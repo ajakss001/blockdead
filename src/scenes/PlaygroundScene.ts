@@ -6,8 +6,6 @@ import { CollisionWorld } from '../world/CollisionWorld';
 import type { IScene } from './IScene';
 import { buildPlayground, PLAYGROUND_SPAWN, PLAYGROUND_YAW } from './playground/buildPlayground';
 
-const DUSK = 0x59626b;
-
 /** Stage 1 test yard: walk around, enter houses, look down at your legs, swing the knife. */
 export class PlaygroundScene implements IScene {
   readonly scene = new Scene();
@@ -17,13 +15,15 @@ export class PlaygroundScene implements IScene {
   private ctx!: GameContext;
   private player!: Player;
   private level!: Mesh;
+  private sky: Mesh | null = null;
   private readonly world = new CollisionWorld();
   private readonly unsubs: (() => void)[] = [];
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    this.scene.background = new Color(DUSK);
-    this.scene.fog = new Fog(DUSK, 6, ctx.quality.preset.fogFar);
+    const palette = ctx.style.palette;
+    this.scene.background = new Color(palette.sky);
+    this.scene.fog = new Fog(palette.fog, palette.fogNear, ctx.quality.preset.fogFar);
 
     // Dusk, but readable on a phone screen in daylight; the flashlight matters indoors and later at night.
     this.scene.add(new HemisphereLight(0x9aa6b4, 0x3a352d, 1.9));
@@ -38,6 +38,11 @@ export class PlaygroundScene implements IScene {
 
     this.player = new Player(ctx, this.camera, this.scene, this.world, PLAYGROUND_SPAWN, PLAYGROUND_YAW);
     this.overlay = this.player.viewmodel;
+
+    this.sky = ctx.style.createSkyDome();
+    if (this.sky) this.scene.add(this.sky);
+    ctx.style.patchObject(this.scene);
+    ctx.style.patchObject(this.player.viewmodel.scene);
 
     this.resize(ctx.renderer.width, ctx.renderer.height);
     this.applyQuality();
@@ -61,6 +66,7 @@ export class PlaygroundScene implements IScene {
 
   render(alpha: number, frameDt: number): void {
     this.player.render(alpha, frameDt);
+    this.sky?.position.copy(this.camera.position);
   }
 
   dispose(): void {

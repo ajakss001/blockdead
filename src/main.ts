@@ -14,10 +14,12 @@ import { createPlatform } from './platform/createPlatform';
 import { pickInitialLevel } from './render/DeviceProfile';
 import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
+import { pickStyle, StyleManager } from './render/style/StyleManager';
 import type { IScene } from './scenes/IScene';
 import { PlaygroundScene } from './scenes/PlaygroundScene';
 import { TestScene } from './scenes/TestScene';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
+import { mountStyleOverlay } from './ui/StyleOverlay';
 
 const params = new URLSearchParams(location.search);
 
@@ -44,11 +46,14 @@ async function boot(): Promise<void> {
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
   const input = new InputManager(pickInputMode(device), events);
+  // ?style=diary|vhs — visual identity prototypes; plain is the neutral baseline.
+  const style = new StyleManager(pickStyle());
 
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new PlaygroundScene();
   const draw = (alpha: number, frameDt: number) => {
     scene.render(alpha, frameDt);
+    style.update(frameDt, renderer);
     renderer.beginFrame();
     profiler.begin('draw');
     renderer.render(scene.scene, scene.camera);
@@ -68,10 +73,11 @@ async function boot(): Promise<void> {
     events,
   );
 
-  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug };
+  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug, style };
   scene.init(ctx);
 
   mountCrosshair(uiEl);
+  mountStyleOverlay(style.style, uiEl);
   if (input.mode === 'touch') {
     new TouchInput(input, uiEl);
   } else {
