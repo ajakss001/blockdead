@@ -60,8 +60,10 @@ export class StaticBatch {
     if (tint) applyTint(g, tint, this.color);
     const spec = SURFACES[surface];
     const n = g.getAttribute('position').count;
-    if (g.getAttribute('uv')) g.deleteAttribute('uv');
-    g.setAttribute('aSurfUv', worldUVs(g, spec.tile));
+    const ownUv = g.getAttribute('uv');
+    // Decals map their texture once per quad; everything else is box-projected in world space.
+    g.setAttribute('aSurfUv', spec.decal && ownUv ? ownUv.clone() : worldUVs(g, spec.tile, spec.tileV ?? spec.tile));
+    if (ownUv) g.deleteAttribute('uv');
     g.setAttribute('aLayer', new BufferAttribute(new Float32Array(n).fill(surfaceLayer(surface)), 1));
     const pbr = new Float32Array(n * 2);
     for (let i = 0; i < n; i++) {
@@ -108,10 +110,11 @@ export class StaticBatch {
  * Box-projected UVs from world position: each triangle uses the plane its normal faces most.
  * Textures keep a constant texel density on every wall, floor and prop, with zero runtime cost.
  */
-function worldUVs(g: BufferGeometry, tile: number): BufferAttribute {
+function worldUVs(g: BufferGeometry, tile: number, tileV: number): BufferAttribute {
   const pos = g.getAttribute('position');
   const uv = new Float32Array(pos.count * 2);
   const inv = 1 / tile;
+  const invV = 1 / tileV;
   for (let i = 0; i + 2 < pos.count; i += 3) {
     const ax = pos.getX(i);
     const ay = pos.getY(i);
@@ -131,9 +134,11 @@ function worldUVs(g: BufferGeometry, tile: number): BufferAttribute {
       const z = pos.getZ(i + k);
       let u: number;
       let v: number;
+      let vScale = invV;
       if (ny >= nx && ny >= nz) {
         u = x;
         v = z;
+        vScale = inv;
       } else if (nx >= nz) {
         u = z;
         v = y;
@@ -142,7 +147,7 @@ function worldUVs(g: BufferGeometry, tile: number): BufferAttribute {
         v = y;
       }
       uv[(i + k) * 2] = u * inv;
-      uv[(i + k) * 2 + 1] = v * inv;
+      uv[(i + k) * 2 + 1] = v * vScale;
     }
   }
   return new BufferAttribute(uv, 2);

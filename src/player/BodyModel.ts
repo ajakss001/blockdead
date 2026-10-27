@@ -1,8 +1,10 @@
-import { BoxGeometry, Group, Mesh, type BufferGeometry } from 'three';
+import { Group, Mesh, type BufferGeometry } from 'three';
 import { clamp } from '../core/math';
 import { limbDown } from '../render/lowpoly';
-import { characterMaterial } from '../render/look/materials';
+import { characterMaterial, VERTEX_COLORED } from '../render/look/materials';
+import { type Outfit, SKIN } from './outfit';
 import { SPEED_SPRINT, SPEED_WALK } from './PlayerController';
+import { buildShoeGeometry, type ShoeStyle } from './shoe';
 
 const HIP_HEIGHT = 0.92;
 /** Hip drop at full crouch; with the crouch leg angles below this keeps the shoes on the ground. */
@@ -17,15 +19,18 @@ const SHIN = 0.44;
 const BACK_OFFSET = 0.18;
 /** Relaxed stance: feet slightly ahead of the hips, so they are visible when looking down. */
 const STANCE = 0.22;
+/**
+ * Ground under the sole, measured from the ankle (end of the shin). In the relaxed stance the
+ * ankle is ~4.4 cm above the hip height minus the leg; the sole lands on the ground there.
+ */
+const SOLE_GROUND = -0.04;
+/** Underwear on bare thighs. */
+const BOXERS = 0x4e4e5a;
 
-export const BODY_COLORS = {
-  jacket: 0x3d4a5c,
-  jeans: 0x2f3b52,
-  shoes: 0x4a3c30,
-} as const;
 
 /**
- * The player's own lower body as seen from first person: legs and shoes.
+ * The player's own lower body as seen from first person: legs and anatomical shoes, dressed in
+ * whatever is worn (setOutfit).
  * No head and no arms — arms live in the viewmodel pass. Legs are animated procedurally
  * from the controller's distance-driven step phase, so feet never slide.
  */
@@ -37,32 +42,60 @@ export class BodyModel {
   private readonly shinL = new Group();
   private readonly shinR = new Group();
   private readonly geometries: BufferGeometry[] = [];
+  private readonly thighs: Mesh[] = [];
+  private readonly shins: Mesh[] = [];
+  private readonly shoes: Mesh[] = [];
+  private shoeKey = '';
 
   constructor() {
-    const jeans = characterMaterial('jeans', BODY_COLORS.jeans);
-    const shoes = characterMaterial('shoes', BODY_COLORS.shoes);
-
     this.hips.position.y = HIP_HEIGHT;
     this.root.add(this.hips);
 
-
     const thighGeo = this.geo(limbDown(0.085, 0.065, THIGH));
     const shinGeo = this.geo(limbDown(0.062, 0.048, SHIN));
-    const shoeGeo = this.geo(new BoxGeometry(0.11, 0.075, 0.27));
+    const shoeMat = characterMaterial('shoes', VERTEX_COLORED, true);
     for (const [thigh, shin, side] of [
       [this.thighL, this.shinL, -1],
       [this.thighR, this.shinR, 1],
     ] as const) {
       thigh.position.x = side * 0.095;
-      thigh.add(new Mesh(thighGeo, jeans));
+      const t = new Mesh(thighGeo);
+      const s = new Mesh(shinGeo);
+      // Shoe geometry arrives with the first outfit; both feet share it.
+      const shoe = new Mesh(undefined, shoeMat);
+      shoe.position.y = -SHIN;
+      thigh.add(t);
       shin.position.y = -THIGH;
-      shin.add(new Mesh(shinGeo, jeans));
-      const shoe = new Mesh(shoeGeo, shoes);
-      shoe.position.set(0, -SHIN - 0.035, -0.06);
-      shin.add(shoe);
+      shin.add(s, shoe);
       thigh.add(shin);
       this.hips.add(thigh);
+      this.thighs.push(t);
+      this.shins.push(s);
+      this.shoes.push(shoe);
     }
+  }
+
+  /** Trousers (or bare legs) and the shoe model. Same-type materials: no shader recompiles. */
+  setOutfit(o: Outfit): void {
+    const thigh = o.pants !== null ? characterMaterial('jeans', o.pants) : characterMaterial('cuff', BOXERS);
+    const shin = o.pants !== null ? thigh : characterMaterial('skin', SKIN);
+    for (const m of this.thighs) m.material = thigh;
+    for (const m of this.shins) m.material = shin;
+    this.setShoes(o.shoes);
+  }
+
+  private setShoes(style: ShoeStyle): void {
+    const key = JSON.stringify(style);
+    if (key === this.shoeKey) return;
+    this.shoeKey = key;
+    const old = this.shoes[0].geometry;
+    const g = buildShoeGeometry(style, SOLE_GROUND);
+    for (const m of this.shoes) m.geometry = g;
+    if (this.geometries.includes(old)) {
+      this.geometries.splice(this.geometries.indexOf(old), 1);
+      old.dispose();
+    }
+    this.geometries.push(g);
   }
 
   /**

@@ -78,7 +78,20 @@ async function boot(): Promise<void> {
     events,
   );
 
-  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug, hud };
+  const kbm = input.mode === 'kbm' ? new KeyboardMouseInput(input, renderer.gl.domElement) : null;
+  const ctx: GameContext = {
+    events,
+    profiler,
+    loop,
+    platform,
+    renderer,
+    quality,
+    device,
+    input,
+    debug,
+    hud,
+    requestPointerLock: () => void kbm?.requestLock(),
+  };
   scene.init(ctx);
   await scene.load?.();
   postfx.setScene(scene.scene, scene.camera, scene.overlay);
@@ -89,15 +102,11 @@ async function boot(): Promise<void> {
   }
 
   mountCrosshair(uiEl);
-  if (input.mode === 'touch') {
-    new TouchInput(input, uiEl);
-  } else {
-    const kbm = new KeyboardMouseInput(input, renderer.gl.domElement);
-    new PlayOverlay(ctx, kbm, uiEl);
-  }
+  if (kbm) new PlayOverlay(ctx, kbm, uiEl);
+  else new TouchInput(input, uiEl);
   new DebugPanel(ctx, uiEl);
 
-  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene } });
+  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw } });
 
   // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.

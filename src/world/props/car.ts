@@ -16,6 +16,7 @@ import { mulberry32 } from '../../core/random';
 import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
+import type { ContainerSpot } from '../gen/pieces';
 
 /** Faded 90s factory colors. */
 export const CAR_PAINTS = {
@@ -35,6 +36,8 @@ export interface CarOptions {
   seed?: number;
   /** Rear-right tire flat: wheel squashed, body sags towards that corner. */
   flatTire?: boolean;
+  /** Chance (0..1) for each window to be smashed out, leaving jagged teeth in the frame. */
+  smashed?: number;
 }
 
 // Mid-size 90s sedan, meters. Local axes: +X nose, +Y up, +Z left side.
@@ -107,7 +110,7 @@ const _s = new Vector3();
  * Abandoned 90s sedan, ~1.4k triangles, built from logical parts that go into the static batch
  * under their own surfaces: rusted paint, dirty rubber, murky cracked glass, old chrome, dead lamps.
  */
-export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions): void {
+export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): void {
   const rand = mulberry32(o.seed ?? 1);
   // Car transform: position, heading, plus sag towards a flat tire.
   const roll = o.flatTire ? -0.022 : 0;
@@ -154,7 +157,7 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions)
   }
 
   // Cabin: pillars and roof in paint, panes in glass — one bilinear grid per face.
-  const cab = buildCabin();
+  const cab = buildCabin(o.smashed ?? 0, rand);
   geos.push(cab.paint, cab.glass);
   add(cab.paint, o.paint, 'carPaint');
   add(cab.glass, 0x2a3036, 'carGlass');
@@ -223,6 +226,12 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions)
 
   for (const g of geos) g.dispose();
 
+  // Searchable trunk just behind the rear bumper.
+  if (containers) {
+    const t = new Vector3(-2.2, 0.8, 0).applyMatrix4(car);
+    containers.push({ type: 'trunk', x: t.x, z: t.z });
+  }
+
   // Collider: AABB of the rotated footprint (conservative for angled cars).
   const c = Math.abs(Math.cos(o.yaw));
   const s = Math.abs(Math.sin(o.yaw));
@@ -232,7 +241,7 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions)
 }
 
 /** Greenhouse faces split into a grid of cells; inner cells are glass, the frame is painted pillars. */
-function buildCabin(): { paint: BufferGeometry; glass: BufferGeometry } {
+function buildCabin(smashed: number, rand: () => number): { paint: BufferGeometry; glass: BufferGeometry } {
   const C = CABIN;
   const v = (x: number, y: number, z: number) => new Vector3(x, y, z);
   const fl = v(C.baseFront, C.baseY, C.baseHalf);
@@ -260,6 +269,16 @@ function buildCabin(): { paint: BufferGeometry; glass: BufferGeometry } {
         const b = at(us[ui + 1], vs[vi]);
         const c = at(us[ui + 1], vs[vi + 1]);
         const d = at(us[ui], vs[vi + 1]);
+        if (isGlass(ui, vi) && rand() < smashed) {
+          // Smashed pane: the frame keeps a few jagged teeth of glass along its bottom edge.
+          for (let t = 0; t < 4; t++) {
+            const b0 = a.clone().lerp(b, t / 4);
+            const b1 = a.clone().lerp(b, (t + 1) / 4);
+            const tip = b0.clone().lerp(b1, 0.5).lerp(d.clone().lerp(c, (t + 0.5) / 4), 0.12 + rand() * 0.28);
+            tri(glass, b0, b1, tip, inside);
+          }
+          continue;
+        }
         quad(isGlass(ui, vi) ? glass : paint, a, b, c, d, inside);
       }
     }
@@ -281,6 +300,11 @@ function buildCabin(): { paint: BufferGeometry; glass: BufferGeometry } {
   face(trl, trr, tfl, tfr, [0, 1], [0, 1], () => false);
 
   return { paint: geometry(paint), glass: geometry(glass) };
+}
+
+/** One triangle, double-sided (thin glass teeth are seen from both sides). */
+function tri(out: number[], a: Vector3, b: Vector3, c: Vector3, _inside: Vector3): void {
+  out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z);
 }
 
 /** Two triangles, wound so the face points away from `inside`. */

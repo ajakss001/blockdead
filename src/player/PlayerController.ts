@@ -19,8 +19,8 @@ const PITCH_LIMIT = 1.45;
 /** How fast the feet follow the ground (1/s): smooths steps and slope changes. */
 const GROUND_FOLLOW = 18;
 
-/** Ground height at (x, z). */
-export type GroundFn = (x: number, z: number) => number;
+/** Height of the walkable surface under (x, z) for a body currently at height y (multi-storey). */
+export type GroundFn = (x: number, z: number, y: number) => number;
 
 /** Footstep loudness by gait, 0..1 — zombies (stage 4) hear the player through this. */
 const NOISE_CROUCH = 0.1;
@@ -48,6 +48,9 @@ export class PlayerController {
   prevStepPhase = 0;
   /** Current noise emitted by the player, 0..1. */
   noise = 0;
+  /** Set from survival stats each step: exhaustion first slows, then forbids sprinting. */
+  canSprint = true;
+  sprintFactor = 1;
 
   private gaitNoise = 0;
   private noiseImpulse = 0;
@@ -72,8 +75,8 @@ export class PlayerController {
     if (input.consumePressed('crouch')) this.crouched = !this.crouched;
     const mx = input.moveX;
     const my = input.moveY;
-    this.sprinting = input.isHeld('sprint') && my > 0.3 && !this.crouched;
-    const maxSpeed = this.crouched ? SPEED_CROUCH : this.sprinting ? SPEED_SPRINT : SPEED_WALK;
+    this.sprinting = input.isHeld('sprint') && my > 0.3 && !this.crouched && this.canSprint;
+    const maxSpeed = this.crouched ? SPEED_CROUCH : this.sprinting ? SPEED_SPRINT * this.sprintFactor : SPEED_WALK;
 
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
@@ -88,7 +91,11 @@ export class PlayerController {
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
     world.resolveCircle(this.position, PLAYER_RADIUS);
-    if (ground) this.position.y = damp(this.position.y, ground(this.position.x, this.position.z), GROUND_FOLLOW, dt);
+    if (ground) {
+      const target = ground(this.position.x, this.position.z, this.position.y);
+      // Climb quickly (steps), fall a little slower (reads as a drop, not a teleport).
+      this.position.y = damp(this.position.y, target, target > this.position.y ? GROUND_FOLLOW : GROUND_FOLLOW * 0.6, dt);
+    }
 
     // Velocity follows the resolved displacement, so pushing into a wall slides instead of building up.
     const dx = this.position.x - this.prevPosition.x;

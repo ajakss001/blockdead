@@ -20,6 +20,9 @@ function track<T extends Texture>(t: T): T {
 
 export type CharacterPart = 'jacket' | 'jeans' | 'shoes' | 'skin' | 'cuff' | 'handle' | 'torch';
 
+/** Light grime base for parts colored per vertex (shoes: upper, sole, laces in one draw call). */
+export const VERTEX_COLORED = 0xd6d6d6;
+
 const CHAR_KIND: Record<CharacterPart, { kind: GrungeKind; blood?: number; noise?: number; roughness: number; metalness: number }> = {
   jacket: { kind: 'fabric', blood: 1, roughness: 0.95, metalness: 0 },
   jeans: { kind: 'fabric', roughness: 0.95, metalness: 0 },
@@ -31,8 +34,8 @@ const CHAR_KIND: Record<CharacterPart, { kind: GrungeKind; blood?: number; noise
 };
 
 /** Grungy material for the player's own body, hands and held items. */
-export function characterMaterial(part: CharacterPart, color: ColorRepresentation): MeshStandardMaterial {
-  const key = `${part}:${String(color)}`;
+export function characterMaterial(part: CharacterPart, color: ColorRepresentation, vertexColors = false): MeshStandardMaterial {
+  const key = `${part}:${String(color)}:${vertexColors}`;
   const cached = charCache.get(key);
   if (cached) return cached;
   const spec = CHAR_KIND[part];
@@ -40,6 +43,7 @@ export function characterMaterial(part: CharacterPart, color: ColorRepresentatio
     map: track(generateGrungeTexture(color, spec.noise ?? 0.4, { kind: spec.kind, seed: charCache.size * 31 + 5, blood: spec.blood, size: 64 })),
     roughness: spec.roughness,
     metalness: spec.metalness,
+    vertexColors,
   });
   charCache.set(key, mat);
   return mat;

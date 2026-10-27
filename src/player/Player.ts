@@ -21,11 +21,12 @@ const FLASHLIGHT = {
   decay: 2,
 } as const;
 
-/** Timed search, seconds (Zomboid: actions take time and leave you exposed). */
-const SEARCH_TIME = 2;
+/** Full battery lasts this many seconds of light. */
+const BATTERY_LIFE = 480;
 
 /**
- * Player = controller (simulation) + camera rig + own body + viewmodel arms + flashlight + timed actions.
+ * Player = controller (simulation) + camera rig + own body + viewmodel arms + flashlight.
+ * Gameplay around it (inventory, searching, stats) lives in systems/ and is driven by the scene.
  * fixedUpdate moves the simulation; render interpolates and applies camera look at frame rate.
  */
 export class Player {
@@ -34,6 +35,10 @@ export class Player {
   readonly viewmodel = new Viewmodel();
   readonly flashlight: SpotLight;
   flashlightOn = false;
+  /** Flashlight charge, 0..1. */
+  battery = 1;
+  /** Set by the scene while a timed action runs: no attacking with your hands full. */
+  busy = false;
 
   private readonly look: LookDelta = { x: 0, y: 0 };
   private readonly frame: ViewmodelFrame = {
@@ -44,8 +49,6 @@ export class Player {
     sprinting: false,
     flashlightOn: false,
   };
-  /** Seconds into the current search, or -1. */
-  private searchT = -1;
   private flickerT = 0;
   private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
@@ -88,17 +91,21 @@ export class Player {
   fixedUpdate(dt: number): void {
     const input = this.ctx.input;
     if (input.consumePressed('flashlight')) this.setFlashlight(!this.flashlightOn);
-    if (input.consumePressed('item1')) this.viewmodel.equip('knife');
-    if (input.consumePressed('item2')) this.viewmodel.equip('fists');
+    if (this.flashlightOn) {
+      this.battery = Math.max(0, this.battery - dt / BATTERY_LIFE);
+      if (this.battery === 0) {
+        this.setFlashlight(false);
+        this.ctx.hud.toast('Батарейка села');
+      }
+    }
 
     this.controller.fixedUpdate(dt, input, this.world, this.ground);
-    const attacking = input.isHeld('attack') && !this.controller.sprinting;
-    this.updateSearch(dt, input.consumePressed('use'), attacking);
-    this.viewmodel.fixedUpdate(dt, attacking && this.searchT < 0);
+    const attacking = input.isHeld('attack') && !this.controller.sprinting && !this.busy;
+    this.viewmodel.fixedUpdate(dt, attacking);
     const strikeNoise = this.viewmodel.consumeStrike();
     if (strikeNoise > 0) this.controller.addNoise(strikeNoise);
 
-    // Placeholder until stage 3 stats: being loud makes you anxious.
+    // Being loud makes you anxious (zombie-driven panic arrives in stage 4).
     this.ctx.hud.setMoodle('anxiety', this.controller.noise > 0.75 ? 2 : this.controller.noise > 0.5 ? 1 : 0);
   }
 
@@ -147,7 +154,15 @@ export class Player {
     this.flashlight.shadow.needsUpdate = true;
   }
 
+  rechargeBattery(amount: number): void {
+    this.battery = Math.min(1, this.battery + amount);
+  }
+
   private setFlashlight(on: boolean): void {
+    if (on && this.battery <= 0) {
+      this.ctx.hud.toast('Нужны батарейки');
+      return;
+    }
     this.flashlightOn = on;
     this.flashlight.intensity = on ? FLASHLIGHT.intensity : 0;
     this.flashlight.shadow.autoUpdate = on;
@@ -165,29 +180,11 @@ export class Player {
     } else {
       this.flashlight.intensity = FLASHLIGHT.intensity;
       this.flickerT = 0;
-      this.flickerNext = 10 + Math.random() * 30;
+      // A dying battery flickers far more often.
+      this.flickerNext = this.battery < 0.15 ? 1.5 + Math.random() * 3 : 10 + Math.random() * 30;
     }
   }
 
-  /** Search: hold still for SEARCH_TIME; moving or attacking cancels. Containers arrive in stage 3. */
-  private updateSearch(dt: number, pressed: boolean, attacking: boolean): void {
-    const hud = this.ctx.hud;
-    if (this.searchT < 0) {
-      if (pressed) this.searchT = 0;
-      else return;
-    }
-    if (this.controller.speed > 0.4 || attacking) {
-      this.searchT = -1;
-      hud.toast('Прервано', 900);
-      return;
-    }
-    this.searchT += dt;
-    hud.showAction('Обыск…', this.searchT / SEARCH_TIME);
-    if (this.searchT >= SEARCH_TIME) {
-      this.searchT = -1;
-      hud.toast('Ничего полезного');
-    }
-  }
 
   private applyQuality(preset: QualityPreset): void {
     const size = Math.max(preset.shadowMapSize, 1);

@@ -11,11 +11,22 @@ import {
   Scene,
   Vector3,
 } from 'three';
+import type { ItemId } from '../data/items';
 import type { GameContext } from '../GameContext';
+import { outfitFrom } from '../player/outfit';
 import { Player } from '../player/Player';
+import type { RightItem } from '../player/Viewmodel';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
+import { Containers } from '../systems/Containers';
+import { Interaction } from '../systems/Interaction';
+import { Inventory, type InventoryData } from '../systems/Inventory';
+import { SaveGame } from '../systems/SaveGame';
+import { Survival } from '../systems/Survival';
+import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
+import { Doors } from '../world/Doors';
+import { Interiors } from '../world/Interiors';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
@@ -32,9 +43,22 @@ const NIGHT = {
 } as const;
 
 const DEFAULT_SEED = 1993;
-/** Sidewalk of the road along z = 0, looking down the street: houses of the starting suburb on the right. */
+/** Sidewalk of the road along z = 0 in the heart of downtown, looking down the street. */
 const SPAWN = new Vector3(20, 0, 4.6);
 const SPAWN_YAW = -Math.PI / 2;
+const AUTOSAVE_INTERVAL = 20;
+/** Fresh survivor: hoodie, jeans, sneakers, the kitchen knife, a little water, a half-dead flashlight. */
+const START_KIT: InventoryData & { battery: number } = {
+  stacks: [
+    ['water', 1],
+    ['chocolate', 1],
+  ],
+  hand: 'knife',
+  worn: { head: null, torso: 'hoodie', legs: 'jeans', feet: 'sneakers' },
+  battery: 0.6,
+};
+/** Hand items with a first-person model. */
+const HELD: Partial<Record<ItemId, RightItem>> = { knife: 'knife', axe: 'axe', bat: 'bat', crowbar: 'crowbar', hammer: 'hammer' };
 
 /** The procedural, endless world: chunks stream around the player from a seed (?seed=…). */
 export class WorldScene implements IScene {
@@ -48,6 +72,16 @@ export class WorldScene implements IScene {
   private readonly world = new CollisionWorld();
   private readonly lookDir = new Vector3();
   private readonly unsubs: (() => void)[] = [];
+  private readonly survival = new Survival();
+  private readonly inventory = new Inventory();
+  private containers!: Containers;
+  private interaction!: Interaction;
+  private panel!: InventoryPanel;
+  private saves!: SaveGame;
+  private interiors!: Interiors;
+  private doors!: Doors;
+  private saveT = 0;
+  private moodleT = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -61,8 +95,42 @@ export class WorldScene implements IScene {
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
     const layout = new WorldLayout(seed);
     this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius);
-    this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, (x, z) => layout.heightAt(x, z));
+    // Standing surface: storeys, stairs and roofs inside high-rises; the terrain everywhere else.
+    const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.heightAt(x, z);
+    this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, ground);
     this.overlay = this.player.viewmodel;
+
+    // Survival layer: containers follow their chunks; the inventory screen pauses the game.
+    this.containers = new Containers(seed);
+    this.doors = new Doors(this.scene, this.world);
+    this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
+    this.chunks.onChunkLoaded = (key, data) => {
+      this.containers.addChunk(key, data.zone, data.containers);
+      this.interiors.addChunk(key, data.buildings);
+    };
+    this.chunks.onChunkUnloaded = (key) => {
+      this.containers.removeChunk(key);
+      this.interiors.removeChunk(key);
+    };
+    const syncBody = () => this.syncBody();
+    this.panel = new InventoryPanel(
+      ctx,
+      {
+        inventory: this.inventory,
+        survival: this.survival,
+        containers: this.containers,
+        player: this.player,
+        syncBody,
+        onClose: () => this.save(),
+      },
+      document.getElementById('ui')!,
+    );
+    this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
+    this.saves = new SaveGame(ctx.platform, seed);
+    this.inventory.restore(START_KIT);
+    this.player.battery = START_KIT.battery;
+    this.syncBody();
+    this.unsubs.push(ctx.events.on('loop:pause', ({ reason }) => reason === 'hidden' && this.save()));
 
     this.resize(ctx.renderer.width, ctx.renderer.height);
     this.applyQuality();
@@ -79,15 +147,44 @@ export class WorldScene implements IScene {
     });
     ctx.debug.set('world', () => {
       const ch = this.chunks;
-      return `world seed ${seed}  zone ${ch.zoneAt(c.position.x, c.position.z)}  chunks ${ch.loadedCount} (+${ch.pendingCount})  gen ${ch.lastGenMs.toFixed(0)}ms  colliders ${this.world.boxCount}`;
+      return `world seed ${seed}  zone ${ch.zoneAt(c.position.x, c.position.z)}  chunks ${ch.loadedCount} (+${ch.pendingCount})  gen ${ch.lastGenMs.toFixed(0)}ms  colliders ${this.world.boxCount}  interiors ${this.interiors.loadedCount}  doors ${this.doors.count}  этаж ${Math.round(c.position.y / 3.2)}`;
+    });
+    ctx.debug.set('survival', () => {
+      const v = this.survival;
+      const pct = (x: number) => Math.round(x * 100);
+      return `hp ${pct(v.health)}  голод ${pct(v.hunger)}  жажда ${pct(v.thirst)}  усталость ${pct(v.fatigue)}  фонарь ${pct(this.player.battery)}  вес ${this.inventory.weight.toFixed(1)}  контейнеры ${this.containers.loadedCount} (открыто ${this.containers.openedCount})`;
     });
   }
 
-  /** Wait for the blocks around the spawn point, so the first frame isn't an empty void. */
-  load(): Promise<void> {
-    const done = this.chunks.whenLoaded(SPAWN.x, SPAWN.z, 1);
-    const pump = window.setInterval(() => this.chunks.update(SPAWN.x, SPAWN.z, 0, 1), 16);
-    return done.then(() => window.clearInterval(pump));
+  /** First-person body follows the inventory: weapon in the hand, sleeves, trousers, shoes. */
+  private syncBody(): void {
+    const hand = this.inventory.hand;
+    this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
+    const outfit = outfitFrom(this.inventory.worn);
+    this.player.body.setOutfit(outfit);
+    this.player.viewmodel.setSleeves(outfit.sleeves);
+  }
+
+  /** Restore the save (if any), then wait for the blocks around the player. */
+  async load(): Promise<void> {
+    const save = await this.saves.load();
+    const c = this.player.controller;
+    if (save) {
+      c.position.set(save.player.x, save.player.y ?? 0, save.player.z);
+      c.prevPosition.copy(c.position);
+      c.yaw = save.player.yaw;
+      this.player.battery = save.player.battery;
+      this.survival.restore(save.stats);
+      // Saves from before clothing existed: keep the starting clothes on.
+      this.inventory.restore({ ...save.inventory, worn: save.inventory.worn ?? START_KIT.worn });
+      this.containers.restore(save.containers);
+      this.syncBody();
+    }
+    const { x, z } = c.position;
+    const done = this.chunks.whenLoaded(x, z, 1);
+    const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
+    await done;
+    window.clearInterval(pump);
   }
 
   /**
@@ -123,19 +220,48 @@ export class WorldScene implements IScene {
   }
 
   fixedUpdate(dt: number): void {
+    const c = this.player.controller;
+    c.canSprint = this.survival.canSprint;
+    c.sprintFactor = this.survival.sprintFactor;
     this.player.fixedUpdate(dt);
+    this.interaction.fixedUpdate(dt);
+    this.survival.update(dt, c.speed, c.sprinting);
+    this.moodleT -= dt;
+    if (this.moodleT <= 0) {
+      this.moodleT = 0.25;
+      this.survival.pushMoodles(this.ctx.hud);
+    }
   }
 
   render(alpha: number, frameDt: number): void {
     this.player.render(alpha, frameDt);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
+    this.interaction.render(frameDt);
+    this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z);
+    this.doors.update(frameDt);
+    if (!this.ctx.loop.paused) {
+      this.saveT += frameDt;
+      if (this.saveT >= AUTOSAVE_INTERVAL) this.save();
+    }
+  }
+
+  private save(): void {
+    this.saveT = 0;
+    const c = this.player.controller;
+    void this.saves.save({
+      player: { x: c.position.x, y: c.position.y, z: c.position.z, yaw: c.yaw, battery: this.player.battery },
+      stats: this.survival.serialize(),
+      inventory: this.inventory.serialize(),
+      containers: this.containers.serialize(),
+    });
   }
 
   dispose(): void {
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');
+    this.ctx.debug.delete('survival');
     this.player.dispose();
     this.chunks.dispose();
   }

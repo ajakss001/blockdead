@@ -22,4 +22,6 @@ export interface GameContext {
   readonly input: InputManager;
   readonly debug: DebugInfo;
   readonly hud: Hud;
+  /** PC: re-acquire pointer lock after a UI closes (no-op on touch). Must run inside a user gesture. */
+  requestPointerLock(): void;
 }

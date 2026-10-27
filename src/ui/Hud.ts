@@ -24,6 +24,7 @@ export class Hud {
   private readonly action = document.createElement('div');
   private readonly actionLabel = document.createElement('div');
   private readonly actionFill = document.createElement('div');
+  private readonly prompt = document.createElement('div');
   private toastTimer = 0;
 
   constructor(parent: HTMLElement) {
@@ -36,7 +37,9 @@ export class Hud {
     this.actionFill.className = 'action__fill';
     track.append(this.actionFill);
     this.action.append(this.actionLabel, track);
-    parent.append(this.moodles, this.action);
+    this.prompt.className = 'prompt';
+    this.prompt.hidden = true;
+    parent.append(this.moodles, this.action, this.prompt);
   }
 
   setMoodle(id: MoodleId, level: MoodleLevel): void {
@@ -57,6 +60,16 @@ export class Hud {
     }
     row.textContent = `${MOODLES[id].label} ${'▪'.repeat(level)}`;
     row.style.opacity = String(0.55 + level * 0.15);
+  }
+
+  /** Context hint under the crosshair ("E — Обыскать: Холодильник"); null hides it. */
+  setPrompt(text: string | null): void {
+    if (text === null) {
+      this.prompt.hidden = true;
+      return;
+    }
+    if (this.prompt.textContent !== text) this.prompt.textContent = text;
+    this.prompt.hidden = false;
   }
 
   /** Show / advance the timed-action bar. progress 0..1. */

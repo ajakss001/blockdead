@@ -15,10 +15,10 @@ import {
 import { clamp, damp, easeInOutSine, easeInQuad, easeOutQuad, lerp } from '../core/math';
 import { limbForward } from '../render/lowpoly';
 import { bladeMaterial, characterMaterial } from '../render/look/materials';
-import { BODY_COLORS } from './BodyModel';
+import { cuffColor, SKIN } from './outfit';
 import { SPEED_WALK } from './PlayerController';
 
-export type RightItem = 'knife' | 'fists';
+export type RightItem = 'fists' | 'knife' | 'axe' | 'bat' | 'crowbar' | 'hammer';
 
 /** Arm root (≈ elbow) transform in viewmodel-camera space: position + Euler XYZ. */
 interface Pose {
@@ -49,9 +49,13 @@ const L_LOWERED = pose(-0.26, -0.62, -0.05, -0.6, -0.3, -0.2);
 const ATTACKS: Record<RightItem, { windup: number; strike: number; recover: number; noise: number }> = {
   knife: { windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
   fists: { windup: 0.1, strike: 0.07, recover: 0.2, noise: 0.25 },
+  // Stage 4 gives the long weapons their own swing arcs; for now they share the knife's poses.
+  axe: { windup: 0.3, strike: 0.12, recover: 0.45, noise: 0.5 },
+  bat: { windup: 0.24, strike: 0.11, recover: 0.38, noise: 0.45 },
+  crowbar: { windup: 0.26, strike: 0.11, recover: 0.4, noise: 0.5 },
+  hammer: { windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
 };
 
-const SKIN = 0xc8946c;
 const FOREARM = 0.32;
 
 export interface ViewmodelFrame {
@@ -76,6 +80,9 @@ export class Viewmodel {
   private readonly armR = new Group();
   private readonly armL = new Group();
   private readonly knife = new Group();
+  private readonly held = new Map<RightItem, Group>();
+  private readonly sleeves: Mesh[] = [];
+  private readonly cuffs: Mesh[] = [];
   private readonly lens: MeshBasicMaterial;
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
@@ -106,12 +113,10 @@ export class Viewmodel {
     this.scene.add(moon, this.bounce);
     this.bounce.position.set(-0.12, -0.12, -0.35);
 
-    const jacket = characterMaterial('jacket', BODY_COLORS.jacket);
-    const cuff = characterMaterial('cuff', 0x2c3644);
     const skin = characterMaterial('skin', SKIN);
-
-    this.buildArm(this.armR, 1, jacket, cuff, skin);
-    this.buildArm(this.armL, -1, jacket, cuff, skin);
+    this.buildArm(this.armR, 1, skin);
+    this.buildArm(this.armL, -1, skin);
+    this.setSleeves(0x3d4a5c);
 
     // Kitchen knife in the right fist, blade forward-up.
     const handle = new Mesh(this.geo(new BoxGeometry(0.024, 0.03, 0.1)), characterMaterial('handle', 0x3b2a1e));
@@ -126,6 +131,8 @@ export class Viewmodel {
     // Tilt forward-up and roll so the flat of the blade faces the camera instead of its edge.
     this.knife.rotation.set(0.45, 0, 1.1);
     (this.armR.userData.hand as Group).add(this.knife);
+    this.held.set('knife', this.knife);
+    this.buildHeldTools();
 
     // Flashlight in the left fist, pointing forward.
     const torch = new Group();
@@ -151,6 +158,18 @@ export class Viewmodel {
   setAspect(aspect: number): void {
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Jacket sleeves in the worn color, or bare forearms (null). */
+  setSleeves(color: number | null): void {
+    const skin = characterMaterial('skin', SKIN);
+    const sleeve = color === null ? skin : characterMaterial('jacket', color);
+    const cuff = color === null ? skin : characterMaterial('cuff', cuffColor(color));
+    for (const m of this.sleeves) m.material = sleeve;
+    for (const m of this.cuffs) {
+      m.material = cuff;
+      m.visible = color !== null;
+    }
   }
 
   equip(item: RightItem): void {
@@ -196,7 +215,7 @@ export class Viewmodel {
     if (this.pendingItem && this.rightDown > 0.95) {
       this.item = this.pendingItem;
       this.pendingItem = null;
-      this.knife.visible = this.item === 'knife';
+      for (const [id, g] of this.held) g.visible = id === this.item;
     }
     this.lens.color.setHex(f.flashlightOn ? 0xfff2c4 : 0x3a3a34);
     this.bounce.intensity = f.flashlightOn ? 0.08 : 0;
@@ -237,8 +256,8 @@ export class Viewmodel {
   private attackPose(base: Pose): Pose {
     if (this.attackT < 0) return base;
     const a = ATTACKS[this.item];
-    const windup = this.item === 'knife' ? R_KNIFE_WINDUP : R_FIST_WINDUP;
-    const strike = this.item === 'knife' ? R_KNIFE_STRIKE : R_FIST_STRIKE;
+    const windup = this.item === 'fists' ? R_FIST_WINDUP : R_KNIFE_WINDUP;
+    const strike = this.item === 'fists' ? R_FIST_STRIKE : R_KNIFE_STRIKE;
     const t = this.attackT;
     if (t < a.windup) return lerpPose(this.tmp, base, windup, easeOutQuad(t / a.windup));
     if (t < a.windup + a.strike) return lerpPose(this.tmp, windup, strike, easeInQuad((t - a.windup) / a.strike));
@@ -247,11 +266,13 @@ export class Viewmodel {
   }
 
   /** side: +1 right, -1 left. Root = elbow; forearm extends along -Z to the hand. */
-  private buildArm(arm: Group, side: number, jacket: Material, cuff: Material, skin: Material): void {
-    arm.add(new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), jacket));
-    const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), cuff);
+  private buildArm(arm: Group, side: number, skin: Material): void {
+    const sleeve = new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), skin);
+    const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), skin);
     cuffMesh.position.z = -FOREARM + 0.02;
-    arm.add(cuffMesh);
+    arm.add(sleeve, cuffMesh);
+    this.sleeves.push(sleeve);
+    this.cuffs.push(cuffMesh);
 
     const hand = new Group();
     hand.position.z = -FOREARM - 0.01;
@@ -266,6 +287,58 @@ export class Viewmodel {
     hand.add(palm, fingers, thumb);
     arm.add(hand);
     arm.userData.hand = hand;
+  }
+
+  /**
+   * Long tools in the right fist: shafts run forward-up out of the grip, heads at the far end.
+   * All share the grungy character materials (wood, dark steel, the knife's rusty blade).
+   */
+  private buildHeldTools(): void {
+    const wood = characterMaterial('handle', 0x6e5034);
+    const steel = characterMaterial('torch', 0x3c4044);
+    const hand = this.armR.userData.hand as Group;
+    const make = (id: RightItem, build: (g: Group) => void) => {
+      const g = new Group();
+      build(g);
+      g.position.set(-0.012, 0.012, -0.075);
+      // Shaft forward and slightly inward, so the head stays in frame on a phone screen.
+      g.rotation.set(0.2, 0.3, 0);
+      g.visible = false;
+      hand.add(g);
+      this.held.set(id, g);
+    };
+    make('axe', (g) => {
+      const shaft = new Mesh(this.geo(limbForward(0.015, 0.013, 0.5, 6)), characterMaterial('handle', 0x8a3a24));
+      shaft.position.z = 0.1;
+      const head = new Mesh(this.geo(new BoxGeometry(0.014, 0.13, 0.06)), bladeMaterial());
+      head.position.set(0, 0.03, -0.37);
+      const spike = new Mesh(this.geo(new ConeGeometry(0.012, 0.06, 4)), steel);
+      spike.position.set(0, -0.06, -0.37);
+      spike.rotation.x = Math.PI;
+      g.add(shaft, head, spike);
+    });
+    make('bat', (g) => {
+      const body = new Mesh(this.geo(limbForward(0.017, 0.036, 0.62, 8)), wood);
+      body.position.z = 0.08;
+      const knob = new Mesh(this.geo(limbForward(0.024, 0.024, 0.015, 8)), wood);
+      knob.position.z = 0.09;
+      g.add(body, knob);
+    });
+    make('crowbar', (g) => {
+      const bar = new Mesh(this.geo(limbForward(0.011, 0.011, 0.55, 6)), steel);
+      bar.position.z = 0.1;
+      const hook = new Mesh(this.geo(limbForward(0.011, 0.008, 0.08, 6)), steel);
+      hook.position.set(0, 0, -0.45);
+      hook.rotation.x = 1.1;
+      g.add(bar, hook);
+    });
+    make('hammer', (g) => {
+      const shaft = new Mesh(this.geo(limbForward(0.013, 0.012, 0.3, 6)), wood);
+      shaft.position.z = 0.06;
+      const head = new Mesh(this.geo(new BoxGeometry(0.028, 0.11, 0.03)), steel);
+      head.position.set(0, 0.02, -0.235);
+      g.add(shaft, head);
+    });
   }
 
   private geo<T extends BufferGeometry>(g: T): T {

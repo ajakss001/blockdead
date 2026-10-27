@@ -8,6 +8,7 @@ import {
   RepeatWrapping,
   SRGBColorSpace,
 } from 'three';
+import { generateDecalCanvas } from './decals';
 import { generateGrungeCanvas } from './grunge';
 import { type Bucket, SURFACE_LIST, SURFACES } from './surfaces';
 
@@ -26,21 +27,27 @@ let texture: DataArrayTexture | null = null;
 export function initWorldMaterials(model: LightingModel, anisotropy: number): void {
   if (materials) return;
   texture = buildSurfaceArray(anisotropy);
-  const make = (transparent: boolean): Material => {
+  const make = (kind: 'opaque' | 'glass' | 'decal'): Material => {
     const m =
       model === 'standard'
         ? new MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
         : new MeshLambertMaterial({ vertexColors: true });
-    if (transparent) {
+    if (kind === 'glass') {
       m.transparent = true;
       m.opacity = SURFACES.carGlass.opacity ?? 0.82;
       // Panes overlap each other and the interior; skipping depth writes avoids sorting holes.
       m.depthWrite = false;
     }
-    patch(m, texture!, model === 'standard');
+    if (kind === 'decal') {
+      // Alpha-cut overlays lying on walls and roads: pulled towards the camera to win the depth test.
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -2;
+      m.polygonOffsetUnits = -4;
+    }
+    patch(m, texture!, model === 'standard', kind === 'decal');
     return m;
   };
-  materials = { cast: make(false), flat: make(false), glass: make(true) };
+  materials = { cast: make('opaque'), flat: make('opaque'), glass: make('glass'), decal: make('decal') };
 }
 
 export function worldMaterials(): Record<Bucket, Material> {
@@ -55,7 +62,9 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   const row = SIZE * 4;
   SURFACE_LIST.forEach((surface, layer) => {
     const s = SURFACES[surface];
-    const canvas = generateGrungeCanvas(s.detail, s.noise, { kind: s.kind, seed: layer * 101 + 13, blood: s.blood, size: SIZE });
+    const canvas = s.decal
+      ? generateDecalCanvas(s.decal, SIZE, layer * 31 + 7)
+      : generateGrungeCanvas(s.detail, s.noise, { kind: s.kind, seed: layer * 101 + 13, blood: s.blood, size: SIZE });
     const px = canvas.getContext('2d')!.getImageData(0, 0, SIZE, SIZE).data;
     const base = layer * SIZE * row;
     // Canvas row 0 is the top; GL row 0 is the bottom. Flip so drips run down the walls.
@@ -72,7 +81,7 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   return tex;
 }
 
-function patch(m: Material, tex: DataArrayTexture, standard: boolean): void {
+function patch(m: Material, tex: DataArrayTexture, standard: boolean, cutout: boolean): void {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uSurfaces = { value: tex };
     shader.vertexShader = shader.vertexShader
@@ -99,7 +108,14 @@ varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;`,
       )
-      .replace('#include <map_fragment>', 'diffuseColor *= texture(uSurfaces, vec3(vSurfUv, vLayer));');
+      .replace(
+        '#include <map_fragment>',
+        cutout
+          ? `vec4 texel = texture(uSurfaces, vec3(vSurfUv, vLayer));
+if (texel.a < 0.45) discard;
+diffuseColor.rgb *= texel.rgb;`
+          : 'diffuseColor *= texture(uSurfaces, vec3(vSurfUv, vLayer));',
+      );
     if (standard) {
       frag = frag
         .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vPbr.x;')
@@ -107,5 +123,5 @@ varying vec2 vPbr;`,
     }
     shader.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `world-surfaces-${standard ? 'pbr' : 'lambert'}`;
+  m.customProgramCacheKey = () => `world-surfaces-${standard ? 'pbr' : 'lambert'}${cutout ? '-decal' : ''}`;
 }

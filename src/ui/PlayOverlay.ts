@@ -48,13 +48,21 @@ export class PlayOverlay {
     });
 
     ctx.events.on('input:active', ({ active }) => this.sync(ctx, active));
+    // The inventory releases the lock on purpose: no "click to play" screen over it.
+    ctx.events.on('ui:modal', ({ open }) => {
+      this.modal = open;
+      this.sync(ctx, ctx.input.active);
+    });
     this.sync(ctx, ctx.input.active);
   }
 
+  private modal = false;
+
   private sync(ctx: GameContext, active: boolean): void {
-    this.root.hidden = active;
-    if (active) ctx.loop.resume('menu');
-    else ctx.loop.pause('menu');
+    const show = !active && !this.modal;
+    this.root.hidden = !show;
+    if (show) ctx.loop.pause('menu');
+    else ctx.loop.resume('menu');
   }
 }
 

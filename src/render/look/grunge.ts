@@ -14,7 +14,12 @@ export type GrungeKind =
   | 'skin'
   | 'foliage'
   | 'carpaint'
-  | 'glass';
+  | 'glass'
+  | 'facadeConcrete'
+  | 'facadeBrick'
+  | 'facadeOffice'
+  | 'concrete'
+  | 'tile';
 
 export interface GrungeOptions {
   /** Texture side, px. 128 is the sweet spot: crisp at arm's length, 64 KB of VRAM. */
@@ -61,6 +66,97 @@ const smooth = (e0: number, e1: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
+
+const cellHash = (a: number, b: number) => {
+  const h = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return h - Math.floor(h);
+};
+
+/**
+ * Facade windows. The tile is 2 bays × 2 storeys (64 px each); canvas top = upper storey.
+ * Each window is dark glass, smashed (black hole with shard teeth), boarded up, or has a faded curtain.
+ * Office towers get full-height glass panels with a mullion instead.
+ */
+function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, office: boolean): void {
+  const cell = size / 2;
+  for (let fy = 0; fy < 2; fy++) {
+    // Slab edge between storeys.
+    g.fillStyle = 'rgba(30, 28, 26, 0.35)';
+    g.fillRect(0, fy * cell + cell - 5, size, 5);
+    for (let bx = 0; bx < 2; bx++) {
+      const x0 = bx * cell + (office ? 3 : 11);
+      const y0 = fy * cell + (office ? 5 : 16);
+      const w = office ? cell - 6 : cell - 22;
+      const h = office ? cell - 12 : 30;
+      const roll = rand();
+      if (!office) {
+        g.fillStyle = 'rgba(70, 66, 60, 0.9)';
+        g.fillRect(x0 - 3, y0 - 3, w + 6, h + 6);
+      }
+      if (roll < 0.22) {
+        // Smashed: black hole, jagged teeth of glass left in the frame.
+        g.fillStyle = '#050505';
+        g.fillRect(x0, y0, w, h);
+        g.fillStyle = 'rgba(120, 130, 136, 0.8)';
+        g.beginPath();
+        g.moveTo(x0, y0);
+        for (let t = 0; t <= 6; t++) g.lineTo(x0 + (w * t) / 6, y0 + (t % 2 ? 4 + rand() * 9 : 1));
+        g.lineTo(x0 + w, y0);
+        g.fill();
+        g.beginPath();
+        g.moveTo(x0, y0 + h);
+        for (let t = 0; t <= 5; t++) g.lineTo(x0 + (w * t) / 5, y0 + h - (t % 2 ? 3 + rand() * 7 : 1));
+        g.lineTo(x0 + w, y0 + h);
+        g.fill();
+      } else if (roll < 0.36 && !office) {
+        // Boarded up from inside after the outbreak.
+        g.fillStyle = '#1a1816';
+        g.fillRect(x0, y0, w, h);
+        g.fillStyle = '#6a5a42';
+        for (let k = 0; k < 3; k++) {
+          g.save();
+          g.translate(x0 + w / 2, y0 + 6 + k * 9);
+          g.rotate((rand() - 0.5) * 0.25);
+          g.fillRect(-w / 2 - 2, -3, w + 4, 6);
+          g.restore();
+        }
+      } else {
+        // Dark glass with a faint cold reflection; some with faded curtains behind.
+        g.fillStyle = office ? '#1b2329' : '#161b1f';
+        g.fillRect(x0, y0, w, h);
+        if (!office && roll > 0.8) {
+          g.fillStyle = ['#4a3a34', '#3a4038', '#4a4434'][Math.floor(rand() * 3)];
+          g.fillRect(x0 + 2, y0 + 2, w * 0.3, h - 4);
+          g.fillRect(x0 + w * 0.7 - 2, y0 + 2, w * 0.3, h - 4);
+        }
+        g.fillStyle = 'rgba(150, 165, 175, 0.18)';
+        g.beginPath();
+        g.moveTo(x0 + w * 0.2, y0 + h);
+        g.lineTo(x0 + w * 0.45, y0 + h);
+        g.lineTo(x0 + w * 0.8, y0);
+        g.lineTo(x0 + w * 0.55, y0);
+        g.fill();
+        if (rand() < 0.3) drawCrackAt(g, x0 + rand() * w, y0 + rand() * h, w * 0.4, rand);
+      }
+      if (office) {
+        g.fillStyle = 'rgba(90, 96, 100, 0.95)';
+        g.fillRect(x0 + w / 2 - 1, y0, 2, h);
+      }
+    }
+  }
+}
+
+function drawCrackAt(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, rand: Rand): void {
+  g.strokeStyle = 'rgba(200, 205, 210, 0.5)';
+  g.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    const a = rand() * Math.PI * 2;
+    g.beginPath();
+    g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(a) * r * (0.4 + rand() * 0.6), cy + Math.sin(a) * r * (0.4 + rand() * 0.6));
+    g.stroke();
+  }
+}
 
 /** Impact crack: radial fractures from one point plus two broken rings around it. */
 function drawCracks(g: CanvasRenderingContext2D, size: number, rand: Rand): void {
@@ -217,6 +313,23 @@ export function generateGrungeCanvas(
           // Dust settles in soft clouds, lighter than the glass.
           shade *= 0.9 + 0.35 * smooth(0.35, 0.75, n);
           break;
+        case 'facadeBrick': {
+          // Running bond: 6 px courses, 16 px bricks; mortar darker and greyer; per-brick tint.
+          const row = Math.floor(y / 6);
+          const off = (row % 2) * 8;
+          if (y % 6 === 0 || (x + off) % 16 === 0) {
+            r = r * 0.55 + 40;
+            gg = gg * 0.6 + 40;
+            b = b * 0.65 + 40;
+          } else {
+            shade *= 0.85 + cellHash(row, Math.floor((x + off) / 16)) * 0.3;
+          }
+          break;
+        }
+        case 'tile':
+          if (x % 16 === 0 || y % 16 === 0) shade *= 0.6;
+          else shade *= (Math.floor(x / 16) + Math.floor(y / 16)) % 2 === 0 ? 1.05 : 0.9;
+          break;
         case 'skin': {
           const blush = smooth(0.55, 0.8, blotch(u, v));
           gg -= blush * 14;
@@ -254,6 +367,8 @@ export function generateGrungeCanvas(
   g.putImageData(img, 0, 0);
 
   if (kind === 'glass') drawCracks(g, size, rand);
+  if (kind === 'facadeConcrete' || kind === 'facadeBrick') drawWindows(g, size, rand, false);
+  if (kind === 'facadeOffice') drawWindows(g, size, rand, true);
   if (kind === 'metal' || kind === 'rust' || kind === 'carpaint') {
     // Scratches catch the flashlight as thin bright lines.
     g.lineWidth = 1;

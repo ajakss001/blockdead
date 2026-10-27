@@ -11,7 +11,10 @@ export const BAND = ROAD_HALF + VERGE;
 /** Country roads keep the grid connected through forests and fields. */
 const COUNTRY_EVERY = 4;
 
-export type Zone = 'town' | 'suburb' | 'forest' | 'field';
+export type Zone = 'downtown' | 'town' | 'suburb' | 'forest' | 'field';
+
+/** Blocks within this Chebyshev radius of the origin are the high-rise downtown. */
+export const DOWNTOWN_RADIUS = 2;
 
 const smooth = (e0: number, e1: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -42,8 +45,9 @@ export class WorldLayout {
     // Urban density: noise plus a settlement around the origin, where the player starts.
     const u = this.urbanNoise(i * 0.23, j * 0.23) * 0.55 + 0.6 * Math.exp(-(i * i + j * j) / 10);
     let z: Zone;
-    if (i === 0 && j === 0) z = 'suburb';
-    else if (u > 0.58) z = 'town';
+    // The city: a high-rise downtown at the center, a ring of low town around it, suburbs, then wilds.
+    if (Math.max(Math.abs(i), Math.abs(j)) <= DOWNTOWN_RADIUS) z = 'downtown';
+    else if (u > 0.48) z = 'town';
     else if (u > 0.12) z = 'suburb';
     else z = this.wildNoise(i * 0.4 + 31, j * 0.4) > -0.15 ? 'forest' : 'field';
     this.zones.set(key, z);
@@ -52,7 +56,11 @@ export class WorldLayout {
 
   isUrban(i: number, j: number): boolean {
     const z = this.zone(i, j);
-    return z === 'town' || z === 'suburb';
+    return z === 'downtown' || z === 'town' || z === 'suburb';
+  }
+
+  isDowntown(i: number, j: number): boolean {
+    return this.zone(i, j) === 'downtown';
   }
 
   /** Road along the line x = i·CHUNK, for the stretch beside block row j. */

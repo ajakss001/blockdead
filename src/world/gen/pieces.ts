@@ -2,7 +2,28 @@ import { BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Euler
 import { gableRoof } from '../../render/lowpoly';
 import type { Surface } from '../../render/look/surfaces';
 import type { StaticBatch } from '../../render/StaticBatch';
+import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
+
+/** A searchable spot in the world (world XZ of its front face, Y of its floor). */
+export interface ContainerSpot {
+  type: ContainerType;
+  x: number;
+  z: number;
+  y?: number;
+}
+
+/** An interior door: hinge position and closed-leaf yaw in world space (leaf extends along +X when yaw = 0). */
+export interface DoorSpot {
+  hx: number;
+  hz: number;
+  y: number;
+  yaw: number;
+  /** +1/−1: which way it swings open. */
+  swing: number;
+  /** Nailed shut from the other side. */
+  barricaded: boolean;
+}
 
 /** Muted 90s-suburb-after-the-end palette. */
 export const PAL = {
@@ -51,6 +72,8 @@ export class Builder {
   readonly cyl5 = new CylinderGeometry(0.75, 1, 1, 5);
   readonly ico = new IcosahedronGeometry(1, 0);
   readonly cone6 = new ConeGeometry(1, 1, 6);
+  readonly containers: ContainerSpot[] = [];
+  readonly doors: DoorSpot[] = [];
   private flip: { cx: number; cz: number } | null = null;
   private readonly m = new Matrix4();
   private readonly flipM = new Matrix4();
@@ -71,6 +94,22 @@ export class Builder {
 
   endFrame(): void {
     this.flip = null;
+  }
+
+  /** Register a searchable container at a point in the current frame. */
+  container(type: ContainerType, x: number, z: number, y = 0): void {
+    this.containers.push({ type, x: this.wx(x), z: this.wz(z), y });
+  }
+
+  /** Register a door by its hinge and closed yaw in the current frame. */
+  door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false): void {
+    this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded });
+  }
+
+  /** Box that only blocks within its own vertical extent (storeys, railings, lintels). */
+  blockY(color: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, surface: Surface = 'plaster'): void {
+    this.block(color, x, y, z, sx, sy, sz, surface, false);
+    this.solid(x, z, x + sx, z + sz, y, y + sy);
   }
 
   /** World X of a local X (for door positions etc.). */
@@ -102,14 +141,14 @@ export class Builder {
     this.batch.add(template, color, matrix, surface);
   }
 
-  /** Collider in the current frame. */
-  solid(x0: number, z0: number, x1: number, z1: number): void {
+  /** Collider in the current frame (optionally limited to a vertical range). */
+  solid(x0: number, z0: number, x1: number, z1: number, y0?: number, y1?: number): void {
     if (this.flip) {
       const a = 2 * this.flip.cx - x1;
       const b = 2 * this.flip.cz - z1;
-      this.colliders.addBox(a, b, a + (x1 - x0), b + (z1 - z0));
+      this.colliders.addBox(a, b, a + (x1 - x0), b + (z1 - z0), y0, y1);
     } else {
-      this.colliders.addBox(x0, z0, x1, z1);
+      this.colliders.addBox(x0, z0, x1, z1, y0, y1);
     }
   }
 
@@ -251,11 +290,14 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   // TV on a stand against the back wall (kept clear of the doorways on the partition).
   b.block(0x2a2826, x0 + 0.9, 0, z0 + WALL_T + 0.05, 1.2, 0.55, 0.45, 'wood', true);
   b.block(0x161616, x0 + 1.05, 0.55, z0 + WALL_T + 0.1, 0.9, 0.5, 0.35, 'metal');
+  b.container('tvstand', x0 + 1.5, z0 + WALL_T + 0.6);
 
   // Kitchen: counter along the back wall, fridge in the corner, small table.
   b.block(PAL.counter, xp + 0.4, 0, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.4), 0.86, 0.6, 'wood', true);
   b.block(PAL.counterTop, xp + 0.38, 0.86, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.38), 0.05, 0.64, 'plaster');
   b.block(PAL.appliance, x1 - WALL_T - 0.8, 0, z0 + WALL_T + 0.05, 0.72, 1.8, 0.7, 'metal', true);
+  b.container('counter', (xp + 0.4 + x1 - WALL_T - 1.05) / 2, z0 + WALL_T + 0.65);
+  b.container('fridge', x1 - WALL_T - 0.44, z0 + WALL_T + 0.8);
   const tz = zp - 1.3;
   b.block(PAL.counter, xp + 1.2, 0.72, tz, 1.0, 0.05, 0.8, 'wood');
   b.solid(xp + 1.2, tz, xp + 2.2, tz + 0.8);
@@ -274,6 +316,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   b.block(pick(rand, PAL.fabric), bx + 0.05, 0.32, zp + 0.35, 1.4, 0.18, 1.9, 'rubber');
   b.block(PAL.counter, bx, 0, zp + 0.14, 1.5, 0.95, 0.12, 'wood');
   b.block(PAL.counter, xp + 1.2, 0, z1 - WALL_T - 0.62, 1.2, 2.0, 0.6, 'wood', true);
+  b.container('wardrobe', xp + 1.8, z1 - WALL_T - 0.7);
 
   // Gable roof with overhang, ridge along X.
   const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.4 + d * 0.06);
@@ -323,11 +366,18 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   // Aisles of shelving and a counter by the door.
   for (let x = x0 + 1.2; x < x1 - 1.6; x += 2.2) {
     b.block(PAL.metal, x, 0, zs + 1.4, 0.6, 1.7, d * 0.42, 'metal', true);
+    b.container('shelf', x + 0.3, zs + 1.4 + d * 0.21);
     for (let y = 0.4; y < 1.7; y += 0.45) b.block(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), x + 0.05, y, zs + 1.5, 0.5, 0.18, d * 0.4, 'wood');
   }
   b.block(PAL.counter, wb + 0.6, 0, z1 - WALL_T - 2.2, 2.2, 1.0, 0.7, 'wood', true);
+  b.container('shopCounter', wb + 1.7, z1 - WALL_T - 2.2);
   // Crates and boxes in the storeroom.
-  for (let i = 0; i < 4; i++) b.block(PAL.crate, x0 + 0.5 + rand() * (w - 2), 0, z0 + WALL_T + 0.3 + rand() * (zs - z0 - 1.5), 0.8, 0.6 + rand() * 0.4, 0.8, 'wood', true);
+  for (let i = 0; i < 4; i++) {
+    const cx = x0 + 0.5 + rand() * (w - 2);
+    const cz = z0 + WALL_T + 0.3 + rand() * (zs - z0 - 1.5);
+    b.block(PAL.crate, cx, 0, cz, 0.8, 0.6 + rand() * 0.4, 0.8, 'wood', true);
+    if (i < 2) b.container('crate', cx + 0.4, cz + 0.4);
+  }
 
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
   b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
@@ -340,10 +390,22 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
 }
 
 /**
- * Fence along X or Z (axis-aligned), with an optional gap. 'picket' for street fronts; 'board'
+ * Fence along X or Z (axis-aligned), with an optional gate gap. 'picket' for street fronts; 'board'
  * (solid privacy panels, ~8× fewer triangles) for the long side and back fences.
+ * With `rand`, the fence shows the outbreak: whole 2 m sections kicked in (and passable),
+ * pickets missing, boards hanging at an angle. Colliders cover only the standing sections.
  */
-export function fence(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.4, style: 'picket' | 'board' = 'picket'): void {
+export function fence(
+  b: Builder,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  gapAt?: number,
+  gapW = 1.4,
+  style: 'picket' | 'board' = 'picket',
+  rand?: Rand,
+): void {
   const alongX = Math.abs(bz - az) < 1e-6;
   const a = alongX ? Math.min(ax, bx) : Math.min(az, bz);
   const c = alongX ? Math.max(ax, bx) : Math.max(az, bz);
@@ -352,24 +414,49 @@ export function fence(b: Builder, ax: number, az: number, bx: number, bz: number
     [a, gapAt - gapW / 2],
     [gapAt + gapW / 2, c],
   ];
-  for (const [s0, s1] of spans) {
-    if (s1 - s0 < 0.3) continue;
-    const len = s1 - s0;
-    const put = (along: number, y: number, size: number, h: number, thick: number) => {
-      if (alongX) b.block(PAL.fence, along, y, fixed - thick / 2, size, h, thick, 'wood');
-      else b.block(PAL.fence, fixed - thick / 2, y, along, thick, h, size, 'wood');
-    };
-    if (style === 'board') {
-      put(s0, 0.05, len, 1.55, 0.04);
-      for (let x = s0; x <= s1 + 1e-6; x += 2.4) put(x - 0.05, 0, 0.1, 1.65, 0.1);
-    } else {
-      put(s0, 0.35, len, 0.07, 0.04);
-      put(s0, 0.75, len, 0.07, 0.04);
-      for (let x = s0; x <= s1 + 1e-6; x += 2) put(x - 0.05, 0, 0.1, 1.0, 0.1);
-      for (let x = s0 + 0.25; x < s1; x += 0.25) put(x - 0.035, 0.1, 0.07, 0.85, 0.02);
-    }
+  const put = (along: number, y: number, size: number, h: number, thick: number) => {
+    if (alongX) b.block(PAL.fence, along, y, fixed - thick / 2, size, h, thick, 'wood');
+    else b.block(PAL.fence, fixed - thick / 2, y, along, thick, h, size, 'wood');
+  };
+  const solid = (s0: number, s1: number) => {
+    if (s1 - s0 < 0.05) return;
     if (alongX) b.colliders.addBox(s0, fixed - 0.08, s1, fixed + 0.08);
     else b.colliders.addBox(fixed - 0.08, s0, fixed + 0.08, s1);
+  };
+  const lean = (along: number, len: number, h: number) => {
+    // A board torn loose, leaning against what is left of the fence.
+    const tilt = (rand!() < 0.5 ? -1 : 1) * (0.5 + rand!() * 0.5);
+    _e.set(alongX ? 0 : tilt, 0, alongX ? tilt : 0);
+    _p.set(alongX ? along + len / 2 : fixed + 0.25, h / 2, alongX ? fixed + 0.25 : along + len / 2);
+    _s.set(alongX ? len : 0.04, h, alongX ? 0.04 : len);
+    b.batch.add(b.box, PAL.fence, _m.compose(_p, _q.setFromEuler(_e), _s), 'wood');
+  };
+  for (const [s0, s1] of spans) {
+    if (s1 - s0 < 0.3) continue;
+    for (let x0 = s0; x0 < s1 - 0.05; x0 += 2) {
+      const x1 = Math.min(s1, x0 + 2);
+      const len = x1 - x0;
+      if (rand && rand() < 0.14) {
+        // Section kicked in: stumps of the posts, a board on the ground, a way through.
+        put(x0 - 0.05, 0, 0.1, 0.3, 0.1);
+        if (rand() < 0.6) lean(x0 + 0.2, len * 0.8, 0.12);
+        continue;
+      }
+      put(x0 - 0.05, 0, 0.1, style === 'board' ? 1.65 : 1.0, 0.1);
+      if (style === 'board') {
+        if (rand && rand() < 0.15) lean(x0 + 0.1, len - 0.2, 1.5);
+        else put(x0, 0.05, len, 1.55, 0.04);
+      } else {
+        put(x0, 0.35, len, 0.07, 0.04);
+        put(x0, 0.75, len, 0.07, 0.04);
+        for (let x = x0 + 0.25; x < x1 - 0.05; x += 0.25) {
+          if (rand && rand() < 0.2) continue;
+          put(x - 0.035, 0.1, 0.07, 0.85, 0.02);
+        }
+      }
+      solid(x0, x1);
+    }
+    put(s1 - 0.05, 0, 0.1, style === 'board' ? 1.65 : 1.0, 0.1);
   }
 }
 
@@ -421,4 +508,5 @@ export function trashBins(b: Builder, x: number, z: number): void {
   b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x, 0.45, z), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
   b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x + 0.7, 0.45, z + 0.1), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
   b.colliders.addBox(x - 0.35, z - 0.35, x + 1.05, z + 0.45);
+  b.containers.push({ type: 'trash', x: x + 0.35, z });
 }

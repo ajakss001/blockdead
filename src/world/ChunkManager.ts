@@ -1,8 +1,9 @@
 import type { Group, Scene } from 'three';
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import type { CollisionWorld } from './CollisionWorld';
-import type { ChunkData } from './gen/buildChunk';
-import type { ChunkRequest } from './gen/chunkWorker';
+import type { ChunkData, InteriorData } from './gen/buildChunk';
+import type { WorkerRequest, WorkerResponse } from './gen/chunkWorker';
+import type { BuildingDesc } from './gen/highrise';
 import { CHUNK, type WorldLayout, type Zone } from './gen/layout';
 
 interface LoadedChunk {
@@ -25,10 +26,15 @@ const key = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
 export class ChunkManager {
   radius: number;
   lastGenMs = 0;
+  /** Gameplay hooks: containers etc. come and go with their chunk. */
+  onChunkLoaded?: (key: number, data: ChunkData) => void;
+  onChunkUnloaded?: (key: number) => void;
+  /** A streamed high-rise interior arrived (see Interiors). */
+  onInterior?: (data: InteriorData) => void;
 
   private readonly loaded = new Map<number, LoadedChunk>();
   private readonly pending = new Set<number>();
-  private readonly ready: ChunkData[] = [];
+  private readonly ready: WorkerResponse[] = [];
   private readonly workers: Worker[] = [];
   private readonly inFlight: number[] = [];
   private readonly waiters: { i: number; j: number; r: number; resolve: () => void }[] = [];
@@ -43,7 +49,7 @@ export class ChunkManager {
     const count = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1));
     for (let n = 0; n < count; n++) {
       const w = new Worker(new URL('./gen/chunkWorker.ts', import.meta.url), { type: 'module' });
-      w.onmessage = (e: MessageEvent<ChunkData>) => {
+      w.onmessage = (e: MessageEvent<WorkerResponse>) => {
         this.inFlight[n]--;
         this.ready.push(e.data);
       };
@@ -76,7 +82,11 @@ export class ChunkManager {
     const cj = Math.floor(z / CHUNK);
     this.request(ci, cj, x, z, dirX, dirZ);
 
-    for (let n = 0; n < APPLY_PER_FRAME && this.ready.length > 0; n++) this.apply(this.ready.shift()!);
+    for (let n = 0; n < APPLY_PER_FRAME && this.ready.length > 0; n++) {
+      const msg = this.ready.shift()!;
+      if (msg.type === 'chunk') this.apply(msg);
+      else this.onInterior?.(msg);
+    }
 
     const keep = this.radius + 1;
     for (const [k, chunk] of this.loaded) {
@@ -86,6 +96,7 @@ export class ChunkManager {
         disposeBatchGroup(chunk.group);
         this.world.removeOwner(k);
         this.loaded.delete(k);
+        this.onChunkUnloaded?.(k);
       }
     }
 
@@ -129,13 +140,21 @@ export class ChunkManager {
     wanted.sort((a, b) => a.score - b.score);
     for (let n = 0; n < Math.min(capacity, wanted.length); n++) {
       const { i, j } = wanted[n];
-      let best = 0;
-      for (let w = 1; w < this.workers.length; w++) if (this.inFlight[w] < this.inFlight[best]) best = w;
-      const msg: ChunkRequest = { seed: this.layout.seed, i, j };
-      this.workers[best].postMessage(msg);
-      this.inFlight[best]++;
+      this.post({ type: 'chunk', seed: this.layout.seed, i, j });
       this.pending.add(key(i, j));
     }
+  }
+
+  /** Ask a worker for a high-rise interior; it arrives through onInterior. */
+  requestInterior(building: BuildingDesc): void {
+    this.post({ type: 'interior', seed: this.layout.seed, building });
+  }
+
+  private post(msg: WorkerRequest): void {
+    let best = 0;
+    for (let w = 1; w < this.workers.length; w++) if (this.inFlight[w] < this.inFlight[best]) best = w;
+    this.workers[best].postMessage(msg);
+    this.inFlight[best]++;
   }
 
   private apply(data: ChunkData): void {
@@ -147,6 +166,7 @@ export class ChunkManager {
     this.world.addPacked(k, data.colliders);
     this.loaded.set(k, { group, zone: data.zone });
     this.lastGenMs = data.ms;
+    this.onChunkLoaded?.(k, data);
   }
 
   private allLoaded(ci: number, cj: number, r: number): boolean {

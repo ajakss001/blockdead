@@ -6,6 +6,8 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   KeyC: 'crouch',
   KeyF: 'flashlight',
   KeyE: 'use',
+  Tab: 'inventory',
+  KeyI: 'inventory',
   Digit1: 'item1',
   Digit2: 'item2',
 };

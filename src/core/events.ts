@@ -14,5 +14,7 @@ export interface GameEvents {
   'gl:contextlost': Record<string, never>;
   'gl:contextrestored': Record<string, never>;
   'input:active': { active: boolean };
+  /** A full-screen UI (inventory) took over input; on PC the pointer lock is released for it. */
+  'ui:modal': { open: boolean };
   'debug:stress': { instances: number; meshes: number };
 }
