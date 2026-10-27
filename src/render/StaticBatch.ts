@@ -1,6 +1,6 @@
 import { BufferAttribute, type BufferGeometry, Color, type ColorRepresentation, type Matrix4 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { type Surface, SURFACES } from './look/surfaces';
+import { type Bucket, bucketOf, type Surface, SURFACES, surfaceLayer } from './look/surfaces';
 
 /**
  * Per-vertex color modifier, called with world position and the triangle normal.
@@ -8,23 +8,28 @@ import { type Surface, SURFACES } from './look/surfaces';
  */
 export type VertexTint = (color: Color, x: number, y: number, z: number, nx: number, ny: number, nz: number) => void;
 
-/** Merged vertex data of one surface — plain typed arrays, transferable from a Web Worker. */
+/** Merged vertex data of one draw bucket — plain typed arrays, transferable from a Web Worker. */
 export interface SurfaceBuffers {
-  surface: Surface;
+  bucket: Bucket;
   position: Float32Array;
   normal: Float32Array;
   color: Float32Array;
-  uv: Float32Array;
+  /** World-projected texture coordinates (meters / tile size). */
+  surfUv: Float32Array;
+  /** Texture-array layer of the surface, one float per vertex. */
+  layer: Float32Array;
+  /** Roughness, metalness per vertex. */
+  pbr: Float32Array;
 }
 
 /**
- * Collects static geometry with baked vertex colors and world-aligned UVs and merges it per
- * surface type (one draw call per surface for a whole chunk, regardless of object count).
+ * Collects static geometry with baked vertex colors, world-aligned UVs and per-vertex surface data
+ * (texture-array layer, roughness, metalness) and merges it into at most three draw buckets.
  * Contains no materials or GPU objects, so it runs inside the chunk worker; meshes are made
  * on the main thread by `meshesFromBuffers`.
  */
 export class StaticBatch {
-  private readonly parts = new Map<Surface, BufferGeometry[]>();
+  private readonly parts = new Map<Bucket, BufferGeometry[]>();
   private readonly color = new Color();
 
   /**
@@ -53,10 +58,21 @@ export class StaticBatch {
     }
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     if (tint) applyTint(g, tint, this.color);
-    g.setAttribute('uv', worldUVs(g, SURFACES[surface].tile));
-    const list = this.parts.get(surface);
+    const spec = SURFACES[surface];
+    const n = g.getAttribute('position').count;
+    if (g.getAttribute('uv')) g.deleteAttribute('uv');
+    g.setAttribute('aSurfUv', worldUVs(g, spec.tile));
+    g.setAttribute('aLayer', new BufferAttribute(new Float32Array(n).fill(surfaceLayer(surface)), 1));
+    const pbr = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      pbr[i * 2] = spec.roughness;
+      pbr[i * 2 + 1] = spec.metalness;
+    }
+    g.setAttribute('aPbr', new BufferAttribute(pbr, 2));
+    const bucket = bucketOf(surface);
+    const list = this.parts.get(bucket);
     if (list) list.push(g);
-    else this.parts.set(surface, [g]);
+    else this.parts.set(bucket, [g]);
   }
 
   get partCount(): number {
@@ -65,19 +81,22 @@ export class StaticBatch {
     return n;
   }
 
-  /** Merge everything per surface and hand out the raw arrays. Clears the batch. */
+  /** Merge everything per bucket and hand out the raw arrays. Clears the batch. */
   buildBuffers(): SurfaceBuffers[] {
     const out: SurfaceBuffers[] = [];
-    for (const [surface, list] of this.parts) {
+    for (const [bucket, list] of this.parts) {
       const merged = mergeGeometries(list, false);
       for (const p of list) p.dispose();
-      if (!merged) throw new Error(`StaticBatch: incompatible geometry attributes (${surface})`);
+      if (!merged) throw new Error(`StaticBatch: incompatible geometry attributes (${bucket})`);
+      const arr = (name: string) => merged.getAttribute(name).array as Float32Array;
       out.push({
-        surface,
-        position: merged.getAttribute('position').array as Float32Array,
-        normal: merged.getAttribute('normal').array as Float32Array,
-        color: merged.getAttribute('color').array as Float32Array,
-        uv: merged.getAttribute('uv').array as Float32Array,
+        bucket,
+        position: arr('position'),
+        normal: arr('normal'),
+        color: arr('color'),
+        surfUv: arr('aSurfUv'),
+        layer: arr('aLayer'),
+        pbr: arr('aPbr'),
       });
     }
     this.parts.clear();

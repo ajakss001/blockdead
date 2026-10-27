@@ -1,16 +1,13 @@
 import { type ColorRepresentation, MeshStandardMaterial, type Texture } from 'three';
 import { generateBumpTexture, generateGrungeTexture, type GrungeKind } from './grunge';
-import { type Surface, SURFACES } from './surfaces';
-
 export type { Surface } from './surfaces';
 export { SURFACES } from './surfaces';
 
 let anisotropy = 1;
 const textures: Texture[] = [];
-const surfaceCache = new Map<Surface, MeshStandardMaterial>();
 const charCache = new Map<string, MeshStandardMaterial>();
 
-/** Call once with renderer.capabilities.getMaxAnisotropy() — sharper ground/road at grazing angles. */
+/** Call once with renderer.capabilities.getMaxAnisotropy() (character and item textures). */
 export function setMaterialAnisotropy(value: number): void {
   anisotropy = Math.min(4, value);
 }
@@ -19,32 +16,6 @@ function track<T extends Texture>(t: T): T {
   t.anisotropy = anisotropy;
   textures.push(t);
   return t;
-}
-
-/** Matte world material for a surface: vertex color × grunge map, roughness 0.9-ish, no plastic sheen. */
-export function surfaceMaterial(surface: Surface): MeshStandardMaterial {
-  const cached = surfaceCache.get(surface);
-  if (cached) return cached;
-  const s = SURFACES[surface];
-  const seed = Object.keys(SURFACES).indexOf(surface) * 101 + 13;
-  const mat = new MeshStandardMaterial({
-    vertexColors: true,
-    map: track(generateGrungeTexture(s.detail, s.noise, { kind: s.kind, seed, blood: s.blood })),
-    roughness: s.roughness,
-    metalness: s.metalness,
-  });
-  if (s.bump) {
-    mat.bumpMap = track(generateBumpTexture({ seed: seed + 1 }));
-    mat.bumpScale = s.bump;
-  }
-  if (s.opacity !== undefined) {
-    mat.transparent = true;
-    mat.opacity = s.opacity;
-    // Panes overlap each other and the interior; skipping depth writes avoids sorting holes.
-    mat.depthWrite = false;
-  }
-  surfaceCache.set(surface, mat);
-  return mat;
 }
 
 export type CharacterPart = 'jacket' | 'jeans' | 'shoes' | 'skin' | 'cuff' | 'handle' | 'torch';
@@ -90,10 +61,8 @@ export function bladeMaterial(): MeshStandardMaterial {
 }
 
 export function disposeLookMaterials(): void {
-  for (const m of surfaceCache.values()) m.dispose();
   for (const m of charCache.values()) m.dispose();
   for (const t of textures) t.dispose();
-  surfaceCache.clear();
   charCache.clear();
   textures.length = 0;
 }

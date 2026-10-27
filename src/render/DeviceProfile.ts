@@ -2,7 +2,8 @@ import type { DeviceInfo } from '../core/device';
 import type { QualityLevel } from '../core/types';
 import { QUALITY_LEVELS } from './QualityPresets';
 
-export const QUALITY_STORAGE_KEY = 'blockdead.quality';
+/** v2: choices saved by the stage 0 debug buttons (often accidental taps on phones) are ignored. */
+export const QUALITY_STORAGE_KEY = 'blockdead.quality.v2';
 
 /** GPUs that cannot hold 60 FPS at native resolution with anything but the low preset. */
 const WEAK_GPU = /Mali-(4|T[6-8])|Mali-G(31|51|52|57)|Adreno \(TM\) [3-5]\d\d|PowerVR|SGX|Intel\(R\) HD Graphics [2-5]\d{2,3}\b|SwiftShader|llvmpipe/i;
@@ -16,13 +17,15 @@ function isLevel(v: string | null): v is QualityLevel {
 /**
  * Initial preset: ?quality=… override → player's saved choice → hardware heuristic.
  * The heuristic is deliberately pessimistic on mobile; QualityManager only lowers further.
+ * Phones and tablets never start above medium, whatever was saved.
  */
 export function pickInitialLevel(device: DeviceInfo, gpuName: string): QualityLevel {
   const forced = new URLSearchParams(location.search).get('quality');
   if (isLevel(forced)) return forced;
+  const mobile = device.type !== 'desktop';
   try {
     const saved = localStorage.getItem(QUALITY_STORAGE_KEY);
-    if (isLevel(saved)) return saved;
+    if (isLevel(saved)) return mobile && saved === 'high' ? 'medium' : saved;
   } catch {
     // Storage can be blocked in third-party iframes; fall through to the heuristic.
   }

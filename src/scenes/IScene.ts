@@ -9,6 +9,11 @@ export interface IScene {
   init(ctx: GameContext): void;
   /** Optional async preparation after init (e.g. first chunks); the loading screen stays up until it resolves. */
   load?(): Promise<void>;
+  /**
+   * Optional: make every material, shadow and pass appear in the next frames so their shaders
+   * compile behind the loading screen. Returns a cleanup to call afterwards.
+   */
+  prewarm?(): () => void;
   /** Fixed-rate simulation step. */
   fixedUpdate(dt: number): void;
   /** Per-frame visual update (interpolation, camera look). Drawing itself is done by the caller. */

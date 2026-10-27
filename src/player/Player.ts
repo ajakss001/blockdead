@@ -142,6 +142,11 @@ export class Player {
     this.flashlight.dispose();
   }
 
+  /** Render the shadow map once (used during loading to compile its shaders off-screen). */
+  prewarmShadows(): void {
+    this.flashlight.shadow.needsUpdate = true;
+  }
+
   private setFlashlight(on: boolean): void {
     this.flashlightOn = on;
     this.flashlight.intensity = on ? FLASHLIGHT.intensity : 0;
@@ -187,6 +192,10 @@ export class Player {
   private applyQuality(preset: QualityPreset): void {
     const size = Math.max(preset.shadowMapSize, 1);
     const shadow = this.flashlight.shadow;
+    if (shadow.camera.far !== preset.shadowDistance) {
+      shadow.camera.far = preset.shadowDistance;
+      shadow.camera.updateProjectionMatrix();
+    }
     if (shadow.mapSize.x !== size) {
       shadow.mapSize.set(size, size);
       shadow.map?.dispose();

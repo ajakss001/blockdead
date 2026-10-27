@@ -1,4 +1,5 @@
 import type { QualityLevel } from '../core/types';
+import type { LightingModel } from './look/worldMaterials';
 
 export interface QualityPreset {
   level: QualityLevel;
@@ -13,10 +14,12 @@ export interface QualityPreset {
   farAiHz: number;
   /** Flashlight shadow map size; 0 disables shadows. */
   shadowMapSize: number;
-  /** PCFSoft (PC) vs plain PCF (phones). */
-  softShadows: boolean;
   /** MSAA samples of the post-processing target (fixed at boot). */
   msaa: number;
+  /** Shadow reach of the flashlight, m: fewer casters in the shadow pass on weak GPUs. */
+  shadowDistance: number;
+  /** World lighting model (fixed at boot): Lambert is far cheaper per pixel on weak phones. */
+  lighting: LightingModel;
   /** Fog end distance, m. Hides the streaming edge. */
   fogFar: number;
 }
@@ -34,8 +37,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesVisible: 30,
     farAiHz: 4,
     shadowMapSize: 512,
-    softShadows: false,
     msaa: 0,
+    shadowDistance: 14,
+    lighting: 'lambert',
     fogFar: 50,
   },
   medium: {
@@ -48,8 +52,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesVisible: 50,
     farAiHz: 6,
     shadowMapSize: 512,
-    softShadows: false,
     msaa: 0,
+    shadowDistance: 20,
+    lighting: 'standard',
     fogFar: 66,
   },
   high: {
@@ -62,8 +67,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesVisible: 100,
     farAiHz: 10,
     shadowMapSize: 1024,
-    softShadows: true,
     msaa: 4,
+    shadowDistance: 28,
+    lighting: 'standard',
     fogFar: 115,
   },
 };

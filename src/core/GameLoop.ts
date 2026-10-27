@@ -95,8 +95,9 @@ export class GameLoop {
       const sinceLast = now - this.lastFrame;
       if (sinceLast + CAP_TOLERANCE_MS < minInterval) return;
       // Carry the remainder (negative when accepted early) so the average interval is exactly
-      // minInterval, and 90 Hz displays average ~60 instead of dropping to 45.
-      this.lastFrame = now - Math.min(Math.max(sinceLast - minInterval, -CAP_TOLERANCE_MS), minInterval);
+      // minInterval and 90 Hz displays average ~60 instead of dropping to 45. Capped at half an
+      // interval: after a stall we resume the rhythm instead of bursting catch-up frames.
+      this.lastFrame = now - Math.min(Math.max(sinceLast - minInterval, -CAP_TOLERANCE_MS), minInterval * 0.5);
     } else {
       this.lastFrame = now;
     }

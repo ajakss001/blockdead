@@ -57,3 +57,20 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
 };
 
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];
+
+/**
+ * Draw buckets: every chunk becomes at most three meshes regardless of how many surfaces it uses.
+ * 'cast' = opaque shadow casters, 'flat' = opaque receivers only (ground, roads, glass, lamps),
+ * 'glass' = translucent car windows.
+ */
+export type Bucket = 'cast' | 'flat' | 'glass';
+export const BUCKETS: readonly Bucket[] = ['cast', 'flat', 'glass'];
+
+export function bucketOf(surface: Surface): Bucket {
+  const s = SURFACES[surface];
+  if (s.opacity !== undefined) return 'glass';
+  return s.castShadow ? 'cast' : 'flat';
+}
+
+/** Layer of the surface in the world texture array. */
+export const surfaceLayer = (surface: Surface): number => SURFACE_LIST.indexOf(surface);

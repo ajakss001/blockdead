@@ -1,22 +1,24 @@
 import { BufferAttribute, BufferGeometry, Group, Mesh } from 'three';
-import { surfaceMaterial } from './look/materials';
-import { SURFACES } from './look/surfaces';
+import { worldMaterials } from './look/worldMaterials';
 import type { SurfaceBuffers } from './StaticBatch';
 
-/** Main thread: turn merged surface buffers into meshes with the shared grunge materials. */
+/** Main thread: turn merged bucket buffers into (at most three) meshes with the shared world materials. */
 export function meshesFromBuffers(buffers: SurfaceBuffers[], name = 'batch'): Group {
   const group = new Group();
   group.name = name;
+  const materials = worldMaterials();
   for (const b of buffers) {
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(b.position, 3));
     g.setAttribute('normal', new BufferAttribute(b.normal, 3));
     g.setAttribute('color', new BufferAttribute(b.color, 3));
-    g.setAttribute('uv', new BufferAttribute(b.uv, 2));
+    g.setAttribute('aSurfUv', new BufferAttribute(b.surfUv, 2));
+    g.setAttribute('aLayer', new BufferAttribute(b.layer, 1));
+    g.setAttribute('aPbr', new BufferAttribute(b.pbr, 2));
     g.computeBoundingSphere();
-    const mesh = new Mesh(g, surfaceMaterial(b.surface));
-    mesh.name = `${name}:${b.surface}`;
-    mesh.castShadow = SURFACES[b.surface].castShadow;
+    const mesh = new Mesh(g, materials[b.bucket]);
+    mesh.name = `${name}:${b.bucket}`;
+    mesh.castShadow = b.bucket === 'cast';
     mesh.receiveShadow = true;
     // Static: skip per-frame matrix recomputation.
     mesh.matrixAutoUpdate = false;

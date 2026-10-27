@@ -15,6 +15,7 @@ import { pickInitialLevel } from './render/DeviceProfile';
 import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
+import { initWorldMaterials } from './render/look/worldMaterials';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
@@ -47,7 +48,9 @@ async function boot(): Promise<void> {
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
   const input = new InputManager(pickInputMode(device), events);
-  setMaterialAnisotropy(renderer.gl.capabilities.getMaxAnisotropy());
+  const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
+  setMaterialAnisotropy(maxAniso);
+  initWorldMaterials(QUALITY_PRESETS[level].lighting, maxAniso);
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);
@@ -96,9 +99,16 @@ async function boot(): Promise<void> {
 
   if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene } });
 
-  // First frame is drawn synchronously, so the game reports ready even when it boots into
+  // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for
+  // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.
+  const t0 = performance.now();
+  const cleanup = scene.prewarm?.();
+  draw(0, 0);
+  cleanup?.();
+  // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
   draw(0, 0);
+  console.info(`[boot] shaders warmed in ${Math.round(performance.now() - t0)} ms`);
   document.getElementById('loading')?.remove();
   platform.gameReady();
 

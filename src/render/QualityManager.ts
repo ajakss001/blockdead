@@ -68,6 +68,11 @@ export class QualityManager {
     const budget = 1000 / this.targetFps;
     const frame = this.profiler.frameAvgMs;
     const over = frame > budget * 1.12;
+    // Hopelessly slow (under ~30 FPS): skip the resolution steps and drop a whole preset now.
+    if (frame > budget * 2 && now - this.badSince > 800 && this.badSince !== 0) {
+      this.dropPreset();
+      return;
+    }
     const headroom = frame < budget * 1.04 && this.profiler.cpuAvgMs < budget * 0.5;
 
     if (over) {
@@ -90,25 +95,33 @@ export class QualityManager {
     if (this._scale - SCALE_STEP >= this._preset.resolutionScaleMin - 1e-3) {
       this._scale -= SCALE_STEP;
     } else {
-      const idx = QUALITY_LEVELS.indexOf(this._preset.level);
-      if (idx === 0) {
-        // Already at the floor of the lowest preset: nothing left to trade.
-        this.badSince = 0;
-        this.cooldownUntil = performance.now() + COOLDOWN_MS;
-        return;
-      }
-      this._preset = QUALITY_PRESETS[QUALITY_LEVELS[idx - 1]];
-      this._scale = (this._preset.resolutionScaleMin + this._preset.resolutionScaleMax) / 2;
+      this.dropPreset();
+      return;
     }
+    this.apply('auto');
+  }
+
+  private dropPreset(): void {
+    const idx = QUALITY_LEVELS.indexOf(this._preset.level);
+    if (idx === 0) {
+      // Lowest preset: fall back to its minimum resolution, nothing else left to trade.
+      this._scale = this._preset.resolutionScaleMin;
+      this.apply('auto');
+      return;
+    }
+    this._preset = QUALITY_PRESETS[QUALITY_LEVELS[idx - 1]];
+    this._scale = (this._preset.resolutionScaleMin + this._preset.resolutionScaleMax) / 2;
     this.apply('auto');
   }
 
   private apply(source: 'init' | 'auto' | 'user'): void {
     this.renderer.setPixelRatioCap(this._preset.maxPixelRatio);
-    this.renderer.setShadows(this._preset.shadowMapSize > 0, this._preset.softShadows);
+    this.renderer.setShadows(this._preset.shadowMapSize > 0);
     this.renderer.setResolutionScale(this._scale);
     this.badSince = this.goodSince = 0;
     this.cooldownUntil = performance.now() + COOLDOWN_MS;
+    // Judge the new settings on fresh frames only, not on the slow history that triggered the change.
+    this.profiler.reset();
     this.events.emit('quality:changed', { level: this._preset.level, resolutionScale: this._scale, source });
   }
 }

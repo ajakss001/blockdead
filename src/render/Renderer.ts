@@ -1,4 +1,4 @@
-import { type Camera, PCFShadowMap, PCFSoftShadowMap, type Scene, WebGLRenderer } from 'three';
+import { type Camera, PCFShadowMap, type Scene, WebGLRenderer } from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 
@@ -54,11 +54,11 @@ export class Renderer {
     this.applySize();
   }
 
-  /** Type changes recompile lit materials once — only happens on quality changes. */
-  setShadows(enabled: boolean, soft: boolean): void {
+  /** PCF filtering (three r186 dropped PCFSoftShadowMap; its PCF is already soft-edged). */
+  setShadows(enabled: boolean): void {
     const sm = this.gl.shadowMap;
     sm.enabled = enabled;
-    sm.type = soft ? PCFSoftShadowMap : PCFShadowMap;
+    sm.type = PCFShadowMap;
   }
 
   setPixelRatioCap(cap: number): void {

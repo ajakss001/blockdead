@@ -15,6 +15,6 @@ self.onmessage = (e: MessageEvent<ChunkRequest>) => {
   if (!layout || layout.seed !== seed) layout = new WorldLayout(seed);
   const data: ChunkData = buildChunk(layout, i, j);
   const transfer: Transferable[] = [data.colliders.buffer];
-  for (const s of data.surfaces) transfer.push(s.position.buffer, s.normal.buffer, s.color.buffer, s.uv.buffer);
+  for (const s of data.surfaces) transfer.push(s.position.buffer, s.normal.buffer, s.color.buffer, s.surfUv.buffer, s.layer.buffer, s.pbr.buffer);
   (self as unknown as { postMessage(message: unknown, transfer: Transferable[]): void }).postMessage(data, transfer);
 };

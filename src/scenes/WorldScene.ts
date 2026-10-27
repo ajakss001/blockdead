@@ -1,6 +1,20 @@
-import { AmbientLight, Color, DirectionalLight, Fog, PerspectiveCamera, Scene, Vector3 } from 'three';
+import {
+  AmbientLight,
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  DirectionalLight,
+  Fog,
+  Group,
+  Mesh,
+  PerspectiveCamera,
+  Scene,
+  Vector3,
+} from 'three';
 import type { GameContext } from '../GameContext';
 import { Player } from '../player/Player';
+import { BUCKETS } from '../render/look/surfaces';
+import { worldMaterials } from '../render/look/worldMaterials';
 import { ChunkManager } from '../world/ChunkManager';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
@@ -74,6 +88,38 @@ export class WorldScene implements IScene {
     const done = this.chunks.whenLoaded(SPAWN.x, SPAWN.z, 1);
     const pump = window.setInterval(() => this.chunks.update(SPAWN.x, SPAWN.z, 0, 1), 16);
     return done.then(() => window.clearInterval(pump));
+  }
+
+  /**
+   * Tiny triangles with each world material right in front of the camera (so none is culled before
+   * its shader compiles), plus one shadow-map render for the flashlight's depth shaders.
+   */
+  prewarm(): () => void {
+    const group = new Group();
+    const g = new BufferGeometry();
+    const tri = (n: number) => new BufferAttribute(new Float32Array(3 * n), n);
+    g.setAttribute('position', new BufferAttribute(new Float32Array([0, 0, 0, 0.001, 0, 0, 0, 0.001, 0]), 3));
+    g.setAttribute('normal', new BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3));
+    g.setAttribute('color', tri(3));
+    g.setAttribute('aSurfUv', tri(2));
+    g.setAttribute('aLayer', tri(1));
+    g.setAttribute('aPbr', tri(2));
+    const mats = worldMaterials();
+    for (const bucket of BUCKETS) {
+      const m = new Mesh(g, mats[bucket]);
+      m.castShadow = bucket === 'cast';
+      m.receiveShadow = true;
+      m.frustumCulled = false;
+      group.add(m);
+    }
+    this.camera.getWorldDirection(this.lookDir);
+    group.position.copy(this.camera.position).addScaledVector(this.lookDir, 0.5);
+    this.scene.add(group);
+    this.player.prewarmShadows();
+    return () => {
+      group.removeFromParent();
+      g.dispose();
+    };
   }
 
   fixedUpdate(dt: number): void {

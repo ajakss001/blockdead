@@ -135,6 +135,18 @@ export function generateGrungeTexture(
   noiseIntensity: number,
   options: GrungeOptions = {},
 ): CanvasTexture {
+  const tex = new CanvasTexture(generateGrungeCanvas(baseColor, noiseIntensity, options));
+  tex.wrapS = tex.wrapT = RepeatWrapping;
+  tex.colorSpace = SRGBColorSpace;
+  return tex;
+}
+
+/** Same as generateGrungeTexture, but returns the raw canvas (used to fill texture arrays). */
+export function generateGrungeCanvas(
+  baseColor: ColorRepresentation,
+  noiseIntensity: number,
+  options: GrungeOptions = {},
+): HTMLCanvasElement {
   const size = options.size ?? 128;
   const kind = options.kind ?? 'grime';
   const rand = mulberry32(options.seed ?? 1);
@@ -260,11 +272,7 @@ export function generateGrungeTexture(
     }
   }
   for (let i = 0; i < (options.blood ?? 0); i++) bloodSplatter(g, size, rand);
-
-  const tex = new CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = RepeatWrapping;
-  tex.colorSpace = SRGBColorSpace;
-  return tex;
+  return canvas;
 }
 
 /**
