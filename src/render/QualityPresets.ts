@@ -2,7 +2,7 @@ import type { QualityLevel } from '../core/types';
 
 export interface QualityPreset {
   level: QualityLevel;
-  /** World streaming radius in chunks (16 m each) — consumed by ChunkManager in stage 2. */
+  /** World streaming radius in chunks (64 m blocks): 1 → 3×3 blocks around the player. */
   chunkRadius: number;
   /** Dynamic-resolution range, multiplied on top of the capped devicePixelRatio. */
   resolutionScaleMin: number;
@@ -26,7 +26,7 @@ export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high']
 export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   low: {
     level: 'low',
-    chunkRadius: 3,
+    chunkRadius: 1,
     resolutionScaleMin: 0.6,
     resolutionScaleMax: 0.85,
     maxPixelRatio: 1,
@@ -40,7 +40,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   },
   medium: {
     level: 'medium',
-    chunkRadius: 4,
+    chunkRadius: 1,
     resolutionScaleMin: 0.7,
     resolutionScaleMax: 1,
     maxPixelRatio: 1.5,
@@ -54,7 +54,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   },
   high: {
     level: 'high',
-    chunkRadius: 7,
+    chunkRadius: 2,
     resolutionScaleMin: 0.85,
     resolutionScaleMax: 1,
     maxPixelRatio: 2,

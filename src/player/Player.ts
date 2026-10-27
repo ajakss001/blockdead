@@ -5,7 +5,7 @@ import type { LookDelta } from '../input/InputManager';
 import type { QualityPreset } from '../render/QualityPresets';
 import type { CollisionWorld } from '../world/CollisionWorld';
 import { BodyModel } from './BodyModel';
-import { PlayerController, SPEED_WALK } from './PlayerController';
+import { type GroundFn, PlayerController, SPEED_WALK } from './PlayerController';
 import { Viewmodel, type ViewmodelFrame } from './Viewmodel';
 
 /**
@@ -57,6 +57,7 @@ export class Player {
     private readonly world: CollisionWorld,
     spawn: Vector3,
     yaw: number,
+    private readonly ground?: GroundFn,
   ) {
     this.controller = new PlayerController(spawn, yaw);
     scene.add(this.body.root);
@@ -90,7 +91,7 @@ export class Player {
     if (input.consumePressed('item1')) this.viewmodel.equip('knife');
     if (input.consumePressed('item2')) this.viewmodel.equip('fists');
 
-    this.controller.fixedUpdate(dt, input, this.world);
+    this.controller.fixedUpdate(dt, input, this.world, this.ground);
     const attacking = input.isHeld('attack') && !this.controller.sprinting;
     this.updateSearch(dt, input.consumePressed('use'), attacking);
     this.viewmodel.fixedUpdate(dt, attacking && this.searchT < 0);

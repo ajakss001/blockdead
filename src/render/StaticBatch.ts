@@ -1,14 +1,6 @@
-import {
-  BufferAttribute,
-  type BufferGeometry,
-  Color,
-  type ColorRepresentation,
-  Group,
-  type Matrix4,
-  Mesh,
-} from 'three';
+import { BufferAttribute, type BufferGeometry, Color, type ColorRepresentation, type Matrix4 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { type Surface, SURFACES, surfaceMaterial } from './look/materials';
+import { type Surface, SURFACES } from './look/surfaces';
 
 /**
  * Per-vertex color modifier, called with world position and the triangle normal.
@@ -16,10 +8,20 @@ import { type Surface, SURFACES, surfaceMaterial } from './look/materials';
  */
 export type VertexTint = (color: Color, x: number, y: number, z: number, nx: number, ny: number, nz: number) => void;
 
+/** Merged vertex data of one surface — plain typed arrays, transferable from a Web Worker. */
+export interface SurfaceBuffers {
+  surface: Surface;
+  position: Float32Array;
+  normal: Float32Array;
+  color: Float32Array;
+  uv: Float32Array;
+}
+
 /**
- * Collects static geometry with baked vertex colors and world-aligned UVs, and merges it into
- * one mesh per surface type (≈ 8 draw calls for a whole chunk, regardless of object count).
- * This is the building block for world chunks (stage 2).
+ * Collects static geometry with baked vertex colors and world-aligned UVs and merges it per
+ * surface type (one draw call per surface for a whole chunk, regardless of object count).
+ * Contains no materials or GPU objects, so it runs inside the chunk worker; meshes are made
+ * on the main thread by `meshesFromBuffers`.
  */
 export class StaticBatch {
   private readonly parts = new Map<Surface, BufferGeometry[]>();
@@ -63,21 +65,23 @@ export class StaticBatch {
     return n;
   }
 
-  build(): Group {
-    const group = new Group();
+  /** Merge everything per surface and hand out the raw arrays. Clears the batch. */
+  buildBuffers(): SurfaceBuffers[] {
+    const out: SurfaceBuffers[] = [];
     for (const [surface, list] of this.parts) {
       const merged = mergeGeometries(list, false);
       for (const p of list) p.dispose();
       if (!merged) throw new Error(`StaticBatch: incompatible geometry attributes (${surface})`);
-      merged.computeBoundingSphere();
-      const mesh = new Mesh(merged, surfaceMaterial(surface));
-      mesh.name = `batch:${surface}`;
-      mesh.castShadow = SURFACES[surface].castShadow;
-      mesh.receiveShadow = true;
-      group.add(mesh);
+      out.push({
+        surface,
+        position: merged.getAttribute('position').array as Float32Array,
+        normal: merged.getAttribute('normal').array as Float32Array,
+        color: merged.getAttribute('color').array as Float32Array,
+        uv: merged.getAttribute('uv').array as Float32Array,
+      });
     }
     this.parts.clear();
-    return group;
+    return out;
   }
 }
 

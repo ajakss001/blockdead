@@ -18,7 +18,7 @@ import { setMaterialAnisotropy } from './render/look/materials';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
-import { PlaygroundScene } from './scenes/PlaygroundScene';
+import { WorldScene } from './scenes/WorldScene';
 import { TestScene } from './scenes/TestScene';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
 import { Hud } from './ui/Hud';
@@ -54,7 +54,7 @@ async function boot(): Promise<void> {
   const hud = new Hud(uiEl);
 
   // ?scene=bench — the stage 0 rendering benchmark.
-  const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new PlaygroundScene();
+  const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
   const draw = (alpha: number, frameDt: number) => {
     scene.render(alpha, frameDt);
     renderer.beginFrame();
@@ -77,6 +77,7 @@ async function boot(): Promise<void> {
 
   const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug, hud };
   scene.init(ctx);
+  await scene.load?.();
   postfx.setScene(scene.scene, scene.camera, scene.overlay);
   // ?hud=demo — preview the state indicators before survival stats exist (stage 3).
   if (params.get('hud') === 'demo') {

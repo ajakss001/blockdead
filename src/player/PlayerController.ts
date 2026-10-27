@@ -16,6 +16,11 @@ const ACCEL = 14;
 const STRIDE_WALK = 0.75;
 const STRIDE_SPRINT = 1.15;
 const PITCH_LIMIT = 1.45;
+/** How fast the feet follow the ground (1/s): smooths steps and slope changes. */
+const GROUND_FOLLOW = 18;
+
+/** Ground height at (x, z). */
+export type GroundFn = (x: number, z: number) => number;
 
 /** Footstep loudness by gait, 0..1 — zombies (stage 4) hear the player through this. */
 const NOISE_CROUCH = 0.1;
@@ -63,7 +68,7 @@ export class PlayerController {
     this.noiseImpulse = Math.max(this.noiseImpulse, level);
   }
 
-  fixedUpdate(dt: number, input: InputManager, world: CollisionWorld): void {
+  fixedUpdate(dt: number, input: InputManager, world: CollisionWorld, ground?: GroundFn): void {
     if (input.consumePressed('crouch')) this.crouched = !this.crouched;
     const mx = input.moveX;
     const my = input.moveY;
@@ -83,6 +88,7 @@ export class PlayerController {
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
     world.resolveCircle(this.position, PLAYER_RADIUS);
+    if (ground) this.position.y = damp(this.position.y, ground(this.position.x, this.position.z), GROUND_FOLLOW, dt);
 
     // Velocity follows the resolved displacement, so pushing into a wall slides instead of building up.
     const dx = this.position.x - this.prevPosition.x;

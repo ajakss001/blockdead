@@ -1,0 +1,424 @@
+import { BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Euler, IcosahedronGeometry, Matrix4, Quaternion, Vector3 } from 'three';
+import { gableRoof } from '../../render/lowpoly';
+import type { Surface } from '../../render/look/surfaces';
+import type { StaticBatch } from '../../render/StaticBatch';
+import type { ColliderSink } from '../CollisionWorld';
+
+/** Muted 90s-suburb-after-the-end palette. */
+export const PAL = {
+  grass: 0x4d5641,
+  dirt: 0x5a5240,
+  asphalt: 0x3a3c3e,
+  dash: 0xa89b66,
+  sidewalk: 0x74736c,
+  curb: 0x85847c,
+  path: 0x6c6a62,
+  trim: 0xb9b4a4,
+  window: 0x1f252a,
+  floor: 0x5e4c39,
+  ceiling: 0x3b3730,
+  counter: 0x6d6250,
+  counterTop: 0x9a9483,
+  fence: 0x6e6352,
+  trunk: 0x4a3b2e,
+  leaves: [0x3f5236, 0x4a5a3a, 0x56603f, 0x4d4f34],
+  metal: 0x3a3c3e,
+  appliance: 0xb5b2a8,
+  fabric: [0x4a3b38, 0x3c4450, 0x564c3c, 0x3e4a3e],
+  bin: 0x3d4f3d,
+  crate: 0x7a6646,
+  sidings: [0x7d8a86, 0x8f7f6a, 0x857a6c, 0x6f7a6e, 0x8a8a80, 0x7a6a62],
+  wallpapers: [0x7d7360, 0x6e7468, 0x7c6a62, 0x6c6858],
+  roofs: [0x4a3f3a, 0x3d4146, 0x463b36, 0x3a3a34],
+  shopFronts: [0x6a6e70, 0x7a6a58, 0x5e6658],
+} as const;
+
+export type Rand = () => number;
+export const pick = <T>(rand: Rand, list: readonly T[]): T => list[Math.floor(rand() * list.length)];
+
+const WALL_T = 0.2;
+const DOOR_W = 1.0;
+const DOOR_H = 2.1;
+
+/**
+ * Thin layer over StaticBatch + colliders, with an optional 180° placement frame: a house is
+ * always authored with its front towards +Z and rotated about its center if it faces the other way.
+ * (A rotation keeps boxes axis-aligned and faces correctly wound — a mirror would not.)
+ */
+export class Builder {
+  readonly box = new BoxGeometry(1, 1, 1);
+  readonly cyl8 = new CylinderGeometry(1, 1, 1, 8);
+  readonly cyl5 = new CylinderGeometry(0.75, 1, 1, 5);
+  readonly ico = new IcosahedronGeometry(1, 0);
+  readonly cone6 = new ConeGeometry(1, 1, 6);
+  private flip: { cx: number; cz: number } | null = null;
+  private readonly m = new Matrix4();
+  private readonly flipM = new Matrix4();
+  private readonly q = new Quaternion();
+  private readonly p = new Vector3();
+  private readonly s = new Vector3();
+
+  constructor(
+    readonly batch: StaticBatch,
+    readonly colliders: ColliderSink,
+  ) {}
+
+  /** Author in a frame rotated 180° about (cx, cz) until endFrame(). */
+  beginFlip(cx: number, cz: number): void {
+    this.flip = { cx, cz };
+    this.flipM.makeTranslation(cx, 0, cz).multiply(new Matrix4().makeRotationY(Math.PI)).multiply(new Matrix4().makeTranslation(-cx, 0, -cz));
+  }
+
+  endFrame(): void {
+    this.flip = null;
+  }
+
+  /** World X of a local X (for door positions etc.). */
+  wx(x: number): number {
+    return this.flip ? 2 * this.flip.cx - x : x;
+  }
+
+  wz(z: number): number {
+    return this.flip ? 2 * this.flip.cz - z : z;
+  }
+
+  /** Axis-aligned box by min corner and size (in the current frame). */
+  block(color: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, surface: Surface = 'plaster', solid = false): void {
+    let x0 = x;
+    let z0 = z;
+    if (this.flip) {
+      x0 = 2 * this.flip.cx - (x + sx);
+      z0 = 2 * this.flip.cz - (z + sz);
+    }
+    this.p.set(x0 + sx / 2, y + sy / 2, z0 + sz / 2);
+    this.s.set(sx, sy, sz);
+    this.batch.add(this.box, color, this.m.compose(this.p, this.q.identity(), this.s), surface);
+    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz);
+  }
+
+  /** Arbitrary template with a local transform (in the current frame). */
+  geo(template: BufferGeometry, color: number, matrix: Matrix4, surface: Surface): void {
+    if (this.flip) matrix = this.m.copy(this.flipM).multiply(matrix);
+    this.batch.add(template, color, matrix, surface);
+  }
+
+  /** Collider in the current frame. */
+  solid(x0: number, z0: number, x1: number, z1: number): void {
+    if (this.flip) {
+      const a = 2 * this.flip.cx - x1;
+      const b = 2 * this.flip.cz - z1;
+      this.colliders.addBox(a, b, a + (x1 - x0), b + (z1 - z0));
+    } else {
+      this.colliders.addBox(x0, z0, x1, z1);
+    }
+  }
+
+  dispose(): void {
+    this.box.dispose();
+    this.cyl8.dispose();
+    this.cyl5.dispose();
+    this.ico.dispose();
+    this.cone6.dispose();
+  }
+}
+
+const _m = new Matrix4();
+const _q = new Quaternion();
+const _e = new Euler();
+const _p = new Vector3();
+const _s = new Vector3();
+
+export interface HouseSpec {
+  x0: number;
+  z0: number;
+  w: number;
+  d: number;
+  /** true: front wall faces +Z; false: faces −Z. */
+  frontPlusZ: boolean;
+  rand: Rand;
+}
+
+export interface HouseResult {
+  /** World X of the front door center and world Z of the front wall's outer face. */
+  doorX: number;
+  frontZ: number;
+}
+
+/** Wall segment along X with outer siding and inner wallpaper; `outerAtPlusZ` picks the side. */
+function wallAlongX(b: Builder, siding: number, paper: number, xa: number, xb: number, z: number, outerAtPlusZ: boolean, y = 0, h = 2.7, solid = true): void {
+  const half = WALL_T / 2;
+  b.block(siding, xa, y, z + (outerAtPlusZ ? half : 0), xb - xa, h, half);
+  b.block(paper, xa, y, z + (outerAtPlusZ ? 0 : half), xb - xa, h, half);
+  if (solid) b.solid(xa, z, xb, z + WALL_T);
+}
+
+function wallAlongZ(b: Builder, siding: number, paper: number, x: number, za: number, zb: number, outerAtPlusX: boolean, h = 2.7): void {
+  const half = WALL_T / 2;
+  b.block(siding, x + (outerAtPlusX ? half : 0), 0, za, half, h, zb - za);
+  b.block(paper, x + (outerAtPlusX ? 0 : half), 0, za, half, h, zb - za);
+  b.solid(x, za, x + WALL_T, zb);
+}
+
+/** Interior partition along Z with doorways at the given Z centers (both faces wallpaper). */
+function partitionZ(b: Builder, paper: number, x: number, za: number, zb: number, doors: number[], h: number): void {
+  let from = za;
+  for (const dz of doors) {
+    const d0 = dz - 0.45;
+    b.block(paper, x, 0, from, 0.12, h, d0 - from, 'plaster', true);
+    b.block(paper, x, DOOR_H, d0, 0.12, h - DOOR_H, 0.9);
+    from = dz + 0.45;
+  }
+  b.block(paper, x, 0, from, 0.12, h, zb - from, 'plaster', true);
+}
+
+function partitionX(b: Builder, paper: number, xa: number, xb: number, z: number, doorX: number, h: number): void {
+  const d0 = doorX - 0.45;
+  const d1 = doorX + 0.45;
+  b.block(paper, xa, 0, z, d0 - xa, h, 0.12, 'plaster', true);
+  b.block(paper, d1, 0, z, xb - d1, h, 0.12, 'plaster', true);
+  b.block(paper, d0, DOOR_H, z, 0.9, h - DOOR_H, 0.12);
+}
+
+/** Window on a wall facing ±Z (glass proud of the trim, both slightly outside the siding). */
+function windowZ(b: Builder, cx: number, faceZ: number, outward: number, width = 1.2): void {
+  const trimZ = outward > 0 ? faceZ : faceZ - 0.02;
+  const glassZ = outward > 0 ? faceZ : faceZ - 0.03;
+  b.block(PAL.trim, cx - width / 2 - 0.08, 0.92, trimZ, width + 0.16, 1.16, 0.02, 'plaster');
+  b.block(PAL.window, cx - width / 2, 1.0, glassZ, width, 1.0, 0.03, 'glass');
+}
+
+function windowX(b: Builder, cz: number, faceX: number, outward: number, width = 1.1): void {
+  const trimX = outward > 0 ? faceX : faceX - 0.02;
+  const glassX = outward > 0 ? faceX : faceX - 0.03;
+  b.block(PAL.trim, trimX, 0.92, cz - width / 2 - 0.08, 0.02, 1.16, width + 0.16, 'plaster');
+  b.block(PAL.window, glassX, 1.0, cz - width / 2, 0.03, 1.0, width, 'glass');
+}
+
+/**
+ * Single-storey 90s house with a real floor plan: living room (front door) on the left,
+ * kitchen at the back right, bedroom at the front right, doorways between them, furniture
+ * with colliders. Authored front-at-+Z, rotated if it faces the other way.
+ */
+export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
+  const { x0, z0, w, d, rand } = s;
+  const x1 = x0 + w;
+  const z1 = z0 + d;
+  const h = 2.7;
+  const siding = pick(rand, PAL.sidings);
+  const paperA = pick(rand, PAL.wallpapers);
+  const paperB = pick(rand, PAL.wallpapers);
+  const roof = pick(rand, PAL.roofs);
+  if (!s.frontPlusZ) b.beginFlip(x0 + w / 2, z0 + d / 2);
+
+  const xp = x0 + Math.round(w * 0.5 * 10) / 10;
+  const zp = z0 + d * 0.5;
+  const doorX = x0 + w * (0.22 + rand() * 0.08);
+
+  // Shell.
+  wallAlongX(b, siding, paperA, x0, doorX - DOOR_W / 2, z1 - WALL_T, true);
+  wallAlongX(b, siding, paperA, doorX + DOOR_W / 2, x1, z1 - WALL_T, true);
+  wallAlongX(b, siding, paperA, doorX - DOOR_W / 2, doorX + DOOR_W / 2, z1 - WALL_T, true, DOOR_H, h - DOOR_H, false);
+  wallAlongX(b, siding, paperB, x0, x1, z0, false);
+  wallAlongZ(b, siding, paperA, x0, z0 + WALL_T, z1 - WALL_T, false);
+  wallAlongZ(b, siding, paperB, x1 - WALL_T, z0 + WALL_T, z1 - WALL_T, true);
+  // Door step and frame.
+  b.block(PAL.path, doorX - 0.7, 0, z1, 1.4, 0.06, 0.6, 'asphalt');
+  b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
+  b.block(PAL.trim, doorX + DOOR_W / 2, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
+  b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, DOOR_H, z1, DOOR_W + 0.16, 0.08, 0.03);
+
+  // Rooms.
+  // Living room opens into the kitchen (back) and the bedroom (front).
+  partitionZ(b, paperA, xp, z0 + WALL_T, z1 - WALL_T, [z0 + d * 0.25, z0 + d * 0.75], h);
+  partitionX(b, paperB, xp + 0.12, x1 - WALL_T, zp, xp + 0.12 + 0.9 + rand() * 0.6, h);
+
+  // Windows: bedroom front, kitchen back, living room and bedroom sides.
+  windowZ(b, x0 + w * 0.76, z1, 1);
+  windowZ(b, x0 + w * 0.75, z0, -1);
+  windowX(b, z0 + d * 0.55, x0, -1);
+  windowX(b, z0 + d * 0.75, x1, 1);
+
+  // Floor, ceiling.
+  b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'wood');
+  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
+
+  // Living room: sofa against the side wall, coffee table, TV stand on the partition.
+  const fabric = pick(rand, PAL.fabric);
+  const sz = z0 + d * 0.3;
+  b.block(fabric, x0 + 0.25, 0, sz, 0.9, 0.45, 2.0, 'rubber', true);
+  b.block(fabric, x0 + 0.25, 0.45, sz, 0.25, 0.45, 2.0, 'rubber');
+  b.block(PAL.counter, x0 + 1.6, 0, sz + 0.5, 0.6, 0.4, 1.0, 'wood', true);
+  // TV on a stand against the back wall (kept clear of the doorways on the partition).
+  b.block(0x2a2826, x0 + 0.9, 0, z0 + WALL_T + 0.05, 1.2, 0.55, 0.45, 'wood', true);
+  b.block(0x161616, x0 + 1.05, 0.55, z0 + WALL_T + 0.1, 0.9, 0.5, 0.35, 'metal');
+
+  // Kitchen: counter along the back wall, fridge in the corner, small table.
+  b.block(PAL.counter, xp + 0.4, 0, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.4), 0.86, 0.6, 'wood', true);
+  b.block(PAL.counterTop, xp + 0.38, 0.86, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.38), 0.05, 0.64, 'plaster');
+  b.block(PAL.appliance, x1 - WALL_T - 0.8, 0, z0 + WALL_T + 0.05, 0.72, 1.8, 0.7, 'metal', true);
+  const tz = zp - 1.3;
+  b.block(PAL.counter, xp + 1.2, 0.72, tz, 1.0, 0.05, 0.8, 'wood');
+  b.solid(xp + 1.2, tz, xp + 2.2, tz + 0.8);
+  for (const [lx, lz] of [
+    [0.05, 0.05],
+    [0.9, 0.05],
+    [0.05, 0.7],
+    [0.9, 0.7],
+  ] as const) {
+    b.block(PAL.counter, xp + 1.2 + lx, 0, tz + lz, 0.05, 0.72, 0.05, 'wood');
+  }
+
+  // Bedroom: bed along the side wall (headboard at the partition), wardrobe against the front wall.
+  const bx = x1 - WALL_T - 1.5;
+  b.block(PAL.counter, bx, 0, zp + 0.3, 1.5, 0.32, 2.0, 'wood', true);
+  b.block(pick(rand, PAL.fabric), bx + 0.05, 0.32, zp + 0.35, 1.4, 0.18, 1.9, 'rubber');
+  b.block(PAL.counter, bx, 0, zp + 0.14, 1.5, 0.95, 0.12, 'wood');
+  b.block(PAL.counter, xp + 1.2, 0, z1 - WALL_T - 0.62, 1.2, 2.0, 0.6, 'wood', true);
+
+  // Gable roof with overhang, ridge along X.
+  const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.4 + d * 0.06);
+  b.geo(roofGeo, roof, _m.compose(_p.set(x0 + w / 2, h, z0 + d / 2), _q.identity(), _s.set(1, 1, 1)), 'roof');
+  roofGeo.dispose();
+
+  const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };
+  b.endFrame();
+  return result;
+}
+
+/**
+ * Town building: corner shop / store with a flat roof, big display windows, shelving aisles,
+ * a counter, and a back storeroom.
+ */
+export function buildShop(b: Builder, s: HouseSpec): HouseResult {
+  const { x0, z0, w, d, rand } = s;
+  const x1 = x0 + w;
+  const z1 = z0 + d;
+  const h = 3.4;
+  const front = pick(rand, PAL.shopFronts);
+  const paper = pick(rand, PAL.wallpapers);
+  if (!s.frontPlusZ) b.beginFlip(x0 + w / 2, z0 + d / 2);
+  const doorX = x0 + w * 0.5;
+
+  // Front: low wall + display windows either side of the door, sign band above.
+  const wa = doorX - DOOR_W / 2;
+  const wb = doorX + DOOR_W / 2;
+  for (const [xa, xb] of [
+    [x0, wa],
+    [wb, x1],
+  ] as const) {
+    wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.7, true);
+    b.block(PAL.window, xa + 0.15, 0.7, z1 - 0.12, xb - xa - 0.3, 1.9, 0.04, 'glass');
+    b.block(PAL.trim, xa, 0.7, z1 - WALL_T, 0.15, 1.9, WALL_T, 'metal');
+    b.block(PAL.trim, xb - 0.15, 0.7, z1 - WALL_T, 0.15, 1.9, WALL_T, 'metal');
+  }
+  wallAlongX(b, front, paper, x0, x1, z1 - WALL_T, true, 2.6, h - 2.6, false);
+  b.block(0x2a2c2e, x0 + 0.3, 2.7, z1, w - 0.6, 0.55, 0.06, 'metal');
+  wallAlongX(b, front, paper, x0, x1, z0, false, 0, h);
+  wallAlongZ(b, front, paper, x0, z0 + WALL_T, z1 - WALL_T, false, h);
+  wallAlongZ(b, front, paper, x1 - WALL_T, z0 + WALL_T, z1 - WALL_T, true, h);
+
+  // Storeroom at the back.
+  const zs = z0 + d * 0.28;
+  partitionX(b, paper, x0 + WALL_T, x1 - WALL_T, zs, x0 + w * 0.8, h);
+  // Aisles of shelving and a counter by the door.
+  for (let x = x0 + 1.2; x < x1 - 1.6; x += 2.2) {
+    b.block(PAL.metal, x, 0, zs + 1.4, 0.6, 1.7, d * 0.42, 'metal', true);
+    for (let y = 0.4; y < 1.7; y += 0.45) b.block(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), x + 0.05, y, zs + 1.5, 0.5, 0.18, d * 0.4, 'wood');
+  }
+  b.block(PAL.counter, wb + 0.6, 0, z1 - WALL_T - 2.2, 2.2, 1.0, 0.7, 'wood', true);
+  // Crates and boxes in the storeroom.
+  for (let i = 0; i < 4; i++) b.block(PAL.crate, x0 + 0.5 + rand() * (w - 2), 0, z0 + WALL_T + 0.3 + rand() * (zs - z0 - 1.5), 0.8, 0.6 + rand() * 0.4, 0.8, 'wood', true);
+
+  b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
+  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
+  // Flat roof with a parapet lip.
+  b.block(0x3a3a38, x0 - 0.1, h, z0 - 0.1, w + 0.2, 0.25, d + 0.2, 'roof');
+
+  const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };
+  b.endFrame();
+  return result;
+}
+
+/**
+ * Fence along X or Z (axis-aligned), with an optional gap. 'picket' for street fronts; 'board'
+ * (solid privacy panels, ~8× fewer triangles) for the long side and back fences.
+ */
+export function fence(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.4, style: 'picket' | 'board' = 'picket'): void {
+  const alongX = Math.abs(bz - az) < 1e-6;
+  const a = alongX ? Math.min(ax, bx) : Math.min(az, bz);
+  const c = alongX ? Math.max(ax, bx) : Math.max(az, bz);
+  const fixed = alongX ? az : ax;
+  const spans: [number, number][] = gapAt === undefined ? [[a, c]] : [
+    [a, gapAt - gapW / 2],
+    [gapAt + gapW / 2, c],
+  ];
+  for (const [s0, s1] of spans) {
+    if (s1 - s0 < 0.3) continue;
+    const len = s1 - s0;
+    const put = (along: number, y: number, size: number, h: number, thick: number) => {
+      if (alongX) b.block(PAL.fence, along, y, fixed - thick / 2, size, h, thick, 'wood');
+      else b.block(PAL.fence, fixed - thick / 2, y, along, thick, h, size, 'wood');
+    };
+    if (style === 'board') {
+      put(s0, 0.05, len, 1.55, 0.04);
+      for (let x = s0; x <= s1 + 1e-6; x += 2.4) put(x - 0.05, 0, 0.1, 1.65, 0.1);
+    } else {
+      put(s0, 0.35, len, 0.07, 0.04);
+      put(s0, 0.75, len, 0.07, 0.04);
+      for (let x = s0; x <= s1 + 1e-6; x += 2) put(x - 0.05, 0, 0.1, 1.0, 0.1);
+      for (let x = s0 + 0.25; x < s1; x += 0.25) put(x - 0.035, 0.1, 0.07, 0.85, 0.02);
+    }
+    if (alongX) b.colliders.addBox(s0, fixed - 0.08, s1, fixed + 0.08);
+    else b.colliders.addBox(fixed - 0.08, s0, fixed + 0.08, s1);
+  }
+}
+
+export function tree(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
+  const h = 2.2 * scale;
+  b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.16 * scale, h + 0.3, 0.16 * scale)), 'wood');
+  const leaves = pick(rand, PAL.leaves);
+  _e.set(rand() * 3, rand() * 3, rand() * 3);
+  b.batch.add(b.ico, leaves, _m.compose(_p.set(x, y + h + 0.5 * scale, z), _q.setFromEuler(_e), _s.setScalar(1.4 * scale)), 'foliage');
+  _e.set(rand() * 3, rand() * 3, rand() * 3);
+  b.batch.add(b.ico, leaves, _m.compose(_p.set(x + 0.3 * scale, y + h + 1.4 * scale, z - 0.2 * scale), _q.setFromEuler(_e), _s.setScalar(0.95 * scale)), 'foliage');
+  b.colliders.addBox(x - 0.18 * scale, z - 0.18 * scale, x + 0.18 * scale, z + 0.18 * scale);
+}
+
+/** Dead pine: tall narrow cones — forests need silhouettes other than round crowns. */
+export function pine(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
+  const h = 5.5 * scale;
+  b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.13 * scale, h, 0.13 * scale)), 'wood');
+  const leaves = pick(rand, PAL.leaves);
+  for (let k = 0; k < 3; k++) {
+    const r = (1.5 - k * 0.38) * scale;
+    _e.set(0, rand() * 3, 0);
+    b.batch.add(b.cone6, leaves, _m.compose(_p.set(x, y + h * (0.42 + k * 0.2), z), _q.setFromEuler(_e), _s.set(r, h * 0.34, r)), 'foliage');
+  }
+  b.colliders.addBox(x - 0.15 * scale, z - 0.15 * scale, x + 0.15 * scale, z + 0.15 * scale);
+}
+
+export function bush(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
+  _e.set(rand() * 3, rand() * 3, rand() * 3);
+  b.batch.add(b.ico, pick(rand, PAL.leaves), _m.compose(_p.set(x, y + 0.35 * scale, z), _q.setFromEuler(_e), _s.set(0.8 * scale, 0.55 * scale, 0.8 * scale)), 'foliage');
+}
+
+/** Street lamp; the arm points along +X/−X/+Z/−Z towards the road. */
+export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: number): void {
+  b.batch.add(b.cyl8, PAL.metal, _m.compose(_p.set(x, 2.1, z), _q.identity(), _s.set(0.07, 4.2, 0.07)), 'metal');
+  const ax = armX * 1.1;
+  const az = armZ * 1.1;
+  b.block(PAL.metal, Math.min(x, x + ax) - 0.04, 4.1, Math.min(z, z + az) - 0.04, Math.abs(ax) + 0.08, 0.06, Math.abs(az) + 0.08, 'metal');
+  b.block(0x55585a, x + ax - 0.15, 3.98, z + az - 0.15, 0.3, 0.12, 0.3, 'metal');
+  b.colliders.addBox(x - 0.13, z - 0.13, x + 0.13, z + 0.13);
+}
+
+export function mailbox(b: Builder, x: number, z: number): void {
+  b.block(PAL.metal, x - 0.04, 0, z - 0.04, 0.08, 1.1, 0.08, 'metal', true);
+  b.block(0x5a6a7a, x - 0.19, 1.1, z - 0.25, 0.38, 0.24, 0.5, 'metal');
+}
+
+export function trashBins(b: Builder, x: number, z: number): void {
+  b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x, 0.45, z), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
+  b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x + 0.7, 0.45, z + 0.1), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
+  b.colliders.addBox(x - 0.35, z - 0.35, x + 1.05, z + 0.45);
+}

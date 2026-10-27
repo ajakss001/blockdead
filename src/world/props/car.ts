@@ -15,7 +15,7 @@ import {
 import { mulberry32 } from '../../core/random';
 import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
-import type { CollisionWorld } from '../CollisionWorld';
+import type { ColliderSink } from '../CollisionWorld';
 
 /** Faded 90s factory colors. */
 export const CAR_PAINTS = {
@@ -107,7 +107,7 @@ const _s = new Vector3();
  * Abandoned 90s sedan, ~1.4k triangles, built from logical parts that go into the static batch
  * under their own surfaces: rusted paint, dirty rubber, murky cracked glass, old chrome, dead lamps.
  */
-export function buildCar(batch: StaticBatch, world: CollisionWorld, o: CarOptions): void {
+export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions): void {
   const rand = mulberry32(o.seed ?? 1);
   // Car transform: position, heading, plus sag towards a flat tire.
   const roll = o.flatTire ? -0.022 : 0;

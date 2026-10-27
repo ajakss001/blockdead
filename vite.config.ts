@@ -8,5 +8,7 @@ export default defineConfig({
     assetsInlineLimit: 4096,
     chunkSizeWarningLimit: 800,
   },
+  // Module workers: the chunk worker imports three.js and the world generator.
+  worker: { format: 'es' },
   server: { port: 5173 },
 });
