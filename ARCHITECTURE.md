@@ -67,14 +67,15 @@ src/
   main.ts         bootstrap + жизненный цикл (visibility, реклама, ориентация, потеря GL-контекста)
   core/       GameLoop, EventBus, Pool, Profiler, device, random (mulberry32), scratch-векторы
   platform/   IPlatform → MockPlatform | (YandexPlatform | VKPlatform — этап 6), createPlatform
-  input/      (этап 1) IInputSource → KeyboardMouse | Touch → InputState
-  render/     Renderer, QualityManager, QualityPresets, DeviceProfile, (ViewmodelPass — этап 1)
-  world/      (этап 2) Noise, ZoneMap, ChunkManager, генераторы, workers/
-  entities/   (этапы 1,3,4) Player, Zombie, Container, Item
+  input/      InputManager (единое состояние) ← KeyboardMouseInput (Pointer Lock) | TouchInput (стик + свайп + кнопки)
+  render/     Renderer (+ renderOverlay для рук), QualityManager, QualityPresets, DeviceProfile, StaticBatch, lowpoly
+  world/      CollisionWorld (этап 1); (этап 2) Noise, ZoneMap, ChunkManager, генераторы, workers/
+  player/     PlayerController, BodyModel (ноги), Viewmodel (руки), Player (сборка + фонарик)
+  entities/   (этапы 3,4) Zombie, Container, Item
   systems/    (этапы 3–5) Stats, Noise, AI, Combat, Loot, Inventory, DayNight, Save
   ui/         HUD, инвентарь, оверлеи (DOM/CSS поверх canvas)
   debug/      DebugPanel
-  scenes/     IScene + сцены (TestScene — этап 0)
+  scenes/     IScene + PlaygroundScene (тестовый двор, по умолчанию), TestScene (?scene=bench)
   data/       (этап 3) JSON: предметы, лут-таблицы, зоны, баланс
 ```
 
@@ -113,6 +114,21 @@ interface IPlatform {
 ```
 Во время рекламы платформа эмитит `ad:start` / `ad:end` → цикл ставится на паузу, звук глушится.
 
+### input (этап 1)
+- `InputManager`: `moveX/moveY` (аналог, длина ≤ 1), `consumeLook()` (радианы, раз за кадр в render),
+  `isHeld(action)` (attack, sprint), `consumePressed(action)` (crouch, flashlight, item1/2 — ровно один раз).
+- Режим выбирается при старте: тач на телефонах/планшетах, клавиатура+мышь на ПК; `?input=touch|kbm` — принудительно.
+- ПК: без Pointer Lock игра на мягкой паузе (`menu`) под экраном «Нажмите, чтобы играть».
+
+### player (этап 1)
+- `PlayerController` — кинематика в fixedUpdate: ходьба 2.2, бег 4.6, присед 1.1 м/с; коллизии — круг r=0.3 против AABB.
+  Отдаёт `stepPhase` (по пройденной дистанции, 2π = два шага), `crouchT`, `speed`, `noise` (0..1, для слуха зомби).
+- `BodyModel` — только ноги и обувь (без торса и таза: сверху они перекрывают обзор), смещены на 18 см назад.
+- `Viewmodel` — руки во втором проходе (своя камера FOV 60, чистый depth). Позы локтя + easing, sway, bob, дыхание.
+  Атака: windup → strike → recover; `consumeStrike()` в момент удара — точка подключения хит-чека (этап 4).
+- Фонарик — SpotLight на камере; выключение = intensity 0 (не удалять: смена числа источников = перекомпиляция шейдеров).
+- Отладка в dev: `window.__game = { ctx, scene }`.
+
 ## Конвенции производительности
 
 1. **Ноль аллокаций в кадре.** Никаких `new Vector3()` в update — используем `core/scratch.ts`
@@ -128,8 +144,8 @@ interface IPlatform {
 | # | Этап | Статус |
 |---|---|---|
 | 0 | Фундамент | ✅ |
-| 1 | Игрок и тело от первого лица | ⏳ |
-| 2 | Процедурный мир | — |
+| 1 | Игрок и тело от первого лица | ✅ (ждёт проверки на телефоне) |
+| 2 | Процедурный мир | ⏳ |
 | 3 | Выживание и инвентарь | — |
 | 4 | Зомби, ИИ, бой | — |
 | 5 | Игровой цикл и мета | — |

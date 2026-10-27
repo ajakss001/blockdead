@@ -3,6 +3,8 @@ import type { EventBus } from './core/EventBus';
 import type { GameEvents } from './core/events';
 import type { GameLoop } from './core/GameLoop';
 import type { Profiler } from './core/Profiler';
+import type { DebugInfo } from './debug/DebugInfo';
+import type { InputManager } from './input/InputManager';
 import type { IPlatform } from './platform/IPlatform';
 import type { QualityManager } from './render/QualityManager';
 import type { Renderer } from './render/Renderer';
@@ -16,4 +18,6 @@ export interface GameContext {
   readonly renderer: Renderer;
   readonly quality: QualityManager;
   readonly device: DeviceInfo;
+  readonly input: InputManager;
+  readonly debug: DebugInfo;
 }

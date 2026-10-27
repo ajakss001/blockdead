@@ -77,6 +77,15 @@ export class Renderer {
     this.gl.render(scene, camera);
   }
 
+  /** Draw on top of the previous pass with a fresh depth buffer (first-person viewmodel). */
+  renderOverlay(scene: Scene, camera: Camera): void {
+    const gl = this.gl;
+    gl.autoClear = false;
+    gl.clearDepth();
+    gl.render(scene, camera);
+    gl.autoClear = true;
+  }
+
   stats(out: RenderStats): RenderStats {
     const info = this.gl.info;
     out.drawCalls = info.render.calls;

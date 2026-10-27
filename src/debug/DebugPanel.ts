@@ -119,11 +119,14 @@ export class DebugPanel {
 
   private refresh(): void {
     if (this.root.hidden) return;
-    const { profiler, renderer, quality, device, platform, loop } = this.ctx;
+    const { profiler, renderer, quality, device, platform, loop, debug } = this.ctx;
     const f = profiler.stats(this.frame);
     const g = renderer.stats(this.gpu);
     const p = quality.preset;
+    const extra: string[] = [];
+    for (const provider of debug.lines.values()) extra.push(provider());
     this.text.textContent = [
+      ...extra,
       `FPS ${f.fps.toFixed(1)}  frame ${f.frameAvgMs.toFixed(1)}ms (p95 ${f.frameP95Ms.toFixed(1)})  cpu ${f.cpuAvgMs.toFixed(2)}ms`,
       `draw ${g.drawCalls}  tris ${(g.triangles / 1000).toFixed(1)}k  geo ${g.geometries}  tex ${g.textures}`,
       `quality ${p.level}${quality.adaptive ? ' (auto)' : ''}  scale ${quality.resolutionScale.toFixed(2)}  dpr ${g.pixelRatio.toFixed(2)}  ${g.bufferWidth}×${g.bufferHeight}`,

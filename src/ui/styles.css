@@ -167,3 +167,104 @@ body {
 .mock-ad__title {
   font-weight: 700;
 }
+
+/* Layering inside #ui: touch controls < crosshair < play overlay < debug. */
+.touch { position: absolute; inset: 0; z-index: 1; }
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.8);
+  z-index: 2;
+}
+#ui > .crosshair { pointer-events: none; }
+.play-overlay { z-index: 3; }
+.debug { z-index: 5; }
+
+/* PC click-to-play */
+.play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(10, 12, 14, 0.55);
+  cursor: pointer;
+}
+.play-overlay[hidden] { display: none; }
+.play-overlay__title { font-size: 26px; font-weight: 700; }
+.play-overlay__controls {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 14px;
+  align-items: center;
+  font-size: 14px;
+  color: #cfd3d6;
+}
+.play-overlay__controls kbd {
+  justify-self: end;
+  padding: 2px 8px;
+  font: 12px ui-monospace, Consolas, monospace;
+  border: 1px solid #6b7075;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.play-overlay__hint { min-height: 18px; font-size: 13px; color: #fac775; }
+
+/* Touch controls */
+.touch__stick {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.touch__stick[hidden] { display: none; }
+.touch__stick::before {
+  content: '';
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+}
+.touch__knob {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+.touch__btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: 600 13px system-ui, sans-serif;
+  touch-action: none;
+}
+.touch__btn.on { background: rgba(250, 199, 117, 0.35); border-color: #fac775; }
+.touch__btn--attack {
+  width: 86px;
+  height: 86px;
+  right: calc(env(safe-area-inset-right, 0px) + 28px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
+  font-size: 15px;
+}
+.touch__btn--sprint { width: 60px; height: 60px; right: calc(env(safe-area-inset-right, 0px) + 128px); bottom: calc(env(safe-area-inset-bottom, 0px) + 34px); }
+.touch__btn--crouch { width: 60px; height: 60px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); }
+.touch__btn--light { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 122px); bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); }
+.touch__btn--weapon { width: 56px; height: 56px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 204px); font-size: 12px; }

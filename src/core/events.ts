@@ -13,5 +13,6 @@ export interface GameEvents {
   'ad:end': { kind: AdKind; result: AdResult };
   'gl:contextlost': Record<string, never>;
   'gl:contextrestored': Record<string, never>;
+  'input:active': { active: boolean };
   'debug:stress': { instances: number; meshes: number };
 }

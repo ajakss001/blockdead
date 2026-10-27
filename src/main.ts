@@ -1,16 +1,32 @@
 import './ui/styles.css';
-import { detectDevice } from './core/device';
+import { detectDevice, type DeviceInfo } from './core/device';
 import { EventBus } from './core/EventBus';
 import type { GameEvents } from './core/events';
 import { GameLoop } from './core/GameLoop';
 import { Profiler } from './core/Profiler';
+import { DebugInfo } from './debug/DebugInfo';
 import { DebugPanel } from './debug/DebugPanel';
 import type { GameContext } from './GameContext';
+import { InputManager, type InputMode } from './input/InputManager';
+import { KeyboardMouseInput } from './input/KeyboardMouseInput';
+import { TouchInput } from './input/TouchInput';
 import { createPlatform } from './platform/createPlatform';
 import { pickInitialLevel } from './render/DeviceProfile';
 import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
+import type { IScene } from './scenes/IScene';
+import { PlaygroundScene } from './scenes/PlaygroundScene';
 import { TestScene } from './scenes/TestScene';
+import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
+
+const params = new URLSearchParams(location.search);
+
+/** ?input=touch|kbm overrides detection (handy for testing touch controls with a mouse). */
+function pickInputMode(device: DeviceInfo): InputMode {
+  const forced = params.get('input');
+  if (forced === 'touch' || forced === 'kbm') return forced;
+  return device.touch && device.type !== 'desktop' ? 'touch' : 'kbm';
+}
 
 async function boot(): Promise<void> {
   const gameEl = document.getElementById('game')!;
@@ -18,6 +34,7 @@ async function boot(): Promise<void> {
 
   const events = new EventBus<GameEvents>();
   const profiler = new Profiler();
+  const debug = new DebugInfo();
   const device = detectDevice();
   const platform = createPlatform(events);
   await platform.init();
@@ -26,13 +43,16 @@ async function boot(): Promise<void> {
   const renderer = new Renderer(gameEl, events, device.type === 'desktop');
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
+  const input = new InputManager(pickInputMode(device), events);
 
-  const scene = new TestScene();
+  // ?scene=bench — the stage 0 rendering benchmark.
+  const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new PlaygroundScene();
   const draw = (alpha: number, frameDt: number) => {
     scene.render(alpha, frameDt);
     renderer.beginFrame();
     profiler.begin('draw');
     renderer.render(scene.scene, scene.camera);
+    if (scene.overlay) renderer.renderOverlay(scene.overlay.scene, scene.overlay.camera);
     profiler.end('draw');
   };
 
@@ -48,9 +68,19 @@ async function boot(): Promise<void> {
     events,
   );
 
-  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device };
+  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug };
   scene.init(ctx);
+
+  mountCrosshair(uiEl);
+  if (input.mode === 'touch') {
+    new TouchInput(input, uiEl);
+  } else {
+    const kbm = new KeyboardMouseInput(input, renderer.gl.domElement);
+    new PlayOverlay(ctx, kbm, uiEl);
+  }
   new DebugPanel(ctx, uiEl);
+
+  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene } });
 
   // First frame is drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
@@ -63,13 +93,20 @@ async function boot(): Promise<void> {
 }
 
 /** Pause/resume rules shared by every scene: hidden tab, ads, portrait phone, lost GL context. */
-function wireLifecycle({ events, loop }: GameContext): void {
+function wireLifecycle({ events, loop, input }: GameContext): void {
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) loop.pause('hidden');
-    else loop.resume('hidden');
+    if (document.hidden) {
+      input.reset();
+      loop.pause('hidden');
+    } else {
+      loop.resume('hidden');
+    }
   });
 
-  events.on('ad:start', () => loop.pause('ad'));
+  events.on('ad:start', () => {
+    input.reset();
+    loop.pause('ad');
+  });
   events.on('ad:end', () => loop.resume('ad'));
   events.on('gl:contextlost', () => loop.pause('context'));
   events.on('gl:contextrestored', () => loop.resume('context'));

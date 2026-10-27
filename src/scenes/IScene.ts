@@ -1,9 +1,11 @@
-import type { PerspectiveCamera, Scene } from 'three';
+import type { Camera, PerspectiveCamera, Scene } from 'three';
 import type { GameContext } from '../GameContext';
 
 export interface IScene {
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
+  /** Optional second pass drawn on top after clearing depth (first-person arms). */
+  readonly overlay?: { scene: Scene; camera: Camera };
   init(ctx: GameContext): void;
   /** Fixed-rate simulation step. */
   fixedUpdate(dt: number): void;
