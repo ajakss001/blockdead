@@ -14,6 +14,7 @@ interface StressConfig {
 /**
  * Developer overlay. Toggle: ` or F3 on keyboard, three-finger tap on touch.
  * Visible by default in dev builds or with ?debug=1.
+ * In touch mode it is compact (FPS + quality, no buttons) and lets touches through to the controls.
  */
 export class DebugPanel {
   private readonly root = document.createElement('div');
@@ -30,14 +31,17 @@ export class DebugPanel {
     pixelRatio: 0,
   };
   private stress: StressConfig = { instances: 400, meshes: 0 };
+  private readonly compact: boolean;
 
   constructor(
     private readonly ctx: GameContext,
     parent: HTMLElement,
   ) {
-    this.root.className = 'debug';
+    this.compact = ctx.input.mode === 'touch';
+    this.root.className = this.compact ? 'debug debug--compact' : 'debug';
     this.root.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
-    this.root.append(this.text, this.buildControls(), this.status);
+    this.root.append(this.text);
+    if (!this.compact) this.root.append(this.buildControls(), this.status);
     parent.append(this.root);
 
     window.addEventListener('keydown', (e) => {
@@ -125,6 +129,10 @@ export class DebugPanel {
     const p = quality.preset;
     const extra: string[] = [];
     for (const provider of debug.lines.values()) extra.push(provider());
+    if (this.compact) {
+      this.text.textContent = `FPS ${f.fps.toFixed(0)}  ${f.frameAvgMs.toFixed(1)}ms  p95 ${f.frameP95Ms.toFixed(0)}  ${p.level} ${quality.resolutionScale.toFixed(2)}  draw ${g.drawCalls}`;
+      return;
+    }
     this.text.textContent = [
       ...extra,
       `FPS ${f.fps.toFixed(1)}  frame ${f.frameAvgMs.toFixed(1)}ms (p95 ${f.frameP95Ms.toFixed(1)})  cpu ${f.cpuAvgMs.toFixed(2)}ms`,

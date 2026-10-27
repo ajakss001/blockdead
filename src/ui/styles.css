@@ -268,3 +268,11 @@ body {
 .touch__btn--crouch { width: 60px; height: 60px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); }
 .touch__btn--light { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 122px); bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); }
 .touch__btn--weapon { width: 56px; height: 56px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 204px); font-size: 12px; }
+
+/* Compact debug on phones: one line, never intercepts touches. */
+#ui > .debug--compact {
+  pointer-events: none;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.debug--compact pre { margin: 0; }
