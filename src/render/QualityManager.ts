@@ -105,6 +105,7 @@ export class QualityManager {
 
   private apply(source: 'init' | 'auto' | 'user'): void {
     this.renderer.setPixelRatioCap(this._preset.maxPixelRatio);
+    this.renderer.setShadows(this._preset.shadowMapSize > 0, this._preset.softShadows);
     this.renderer.setResolutionScale(this._scale);
     this.badSince = this.goodSince = 0;
     this.cooldownUntil = performance.now() + COOLDOWN_MS;

@@ -1,6 +1,7 @@
-import { BoxGeometry, Group, Mesh, type BufferGeometry, type Material } from 'three';
+import { BoxGeometry, Group, Mesh, type BufferGeometry } from 'three';
 import { clamp } from '../core/math';
-import { limbDown, lowPolyMaterial } from '../render/lowpoly';
+import { limbDown } from '../render/lowpoly';
+import { characterMaterial } from '../render/look/materials';
 import { SPEED_SPRINT, SPEED_WALK } from './PlayerController';
 
 const HIP_HEIGHT = 0.92;
@@ -36,11 +37,10 @@ export class BodyModel {
   private readonly shinL = new Group();
   private readonly shinR = new Group();
   private readonly geometries: BufferGeometry[] = [];
-  private readonly materials: Material[] = [];
 
   constructor() {
-    const jeans = this.mat(BODY_COLORS.jeans);
-    const shoes = this.mat(BODY_COLORS.shoes);
+    const jeans = characterMaterial('jeans', BODY_COLORS.jeans);
+    const shoes = characterMaterial('shoes', BODY_COLORS.shoes);
 
     this.hips.position.y = HIP_HEIGHT;
     this.root.add(this.hips);
@@ -87,7 +87,6 @@ export class BodyModel {
 
   dispose(): void {
     for (const g of this.geometries) g.dispose();
-    for (const m of this.materials) m.dispose();
   }
 
   private geo<T extends BufferGeometry>(g: T): T {
@@ -95,9 +94,4 @@ export class BodyModel {
     return g;
   }
 
-  private mat(color: number): Material {
-    const m = lowPolyMaterial(color);
-    this.materials.push(m);
-    return m;
-  }
 }

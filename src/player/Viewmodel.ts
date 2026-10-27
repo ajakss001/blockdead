@@ -1,18 +1,20 @@
 import {
   BoxGeometry,
   ConeGeometry,
+  AmbientLight,
   DirectionalLight,
   Group,
-  HemisphereLight,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
+  PointLight,
   Scene,
   type BufferGeometry,
   type Material,
 } from 'three';
 import { clamp, damp, easeInOutSine, easeInQuad, easeOutQuad, lerp } from '../core/math';
-import { limbForward, lowPolyMaterial } from '../render/lowpoly';
+import { limbForward } from '../render/lowpoly';
+import { bladeMaterial, characterMaterial } from '../render/look/materials';
 import { BODY_COLORS } from './BodyModel';
 import { SPEED_WALK } from './PlayerController';
 
@@ -77,6 +79,7 @@ export class Viewmodel {
   private readonly lens: MeshBasicMaterial;
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
+  private readonly bounce = new PointLight(0xfffaed, 0, 1.5, 2);
 
   private item: RightItem = 'knife';
   private pendingItem: RightItem | null = null;
@@ -95,25 +98,29 @@ export class Viewmodel {
   private readonly base: Pose = pose(0, 0, 0, 0, 0, 0);
 
   constructor() {
-    this.scene.add(new HemisphereLight(0x9aa6b4, 0x3a342c, 1.3));
-    const key = new DirectionalLight(0xffc28a, 1.0);
-    key.position.set(0.5, 1, 0.3);
-    this.scene.add(key);
+    // Same darkness as the world: near-black ambient, a cold sliver of moonlight, and a warm
+    // bounce near the hands that exists only while the flashlight is on.
+    this.scene.add(new AmbientLight(0x050510, 0.15));
+    const moon = new DirectionalLight(0x5a6c90, 0.12);
+    moon.position.set(-0.5, 1, 0.4);
+    this.scene.add(moon, this.bounce);
+    this.bounce.position.set(-0.12, -0.12, -0.35);
 
-    const jacket = this.mat(lowPolyMaterial(BODY_COLORS.jacket));
-    const cuff = this.mat(lowPolyMaterial(0x2c3644));
-    const skin = this.mat(lowPolyMaterial(SKIN));
+    const jacket = characterMaterial('jacket', BODY_COLORS.jacket);
+    const cuff = characterMaterial('cuff', 0x2c3644);
+    const skin = characterMaterial('skin', SKIN);
 
     this.buildArm(this.armR, 1, jacket, cuff, skin);
     this.buildArm(this.armL, -1, jacket, cuff, skin);
 
     // Kitchen knife in the right fist, blade forward-up.
-    const handle = new Mesh(this.geo(new BoxGeometry(0.024, 0.03, 0.1)), this.mat(lowPolyMaterial(0x3b2a1e)));
+    const handle = new Mesh(this.geo(new BoxGeometry(0.024, 0.03, 0.1)), characterMaterial('handle', 0x3b2a1e));
     const bladeGeo = this.geo(new ConeGeometry(0.03, 0.15, 4));
     bladeGeo.scale(0.22, 1, 1);
     bladeGeo.rotateX(-Math.PI / 2);
     bladeGeo.translate(0, 0, -0.125);
-    const blade = new Mesh(bladeGeo, this.mat(lowPolyMaterial(0xb9c2c7)));
+    // Dark rusty steel with notches (bump) — catches the flashlight only in thin highlights.
+    const blade = new Mesh(bladeGeo, bladeMaterial());
     this.knife.add(handle, blade);
     this.knife.position.set(-0.012, 0.015, -0.075);
     // Tilt forward-up and roll so the flat of the blade faces the camera instead of its edge.
@@ -122,9 +129,9 @@ export class Viewmodel {
 
     // Flashlight in the left fist, pointing forward.
     const torch = new Group();
-    const body = new Mesh(this.geo(limbForward(0.018, 0.018, 0.15, 8)), this.mat(lowPolyMaterial(0x2d2f31)));
+    const body = new Mesh(this.geo(limbForward(0.018, 0.018, 0.15, 8)), characterMaterial('torch', 0x2d2f31));
     body.position.z = 0.05;
-    const head = new Mesh(this.geo(limbForward(0.022, 0.028, 0.045, 8)), this.mat(lowPolyMaterial(0x3a3d40)));
+    const head = new Mesh(this.geo(limbForward(0.022, 0.028, 0.045, 8)), characterMaterial('torch', 0x3a3d40));
     head.position.z = -0.1;
     this.lens = this.mat(new MeshBasicMaterial({ color: 0x3a3a34 })) as MeshBasicMaterial;
     const lens = new Mesh(this.geo(limbForward(0.026, 0.026, 0.004, 8)), this.lens);
@@ -192,6 +199,7 @@ export class Viewmodel {
       this.knife.visible = this.item === 'knife';
     }
     this.lens.color.setHex(f.flashlightOn ? 0xfff2c4 : 0x3a3a34);
+    this.bounce.intensity = f.flashlightOn ? 0.08 : 0;
 
     // Right arm: idle/sprint base → lowered for switching → attack overlay.
     lerpPose(this.base, R_IDLE, R_SPRINT, this.sprintT);
@@ -220,6 +228,7 @@ export class Viewmodel {
     this.root.rotation.set(this.swayY * 1.2, this.swayX * 2, this.swayX * 1.5);
   }
 
+  /** Shared grunge materials are owned by look/materials; only the lens is ours. */
   dispose(): void {
     for (const g of this.geometries) g.dispose();
     for (const m of this.materials) m.dispose();

@@ -2,20 +2,10 @@ import {
   BufferGeometry,
   CylinderGeometry,
   Float32BufferAttribute,
-  MeshLambertMaterial,
-  type ColorRepresentation,
 } from 'three';
 
 /** Default facet count for limbs: reads as "low-poly realism", not as boxes. */
 const LIMB_SEGMENTS = 6;
-
-/**
- * Faceted matte material — the base look of the game. flatShading gives the low-poly facets;
- * Lambert is the cheapest lit material that still supports the flashlight spot.
- */
-export function lowPolyMaterial(color: ColorRepresentation): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true });
-}
 
 /** Tapered limb hanging down from its pivot: spans y ∈ [-length, 0]. */
 export function limbDown(rTop: number, rBottom: number, length: number, segments = LIMB_SEGMENTS): BufferGeometry {

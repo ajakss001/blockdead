@@ -178,7 +178,7 @@ body {
   height: 4px;
   margin: -2px 0 0 -2px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(200, 196, 186, 0.45);
   z-index: 2;
 }
 #ui > .crosshair { pointer-events: none; }
@@ -234,15 +234,15 @@ body {
   height: 120px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(190, 182, 166, 0.25);
+  background: rgba(20, 20, 22, 0.18);
 }
 .touch__knob {
   position: absolute;
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.35);
+  background: rgba(190, 182, 166, 0.25);
 }
 .touch__btn {
   position: absolute;
@@ -250,13 +250,13 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font: 600 13px system-ui, sans-serif;
+  border: 1px solid rgba(190, 182, 166, 0.28);
+  background: rgba(20, 20, 22, 0.28);
+  color: rgba(205, 198, 184, 0.75);
+  font: 500 12px system-ui, sans-serif;
   touch-action: none;
 }
-.touch__btn.on { background: rgba(250, 199, 117, 0.35); border-color: #fac775; }
+.touch__btn.on { background: rgba(120, 104, 70, 0.35); border-color: rgba(190, 168, 120, 0.55); color: rgba(225, 212, 186, 0.9); }
 .touch__btn--attack {
   width: 86px;
   height: 86px;
@@ -277,34 +277,43 @@ body {
 }
 .debug--compact pre { margin: 0; }
 
-/* Style dressing (never intercepts input). */
-#ui > .style-diary,
-#ui > .style-vhs { pointer-events: none; }
-.style-diary {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  box-shadow: inset 0 0 70px rgba(80, 60, 30, 0.45), inset 0 0 0 6px rgba(120, 96, 60, 0.25);
-}
-.style-vhs {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  font: 700 18px ui-monospace, 'Courier New', monospace;
-  color: rgba(245, 245, 235, 0.9);
-  text-shadow: 2px 0 rgba(255, 40, 40, 0.5), -2px 0 rgba(40, 200, 255, 0.4);
-  letter-spacing: 1px;
-}
-.style-vhs__rec {
+.touch__btn--use { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 30px); font-size: 11px; }
+
+/* Zomboid HUD: plain text, muted colors, appears only when it matters. */
+#ui > .moodles,
+#ui > .action { pointer-events: none; }
+.moodles {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 14px);
-  right: calc(env(safe-area-inset-right, 0px) + 20px);
-  animation: vhs-blink 1s steps(1) infinite;
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  z-index: 2;
+  font: 500 13px system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
-.style-vhs__rec::first-letter { color: #ff3b30; }
-.style-vhs__stamp {
+.action {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
-  left: calc(env(safe-area-inset-left, 0px) + 20px);
+  left: 50%;
+  top: 58%;
+  width: 150px;
+  margin-left: -75px;
+  z-index: 2;
+  text-align: center;
+  font: 500 12px system-ui, sans-serif;
+  color: rgba(196, 188, 172, 0.8);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
-@keyframes vhs-blink { 50% { opacity: 0.2; } }
+.action[hidden] { display: none; }
+.action__label { margin-bottom: 5px; }
+.action__track { height: 2px; background: rgba(196, 188, 172, 0.15); }
+.action__fill {
+  height: 100%;
+  background: rgba(196, 188, 172, 0.75);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.action--done .action__track { visibility: hidden; }

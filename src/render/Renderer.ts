@@ -1,4 +1,4 @@
-import { type Camera, type Scene, WebGLRenderer } from 'three';
+import { type Camera, PCFShadowMap, PCFSoftShadowMap, type Scene, WebGLRenderer } from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 
@@ -54,6 +54,13 @@ export class Renderer {
     this.applySize();
   }
 
+  /** Type changes recompile lit materials once — only happens on quality changes. */
+  setShadows(enabled: boolean, soft: boolean): void {
+    const sm = this.gl.shadowMap;
+    sm.enabled = enabled;
+    sm.type = soft ? PCFSoftShadowMap : PCFShadowMap;
+  }
+
   setPixelRatioCap(cap: number): void {
     this.pixelRatioCap = cap;
     this.applySize();
@@ -77,14 +84,6 @@ export class Renderer {
     this.gl.render(scene, camera);
   }
 
-  /** Draw on top of the previous pass with a fresh depth buffer (first-person viewmodel). */
-  renderOverlay(scene: Scene, camera: Camera): void {
-    const gl = this.gl;
-    gl.autoClear = false;
-    gl.clearDepth();
-    gl.render(scene, camera);
-    gl.autoClear = true;
-  }
 
   stats(out: RenderStats): RenderStats {
     const info = this.gl.info;

@@ -12,8 +12,10 @@ import {
 } from 'three';
 import { mulberry32 } from '../../core/random';
 import { gableRoof } from '../../render/lowpoly';
+import type { Surface } from '../../render/look/materials';
 import type { StaticBatch } from '../../render/StaticBatch';
 import type { CollisionWorld } from '../../world/CollisionWorld';
+import { buildCar, CAR_PAINTS } from '../../world/props/car';
 
 /** Muted dusk palette — 90s suburb after the end of the world. */
 const C = {
@@ -35,13 +37,34 @@ const C = {
   fence: 0x6e6352,
   trunk: 0x4a3b2e,
   leaves: [0x3f5236, 0x4a5a3a, 0x56603f],
-  carBody: 0x6f3d34,
-  glass: 0x262c31,
-  tire: 0x1c1d1e,
   metal: 0x3a3c3e,
   bin: 0x3d4f3d,
   crate: 0x7a6646,
 } as const;
+
+/** Which grunge material a palette color gets; anything unlisted (house siding) is plaster. */
+const SURFACE_OF = new Map<number, Surface>([
+  [C.asphalt, 'asphalt'],
+  [C.dash, 'asphalt'],
+  [C.sidewalk, 'asphalt'],
+  [C.curb, 'asphalt'],
+  [C.path, 'asphalt'],
+  [C.window, 'glass'],
+  [C.floor, 'wood'],
+  [C.counter, 'wood'],
+  [C.fence, 'wood'],
+  [C.crate, 'wood'],
+  [C.trunk, 'wood'],
+  [C.metal, 'metal'],
+  [C.bin, 'metal'],
+  [0x5a6a7a, 'metal'],
+  [0x55585a, 'metal'],
+  ...C.leaves.map((c) => [c, 'foliage'] as [number, Surface]),
+  [0x4a3f3a, 'roof'],
+  [0x3d4146, 'roof'],
+  [0x463b36, 'roof'],
+]);
+const surfaceOf = (color: number): Surface => SURFACE_OF.get(color) ?? 'plaster';
 
 const WALL_H = 2.7;
 const WALL_T = 0.2;
@@ -73,12 +96,12 @@ class Builder {
   block(color: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, solid = false): void {
     _p.set(x + sx / 2, y + sy / 2, z + sz / 2);
     _s.set(sx, sy, sz);
-    this.batch.add(this.box, color, _m.compose(_p, _q.identity(), _s));
+    this.batch.add(this.box, color, _m.compose(_p, _q.identity(), _s), surfaceOf(color));
     if (solid) this.world.addBox(x, z, x + sx, z + sz);
   }
 
   shape(template: typeof this.box | typeof this.cyl8, color: number, pos: Vector3, scale: Vector3, rot?: Euler): void {
-    this.batch.add(template, color, _m.compose(pos, rot ? _q.setFromEuler(rot) : _q.identity(), scale));
+    this.batch.add(template, color, _m.compose(pos, rot ? _q.setFromEuler(rot) : _q.identity(), scale), surfaceOf(color));
   }
 
   dispose(): void {
@@ -121,8 +144,9 @@ export function buildPlayground(batch: StaticBatch, world: CollisionWorld): void
   house(b, -12, 13, 9, 7, -7.5, 'north', 0x857a6c, 0x463b36);
   b.block(C.path, -8.1, 0, 11.2, 1.2, 0.035, 1.9);
 
-  // Abandoned car on the north lane.
-  car(b, 5.5, 3.1);
+  // Abandoned cars: one left on the north lane with a flat, one abandoned askew across the south lane.
+  buildCar(batch, world, { x: 5.5, z: 3.1, yaw: 0.04, paint: CAR_PAINTS.maroon, seed: 3, flatTire: true });
+  buildCar(batch, world, { x: -14, z: 6.9, yaw: Math.PI + 0.32, paint: CAR_PAINTS.slate, seed: 8 });
 
   // Lamp posts, bins, crates, mailbox.
   for (const x of [-11, 9]) lampPost(b, x, 1.2);
@@ -176,7 +200,7 @@ function ground(batch: StaticBatch, rand: () => number): void {
   }
   g.setAttribute('color', new Float32BufferAttribute(colors, 3));
   g.computeVertexNormals();
-  batch.add(g, null);
+  batch.add(g, null, undefined, 'ground');
   g.dispose();
 }
 
@@ -254,7 +278,7 @@ function house(
 
   // Gable roof with overhang, ridge along X.
   const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.6);
-  b.batch.add(roofGeo, roof, _m.compose(_p.set(x0 + w / 2, WALL_H, z0 + d / 2), _q.identity(), _s.set(1, 1, 1)));
+  b.batch.add(roofGeo, roof, _m.compose(_p.set(x0 + w / 2, WALL_H, z0 + d / 2), _q.identity(), _s.set(1, 1, 1)), 'roof');
   roofGeo.dispose();
 }
 
@@ -266,24 +290,6 @@ function fence(b: Builder, xa: number, xb: number, z: number): void {
   b.world.addBox(xa - 0.05, z - 0.08, xb + 0.05, z + 0.08);
 }
 
-function car(b: Builder, cx: number, cz: number): void {
-  const L = 4.2;
-  const W = 1.8;
-  b.block(C.carBody, cx - L / 2, 0.3, cz - W / 2, L, 0.6, W);
-  b.block(C.glass, cx - 1.05, 0.9, cz - W / 2 + 0.08, 2.1, 0.5, W - 0.16);
-  b.block(C.carBody, cx - 0.95, 1.4, cz - W / 2 + 0.12, 1.9, 0.07, W - 0.24);
-  b.block(0xd8c48a, cx + L / 2 - 0.02, 0.62, cz - W / 2 + 0.2, 0.04, 0.12, 0.3);
-  b.block(0xd8c48a, cx + L / 2 - 0.02, 0.62, cz + W / 2 - 0.5, 0.04, 0.12, 0.3);
-  for (const [dx, dz] of [
-    [-1.35, -0.85],
-    [1.35, -0.85],
-    [-1.35, 0.85],
-    [1.35, 0.85],
-  ] as const) {
-    b.shape(b.cyl8, C.tire, _p.set(cx + dx, 0.34, cz + dz), _s.set(0.34, 0.24, 0.34), _e.set(Math.PI / 2, 0, 0));
-  }
-  b.world.addBox(cx - L / 2, cz - W / 2, cx + L / 2, cz + W / 2);
-}
 
 function lampPost(b: Builder, x: number, z: number): void {
   b.shape(b.cyl8, C.metal, _p.set(x, 2.1, z), _s.set(0.07, 4.2, 0.07));
@@ -294,15 +300,16 @@ function lampPost(b: Builder, x: number, z: number): void {
 
 function tree(b: Builder, x: number, z: number, scale: number, rand: () => number): void {
   const h = 2.2 * scale;
-  b.batch.add(b.cyl5, C.trunk, _m.compose(_p.set(x, h / 2, z), _q.identity(), _s.set(0.16 * scale, h, 0.16 * scale)));
+  b.batch.add(b.cyl5, C.trunk, _m.compose(_p.set(x, h / 2, z), _q.identity(), _s.set(0.16 * scale, h, 0.16 * scale)), 'wood');
   const leaves = C.leaves[Math.floor(rand() * C.leaves.length)];
   _e.set(rand() * 3, rand() * 3, rand() * 3);
-  b.batch.add(b.ico, leaves, _m.compose(_p.set(x, h + 0.5 * scale, z), _q.setFromEuler(_e), _s.setScalar(1.4 * scale)));
+  b.batch.add(b.ico, leaves, _m.compose(_p.set(x, h + 0.5 * scale, z), _q.setFromEuler(_e), _s.setScalar(1.4 * scale)), 'foliage');
   _e.set(rand() * 3, rand() * 3, rand() * 3);
   b.batch.add(
     b.ico,
     leaves,
     _m.compose(_p.set(x + 0.3 * scale, h + 1.4 * scale, z - 0.2 * scale), _q.setFromEuler(_e), _s.setScalar(0.95 * scale)),
+    'foliage',
   );
   b.world.addBoxCentered(x, z, 0.35 * scale, 0.35 * scale);
 }

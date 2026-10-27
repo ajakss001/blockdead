@@ -47,6 +47,7 @@ export class TouchInput {
       (this.sprintButton = this.button('Бег', 'sprint', 'latch', 'touch__btn--sprint')),
       this.button('Присед', 'crouch', 'toggle', 'touch__btn--crouch'),
       this.button('Свет', 'flashlight', 'toggle', 'touch__btn--light'),
+      this.button('Обыск', 'use', 'tap', 'touch__btn--use'),
       this.weaponButton(),
     );
     this.root.append(this.stick, buttons);

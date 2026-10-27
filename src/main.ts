@@ -14,12 +14,14 @@ import { createPlatform } from './platform/createPlatform';
 import { pickInitialLevel } from './render/DeviceProfile';
 import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
-import { pickStyle, StyleManager } from './render/style/StyleManager';
+import { setMaterialAnisotropy } from './render/look/materials';
+import { PostFX } from './render/PostFX';
+import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
 import { PlaygroundScene } from './scenes/PlaygroundScene';
 import { TestScene } from './scenes/TestScene';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
-import { mountStyleOverlay } from './ui/StyleOverlay';
+import { Hud } from './ui/Hud';
 
 const params = new URLSearchParams(location.search);
 
@@ -41,23 +43,23 @@ async function boot(): Promise<void> {
   const platform = createPlatform(events);
   await platform.init();
 
-  // MSAA is fixed at context creation, before the GPU name is known: decide by device class.
-  const renderer = new Renderer(gameEl, events, device.type === 'desktop');
+  const renderer = new Renderer(gameEl, events, false);
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
   const input = new InputManager(pickInputMode(device), events);
-  // ?style=diary|vhs — visual identity prototypes; plain is the neutral baseline.
-  const style = new StyleManager(pickStyle());
+  setMaterialAnisotropy(renderer.gl.capabilities.getMaxAnisotropy());
+  // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
+  // once at boot from the initial preset, like a context-level setting would be.
+  const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);
+  const hud = new Hud(uiEl);
 
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new PlaygroundScene();
   const draw = (alpha: number, frameDt: number) => {
     scene.render(alpha, frameDt);
-    style.update(frameDt, renderer);
     renderer.beginFrame();
     profiler.begin('draw');
-    renderer.render(scene.scene, scene.camera);
-    if (scene.overlay) renderer.renderOverlay(scene.overlay.scene, scene.overlay.camera);
+    postfx.render(frameDt);
     profiler.end('draw');
   };
 
@@ -73,11 +75,16 @@ async function boot(): Promise<void> {
     events,
   );
 
-  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug, style };
+  const ctx: GameContext = { events, profiler, loop, platform, renderer, quality, device, input, debug, hud };
   scene.init(ctx);
+  postfx.setScene(scene.scene, scene.camera, scene.overlay);
+  // ?hud=demo — preview the state indicators before survival stats exist (stage 3).
+  if (params.get('hud') === 'demo') {
+    hud.setMoodle('hunger', 1);
+    hud.setMoodle('bleeding', 2);
+  }
 
   mountCrosshair(uiEl);
-  mountStyleOverlay(style.style, uiEl);
   if (input.mode === 'touch') {
     new TouchInput(input, uiEl);
   } else {

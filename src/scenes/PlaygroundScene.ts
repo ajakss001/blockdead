@@ -1,10 +1,21 @@
-import { Color, DirectionalLight, Fog, HemisphereLight, type Mesh, type MeshLambertMaterial, PerspectiveCamera, Scene } from 'three';
+import { AmbientLight, Color, DirectionalLight, Fog, type Group, type Mesh, PerspectiveCamera, Scene } from 'three';
 import type { GameContext } from '../GameContext';
 import { Player } from '../player/Player';
 import { StaticBatch } from '../render/StaticBatch';
 import { CollisionWorld } from '../world/CollisionWorld';
 import type { IScene } from './IScene';
 import { buildPlayground, PLAYGROUND_SPAWN, PLAYGROUND_YAW } from './playground/buildPlayground';
+
+/**
+ * Night setup. Ambient is at the floor the brief asks for; a weak cold moon keeps silhouettes
+ * and roof lines readable against the sky on a phone screen — everything else is flashlight.
+ */
+const NIGHT = {
+  sky: 0x0a0d14,
+  fogNear: 3,
+  ambient: { color: 0x050510, intensity: 0.15 },
+  moon: { color: 0x5a6c90, intensity: 0.35 },
+} as const;
 
 /** Stage 1 test yard: walk around, enter houses, look down at your legs, swing the knife. */
 export class PlaygroundScene implements IScene {
@@ -14,22 +25,19 @@ export class PlaygroundScene implements IScene {
 
   private ctx!: GameContext;
   private player!: Player;
-  private level!: Mesh;
-  private sky: Mesh | null = null;
+  private level!: Group;
   private readonly world = new CollisionWorld();
   private readonly unsubs: (() => void)[] = [];
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
-    const palette = ctx.style.palette;
-    this.scene.background = new Color(palette.sky);
-    this.scene.fog = new Fog(palette.fog, palette.fogNear, ctx.quality.preset.fogFar);
+    this.scene.background = new Color(NIGHT.sky);
+    this.scene.fog = new Fog(NIGHT.sky, NIGHT.fogNear, ctx.quality.preset.fogFar);
 
-    // Dusk, but readable on a phone screen in daylight; the flashlight matters indoors and later at night.
-    this.scene.add(new HemisphereLight(0x9aa6b4, 0x3a352d, 1.9));
-    const sun = new DirectionalLight(0xffb98a, 1.1);
-    sun.position.set(-30, 18, -20);
-    this.scene.add(sun);
+    this.scene.add(new AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity));
+    const moon = new DirectionalLight(NIGHT.moon.color, NIGHT.moon.intensity);
+    moon.position.set(-30, 40, -10);
+    this.scene.add(moon);
 
     const batch = new StaticBatch();
     buildPlayground(batch, this.world);
@@ -38,11 +46,6 @@ export class PlaygroundScene implements IScene {
 
     this.player = new Player(ctx, this.camera, this.scene, this.world, PLAYGROUND_SPAWN, PLAYGROUND_YAW);
     this.overlay = this.player.viewmodel;
-
-    this.sky = ctx.style.createSkyDome();
-    if (this.sky) this.scene.add(this.sky);
-    ctx.style.patchObject(this.scene);
-    ctx.style.patchObject(this.player.viewmodel.scene);
 
     this.resize(ctx.renderer.width, ctx.renderer.height);
     this.applyQuality();
@@ -66,7 +69,6 @@ export class PlaygroundScene implements IScene {
 
   render(alpha: number, frameDt: number): void {
     this.player.render(alpha, frameDt);
-    this.sky?.position.copy(this.camera.position);
   }
 
   dispose(): void {
@@ -74,8 +76,7 @@ export class PlaygroundScene implements IScene {
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('level');
     this.player.dispose();
-    this.level.geometry.dispose();
-    (this.level.material as MeshLambertMaterial).dispose();
+    this.level.traverse((o) => (o as Mesh).geometry?.dispose());
   }
 
   private applyQuality(): void {

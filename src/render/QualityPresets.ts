@@ -11,9 +11,12 @@ export interface QualityPreset {
   zombiesActive: number;
   zombiesVisible: number;
   farAiHz: number;
-  shadowMaps: boolean;
-  /** MSAA is fixed at context creation; changing preset at runtime does not toggle it. */
-  antialias: boolean;
+  /** Flashlight shadow map size; 0 disables shadows. */
+  shadowMapSize: number;
+  /** PCFSoft (PC) vs plain PCF (phones). */
+  softShadows: boolean;
+  /** MSAA samples of the post-processing target (fixed at boot). */
+  msaa: number;
   /** Fog end distance, m. Hides the streaming edge. */
   fogFar: number;
 }
@@ -30,8 +33,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesActive: 20,
     zombiesVisible: 30,
     farAiHz: 4,
-    shadowMaps: false,
-    antialias: false,
+    shadowMapSize: 512,
+    softShadows: false,
+    msaa: 0,
     fogFar: 50,
   },
   medium: {
@@ -43,8 +47,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesActive: 35,
     zombiesVisible: 50,
     farAiHz: 6,
-    shadowMaps: false,
-    antialias: false,
+    shadowMapSize: 512,
+    softShadows: false,
+    msaa: 0,
     fogFar: 66,
   },
   high: {
@@ -56,8 +61,9 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     zombiesActive: 60,
     zombiesVisible: 100,
     farAiHz: 10,
-    shadowMaps: true,
-    antialias: true,
+    shadowMapSize: 1024,
+    softShadows: true,
+    msaa: 4,
     fogFar: 115,
   },
 };

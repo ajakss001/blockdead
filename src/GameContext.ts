@@ -8,7 +8,7 @@ import type { InputManager } from './input/InputManager';
 import type { IPlatform } from './platform/IPlatform';
 import type { QualityManager } from './render/QualityManager';
 import type { Renderer } from './render/Renderer';
-import type { StyleManager } from './render/style/StyleManager';
+import type { Hud } from './ui/Hud';
 
 /** Services shared by scenes and systems. Passed explicitly — no globals, no service locator lookups. */
 export interface GameContext {
@@ -21,5 +21,5 @@ export interface GameContext {
   readonly device: DeviceInfo;
   readonly input: InputManager;
   readonly debug: DebugInfo;
-  readonly style: StyleManager;
+  readonly hud: Hud;
 }
