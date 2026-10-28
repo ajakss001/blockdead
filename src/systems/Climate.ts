@@ -1,12 +1,12 @@
 /**
- * Time of day and air temperature. The clock only drives the climate for now — the lighting stays
- * night until the day/night cycle of stage 5 hooks into the same clock.
+ * Time of day and air temperature; the scene lights the world from the same clock (day / night).
  */
 
-/** One in-game day lasts this many real seconds (48 min, Zomboid's default pace). */
-const DAY_SECONDS = 48 * 60;
-/** A new survivor starts at 22:00, the first night ahead. */
-export const START_MINUTE = 22 * 60;
+/** Daytime 06:00–20:00 passes in 20 real minutes, the night 20:00–06:00 in 30. */
+const DAY_RATE = (14 * 60) / (20 * 60);
+const NIGHT_RATE = (10 * 60) / (30 * 60);
+/** A new survivor starts at 07:00, the day ahead. */
+export const START_MINUTE = 7 * 60;
 
 /** Outdoor air, °C: coldest just before dawn, warmest mid-afternoon (late autumn, frost at night). */
 const AIR = { min: -1, max: 10, coldestHour: 5 } as const;
@@ -20,7 +20,7 @@ export class Clock {
   minutes = START_MINUTE;
 
   update(dt: number): void {
-    this.minutes += (dt * 24 * 60) / DAY_SECONDS;
+    this.minutes += dt * (this.isNight ? NIGHT_RATE : DAY_RATE);
   }
 
   /** 0..24 */
@@ -31,6 +31,16 @@ export class Clock {
   get isNight(): boolean {
     const h = this.hour;
     return h >= 20 || h < 6;
+  }
+
+  /** 0 at night … 1 by day, dawn 05:00–07:00, dusk 19:00–21:00. */
+  get daylight(): number {
+    const h = this.hour;
+    const s = (t: number) => t * t * (3 - 2 * t);
+    if (h < 5 || h >= 21) return 0;
+    if (h < 7) return s((h - 5) / 2);
+    if (h < 19) return 1;
+    return s(1 - (h - 19) / 2);
   }
 
   get label(): string {

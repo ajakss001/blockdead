@@ -54,7 +54,16 @@ const NIGHT = {
   moon: { color: 0x5a6c90, intensity: 0.35 },
 } as const;
 
+/** Overcast late-autumn day: grey sky, soft cool light, no hard sun. */
+const DAY = {
+  sky: 0x8d969f,
+  fogNear: 12,
+  ambient: { color: 0xc4c8d0, intensity: 1.05 },
+  sun: { color: 0xfff2e0, intensity: 1.35 },
+} as const;
+
 const DEFAULT_SEED = 1993;
+const _dayColor = new Color();
 const BASE_VFOV = 75;
 const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
@@ -99,6 +108,9 @@ export class WorldScene implements IScene {
   private saveT = 0;
   private moodleT = 0;
   private readonly clock = new Clock();
+  private ambient!: AmbientLight;
+  private moon!: DirectionalLight;
+  private lightKey = -1;
   private readonly shelters = new Shelters();
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
@@ -126,10 +138,12 @@ export class WorldScene implements IScene {
     this.ctx = ctx;
     this.scene.background = new Color(NIGHT.sky);
     this.scene.fog = new Fog(NIGHT.sky, NIGHT.fogNear, ctx.quality.preset.fogFar);
-    this.scene.add(new AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity));
+    this.ambient = new AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity);
+    this.scene.add(this.ambient);
     const moon = new DirectionalLight(NIGHT.moon.color, NIGHT.moon.intensity);
     moon.position.set(-30, 40, -10);
     this.scene.add(moon);
+    this.moon = moon;
     this.sky = new Sky(this.scene, NIGHT.sky, moon.position);
 
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
@@ -289,6 +303,7 @@ export class WorldScene implements IScene {
     c.jumpFactor = this.survival.jumpFactor;
     this.player.fixedUpdate(dt);
     if (c.jumped) this.survival.onJump();
+    this.ctx.hud.setStamina(this.survival.stamina);
     // Footsteps on whatever is underfoot; jump and landing.
     const feet = { x: c.position.x, y: c.position.y + 0.05, z: c.position.z };
     const n = Math.floor(c.stepPhase / Math.PI);
@@ -335,8 +350,9 @@ export class WorldScene implements IScene {
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
+    this.applyDaylight(this.clock.daylight);
     const wa = this.life.windDirection;
-    const ws = 0.003 + this.life.windGust * 0.006;
+    const ws = 0.0005 + this.life.windGust * 0.001;
     this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
     const cp = this.camera.position;
@@ -346,6 +362,26 @@ export class WorldScene implements IScene {
       this.saveT += frameDt;
       if (this.saveT >= AUTOSAVE_INTERVAL) this.save();
     }
+  }
+
+  /** Day / night: sky, fog, ambient, sun or moon, clouds, lit windows, the arms' own lights. */
+  private applyDaylight(k: number): void {
+    const key = Math.round(k * 200);
+    if (key === this.lightKey) return;
+    this.lightKey = key;
+    const sky = (this.scene.background as Color).set(NIGHT.sky).lerp(_dayColor.set(DAY.sky), k);
+    const fog = this.scene.fog as Fog;
+    fog.color.copy(sky);
+    fog.near = NIGHT.fogNear + (DAY.fogNear - NIGHT.fogNear) * k;
+    this.ambient.color.set(NIGHT.ambient.color).lerp(_dayColor.set(DAY.ambient.color), k);
+    this.ambient.intensity = NIGHT.ambient.intensity + (DAY.ambient.intensity - NIGHT.ambient.intensity) * k;
+    this.moon.color.set(NIGHT.moon.color).lerp(_dayColor.set(DAY.sun.color), k);
+    this.moon.intensity = NIGHT.moon.intensity + (DAY.sun.intensity - NIGHT.moon.intensity) * k;
+    this.moon.position.set(-30 + 10 * k, 40 + 30 * k, -10 + 20 * k);
+    this.sky.daylight = k;
+    this.sky.skyColor = sky;
+    this.life.daylight = k;
+    this.player.viewmodel.setDaylight(k);
   }
 
   /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass. */

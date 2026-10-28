@@ -111,6 +111,11 @@ export class Sky {
     this.domeMat.uniforms.uDay.value = v;
   }
 
+  /** Sky (and fog) color the clouds fade into at the horizon. */
+  set skyColor(c: Color) {
+    this.domeMat.uniforms.uSky.value.copy(c);
+  }
+
   update(dt: number, camera: PerspectiveCamera, paused: boolean): void {
     // Inside the far plane on every preset (the far plane follows the fog distance).
     const R = camera.far * SKY_SHARE;

@@ -96,6 +96,8 @@ export class WorldLife {
   private readonly papers: Paper[] = [];
   private papersOn = false;
   private clothOn = true;
+  /** 0 night … 1 day: lit windows and lamps fade in daylight. */
+  daylight = 0;
   private readonly audio: AmbientAudio;
   private time = 0;
   /** Wind: direction (radians) wandering slowly, gusts 0..1. */
@@ -220,7 +222,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.wind(dt);
     this.glowMat.uniforms.uTime.value = this.time;
     const fog = this.scene.fog as Fog | null;
-    if (fog) this.glowMat.uniforms.uFog.value.set(fog.near, fog.far, 0);
+    if (fog) this.glowMat.uniforms.uFog.value.set(fog.near, fog.far, this.daylight);
     this.clothUniforms.uTime.value = this.time;
     this.clothUniforms.uWind.value = this.gust;
     this.updatePapers(dt, player, this.clothOn && outdoors && street);
@@ -512,5 +514,6 @@ void main() {
     col = uWarm * 3.0;
   }
   float fog = smoothstep(uFog.x, uFog.y, vDepth);
-  gl_FragColor = vec4(col * a * vI * (1.0 - fog), 1.0);
+  // uFog.z = daylight: lamps and lit windows read far weaker by day.
+  gl_FragColor = vec4(col * a * vI * (1.0 - fog) * (1.0 - 0.75 * uFog.z), 1.0);
 }`;

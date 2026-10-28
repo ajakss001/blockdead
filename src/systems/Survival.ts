@@ -11,7 +11,7 @@ const RATE = {
   hunger: 0.04 / 60,
   thirst: 0.06 / 60,
   fatigueWalk: 0.012 / 60,
-  fatigueSprint: 0.15 / 60,
+  fatigueSprint: 0.04 / 60,
   restRecovery: 0.04 / 60,
   starvation: 0.12 / 60,
   wound: 0.25 / 60,
@@ -85,6 +85,11 @@ export class Survival implements SurvivalState {
   anxiety = 0;
   /** Who the survivor was (class): endurance, appetite, cold, nerves, healing. */
   mods: ClassMods = { ...BASE_MODS };
+  /** Short-term wind (0..1): sprinting and jumping spend it, it comes back in seconds. */
+  stamina = 1;
+  /** Ran out: no sprint until it is back above a third. */
+  private winded = false;
+  private sinceSpent = 10;
   private wasBatteryDead = false;
 
   update(dt: number, speed: number, sprinting: boolean, env: Exposure): void {
@@ -97,6 +102,16 @@ export class Survival implements SurvivalState {
     // Shivering wears you out: more tiring, slower rest.
     if (this.bodyTemp < COLD.cold) tiring = tiring > 0 ? tiring * COLD.fatigueFactor : tiring / COLD.fatigueFactor;
     this.fatigue = clamp(this.fatigue + tiring * dt, 0, 1);
+    // Stamina: ~12 s of sprint; back after a short breath, faster standing, slower when tired.
+    if (sprinting) {
+      this.stamina = clamp(this.stamina - (dt / 12) * m.stamina, 0, 1);
+      this.sinceSpent = 0;
+    } else {
+      this.sinceSpent += dt;
+      if (this.sinceSpent > 0.8) this.stamina = clamp(this.stamina + (speed > 0.2 ? 0.12 : 0.22) * (1 - this.fatigue * 0.6) * dt, 0, 1);
+    }
+    if (this.stamina <= 0.02) this.winded = true;
+    else if (this.stamina >= 0.35) this.winded = false;
     this.pain = clamp(this.pain - RATE.painFade * dt, 0, 1);
 
     let dh = 0;
@@ -129,24 +144,26 @@ export class Survival implements SurvivalState {
     return clamp((this.bodyTemp - COLD.hypothermia) / (COLD.normal - COLD.hypothermia), 0, 1);
   }
 
-  /** Jump height factor: full when rested, lower when tired, none when exhausted. */
+  /** Jump height factor: none out of breath, a bit lower when very tired. */
   get jumpFactor(): number {
-    if (this.fatigue >= 0.85) return 0;
-    return 1 - clamp((this.fatigue - 0.5) / 0.35, 0, 1) * 0.45;
+    if (this.winded || this.stamina < 0.12) return 0;
+    return this.fatigue > 0.7 ? 0.8 : 1;
   }
 
-  /** A jump costs a little strength. */
+  /** A jump costs breath (and a little strength). */
   onJump(): void {
-    this.fatigue = clamp(this.fatigue + 0.012 * this.mods.stamina, 0, 1);
+    this.stamina = clamp(this.stamina - 0.12 * this.mods.stamina, 0, 1);
+    this.sinceSpent = 0;
+    this.fatigue = clamp(this.fatigue + 0.004 * this.mods.stamina, 0, 1);
   }
 
   /** Too tired to run; fatigue also slows the sprint before that. */
   get canSprint(): boolean {
-    return this.fatigue < 0.75;
+    return !this.winded && this.stamina > 0.02 && this.fatigue < 0.95;
   }
 
   get sprintFactor(): number {
-    return this.fatigue < 0.5 ? 1 : 0.8;
+    return this.fatigue < 0.6 ? 1 : 0.85;
   }
 
   /** Apply an item's effects. Returns a short result line for the HUD. */

@@ -75,9 +75,9 @@ const W_IDLE = key2h([-0.183, -0.282, -0.573], [0.75, 0.62, -0.1], [0.6, -0.1, -
 /** Sprinting: lower and flatter across the chest, the head tipped back a little. */
 const W_SPRINT = key2h([-0.227, -0.359, -0.627], [0.8, 0.55, 0.1], [0.3, 0, -1]);
 /** Wound up: the head lifted back over the right shoulder, the edge leading. */
-const W_WINDUP = key2h([0.101, -0.272, -0.682], [0.3, 0.8, 0.5], [0.1, 0.6, -0.8]);
+const W_WINDUP = key2h([0.06, -0.3, -0.6], [0.35, 0.85, 0.3], [0.1, 0.6, -0.8]);
 /** End of the chop: hands down at the belly, the head forward and low, mostly below the frame. */
-const W_STRIKE = key2h([0.043, -0.351, -0.225], [-0.05, -0.15, -0.99], [0, -1, 0.15]);
+const W_STRIKE = key2h([0.0, -0.42, -0.5], [-0.12, -0.3, -0.95], [0, -1, 0.15]);
 /** Elbow directions (from the hand towards the elbow): both elbows bent, down and back, never at the camera. */
 const ELBOW_R = new Vector3(0.45, -0.75, 0.45).normalize();
 const ELBOW_L = new Vector3(-0.35, -0.7, 0.6).normalize();
@@ -121,11 +121,15 @@ export class Viewmodel {
   private readonly torch: Group;
   private readonly sleeves: Mesh[] = [];
   private readonly cuffs: Mesh[] = [];
+  /** Upper arms behind the elbows: two-handed poses bring the elbows into view. */
+  private readonly uppers: Mesh[] = [];
   private readonly hands: Mesh[] = [];
   private readonly lens: MeshBasicMaterial;
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
   private readonly bounce = new PointLight(0xfffaed, 0, 1.5, 2);
+  private readonly ambient = new AmbientLight(0x050510, 0.15);
+  private readonly moon = new DirectionalLight(0x5a6c90, 0.12);
   private readonly weapon = { pos: new Vector3(), q: new Quaternion() };
 
   private item: RightItem = 'knife';
@@ -149,8 +153,8 @@ export class Viewmodel {
   constructor() {
     // Same darkness as the world: near-black ambient, a cold sliver of moonlight, and a warm
     // bounce near the hands that exists only while the flashlight is on.
-    this.scene.add(new AmbientLight(0x050510, 0.15));
-    const moon = new DirectionalLight(0x5a6c90, 0.12);
+    this.scene.add(this.ambient);
+    const moon = this.moon;
     moon.position.set(-0.5, 1, 0.4);
     this.scene.add(moon, this.bounce);
     this.bounce.position.set(-0.12, -0.12, -0.35);
@@ -199,6 +203,14 @@ export class Viewmodel {
   /** The current weapon needs both hands: the flashlight is worn on the head. */
   get headlamp(): boolean {
     return this.config(this.item).twoHanded;
+  }
+
+  /** Day / night for the arms (they are drawn in their own scene). */
+  setDaylight(k: number): void {
+    this.ambient.color.setRGB(0.02 + 0.68 * k, 0.02 + 0.7 * k, 0.06 + 0.68 * k);
+    this.ambient.intensity = 0.15 + 0.75 * k;
+    this.moon.color.setRGB(0.35 + 0.65 * k, 0.42 + 0.53 * k, 0.56 + 0.32 * k);
+    this.moon.intensity = 0.12 + 0.6 * k;
   }
 
   setAspect(aspect: number): void {
@@ -267,6 +279,7 @@ export class Viewmodel {
     }
     const twoHanded = this.headlamp;
     this.torch.visible = !twoHanded;
+    for (const u of this.uppers) u.visible = twoHanded;
     this.lens.color.setHex(f.flashlightOn ? 0xfff2c4 : 0x3a3a34);
     // The light comes from the left hand, or from the forehead when both hands are on a weapon.
     if (twoHanded) this.bounce.position.set(0.05, 0.22, -0.05);
@@ -404,8 +417,13 @@ export class Viewmodel {
     const sleeve = new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), skin);
     const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), skin);
     cuffMesh.position.z = -FOREARM + 0.02;
-    arm.add(sleeve, cuffMesh);
-    this.sleeves.push(sleeve);
+    // The arm goes on past the elbow to the edge of the frame, so it never ends in mid-air.
+    const upper = new Mesh(this.geo(limbForward(0.062, 0.052, 0.5)), skin);
+    upper.position.z = 0.5;
+    upper.visible = false;
+    arm.add(sleeve, cuffMesh, upper);
+    this.sleeves.push(sleeve, upper);
+    this.uppers.push(upper);
     this.cuffs.push(cuffMesh);
     hand.position.z = -HAND_OFFSET;
     const fist = new Mesh(this.geo(handGeometry(side)), skin);

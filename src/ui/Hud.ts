@@ -46,6 +46,10 @@ export class Hud {
   private readonly actionLabel = document.createElement('div');
   private readonly actionFill = document.createElement('div');
   private readonly prompt = document.createElement('div');
+  /** Stamina bar under the crosshair: shown while not full. */
+  private readonly stamina = document.createElement('div');
+  private readonly staminaFill = document.createElement('div');
+  private staminaKey = -1;
   private toastTimer = 0;
 
   constructor(parent: HTMLElement) {
@@ -85,7 +89,20 @@ export class Hud {
     this.action.append(this.actionLabel, track);
     this.prompt.className = 'prompt';
     this.prompt.hidden = true;
-    parent.append(this.stats, this.action, this.prompt);
+    this.stamina.className = 'stamina';
+    this.staminaFill.className = 'stamina__fill';
+    this.stamina.append(this.staminaFill);
+    parent.append(this.stats, this.action, this.prompt, this.stamina);
+  }
+
+  /** Stamina 0..1 (call every step; DOM only changes when the value does). */
+  setStamina(v: number): void {
+    const key = Math.round(v * 100);
+    if (key === this.staminaKey) return;
+    this.staminaKey = key;
+    this.staminaFill.style.width = `${key}%`;
+    this.stamina.classList.toggle('full', key >= 100);
+    this.stamina.classList.toggle('low', key < 25);
   }
 
   /** value: 0..1 how much is left; severity picks the color, 3 blinks. */

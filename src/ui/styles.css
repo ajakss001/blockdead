@@ -701,3 +701,8 @@ body {
 .volume input { width: 120px; accent-color: #b8a46a; }
 .inv__volume input { width: 70px; }
 @media (max-height: 430px) { .inv__volume span { display: none; } }
+/* Stamina: a thin bar low in the middle, fades out when full. */
+.stamina { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); width: 160px; height: 4px; transform: translateX(-50%); background: rgba(20, 20, 22, 0.45); border-radius: 2px; overflow: hidden; pointer-events: none; transition: opacity 0.6s; }
+.stamina.full { opacity: 0; transition-delay: 0.8s; }
+.stamina__fill { height: 100%; width: 100%; background: rgba(196, 186, 150, 0.8); }
+.stamina.low .stamina__fill { background: rgba(214, 150, 80, 0.9); }
