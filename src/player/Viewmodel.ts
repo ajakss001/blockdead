@@ -11,6 +11,7 @@ import {
   PerspectiveCamera,
   PointLight,
   Quaternion,
+  SphereGeometry,
   Scene,
   Vector3,
 } from 'three';
@@ -71,18 +72,20 @@ const key2h = (hand: [number, number, number], axis: [number, number, number], e
  * right shoulder in the top right of the frame, edge out and forward; the handle running down to the
  * left hip, the left hand at its end low left. The crosshair stays clear (the handle passes well below it).
  */
-const W_IDLE = key2h([-0.183, -0.282, -0.573], [0.75, 0.62, -0.1], [0.6, -0.1, -0.8]);
+const W_IDLE = key2h([-0.11, -0.25, -0.46], [0.72, 0.66, -0.2], [0.6, 0, -0.8]);
 /** Sprinting: lower and flatter across the chest, the head tipped back a little. */
-const W_SPRINT = key2h([-0.227, -0.359, -0.627], [0.8, 0.55, 0.1], [0.3, 0, -1]);
+const W_SPRINT = key2h([-0.08, -0.27, -0.42], [0.85, 0.5, -0.1], [0.3, 0, -1]);
 /** Wound up: the head lifted back over the right shoulder, the edge leading. */
-const W_WINDUP = key2h([0.06, -0.3, -0.6], [0.35, 0.85, 0.3], [0.1, 0.6, -0.8]);
+const W_WINDUP = key2h([0.08, -0.12, -0.5], [0.35, 0.85, 0.4], [0.1, 0.6, -0.8]);
 /** End of the chop: hands down at the belly, the head forward and low, mostly below the frame. */
-const W_STRIKE = key2h([0.0, -0.42, -0.5], [-0.12, -0.3, -0.95], [0, -1, 0.15]);
+const W_STRIKE = key2h([0.05, -0.19, -0.25], [-0.15, -0.3, -0.94], [0, -1, 0.15]);
 /** Elbow directions (from the hand towards the elbow): both elbows bent, down and back, never at the camera. */
-const ELBOW_R = new Vector3(0.45, -0.75, 0.45).normalize();
-const ELBOW_L = new Vector3(-0.35, -0.7, 0.6).normalize();
-/** Wrist bend between the fist's grip axis and the forearm on two-handed grips, rad (right, left). */
-const WRIST_2H = [0.35, 0.5];
+/** Two-bone arms for two-handed grips: shoulders below and just behind the eyes, elbows bent down and out. */
+const SHOULDER_R = new Vector3(0.19, -0.25, -0.05);
+const SHOULDER_L = new Vector3(-0.19, -0.25, -0.05);
+const POLE_R = new Vector3(0.7, -0.6, 0.25).normalize();
+const POLE_L = new Vector3(-0.7, -0.6, 0.25).normalize();
+const UPPER = 0.4;
 const FOREARM = 0.32;
 const HAND_OFFSET = FOREARM + 0.01;
 
@@ -96,9 +99,19 @@ export interface ViewmodelFrame {
 }
 
 const _v = new Vector3();
-const _w = new Vector3();
-const _q = new Quaternion();
 const _m = new Matrix4();
+const _up = new Vector3(0, 1, 0);
+
+/** Two-bone IK: elbow for a shoulder, a wrist target, bone lengths a (upper) and b (fore), bent towards pole. */
+function solveElbow(s: Vector3, w: Vector3, a: number, b: number, pole: Vector3, out: Vector3): void {
+  const dir = new Vector3().subVectors(w, s);
+  const len = Math.min(a + b - 1e-3, Math.max(Math.abs(a - b) + 1e-3, dir.length()));
+  dir.normalize();
+  const along = (a * a - b * b + len * len) / (2 * len);
+  const h = Math.sqrt(Math.max(0, a * a - along * along));
+  const p = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+  out.copy(s).addScaledVector(dir, along).addScaledVector(p, h);
+}
 
 /**
  * First-person arms, drawn in a second pass with their own camera and FOV after clearing depth:
@@ -121,7 +134,7 @@ export class Viewmodel {
   private readonly torch: Group;
   private readonly sleeves: Mesh[] = [];
   private readonly cuffs: Mesh[] = [];
-  /** Upper arms behind the elbows: two-handed poses bring the elbows into view. */
+  /** Upper arms (shoulder → elbow) of the two-handed grips; [right, left]. */
   private readonly uppers: Mesh[] = [];
   private readonly hands: Mesh[] = [];
   private readonly lens: MeshBasicMaterial;
@@ -187,7 +200,7 @@ export class Viewmodel {
     (this.torch.children[0] as Group).add(lens);
     this.handL.add(this.torch);
 
-    this.root.add(this.armR, this.armL);
+    this.root.add(this.armR, this.armL, ...this.uppers);
     this.scene.add(this.root);
   }
 
@@ -297,6 +310,8 @@ export class Viewmodel {
       this.base.py += pump * 0.03;
       lerpPose(this.base, this.base, R_LOWERED, this.rightDown);
       applyPose(this.armR, this.attackPose(this.base));
+      this.handR.position.set(0, 0, -HAND_OFFSET);
+      this.handL.position.set(0, 0, -HAND_OFFSET);
       this.handR.rotation.set(this.config(this.item).wrist, 0, 0);
 
       lerpPose(this.tmp, L_IDLE, L_SPRINT, this.sprintT);
@@ -364,32 +379,40 @@ export class Viewmodel {
     const g = this.held.get(this.item)!;
     g.position.copy(w.pos);
     g.quaternion.copy(w.q);
-    this.placeHand(this.armR, this.handR, a.grips[0], ELBOW_R, 1);
-    this.placeHand(this.armL, this.handL, a.grips[1], ELBOW_L, -1);
+    this.placeHand(this.armR, this.handR, this.uppers[0], a.grips[0], SHOULDER_R, POLE_R, 1);
+    this.placeHand(this.armL, this.handL, this.uppers[1], a.grips[1], SHOULDER_L, POLE_L, -1);
   }
 
   /**
-   * Put a hand on the weapon's handle at distance `grip` from the butt: the fist's grip axis along
-   * the handle, the forearm rolled so it runs back towards `elbowDir`. Arm root = elbow.
+   * A hand on the handle at `grip` from the butt, the arm a two-bone chain to it: shoulder → elbow
+   * (upper arm, fixed length) → wrist (forearm), the elbow bent towards `pole` (down and out). The fist
+   * wraps the handle (its grip axis along it), turned towards the forearm.
    */
-  private placeHand(arm: Group, hand: Group, grip: number, elbowDir: Vector3, side: number): void {
+  private placeHand(arm: Group, hand: Group, upper: Mesh, grip: number, shoulder: Vector3, pole: Vector3, side: number): void {
     const w = this.weapon;
-    const axis = _v.set(0, 1, 0).applyQuaternion(w.q);
-    const point = _w.set(0, grip, 0).applyQuaternion(w.q).add(w.pos);
-    // Hand basis: y = handle axis, z = towards the elbow (perpendicular part), x = y × z.
-    const z = elbowDir.clone().addScaledVector(axis, -elbowDir.dot(axis)).normalize();
-    const x = new Vector3().crossVectors(axis, z);
-    _m.makeBasis(x, axis, z);
-    _q.setFromRotationMatrix(_m);
-    // Hand origin so that its grip axis passes through the grip point.
-    const gripLocal = new Vector3(GRIP_X * side, 0, GRIP_Z).applyQuaternion(_q);
-    const handOrigin = point.clone().sub(gripLocal);
-    // The wrist is bent: forearm rotation = hand rotation undone by the bend; the elbow behind it.
-    const bend = WRIST_2H[side > 0 ? 0 : 1];
-    hand.rotation.set(bend, 0, 0);
-    const armQ = _q.clone().multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -bend));
-    arm.quaternion.copy(armQ);
-    arm.position.copy(handOrigin).add(new Vector3(0, 0, HAND_OFFSET).applyQuaternion(armQ));
+    const axis = new Vector3(0, 1, 0).applyQuaternion(w.q);
+    const point = new Vector3(0, grip, 0).applyQuaternion(w.q).add(w.pos);
+    const toElbow = pole.clone();
+    const handQ = new Quaternion();
+    const wrist = new Vector3();
+    const elbow = new Vector3();
+    for (let it = 0; it < 2; it++) {
+      // Hand basis: y = handle axis, z = towards the elbow (perpendicular part), x = y × z.
+      const z = toElbow.clone().addScaledVector(axis, -toElbow.dot(axis)).normalize();
+      handQ.setFromRotationMatrix(_m.makeBasis(new Vector3().crossVectors(axis, z), axis, z));
+      wrist.copy(point).sub(new Vector3(GRIP_X * side, 0, GRIP_Z).applyQuaternion(handQ));
+      solveElbow(shoulder, wrist, UPPER, HAND_OFFSET, pole, elbow);
+      toElbow.subVectors(elbow, wrist).normalize();
+    }
+    // Forearm: from the elbow along its −Z to the wrist; the hand keeps its own (handle) rotation.
+    arm.position.copy(elbow);
+    arm.quaternion.setFromRotationMatrix(_m.lookAt(elbow, wrist, axis));
+    hand.position.set(0, 0, -elbow.distanceTo(wrist));
+    hand.quaternion.copy(arm.quaternion).invert().multiply(handQ);
+    // Upper arm: shoulder to elbow.
+    upper.position.copy(shoulder);
+    upper.quaternion.setFromRotationMatrix(_m.lookAt(shoulder, elbow, _up));
+    upper.scale.set(1, 1, shoulder.distanceTo(elbow) / UPPER);
   }
 
   private attackPose(base: Pose): Pose {
@@ -417,11 +440,14 @@ export class Viewmodel {
     const sleeve = new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), skin);
     const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), skin);
     cuffMesh.position.z = -FOREARM + 0.02;
-    // The arm goes on past the elbow to the edge of the frame, so it never ends in mid-air.
-    const upper = new Mesh(this.geo(limbForward(0.062, 0.052, 0.5)), skin);
-    upper.position.z = 0.5;
+    // Upper arm (two-handed grips), with a rounded elbow at its end.
+    const upper = new Mesh(this.geo(limbForward(0.064, 0.054, UPPER)), skin);
+    const joint = new Mesh(this.geo(new SphereGeometry(0.055, 8, 6)), skin);
+    joint.position.z = -UPPER;
+    upper.add(joint);
     upper.visible = false;
-    arm.add(sleeve, cuffMesh, upper);
+    this.sleeves.push(joint);
+    arm.add(sleeve, cuffMesh);
     this.sleeves.push(sleeve, upper);
     this.uppers.push(upper);
     this.cuffs.push(cuffMesh);
