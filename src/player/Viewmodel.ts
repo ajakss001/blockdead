@@ -12,6 +12,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, damp, easeInOutSine, easeInQuad, easeOutQuad, lerp } from '../core/math';
 import { limbForward } from '../render/lowpoly';
 import { bladeMaterial, characterMaterial } from '../render/look/materials';
@@ -136,14 +137,18 @@ export class Viewmodel {
 
     // Flashlight in the left fist, pointing forward.
     const torch = new Group();
-    const body = new Mesh(this.geo(limbForward(0.018, 0.018, 0.15, 8)), characterMaterial('torch', 0x2d2f31));
-    body.position.z = 0.05;
-    const head = new Mesh(this.geo(limbForward(0.022, 0.028, 0.045, 8)), characterMaterial('torch', 0x3a3d40));
-    head.position.z = -0.1;
+    // Body and head in one mesh (one draw call).
+    const bodyGeo = limbForward(0.018, 0.018, 0.15, 8);
+    bodyGeo.translate(0, 0, 0.05);
+    const headGeo = limbForward(0.022, 0.028, 0.045, 8);
+    headGeo.translate(0, 0, -0.1);
+    const body = new Mesh(this.geo(mergeGeometries([bodyGeo, headGeo])!), characterMaterial('torch', 0x33363a));
+    bodyGeo.dispose();
+    headGeo.dispose();
     this.lens = this.mat(new MeshBasicMaterial({ color: 0x3a3a34 })) as MeshBasicMaterial;
     const lens = new Mesh(this.geo(limbForward(0.026, 0.026, 0.004, 8)), this.lens);
     lens.position.z = -0.145;
-    torch.add(body, head, lens);
+    torch.add(body, lens);
     torch.position.set(0.012, 0.012, -0.07);
     (this.armL.userData.hand as Group).add(torch);
 
@@ -276,15 +281,19 @@ export class Viewmodel {
 
     const hand = new Group();
     hand.position.z = -FOREARM - 0.01;
-    const palm = new Mesh(this.geo(new BoxGeometry(0.036, 0.075, 0.085)), skin);
-    palm.position.z = -0.04;
-    // Curled fingers form the fist around a vertical grip on the inner side of the palm.
-    const fingers = new Mesh(this.geo(new BoxGeometry(0.05, 0.072, 0.034)), skin);
-    fingers.position.set(-side * 0.014, -0.004, -0.088);
-    const thumb = new Mesh(this.geo(new BoxGeometry(0.022, 0.022, 0.05)), skin);
-    thumb.position.set(-side * 0.03, 0.03, -0.06);
-    thumb.rotation.y = side * 0.4;
-    hand.add(palm, fingers, thumb);
+    // Palm, curled fingers (the fist closes round a vertical grip on the palm's inner side) and the
+    // thumb: one mesh, one draw call.
+    const palm = new BoxGeometry(0.036, 0.075, 0.085);
+    palm.translate(0, 0, -0.04);
+    const fingers = new BoxGeometry(0.05, 0.072, 0.034);
+    fingers.translate(-side * 0.014, -0.004, -0.088);
+    const thumb = new BoxGeometry(0.022, 0.022, 0.05);
+    thumb.rotateY(side * 0.4);
+    thumb.translate(-side * 0.03, 0.03, -0.06);
+    hand.add(new Mesh(this.geo(mergeGeometries([palm, fingers, thumb])!), skin));
+    palm.dispose();
+    fingers.dispose();
+    thumb.dispose();
     arm.add(hand);
     arm.userData.hand = hand;
   }

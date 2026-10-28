@@ -26,7 +26,7 @@ export function outfitFrom(worn: Worn): Outfit {
   } else {
     shoes = { kind: 'barefoot', upper: SKIN, sole: darker(SKIN, 0.75), laces: SKIN, collar: SKIN };
   }
-  return { sleeves: torso?.color ?? null, pants: legs?.color ?? null, shoes };
+  return { sleeves: torso && torso.sleeves !== false ? torso.color : null, pants: legs?.color ?? null, shoes };
 }
 
 export function cuffColor(sleeves: number): number {

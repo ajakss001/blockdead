@@ -1,6 +1,5 @@
 import type { ItemId } from '../data/items';
 import { ITEMS } from '../data/items';
-import type { Worn } from '../systems/Inventory';
 
 /**
  * Lo-fi pixel art drawn in code: every icon is a few primitives on a 16×16 grid, then one shared
@@ -99,7 +98,6 @@ const C = {
   steelDark: 0x5a5e62,
   wood: 0x8a6440,
   woodDark: 0x5e4228,
-  blood: 0x6a1410,
   paper: 0xd8d0b8,
   white: 0xe6e2d6,
   black: 0x24221f,
@@ -262,15 +260,12 @@ const DRAW: Record<ItemId, (s: Sprite) => void> = {
     s.line(6, 9, 13, 2, C.steel, 2);
     s.line(7, 10, 13, 4, C.steelDark);
     s.line(2, 14, 6, 10, C.woodDark, 2);
-    s.dot(10, 5, C.blood);
-    s.dot(11, 5, C.blood);
   },
   bat: (s) => {
     s.line(2, 14, 13, 3, 0xb08850, 2);
     s.line(9, 7, 13, 3, 0xb08850, 3);
     s.line(3, 13, 5, 11, C.black, 2);
     s.dot(1, 15, C.woodDark);
-    s.dot(12, 5, C.blood);
   },
   hammer: (s) => {
     s.line(3, 14, 10, 7, C.wood, 2);
@@ -288,7 +283,6 @@ const DRAW: Record<ItemId, (s: Sprite) => void> = {
     s.rect(9, 1, 6, 4, C.steelDark);
     s.line(14, 1, 14, 6, C.steel);
     s.rect(10, 5, 3, 1, C.steelDark);
-    s.dot(13, 3, C.blood);
   },
   nails: (s) => {
     for (const [x, y] of [
@@ -361,6 +355,13 @@ const DRAW: Record<ItemId, (s: Sprite) => void> = {
     s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
     s.line(8, 4, 8, 9, shadeRGB(c, 1.25));
   },
+  tshirt: (s) => {
+    const c = ITEMS.tshirt.wear!.color;
+    s.rect(4, 3, 8, 11, c);
+    s.rect(1, 3, 3, 4, c);
+    s.rect(12, 3, 3, 4, c);
+    s.rect(6, 3, 4, 1, shadeRGB(c, 0.7));
+  },
   hoodie: (s) => top(s, ITEMS.hoodie.wear!.color, true, true, null),
   leatherJacket: (s) => top(s, ITEMS.leatherJacket.wear!.color, false, false, 0x9a9c96),
   workJacket: (s) => top(s, ITEMS.workJacket.wear!.color, false, true, 0x3a3428),
@@ -384,6 +385,89 @@ function clearRect(s: Sprite, x0: number, y0: number, x1: number, y1: number): v
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (x >= 0 && y >= 0 && x < s.w && y < s.h) s.px[y * s.w + x] = 0;
 }
 
+/** HUD indicators: health, hunger, thirst, energy, body warmth, calm, flashlight battery; wound is a status. */
+export type StatIcon = 'health' | 'hunger' | 'thirst' | 'energy' | 'warmth' | 'calm' | 'battery' | 'wound';
+
+/** One-color silhouettes (+ a darker detail tone), tinted per severity by the HUD. */
+const STAT_DRAW: Record<StatIcon, (s: Sprite, c: number, d: number) => void> = {
+  health: (s, c) => {
+    s.ellipse(5, 6, 3, 3, c);
+    s.ellipse(10, 6, 3, 3, c);
+    for (let y = 7; y <= 13; y++) s.rect(2 + (y - 7), y, 12 - 2 * (y - 7), 1, c);
+    s.dot(5, 5, shadeRGB(c, 1.35));
+  },
+  hunger: (s, c, d) => {
+    // A loaf of bread with scored top.
+    s.ellipse(8, 9, 6, 4, c);
+    s.rect(2, 10, 13, 3, c);
+    for (const x of [5, 8, 11]) s.line(x, 7, x + 1, 9, d);
+  },
+  thirst: (s, c) => {
+    s.ellipse(8, 10, 4, 4, c);
+    for (let y = 2; y <= 8; y++) {
+      const w = Math.round((y - 2) * 0.6);
+      s.rect(8 - w, y, 1 + 2 * w, 1, c);
+    }
+    s.dot(6, 9, shadeRGB(c, 1.4));
+  },
+  energy: (s, c, d) => {
+    // Crescent moon and a "z": tiredness.
+    s.ellipse(7, 9, 5, 5, c);
+    clearEllipse(s, 10, 7, 4, 4);
+    s.line(11, 2, 14, 2, d);
+    s.line(14, 2, 11, 5, d);
+    s.line(11, 5, 14, 5, d);
+  },
+  warmth: (s, c, d) => {
+    // Thermometer.
+    s.rect(7, 1, 3, 10, c);
+    s.ellipse(8, 12, 3, 3, c);
+    s.line(8, 4, 8, 11, d);
+    for (const y of [3, 6, 9]) s.dot(11, y, c);
+  },
+  calm: (s, c, d) => {
+    // Heartbeat trace in a frame: the faster it gets, the less calm you are.
+    s.rect(1, 3, 14, 10, d);
+    s.line(2, 8, 5, 8, c);
+    s.line(5, 8, 7, 4, c);
+    s.line(7, 4, 9, 12, c);
+    s.line(9, 12, 10, 8, c);
+    s.line(10, 8, 13, 8, c);
+  },
+  battery: (s, c, d) => {
+    // Flashlight with a beam.
+    s.rect(1, 7, 7, 3, c);
+    s.rect(8, 6, 3, 5, c);
+    s.dot(4, 8, d);
+    s.line(12, 6, 14, 4, c);
+    s.line(12, 8, 15, 8, c);
+    s.line(12, 10, 14, 12, c);
+  },
+  wound: (s, c, d) => {
+    // Adhesive bandage.
+    s.line(3, 12, 12, 3, c, 4);
+    s.rect(6, 6, 4, 4, d);
+    s.dot(7, 7, c);
+    s.dot(8, 8, c);
+  },
+};
+
+const statCache = new Map<string, string>();
+
+/** Data URL of a 16×16 HUD indicator in the given color (cached per color). */
+export function statIcon(id: StatIcon, color: number): string {
+  const key = `${id}:${color}`;
+  let url = statCache.get(key);
+  if (!url) {
+    const s = new Sprite(16, 16);
+    STAT_DRAW[id](s, color, shadeRGB(color, 0.55));
+    s.finish(0x0c0a08);
+    url = s.toDataURL();
+    statCache.set(key, url);
+  }
+  return url;
+}
+
 const iconCache = new Map<ItemId, string>();
 
 /** Data URL of the item's 16×16 icon (cached). */
@@ -397,94 +481,4 @@ export function itemIcon(id: ItemId): string {
     iconCache.set(id, url);
   }
   return url;
-}
-
-const SKIN = 0xc8946c;
-const HAIR = 0x3a2a1e;
-
-/**
- * Paper doll, 32×64: the survivor in what they wear right now (bare skin and underwear where
- * a slot is empty), plus the weapon in the right hand. Shown scaled ×3 in the inventory.
- */
-export function dollImage(worn: Worn, hand: ItemId | null): string {
-  const s = new Sprite(32, 64);
-  const col = (id: ItemId | null) => (id ? ITEMS[id].wear!.color : null);
-  const torso = col(worn.torso);
-  const legs = col(worn.legs);
-  const feet = worn.feet ? ITEMS[worn.feet].wear! : null;
-
-  // Head and neck.
-  s.ellipse(16, 7, 4, 5, SKIN);
-  s.rect(12, 3, 9, 3, HAIR);
-  s.dot(14, 8, 0x2a1a12);
-  s.dot(18, 8, 0x2a1a12);
-  s.rect(14, 12, 5, 2, SKIN);
-
-  // Arms (sleeves or skin) and hands.
-  const arm = torso ?? SKIN;
-  s.rect(7, 15, 3, 15, arm);
-  s.rect(23, 15, 3, 15, arm);
-  s.rect(7, 30, 3, 3, SKIN);
-  s.rect(23, 30, 3, 3, SKIN);
-  // Torso: jacket or an undershirt.
-  s.rect(10, 14, 13, 17, torso ?? 0x8a8a82);
-  if (torso !== null) {
-    s.line(16, 15, 16, 30, shadeRGB(torso, 0.7));
-    s.rect(10, 14, 13, 1, shadeRGB(torso, 1.2));
-  }
-  // Hips and legs.
-  s.rect(10, 31, 13, 4, legs ?? 0x4e4e5a);
-  s.rect(10, 35, 6, 18, legs ?? SKIN);
-  s.rect(17, 35, 6, 18, legs ?? SKIN);
-  if (legs === null) {
-    s.rect(10, 35, 6, 3, 0x4e4e5a);
-    s.rect(17, 35, 6, 3, 0x4e4e5a);
-  }
-  // Feet.
-  if (feet?.shoe === 'boots') {
-    s.rect(9, 50, 7, 9, feet.color);
-    s.rect(17, 50, 7, 9, feet.color);
-    s.rect(9, 58, 7, 2, 0x221e1a);
-    s.rect(17, 58, 7, 2, 0x221e1a);
-  } else if (feet) {
-    s.rect(9, 53, 7, 5, feet.color);
-    s.rect(17, 53, 7, 5, feet.color);
-    s.rect(9, 58, 7, 2, 0xd8d0be);
-    s.rect(17, 58, 7, 2, 0xd8d0be);
-  } else {
-    s.rect(10, 53, 6, 6, SKIN);
-    s.rect(17, 53, 6, 6, SKIN);
-  }
-  // Headwear.
-  const head = worn.head;
-  if (head) {
-    const c = ITEMS[head].wear!.color;
-    if (head === 'cap') {
-      s.rect(11, 1, 10, 4, c);
-      s.rect(19, 4, 5, 1, shadeRGB(c, 0.8));
-    } else if (head === 'beanie') {
-      s.rect(11, 0, 10, 5, c);
-      s.rect(11, 4, 10, 1, shadeRGB(c, 0.75));
-    } else {
-      s.ellipse(16, 4, 6, 4, c);
-      clearRect(s, 9, 5, 24, 6);
-      s.rect(9, 4, 15, 1, shadeRGB(c, 0.85));
-    }
-  }
-  // Weapon held in the right hand (screen left).
-  if (hand) {
-    const steel = 0x8a8e92;
-    if (hand === 'knife') s.line(8, 33, 8, 40, steel);
-    else if (hand === 'axe') {
-      s.line(8, 26, 8, 44, 0x8a3a24);
-      s.rect(4, 26, 4, 4, steel);
-    } else if (hand === 'bat') s.line(8, 22, 8, 44, 0xb08850, 2);
-    else if (hand === 'crowbar') s.line(8, 24, 8, 44, 0x8a2a20);
-    else if (hand === 'hammer') {
-      s.line(8, 30, 8, 40, 0x8a6440);
-      s.rect(6, 29, 5, 2, 0x5a5e62);
-    }
-  }
-  s.finish();
-  return s.toDataURL();
 }

@@ -8,6 +8,8 @@ export const ROAD_HALF = 3.6;
 export const VERGE = 2;
 /** Half-width of the whole road corridor; nothing is built inside it. */
 export const BAND = ROAD_HALF + VERGE;
+/** Slab tops laid over flat ground by the generator, m. */
+export const PAVE = { asphalt: 0.02, sidewalk: 0.06, plaza: 0.04 } as const;
 /** Country roads keep the grid connected through forests and fields. */
 const COUNTRY_EVERY = 4;
 
@@ -80,6 +82,31 @@ export class WorldLayout {
 
   urbanZ(i: number, j: number): boolean {
     return this.isUrban(i, j - 1) || this.isUrban(i, j);
+  }
+
+  /**
+   * Top of what the player walks on outside buildings: asphalt (+2 cm), sidewalks and curbside
+   * corners (+6 cm), the paved downtown blocks (+4 cm), the terrain everywhere else.
+   * Mirrors the slabs laid by buildChunk.roads() / downtown().
+   */
+  walkHeightAt(x: number, z: number): number {
+    const ground = this.heightAt(x, z);
+    const li = Math.round(x / CHUNK);
+    const lj = Math.round(z / CHUNK);
+    const dx = Math.abs(x - li * CHUNK);
+    const dz = Math.abs(z - lj * CHUNK);
+    const bi = Math.floor(x / CHUNK);
+    const bj = Math.floor(z / CHUNK);
+    if (dx <= BAND && dz <= BAND) {
+      // Intersection square around (li, lj).
+      if (!(this.roadX(li, lj) || this.roadZ(li, lj) || this.roadX(li, lj - 1) || this.roadZ(li - 1, lj))) return ground;
+      if (dx <= ROAD_HALF || dz <= ROAD_HALF) return PAVE.asphalt;
+      const urban = this.isUrban(li, lj) || this.isUrban(li - 1, lj) || this.isUrban(li, lj - 1) || this.isUrban(li - 1, lj - 1);
+      return urban ? PAVE.sidewalk : PAVE.asphalt;
+    }
+    if (dx <= BAND && this.roadX(li, bj)) return dx <= ROAD_HALF ? PAVE.asphalt : this.urbanX(li, bj) ? PAVE.sidewalk : ground;
+    if (dz <= BAND && this.roadZ(bi, lj)) return dz <= ROAD_HALF ? PAVE.asphalt : this.urbanZ(bi, lj) ? PAVE.sidewalk : ground;
+    return this.isDowntown(bi, bj) ? PAVE.plaza : ground;
   }
 
   /**

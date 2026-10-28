@@ -22,6 +22,8 @@ export interface GameContext {
   readonly input: InputManager;
   readonly debug: DebugInfo;
   readonly hud: Hud;
+  /** Screen effects driven by gameplay. */
+  readonly fx: { setDread(amount: number): void };
   /** PC: re-acquire pointer lock after a UI closes (no-op on touch). Must run inside a user gesture. */
   requestPointerLock(): void;
 }

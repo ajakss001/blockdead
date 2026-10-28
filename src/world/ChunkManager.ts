@@ -1,5 +1,6 @@
-import type { Group, Scene } from 'three';
+import type { Group, Mesh, Scene } from 'three';
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
+import { worldMaterials } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
 import type { ChunkData, InteriorData } from './gen/buildChunk';
 import type { WorkerRequest, WorkerResponse } from './gen/chunkWorker';
@@ -33,6 +34,8 @@ export class ChunkManager {
   onInterior?: (data: InteriorData) => void;
 
   private readonly loaded = new Map<number, LoadedChunk>();
+  /** Chunks whose opaque mesh uses the window-cutting material, with a count of buildings asking. */
+  private readonly cutRefs = new Map<number, number>();
   private readonly pending = new Set<number>();
   private readonly ready: WorkerResponse[] = [];
   private readonly workers: Worker[] = [];
@@ -157,6 +160,27 @@ export class ChunkManager {
     this.inFlight[best]++;
   }
 
+  /**
+   * Switch a chunk's opaque mesh to the window-cutting material while one of its high-rises has its
+   * interior loaded (reference-counted: a chunk can hold two such buildings).
+   */
+  setWindowCut(chunkKey: number, on: boolean): void {
+    const n = (this.cutRefs.get(chunkKey) ?? 0) + (on ? 1 : -1);
+    if (n <= 0) this.cutRefs.delete(chunkKey);
+    else this.cutRefs.set(chunkKey, n);
+    this.applyCut(chunkKey);
+  }
+
+  private applyCut(chunkKey: number): void {
+    const chunk = this.loaded.get(chunkKey);
+    if (!chunk) return;
+    const mats = worldMaterials();
+    const cut = (this.cutRefs.get(chunkKey) ?? 0) > 0;
+    for (const child of chunk.group.children) {
+      if (child.name.endsWith(':cast')) (child as Mesh).material = cut ? mats.castCut : mats.cast;
+    }
+  }
+
   private apply(data: ChunkData): void {
     const k = key(data.i, data.j);
     this.pending.delete(k);
@@ -165,6 +189,7 @@ export class ChunkManager {
     this.scene.add(group);
     this.world.addPacked(k, data.colliders);
     this.loaded.set(k, { group, zone: data.zone });
+    this.applyCut(k);
     this.lastGenMs = data.ms;
     this.onChunkLoaded?.(k, data);
   }

@@ -2,7 +2,7 @@ import { mulberry32 } from '../../core/random';
 import type { DecalKind } from './surfaces';
 
 /**
- * Alpha-cut overlay textures on a transparent background: blood pools, tyre skid marks,
+ * Alpha-cut overlay textures on a transparent background: scorch marks, oil leaks, tyre skid marks,
  * bullet-hole clusters, broken glass, paper litter. They sit on top of other surfaces as thin quads,
  * so a street can carry its own story without a single unique texture.
  */
@@ -13,24 +13,38 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
   const g = canvas.getContext('2d')!;
   const c = size / 2;
   switch (kind) {
-    case 'blood': {
-      g.fillStyle = 'rgba(52, 6, 6, 0.95)';
-      for (let i = 0; i < 9; i++) {
+    case 'soot': {
+      // Scorch mark of a burnt-out fire: grey ash rim, black core, flecks of char.
+      for (let i = 0; i < 7; i++) {
+        g.fillStyle = `rgba(${40 + rand() * 20}, ${40 + rand() * 18}, ${38 + rand() * 16}, 0.55)`;
         g.beginPath();
-        g.ellipse(c + (rand() - 0.5) * size * 0.3, c + (rand() - 0.5) * size * 0.3, size * (0.08 + rand() * 0.12), size * (0.06 + rand() * 0.1), rand() * 3, 0, Math.PI * 2);
+        g.ellipse(c + (rand() - 0.5) * size * 0.3, c + (rand() - 0.5) * size * 0.3, size * (0.14 + rand() * 0.14), size * (0.1 + rand() * 0.12), rand() * 3, 0, Math.PI * 2);
         g.fill();
       }
-      for (let i = 0; i < 24; i++) {
-        const a = rand() * Math.PI * 2;
-        const d = size * (0.25 + rand() * 0.2);
-        g.beginPath();
-        g.arc(c + Math.cos(a) * d, c + Math.sin(a) * d, 1 + rand() * 3, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.fillStyle = 'rgba(30, 3, 3, 0.7)';
+      g.fillStyle = 'rgba(14, 13, 12, 0.92)';
       g.beginPath();
-      g.ellipse(c, c, size * 0.12, size * 0.09, 0.4, 0, Math.PI * 2);
+      g.ellipse(c, c, size * 0.16, size * 0.12, rand() * 3, 0, Math.PI * 2);
       g.fill();
+      for (let i = 0; i < 30; i++) {
+        const a = rand() * Math.PI * 2;
+        const d = size * (0.1 + rand() * 0.3);
+        g.fillStyle = rand() < 0.5 ? 'rgba(20, 19, 18, 0.9)' : 'rgba(120, 116, 108, 0.6)';
+        g.fillRect(c + Math.cos(a) * d, c + Math.sin(a) * d, 1 + rand() * 3, 1 + rand() * 2);
+      }
+      break;
+    }
+    case 'oil': {
+      // Engine oil leaked from a wreck: near-black puddle with a dull grey rim.
+      g.fillStyle = 'rgba(70, 72, 74, 0.5)';
+      g.beginPath();
+      g.ellipse(c, c, size * 0.34, size * 0.24, rand() * 3, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = 'rgba(12, 13, 14, 0.95)';
+      for (let i = 0; i < 6; i++) {
+        g.beginPath();
+        g.ellipse(c + (rand() - 0.5) * size * 0.25, c + (rand() - 0.5) * size * 0.2, size * (0.08 + rand() * 0.12), size * (0.06 + rand() * 0.08), rand() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
       break;
     }
     case 'skid': {

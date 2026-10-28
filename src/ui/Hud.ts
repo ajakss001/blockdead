@@ -1,26 +1,47 @@
-export type MoodleId = 'hunger' | 'thirst' | 'tired' | 'anxiety' | 'bleeding' | 'pain';
-/** 0 = hidden, 1..3 = severity. */
-export type MoodleLevel = 0 | 1 | 2 | 3;
+import { type StatIcon, statIcon } from './pixelart';
 
-/** Muted, dirty palette: nothing on screen should look like a mobile game button. */
-const MOODLES: Record<MoodleId, { label: string; color: string }> = {
-  hunger: { label: 'Голод', color: '#9a8442' },
-  thirst: { label: 'Жажда', color: '#6f7f86' },
-  tired: { label: 'Усталость', color: '#7a7468' },
-  anxiety: { label: 'Тревога', color: '#94704e' },
-  bleeding: { label: 'Кровотечение', color: '#8a2420' },
-  pain: { label: 'Боль', color: '#7c3a30' },
+/** Meters on the HUD; each is 0..1 where 1 = fine ("how much is left"). */
+export type StatId = Exclude<StatIcon, 'wound'>;
+/** 0 fine, 1 warning, 2 bad, 3 critical (blinks). */
+export type Severity = 0 | 1 | 2 | 3;
+/** Cold readings tint blue instead of amber. */
+export type Tint = 'normal' | 'cold';
+
+const STATS: { id: StatId; label: string }[] = [
+  { id: 'health', label: 'Здоровье' },
+  { id: 'hunger', label: 'Сытость' },
+  { id: 'thirst', label: 'Вода' },
+  { id: 'energy', label: 'Силы' },
+  { id: 'warmth', label: 'Тепло тела' },
+  { id: 'calm', label: 'Спокойствие' },
+  { id: 'battery', label: 'Заряд фонаря' },
+];
+
+/** Muted lo-fi palette: severity reads by hue, nothing screams like a mobile-game button. */
+const PALETTE: Record<Tint, readonly number[]> = {
+  normal: [0xa3ab96, 0xc8a050, 0xc8783a, 0xd8602e],
+  cold: [0xa3ab96, 0x86a4c0, 0x6a92c8, 0x5a84d8],
 };
+const DIM = 0x55574f;
+
+interface StatView {
+  root: HTMLDivElement;
+  fill: HTMLDivElement;
+  img: HTMLImageElement;
+  fillKey: number;
+  colorKey: string;
+}
 
 /**
- * Zomboid-style minimal HUD: plain-text state indicators in the corner that appear only when
- * something is wrong, and a thin timed-action bar under the crosshair. Pure DOM, no per-frame
- * layout: updates only touch textContent / opacity / transform.
+ * Zomboid-style HUD: a compact row of pixel-art indicators in the top-right corner (clear of the
+ * phone buttons), filled from the bottom by how much is left and tinted by severity; critical ones
+ * blink. Plus the thin timed-action bar under the crosshair, toasts and the context prompt.
+ * Updates touch only style/src when a value actually changes.
  */
 export class Hud {
-  private readonly moodles = document.createElement('div');
-  private readonly rows = new Map<MoodleId, HTMLDivElement>();
-  private readonly levels = new Map<MoodleId, MoodleLevel>();
+  private readonly stats = document.createElement('div');
+  private readonly views = new Map<StatId, StatView>();
+  private readonly wound = document.createElement('img');
   private readonly action = document.createElement('div');
   private readonly actionLabel = document.createElement('div');
   private readonly actionFill = document.createElement('div');
@@ -28,7 +49,32 @@ export class Hud {
   private toastTimer = 0;
 
   constructor(parent: HTMLElement) {
-    this.moodles.className = 'moodles';
+    this.stats.className = 'stats';
+    for (const { id, label } of STATS) {
+      const root = document.createElement('div');
+      root.className = 'stat';
+      root.title = label;
+      const base = document.createElement('img');
+      base.className = 'stat__img';
+      base.src = statIcon(id, DIM);
+      base.alt = '';
+      const fill = document.createElement('div');
+      fill.className = 'stat__fill';
+      const img = document.createElement('img');
+      img.className = 'stat__img';
+      img.alt = label;
+      fill.append(img);
+      root.append(base, fill);
+      this.stats.append(root);
+      this.views.set(id, { root, fill, img, fillKey: -1, colorKey: '' });
+      this.setStat(id, 1, 0);
+    }
+    this.wound.className = 'stat stat__img stat--wound';
+    this.wound.src = statIcon('wound', PALETTE.normal[3]);
+    this.wound.title = 'Рана — нужна перевязка';
+    this.wound.hidden = true;
+    this.stats.append(this.wound);
+
     this.action.className = 'action';
     this.action.hidden = true;
     this.actionLabel.className = 'action__label';
@@ -39,27 +85,30 @@ export class Hud {
     this.action.append(this.actionLabel, track);
     this.prompt.className = 'prompt';
     this.prompt.hidden = true;
-    parent.append(this.moodles, this.action, this.prompt);
+    parent.append(this.stats, this.action, this.prompt);
   }
 
-  setMoodle(id: MoodleId, level: MoodleLevel): void {
-    if (this.levels.get(id) === level) return;
-    this.levels.set(id, level);
-    let row = this.rows.get(id);
-    if (level === 0) {
-      row?.remove();
-      this.rows.delete(id);
-      return;
+  /** value: 0..1 how much is left; severity picks the color, 3 blinks. */
+  setStat(id: StatId, value: number, severity: Severity, tint: Tint = 'normal'): void {
+    const v = this.views.get(id)!;
+    const fillKey = Math.round(Math.min(1, Math.max(0, value)) * 16);
+    if (fillKey !== v.fillKey) {
+      v.fillKey = fillKey;
+      // Whole pixels of the 16-px icon, so the level reads as pixel art too.
+      v.fill.style.height = `${(fillKey / 16) * 100}%`;
     }
-    if (!row) {
-      row = document.createElement('div');
-      row.className = 'moodle';
-      row.style.color = MOODLES[id].color;
-      this.rows.set(id, row);
-      this.moodles.append(row);
+    const colorKey = `${tint}${severity}`;
+    if (colorKey !== v.colorKey) {
+      v.colorKey = colorKey;
+      v.img.src = statIcon(id, PALETTE[tint][severity]);
+      v.root.classList.toggle('stat--warn', severity > 0);
+      v.root.classList.toggle('stat--critical', severity === 3);
     }
-    row.textContent = `${MOODLES[id].label} ${'▪'.repeat(level)}`;
-    row.style.opacity = String(0.55 + level * 0.15);
+  }
+
+  setWound(on: boolean): void {
+    if (this.wound.hidden === !on) return;
+    this.wound.hidden = !on;
   }
 
   /** Context hint under the crosshair ("E — Обыскать: Холодильник"); null hides it. */
@@ -93,4 +142,9 @@ export class Hud {
     window.clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => this.hideAction(), ms);
   }
+}
+
+/** Severity of a "how much is left" value: < 50% warn, < 25% bad, < 10% critical. */
+export function severityOf(left: number): Severity {
+  return left < 0.1 ? 3 : left < 0.25 ? 2 : left < 0.5 ? 1 : 0;
 }

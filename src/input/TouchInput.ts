@@ -129,8 +129,8 @@ export class TouchInput {
           this.input.press(action);
           break;
         case 'tap':
+          // Edge on touch-down; held until the finger lifts, so a long press can't act twice.
           this.input.press(action);
-          this.input.release(action);
           break;
         case 'toggle':
           btn.classList.toggle('on');
@@ -143,7 +143,7 @@ export class TouchInput {
           break;
       }
     });
-    if (kind === 'hold') {
+    if (kind === 'hold' || kind === 'tap') {
       const up = () => {
         btn.classList.remove('on');
         this.input.release(action);

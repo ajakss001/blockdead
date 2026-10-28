@@ -1,5 +1,5 @@
 import { CylinderGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
-import type { Surface } from '../../render/look/surfaces';
+import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
 /**
@@ -130,6 +130,7 @@ const _m = new Matrix4();
 const _q = new Quaternion();
 const _p = new Vector3();
 const _s = new Vector3();
+const _yAxis = new Vector3(0, 1, 0);
 
 /** Decal quad lying on the ground (or a slab), random rotation. */
 export function groundDecal(b: Builder, surface: Surface, x: number, y: number, z: number, size: number, rand: Rand, stretch = 1): void {
@@ -140,7 +141,7 @@ export function groundDecal(b: Builder, surface: Surface, x: number, y: number, 
   g.dispose();
 }
 
-/** Decal on a wall facing −Z (in the current frame), e.g. bullet holes, blood. */
+/** Decal on a wall facing −Z (in the current frame), e.g. bullet holes. */
 export function wallDecalZ(b: Builder, surface: Surface, x: number, y: number, z: number, size: number, facing: 1 | -1): void {
   const g = new PlaneGeometry(size, size);
   if (facing < 0) g.rotateY(Math.PI);
@@ -150,6 +151,7 @@ export function wallDecalZ(b: Builder, surface: Surface, x: number, y: number, z
 
 /** Shell: facades, roof with parapet and stair head-house, storefront at street level, rooftop clutter. */
 export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): void {
+  b.shelter(desc.cx - desc.w / 2, desc.cz - desc.d / 2, desc.cx + desc.w / 2, desc.cz + desc.d / 2, desc.floors * FLOOR_H);
   if (desc.flip) b.beginFlip(desc.cx, desc.cz);
   const L = local(desc);
   const H = desc.floors * FLOOR_H;
@@ -203,13 +205,17 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     for (let x = a; x < c - 1; x += 3) {
       const pw = Math.min(2.8, c - x);
       const broken = rand() < 0.45;
-      b.block(PAL.trim, x - 0.08, 0.35, L.z0 - 0.06, pw + 0.16, 2.55, 0.06, 'metal');
+      // Frame: four bars round the pane (the glass is see-through now, so no backing plate).
+      b.block(PAL.trim, x - 0.08, 0.35, L.z0 - 0.06, 0.08, 2.55, 0.06, 'metal');
+      b.block(PAL.trim, x + pw, 0.35, L.z0 - 0.06, 0.08, 2.55, 0.06, 'metal');
+      b.block(PAL.trim, x, 0.35, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
+      b.block(PAL.trim, x, 2.8, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
       if (broken) {
         b.block(0x050505, x, 0.45, L.z0 - 0.07, pw, 2.35, 0.03, 'glass');
         shardTeeth(b, x, 0.45, L.z0 - 0.09, pw, 2.35, rand);
         groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
       } else {
-        b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'glass');
+        b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass');
       }
     }
   }
@@ -218,7 +224,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'metal');
   b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'metal');
   if (rand() < 0.5) wallDecalZ(b, 'decalBullets', L.x0 + 2 + rand() * (desc.w - 4), 1.2 + rand() * 1.4, L.z0, 1.4, -1);
-  if (rand() < 0.35) groundDecal(b, 'decalBlood', L.doorX + (rand() - 0.5) * 3, 0, L.z0 - 1.5 - rand() * 2, 1.6, rand);
+  if (rand() < 0.35) groundDecal(b, 'decalLitter', L.doorX + (rand() - 0.5) * 3, 0, L.z0 - 1.5 - rand() * 2, 1.6, rand);
   b.endFrame();
 }
 
@@ -239,6 +245,37 @@ function shardTeeth(b: Builder, x: number, y: number, z: number, w: number, h: n
  * apartments or offices with doors, furniture and containers; a lobby with a security desk at
  * street level. Colliders are limited to their storey so each floor has its own layout.
  */
+/**
+ * Glass panes in every window opening of the facade grid, all storeys, all four walls, set into the
+ * middle of the wall. Where the facade texture shows intact glass the wall is cut open near the
+ * player and the pane is what you look through; elsewhere the pane hides inside the wall.
+ * Double-sided quads: ~2 triangles a window.
+ */
+export function windowPanes(b: Builder, desc: BuildingDesc): void {
+  const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
+  const x0 = desc.cx - desc.w / 2;
+  const z0 = desc.cz - desc.d / 2;
+  const x1 = x0 + desc.w;
+  const z1 = z0 + desc.d;
+  const h = spec.head - spec.sill;
+  const pane = new PlaneGeometry(spec.width, h);
+  const mid = WALL / 2;
+  for (let k = 0; k < desc.floors; k++) {
+    const y = k * FLOOR_H + spec.sill + h / 2;
+    for (let u = Math.ceil(x0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= x1 + 1e-6; u += FACADE_BAY) {
+      const cx = u + spec.inset + spec.width / 2;
+      for (const z of [z0 + mid, z1 - mid]) b.geo(pane, 0x6c7a84, _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1)), 'windowGlass');
+    }
+    _q.setFromAxisAngle(_yAxis, Math.PI / 2);
+    for (let u = Math.ceil(z0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= z1 + 1e-6; u += FACADE_BAY) {
+      const cz = u + spec.inset + spec.width / 2;
+      for (const x of [x0 + mid, x1 - mid]) b.geo(pane, 0x6c7a84, _m.compose(_p.set(x, y, cz), _q, _s.set(1, 1, 1)), 'windowGlass');
+    }
+    _q.identity();
+  }
+  pane.dispose();
+}
+
 export function buildHighriseInterior(b: Builder, desc: BuildingDesc, rand: Rand): void {
   if (desc.flip) b.beginFlip(desc.cx, desc.cz);
   const L = local(desc);
@@ -283,7 +320,7 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, rand: Rand
 }
 
 function lobby(b: Builder, L: Local, desc: BuildingDesc, rand: Rand): void {
-  // Security desk, mailboxes, dead elevator doors, an overturned bench, blood on the floor.
+  // Security desk, mailboxes, dead elevator doors, an overturned bench, the ashes of a campfire.
   const dx = L.doorX + 2.5;
   b.block(PAL.counter, dx, 0, L.iz0 + 3, 2.4, 1.05, 0.7, 'wood', true);
   b.container('reception', dx + 1.2, L.iz0 + 2.7);
@@ -291,7 +328,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, rand: Rand): void {
   b.block(0x6a6e70, L.cx1 + 0.4, 0, L.cz0 - 0.1, 2.2, 2.4, 0.1, 'metal');
   b.block(0x1a1c1e, L.cx1 + 1.45, 0, L.cz0 - 0.12, 0.1, 2.4, 0.02, 'metal');
   b.block(0x4a3b38, L.ix0 + 1.5, 0, L.iz0 + 4.5, 0.6, 0.45, 2.2, 'rubber', true);
-  if (rand() < 0.7) groundDecal(b, 'decalBlood', L.doorX + (rand() - 0.5) * 4, 0.05, L.iz0 + 2 + rand() * 4, 2.2, rand, 1.3);
+  if (rand() < 0.7) groundDecal(b, 'decalSoot', L.doorX + (rand() - 0.5) * 4, 0.05, L.iz0 + 2 + rand() * 4, 2.2, rand, 1.3);
   groundDecal(b, 'decalLitter', L.doorX - 2 + rand() * 4, 0.05, L.iz0 + 1.5 + rand() * 5, 2.0, rand);
   // Back units at street level: storage rooms off the corridor line.
   backUnits(b, L, desc, 0, FLOOR_H - 0.2, PAL.wallpapers[0], false, rand);
@@ -320,7 +357,7 @@ function corridorStorey(b: Builder, L: Local, desc: BuildingDesc, y: number, h: 
   }
   backUnits(b, L, desc, y, h, paperB, office, rand);
   // Corridor clutter and storytelling.
-  if (rand() < 0.35) groundDecal(b, 'decalBlood', L.ix0 + 2 + rand() * (width - 4), y, L.czA + CORRIDOR / 2, 1.5, rand, 1.8);
+  if (rand() < 0.35) groundDecal(b, 'decalLitter', L.ix0 + 2 + rand() * (width - 4), y, L.czA + CORRIDOR / 2, 1.5, rand, 1.8);
   if (rand() < 0.5) groundDecal(b, 'decalLitter', L.ix0 + 2 + rand() * (width - 4), y, L.czA + CORRIDOR / 2, 1.6, rand);
   if (rand() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 2 + rand() * (width - 4), y + 1.3, L.czA, 1.2, 1);
 }
@@ -353,8 +390,8 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   const inward = front ? 1 : -1; // from the far wall towards the door
   const farEdge = front ? farZ + 0.1 : farZ - 0.1;
   if (rand() < 0.15) {
-    // Ransacked and empty, a stain on the floor.
-    groundDecal(b, 'decalBlood', x0 + w / 2, y, (z0 + z1) / 2, 1.8, rand, 1.2);
+    // Ransacked and empty, someone burnt furniture for warmth.
+    groundDecal(b, 'decalSoot', x0 + w / 2, y, (z0 + z1) / 2, 1.8, rand, 1.2);
     return;
   }
   if (office) {
@@ -385,5 +422,5 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
     b.blockY(PAL.appliance, x0 + 2.1, y, kz, 0.7, 1.8, 0.65, 'metal');
     b.container('fridge', x0 + 2.45, kz + (front ? -0.15 : 0.8), y);
   }
-  if (rand() < 0.3) groundDecal(b, 'decalBlood', x0 + w * (0.3 + rand() * 0.4), y, z0 + d * (0.3 + rand() * 0.4), 1.3, rand);
+  if (rand() < 0.3) groundDecal(b, 'decalLitter', x0 + w * (0.3 + rand() * 0.4), y, z0 + d * (0.3 + rand() * 0.4), 1.3, rand);
 }

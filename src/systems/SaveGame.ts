@@ -13,6 +13,8 @@ export interface SaveV1 {
   player: { x: number; y?: number; z: number; yaw: number; battery: number };
   stats: SurvivalState;
   inventory: InventoryData;
+  /** In-game minutes since the first midnight (older saves: none → start of the night). */
+  clock?: number;
   /** Touched containers only; untouched ones are re-rolled from the seed. */
   containers: [number, [ItemId, number][]][];
 }

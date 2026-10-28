@@ -38,7 +38,8 @@ export type ItemId =
   | 'jeans'
   | 'cargoPants'
   | 'sneakers'
-  | 'boots';
+  | 'boots'
+  | 'tshirt';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -46,12 +47,27 @@ export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'mater
 export type WearSlot = 'head' | 'torso' | 'legs' | 'feet';
 export const WEAR_SLOTS: readonly WearSlot[] = ['head', 'torso', 'legs', 'feet'];
 
+/** What a piece of clothing does. Every field is summed over the worn set. */
+export interface WearStats {
+  /** Chance to stop a bite on that body part, 0..1 (stage 4). */
+  bite: number;
+  /** Insulation: how many °C warmer the air feels. */
+  warmth: number;
+}
+
+/** How each stat is shown (item card, equipment summary). Order = display order. */
+export const WEAR_STATS: readonly { key: keyof WearStats; label: string; format: (v: number) => string }[] = [
+  { key: 'bite', label: 'Защита от укуса', format: (v) => `${Math.round(v * 100)}%` },
+  { key: 'warmth', label: 'Тепло', format: (v) => `+${v}°` },
+];
+
 export interface WearDef {
   slot: WearSlot;
   /** Main color on the body (sleeves, trousers, shoe upper, paper doll). */
   color: number;
-  /** Chance to stop a bite on that body part (stage 4). */
-  bite: number;
+  stats: WearStats;
+  /** Torso: false = short sleeves, forearms stay bare. */
+  sleeves?: boolean;
   /** Feet only: which shoe model the legs get. */
   shoe?: 'sneakers' | 'boots';
 }
@@ -67,7 +83,8 @@ export interface ItemDef {
   fatigue?: number;
   health?: number;
   pain?: number;
-  stopsBleeding?: boolean;
+  /** Dresses an open wound. */
+  dressesWound?: boolean;
   /** Restores the flashlight battery (0..1). */
   battery?: number;
   /** Can be held in the hand (melee arrives with zombies in stage 4). */
@@ -90,8 +107,8 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   water: { name: 'Бутылка воды', kind: 'drink', weight: 1.0, stack: 4, thirst: -0.5 },
   soda: { name: 'Газировка', kind: 'drink', weight: 0.35, stack: 6, thirst: -0.25, fatigue: -0.04 },
   juice: { name: 'Сок в коробке', kind: 'drink', weight: 0.25, stack: 6, thirst: -0.2, hunger: -0.04 },
-  bandage: { name: 'Бинт', kind: 'medical', weight: 0.05, stack: 10, stopsBleeding: true, health: 0.05 },
-  rag: { name: 'Чистая тряпка', kind: 'medical', weight: 0.1, stack: 10, stopsBleeding: true },
+  bandage: { name: 'Бинт', kind: 'medical', weight: 0.05, stack: 10, dressesWound: true, health: 0.05 },
+  rag: { name: 'Чистая тряпка', kind: 'medical', weight: 0.1, stack: 10, dressesWound: true },
   painkillers: { name: 'Обезболивающее', kind: 'medical', weight: 0.05, stack: 10, pain: -0.5, health: 0.05 },
   antibiotics: { name: 'Антибиотики', kind: 'medical', weight: 0.05, stack: 5, health: 0.15 },
   batteries: { name: 'Батарейки', kind: 'tool', weight: 0.1, stack: 8, battery: 1 },
@@ -107,17 +124,29 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   lighter: { name: 'Зажигалка', kind: 'tool', weight: 0.05, stack: 3 },
   matches: { name: 'Спички', kind: 'tool', weight: 0.05, stack: 5 },
   junk: { name: 'Хлам', kind: 'junk', weight: 0.3, stack: 10 },
-  cap: { name: 'Кепка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x2e3a30, bite: 0.02 } },
-  beanie: { name: 'Вязаная шапка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x5a2a26, bite: 0.04 } },
-  hardhat: { name: 'Строительная каска', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'head', color: 0xc89a2a, bite: 0.35 } },
-  hoodie: { name: 'Толстовка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'torso', color: 0x3d4a5c, bite: 0.08 } },
-  leatherJacket: { name: 'Кожаная куртка', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'torso', color: 0x2b2420, bite: 0.3 } },
-  workJacket: { name: 'Рабочая куртка', kind: 'clothing', weight: 1.1, stack: 1, wear: { slot: 'torso', color: 0x5c5236, bite: 0.2 } },
-  jeans: { name: 'Джинсы', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'legs', color: 0x2f3b52, bite: 0.12 } },
-  cargoPants: { name: 'Штаны карго', kind: 'clothing', weight: 0.8, stack: 1, wear: { slot: 'legs', color: 0x4a4a36, bite: 0.15 } },
-  sneakers: { name: 'Кроссовки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'feet', color: 0x5e6266, bite: 0.05, shoe: 'sneakers' } },
-  boots: { name: 'Рабочие ботинки', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'feet', color: 0x4a3626, bite: 0.3, shoe: 'boots' } },
+  // Clothing. Warmth in °C of felt temperature: jackets and boots warm the most, a T-shirt and sneakers the least.
+  cap: { name: 'Кепка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x2e3a30, stats: { bite: 0.02, warmth: 1 } } },
+  beanie: { name: 'Вязаная шапка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x5a2a26, stats: { bite: 0.04, warmth: 4 } } },
+  hardhat: { name: 'Строительная каска', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'head', color: 0xc89a2a, stats: { bite: 0.35, warmth: 1 } } },
+  tshirt: { name: 'Футболка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x8a8a7e, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
+  hoodie: { name: 'Толстовка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'torso', color: 0x3d4a5c, stats: { bite: 0.08, warmth: 6 } } },
+  leatherJacket: { name: 'Кожаная куртка', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'torso', color: 0x2b2420, stats: { bite: 0.3, warmth: 9 } } },
+  workJacket: { name: 'Рабочая куртка', kind: 'clothing', weight: 1.1, stack: 1, wear: { slot: 'torso', color: 0x5c5236, stats: { bite: 0.2, warmth: 10 } } },
+  jeans: { name: 'Джинсы', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'legs', color: 0x2f3b52, stats: { bite: 0.12, warmth: 4 } } },
+  cargoPants: { name: 'Штаны карго', kind: 'clothing', weight: 0.8, stack: 1, wear: { slot: 'legs', color: 0x4a4a36, stats: { bite: 0.15, warmth: 5 } } },
+  sneakers: { name: 'Кроссовки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'feet', color: 0x5e6266, stats: { bite: 0.05, warmth: 1 }, shoe: 'sneakers' } },
+  boots: { name: 'Рабочие ботинки', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'feet', color: 0x4a3626, stats: { bite: 0.3, warmth: 4 }, shoe: 'boots' } },
 };
+
+/** Sum of a clothing stat over everything worn. */
+export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: keyof WearStats): number {
+  let sum = 0;
+  for (const slot of WEAR_SLOTS) {
+    const id = worn[slot];
+    if (id) sum += ITEMS[id].wear!.stats[key];
+  }
+  return sum;
+}
 
 export interface ItemStack {
   id: ItemId;
@@ -128,7 +157,7 @@ export interface ItemStack {
 export function useVerb(def: ItemDef): string | null {
   if (def.kind === 'food') return 'Съесть';
   if (def.kind === 'drink') return 'Выпить';
-  if (def.stopsBleeding) return 'Перевязать';
+  if (def.dressesWound) return 'Перевязать';
   if (def.kind === 'medical') return 'Принять';
   if (def.battery) return 'Вставить в фонарь';
   if (def.wear) return 'Надеть';

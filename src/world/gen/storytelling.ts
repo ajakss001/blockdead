@@ -5,7 +5,7 @@ import { type Builder, PAL, pick, type Rand } from './pieces';
 
 /**
  * Environmental storytelling: the street remembers the day it fell. Traffic jams of people who
- * tried to leave, pile-ups at intersections with skid marks and blood, a car wrapped round a pole,
+ * tried to leave, pile-ups at intersections with skid marks and leaked oil, a car wrapped round a pole,
  * army checkpoints that did not hold, litter everywhere. Pure placement on top of the batch: decals
  * and existing props, no new draw calls.
  */
@@ -17,8 +17,8 @@ const _p = new Vector3();
 const _s = new Vector3();
 const _up = new Vector3(0, 1, 0);
 
-/** Long decal (skid marks, blood trail) along a yaw (same convention as cars: yaw 0 = +X). */
-export function stripDecal(b: Builder, x: number, z: number, yaw: number, length: number, width: number, surface: 'decalSkid' | 'decalBlood'): void {
+/** Long decal (skid marks) along a yaw (same convention as cars: yaw 0 = +X). */
+export function stripDecal(b: Builder, x: number, z: number, yaw: number, length: number, width: number, surface: 'decalSkid'): void {
   const g = new PlaneGeometry(length, width);
   g.rotateX(-Math.PI / 2);
   b.geo(g, 0xffffff, _m.compose(_p.set(x, 0.035, z), _q.setFromAxisAngle(_up, yaw), _s.set(1, 1, 1)), surface);
@@ -36,9 +36,9 @@ function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed 
 
 /**
  * Cars that queued to leave the city and were abandoned bumper to bumper, along a road segment.
- * `alongX`: the road runs along X. Lane offsets are ±1.8 m from the road center line.
+ * `alongX`: the road runs along X. Lane offsets are ±1.8 m from the road center line. Returns the lane used.
  */
-export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, from: number, to: number, rand: Rand): void {
+export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, from: number, to: number, rand: Rand): number {
   const lane = rand() < 0.5 ? -1.8 : 1.8;
   const heading = alongX ? (lane > 0 ? 0 : Math.PI) : lane > 0 ? Math.PI / 2 : -Math.PI / 2;
   let t = from + 2.5 + rand() * 3;
@@ -48,14 +48,15 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
     const x = alongX ? t : cx + lane + (rand() - 0.5) * 0.4;
     const z = alongX ? cz + lane + (rand() - 0.5) * 0.4 : t;
     car(b, x, z, heading + askew, rand);
-    // Someone ran from this one.
-    if (rand() < 0.2) groundDecal(b, 'decalBlood', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 1.2, rand);
+    // Leaking engine.
+    if (rand() < 0.2) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 1.2, rand);
     t += 4.9 + rand() * 1.6;
     n++;
   }
+  return lane;
 }
 
-/** Pile-up in an intersection: cars slewed across lanes, skid marks leading in, glass and blood. */
+/** Pile-up in an intersection: cars slewed across lanes, skid marks leading in, glass and oil. */
 export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void {
   const yaw0 = rand() * Math.PI * 2;
   car(b, cx + (rand() - 0.5) * 2, cz + (rand() - 0.5) * 2, yaw0, rand, 0.7);
@@ -70,8 +71,9 @@ export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void 
     car(b, cx + Math.cos(yaw0) * 4.6, cz - Math.sin(yaw0) * 4.6, a3, rand, 0.5);
   }
   groundDecal(b, 'decalShards', cx, 0, cz, 3.2, rand, 1.3);
-  groundDecal(b, 'decalBlood', cx + (rand() - 0.5) * 4, 0, cz + (rand() - 0.5) * 4, 2.2, rand, 1.4);
-  for (let i = 0; i < 4; i++) groundDecal(b, 'decalBlood', cx + 3 + i * 1.3, 0, cz + 2 + i * 0.6 + (rand() - 0.5), 0.7, rand);
+  groundDecal(b, 'decalOil', cx + (rand() - 0.5) * 4, 0, cz + (rand() - 0.5) * 4, 2.2, rand, 1.4);
+  // One of them caught fire.
+  groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 3, 0, cz + (rand() - 0.5) * 3, 3.4, rand, 1.2);
 }
 
 /** A car that left the road and wrapped itself round a street lamp. */
@@ -86,7 +88,7 @@ export function carIntoPole(b: Builder, px: number, pz: number, toward: number, 
 
 /**
  * Army checkpoint that did not hold: sandbag walls, striped barriers, ammo crates, the street around it
- * covered in litter and blood.
+ * covered in litter and the scorch marks of burn barrels.
  */
 export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void {
   const sand = 0x7a6e56;
@@ -108,5 +110,5 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
   b.block(0x3e4a34, cx - 0.6, 0, cz - 2.6, 1.0, 0.5, 0.6, 'wood', true);
   b.containers.push({ type: 'crate', x: cx - 0.1, z: cz - 1.9 });
   for (let i = 0; i < 3; i++) groundDecal(b, 'decalLitter', cx + (rand() - 0.5) * 8, 0, cz + (rand() - 0.5) * 8, 2.4, rand);
-  for (let i = 0; i < 2; i++) groundDecal(b, 'decalBlood', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
+  for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

@@ -40,7 +40,7 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
     rolls: [1, 2],
     items: [
       ['rag', 4], ['bandage', 3], ['painkillers', 2], ['batteries', 1], ['rope', 1], ['bat', 1], ['antibiotics', 0.3],
-      ['hoodie', 1.5], ['leatherJacket', 0.6], ['jeans', 1.5], ['cargoPants', 1], ['sneakers', 1.2], ['boots', 0.6], ['cap', 1], ['beanie', 1],
+      ['tshirt', 2], ['hoodie', 1.5], ['leatherJacket', 0.6], ['jeans', 1.5], ['cargoPants', 1], ['sneakers', 1.2], ['boots', 0.6], ['cap', 1], ['beanie', 1],
     ],
   },
   tvstand: { name: 'Тумба', empty: 0.4, rolls: [1, 2], items: [['batteries', 4], ['lighter', 2], ['tape', 2], ['chocolate', 2], ['junk', 3]] },

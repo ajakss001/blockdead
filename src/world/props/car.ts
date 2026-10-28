@@ -20,7 +20,7 @@ import type { ContainerSpot } from '../gen/pieces';
 
 /** Faded 90s factory colors. */
 export const CAR_PAINTS = {
-  maroon: 0x5e2c27,
+  tan: 0x5c4a36,
   slate: 0x3c4650,
   beige: 0x8a7f68,
   bottle: 0x2f4034,
@@ -52,6 +52,8 @@ const AXLE_R = -1.35;
 const SILL = 0.23;
 /** Body panels are extruded slightly narrower; the 3 cm bevel brings them back to WIDTH. */
 const BEVEL = 0.03;
+/** Bumper tip to bumper tip / 2. */
+const BODY_HALF_LENGTH = 2.44;
 
 type P = [number, number];
 
@@ -232,12 +234,8 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     containers.push({ type: 'trunk', x: t.x, z: t.z });
   }
 
-  // Collider: AABB of the rotated footprint (conservative for angled cars).
-  const c = Math.abs(Math.cos(o.yaw));
-  const s = Math.abs(Math.sin(o.yaw));
-  const hx = (LENGTH / 2) * c + (WIDTH / 2) * s;
-  const hz = (LENGTH / 2) * s + (WIDTH / 2) * c;
-  world.addBox(o.x - hx, o.z - hz, o.x + hx, o.z + hz);
+  // Collider: the body itself, rotated with the car (bumper to bumper, mirrors excluded).
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH, WIDTH / 2, o.yaw);
 }
 
 /** Greenhouse faces split into a grid of cells; inner cells are glass, the frame is painted pillars. */

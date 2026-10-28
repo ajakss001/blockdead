@@ -53,6 +53,11 @@ export class PostFX {
     }
   }
 
+  /** 0..1 anxiety vignette (see FilmShader.uDread). */
+  setDread(amount: number): void {
+    this.filmPass.uniforms.uDread.value = Math.min(1, Math.max(0, amount));
+  }
+
   render(dt: number): void {
     this.syncSize();
     this.time += dt;

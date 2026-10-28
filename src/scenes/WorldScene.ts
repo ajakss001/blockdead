@@ -11,13 +11,15 @@ import {
   Scene,
   Vector3,
 } from 'three';
-import type { ItemId } from '../data/items';
+import { AnxietyAudio } from '../audio/AnxietyAudio';
+import { type ItemId, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import { outfitFrom } from '../player/outfit';
 import { Player } from '../player/Player';
 import type { RightItem } from '../player/Viewmodel';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
+import { airTemperature, Clock, feltTemperature, Shelters } from '../systems/Climate';
 import { Containers } from '../systems/Containers';
 import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
@@ -82,6 +84,13 @@ export class WorldScene implements IScene {
   private doors!: Doors;
   private saveT = 0;
   private moodleT = 0;
+  private readonly clock = new Clock();
+  private readonly shelters = new Shelters();
+  private dread!: AnxietyAudio;
+  private indoors = false;
+  private air = 0;
+  private felt = 0;
+  private climateT = 0;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -95,8 +104,8 @@ export class WorldScene implements IScene {
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
     const layout = new WorldLayout(seed);
     this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius);
-    // Standing surface: storeys, stairs and roofs inside high-rises; the terrain everywhere else.
-    const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.heightAt(x, z);
+    // Standing surface: storeys, stairs and roofs inside high-rises; paving and terrain everywhere else.
+    const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
     this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, ground);
     this.overlay = this.player.viewmodel;
 
@@ -107,10 +116,12 @@ export class WorldScene implements IScene {
     this.chunks.onChunkLoaded = (key, data) => {
       this.containers.addChunk(key, data.zone, data.containers);
       this.interiors.addChunk(key, data.buildings);
+      this.shelters.add(key, data.shelters);
     };
     this.chunks.onChunkUnloaded = (key) => {
       this.containers.removeChunk(key);
       this.interiors.removeChunk(key);
+      this.shelters.remove(key);
     };
     const syncBody = () => this.syncBody();
     this.panel = new InventoryPanel(
@@ -127,6 +138,7 @@ export class WorldScene implements IScene {
     );
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
     this.saves = new SaveGame(ctx.platform, seed);
+    this.dread = new AnxietyAudio(ctx.events, ctx.loop);
     this.inventory.restore(START_KIT);
     this.player.battery = START_KIT.battery;
     this.syncBody();
@@ -148,6 +160,10 @@ export class WorldScene implements IScene {
     ctx.debug.set('world', () => {
       const ch = this.chunks;
       return `world seed ${seed}  zone ${ch.zoneAt(c.position.x, c.position.z)}  chunks ${ch.loadedCount} (+${ch.pendingCount})  gen ${ch.lastGenMs.toFixed(0)}ms  colliders ${this.world.boxCount}  interiors ${this.interiors.loadedCount}  doors ${this.doors.count}  этаж ${Math.round(c.position.y / 3.2)}`;
+    });
+    ctx.debug.set('climate', () => {
+      const s = this.survival;
+      return `время ${this.clock.label}  ${this.indoors ? 'внутри' : 'снаружи'}  воздух ${this.air.toFixed(1)}°  ощущается ${this.felt.toFixed(1)}°  тело ${s.bodyTemp.toFixed(2)}°  тревога ${Math.round(s.anxiety * 100)}%`;
     });
     ctx.debug.set('survival', () => {
       const v = this.survival;
@@ -174,6 +190,7 @@ export class WorldScene implements IScene {
       c.prevPosition.copy(c.position);
       c.yaw = save.player.yaw;
       this.player.battery = save.player.battery;
+      if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.survival.restore(save.stats);
       // Saves from before clothing existed: keep the starting clothes on.
       this.inventory.restore({ ...save.inventory, worn: save.inventory.worn ?? START_KIT.worn });
@@ -202,9 +219,9 @@ export class WorldScene implements IScene {
     g.setAttribute('aLayer', tri(1));
     g.setAttribute('aPbr', tri(2));
     const mats = worldMaterials();
-    for (const bucket of BUCKETS) {
+    for (const bucket of [...BUCKETS, 'castCut'] as const) {
       const m = new Mesh(g, mats[bucket]);
-      m.castShadow = bucket === 'cast';
+      m.castShadow = bucket === 'cast' || bucket === 'castCut';
       m.receiveShadow = true;
       m.frustumCulled = false;
       group.add(m);
@@ -225,11 +242,26 @@ export class WorldScene implements IScene {
     c.sprintFactor = this.survival.sprintFactor;
     this.player.fixedUpdate(dt);
     this.interaction.fixedUpdate(dt);
-    this.survival.update(dt, c.speed, c.sprinting);
+    this.clock.update(dt);
+    // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
+    this.climateT -= dt;
+    if (this.climateT <= 0) {
+      this.climateT = 0.25;
+      const p = c.position;
+      this.indoors = this.shelters.covers(p.x, p.z, p.y);
+      this.air = airTemperature(this.clock.hour, this.indoors);
+    }
+    this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting);
+    const dark = !this.player.lightOn && (this.clock.isNight || this.indoors);
+    this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0 });
+    // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
+    const a = this.survival.anxiety;
+    this.dread.update(dt, a);
+    this.ctx.fx.setDread(a * 0.8 + this.dread.pulse * a * 0.25);
     this.moodleT -= dt;
     if (this.moodleT <= 0) {
       this.moodleT = 0.25;
-      this.survival.pushMoodles(this.ctx.hud);
+      this.survival.pushStats(this.ctx.hud, this.player.battery);
     }
   }
 
@@ -254,6 +286,7 @@ export class WorldScene implements IScene {
       stats: this.survival.serialize(),
       inventory: this.inventory.serialize(),
       containers: this.containers.serialize(),
+      clock: this.clock.minutes,
     });
   }
 
@@ -268,6 +301,7 @@ export class WorldScene implements IScene {
 
   private applyQuality(): void {
     const preset = this.ctx.quality.preset;
+    this.interiors.maxLoaded = preset.interiors;
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();

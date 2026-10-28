@@ -23,11 +23,11 @@ export type CharacterPart = 'jacket' | 'jeans' | 'shoes' | 'skin' | 'cuff' | 'ha
 /** Light grime base for parts colored per vertex (shoes: upper, sole, laces in one draw call). */
 export const VERTEX_COLORED = 0xd6d6d6;
 
-const CHAR_KIND: Record<CharacterPart, { kind: GrungeKind; blood?: number; noise?: number; roughness: number; metalness: number }> = {
-  jacket: { kind: 'fabric', blood: 1, roughness: 0.95, metalness: 0 },
+const CHAR_KIND: Record<CharacterPart, { kind: GrungeKind; noise?: number; roughness: number; metalness: number }> = {
+  jacket: { kind: 'fabric', roughness: 0.95, metalness: 0 },
   jeans: { kind: 'fabric', roughness: 0.95, metalness: 0 },
   shoes: { kind: 'grime', roughness: 0.85, metalness: 0 },
-  skin: { kind: 'skin', blood: 1, noise: 0.18, roughness: 0.75, metalness: 0 },
+  skin: { kind: 'skin', noise: 0.1, roughness: 0.75, metalness: 0 },
   cuff: { kind: 'fabric', roughness: 0.95, metalness: 0 },
   handle: { kind: 'wood', roughness: 0.8, metalness: 0 },
   torch: { kind: 'metal', roughness: 0.55, metalness: 0.6 },
@@ -40,7 +40,7 @@ export function characterMaterial(part: CharacterPart, color: ColorRepresentatio
   if (cached) return cached;
   const spec = CHAR_KIND[part];
   const mat = new MeshStandardMaterial({
-    map: track(generateGrungeTexture(color, spec.noise ?? 0.4, { kind: spec.kind, seed: charCache.size * 31 + 5, blood: spec.blood, size: 64 })),
+    map: track(generateGrungeTexture(color, spec.noise ?? 0.4, { kind: spec.kind, seed: charCache.size * 31 + 5, size: 64 })),
     roughness: spec.roughness,
     metalness: spec.metalness,
     vertexColors,
@@ -49,12 +49,12 @@ export function characterMaterial(part: CharacterPart, color: ColorRepresentatio
   return mat;
 }
 
-/** Dark, worn kitchen-knife steel: rust blooms, scratches, dried blood and bumped notches on the edge. */
+/** Dark, worn kitchen-knife steel: rust blooms, scratches and bumped notches on the edge. */
 export function bladeMaterial(): MeshStandardMaterial {
   const cached = charCache.get('blade');
   if (cached) return cached;
   const mat = new MeshStandardMaterial({
-    map: track(generateGrungeTexture(0x6f7376, 0.45, { kind: 'rust', seed: 404, blood: 2, size: 64 })),
+    map: track(generateGrungeTexture(0x6f7376, 0.45, { kind: 'rust', seed: 404, size: 64 })),
     bumpMap: track(generateBumpTexture({ seed: 405, notches: 6, size: 64 })),
     bumpScale: 1.5,
     roughness: 0.4,

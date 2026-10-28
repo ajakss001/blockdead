@@ -74,6 +74,8 @@ export class Builder {
   readonly cone6 = new ConeGeometry(1, 1, 6);
   readonly containers: ContainerSpot[] = [];
   readonly doors: DoorSpot[] = [];
+  /** Roofed footprints in world space: [minX, minZ, maxX, maxZ, roofY, …] (see systems/Climate). */
+  readonly shelters: number[] = [];
   private flip: { cx: number; cz: number } | null = null;
   private readonly m = new Matrix4();
   private readonly flipM = new Matrix4();
@@ -94,6 +96,11 @@ export class Builder {
 
   endFrame(): void {
     this.flip = null;
+  }
+
+  /** Register a roofed footprint (world coordinates): indoors for the climate. */
+  shelter(x0: number, z0: number, x1: number, z1: number, roofY: number): void {
+    this.shelters.push(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), roofY);
   }
 
   /** Register a searchable container at a point in the current frame. */
@@ -247,6 +254,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const paperA = pick(rand, PAL.wallpapers);
   const paperB = pick(rand, PAL.wallpapers);
   const roof = pick(rand, PAL.roofs);
+  b.shelter(x0, z0, x1, z1, h);
   if (!s.frontPlusZ) b.beginFlip(x0 + w / 2, z0 + d / 2);
 
   const xp = x0 + Math.round(w * 0.5 * 10) / 10;
@@ -339,6 +347,7 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   const h = 3.4;
   const front = pick(rand, PAL.shopFronts);
   const paper = pick(rand, PAL.wallpapers);
+  b.shelter(x0, z0, x1, z1, h);
   if (!s.frontPlusZ) b.beginFlip(x0 + w / 2, z0 + d / 2);
   const doorX = x0 + w * 0.5;
 

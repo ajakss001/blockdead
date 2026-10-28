@@ -26,10 +26,12 @@ export class KeyboardMouseInput {
   sensitivity = 0.0022;
 
   private readonly keys = new Set<string>();
+  /** Quiet "click to continue" state after a game window: keys work, mouse look waits for a click. */
+  keysWithoutLock = false;
 
   constructor(
     private readonly input: InputManager,
-    private readonly canvas: HTMLCanvasElement,
+    readonly canvas: HTMLCanvasElement,
   ) {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
@@ -59,7 +61,7 @@ export class KeyboardMouseInput {
   }
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (!this.locked) return;
+    if (!this.locked && !this.keysWithoutLock) return;
     const action = KEY_ACTIONS[e.code];
     const isMove = FORWARD.includes(e.code) || BACK.includes(e.code) || LEFT.includes(e.code) || RIGHT.includes(e.code);
     if (!action && !isMove) return;

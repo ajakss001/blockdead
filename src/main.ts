@@ -90,6 +90,7 @@ async function boot(): Promise<void> {
     input,
     debug,
     hud,
+    fx: { setDread: (amount) => postfx.setDread(amount) },
     requestPointerLock: () => void kbm?.requestLock(),
   };
   scene.init(ctx);
@@ -97,8 +98,10 @@ async function boot(): Promise<void> {
   postfx.setScene(scene.scene, scene.camera, scene.overlay);
   // ?hud=demo — preview the state indicators before survival stats exist (stage 3).
   if (params.get('hud') === 'demo') {
-    hud.setMoodle('hunger', 1);
-    hud.setMoodle('bleeding', 2);
+    hud.setStat('hunger', 0.4, 1);
+    hud.setStat('warmth', 0.15, 2, 'cold');
+    hud.setStat('battery', 0.05, 3);
+    hud.setWound(true);
   }
 
   mountCrosshair(uiEl);
@@ -106,7 +109,7 @@ async function boot(): Promise<void> {
   else new TouchInput(input, uiEl);
   new DebugPanel(ctx, uiEl);
 
-  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw } });
+  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx } });
 
   // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.

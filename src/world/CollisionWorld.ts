@@ -8,15 +8,18 @@ export const ANY_Y_MIN = -1e4;
 export const ANY_Y_MAX = 1e4;
 /** Obstacles whose top is within this of the feet are stepped over (stairs, kerbs, low clutter). */
 const STEP_UP = 0.4;
-/** Packed collider stride: minX, minZ, maxX, maxZ, minY, maxY. */
-export const COLLIDER_STRIDE = 6;
+/** Packed collider stride: centerX, centerZ, halfX, halfZ, minY, maxY, cos(yaw), sin(yaw). */
+export const COLLIDER_STRIDE = 8;
 
 /** Anything that can receive static boxes: the live CollisionWorld or the worker's collector. */
 export interface ColliderSink {
   addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY?: number, maxY?: number): void;
+  /** Box rotated about Y (cars): half sizes along its own X (length) and Z (width). Same yaw as three's rotation.y. */
+  addOrientedBox(cx: number, cz: number, halfX: number, halfZ: number, yaw: number, minY?: number, maxY?: number): void;
 }
 
 interface Box {
+  /** Broad-phase bounds (the rotated footprint's AABB). */
   minX: number;
   minZ: number;
   maxX: number;
@@ -24,6 +27,8 @@ interface Box {
   minY: number;
   maxY: number;
   owner: number;
+  /** Oriented boxes only: center, half extents and rotation. */
+  obb: { cx: number; cz: number; hx: number; hz: number; c: number; s: number } | null;
 }
 
 /**
@@ -47,8 +52,28 @@ export class CollisionWorld implements ColliderSink {
   }
 
   addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
+    this.insert({ minX, minZ, maxX, maxZ, minY, maxY, owner: this.owner, obb: null });
+  }
+
+  addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    // Nearly axis-aligned: a plain box is exact and cheaper.
+    if (Math.abs(s) < 1e-3 || Math.abs(c) < 1e-3) {
+      const ax = Math.abs(c) > 0.5 ? hx : hz;
+      const az = Math.abs(c) > 0.5 ? hz : hx;
+      this.addBox(cx - ax, cz - az, cx + ax, cz + az, minY, maxY);
+      return;
+    }
+    const ex = hx * Math.abs(c) + hz * Math.abs(s);
+    const ez = hx * Math.abs(s) + hz * Math.abs(c);
+    this.insert({ minX: cx - ex, minZ: cz - ez, maxX: cx + ex, maxZ: cz + ez, minY, maxY, owner: this.owner, obb: { cx, cz, hx, hz, c, s } });
+  }
+
+  private insert(box: Box): void {
+    const { minX, minZ, maxX, maxZ } = box;
     const id = this.nextId++;
-    this.boxes.set(id, { minX, minZ, maxX, maxZ, minY, maxY, owner: this.owner });
+    this.boxes.set(id, box);
     const owned = this.byOwner.get(this.owner);
     if (owned) owned.push(id);
     else this.byOwner.set(this.owner, [id]);
@@ -64,12 +89,17 @@ export class CollisionWorld implements ColliderSink {
     this.addBox(cx - sizeX / 2, cz - sizeZ / 2, cx + sizeX / 2, cz + sizeZ / 2);
   }
 
-  /** Add a flat [minX, minZ, maxX, maxZ, minY, maxY, …] array under one owner. */
+  /** Add a flat [cx, cz, hx, hz, minY, maxY, cos, sin, …] array under one owner. */
   addPacked(owner: number, packed: Float32Array): void {
     const prev = this.owner;
     this.owner = owner;
-    for (let i = 0; i + 5 < packed.length; i += COLLIDER_STRIDE) {
-      this.addBox(packed[i], packed[i + 1], packed[i + 2], packed[i + 3], packed[i + 4], packed[i + 5]);
+    for (let i = 0; i + COLLIDER_STRIDE - 1 < packed.length; i += COLLIDER_STRIDE) {
+      const cx = packed[i];
+      const cz = packed[i + 1];
+      const hx = packed[i + 2];
+      const hz = packed[i + 3];
+      if (packed[i + 7] === 0) this.addBox(cx - hx, cz - hz, cx + hx, cz + hz, packed[i + 4], packed[i + 5]);
+      else this.addOrientedBox(cx, cz, hx, hz, Math.atan2(packed[i + 7], packed[i + 6]), packed[i + 4], packed[i + 5]);
     }
     this.owner = prev;
   }
@@ -114,6 +144,10 @@ export class CollisionWorld implements ColliderSink {
       for (let i = 0; i < this.candidates.length; i++) {
         const b = this.boxes.get(this.candidates[i])!;
         if (b.maxY <= feet || b.minY >= head) continue;
+        if (b.obb) {
+          if (this.pushOutOfObb(pos, b.obb, radius)) pushed = true;
+          continue;
+        }
         const cx = pos.x < b.minX ? b.minX : pos.x > b.maxX ? b.maxX : pos.x;
         const cz = pos.z < b.minZ ? b.minZ : pos.z > b.maxZ ? b.maxZ : pos.z;
         const dx = pos.x - cx;
@@ -142,6 +176,44 @@ export class CollisionWorld implements ColliderSink {
     }
   }
 
+  /** Circle vs rotated box: solve in the box's frame, push back in world space. */
+  private pushOutOfObb(pos: Vector3, o: NonNullable<Box['obb']>, radius: number): boolean {
+    const wx = pos.x - o.cx;
+    const wz = pos.z - o.cz;
+    // World → local is the inverse of three's rotation.y: x' = x·c − z·s, z' = x·s + z·c.
+    const lx = wx * o.c - wz * o.s;
+    const lz = wx * o.s + wz * o.c;
+    const qx = lx < -o.hx ? -o.hx : lx > o.hx ? o.hx : lx;
+    const qz = lz < -o.hz ? -o.hz : lz > o.hz ? o.hz : lz;
+    let dx = lx - qx;
+    let dz = lz - qz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= radius * radius) return false;
+    let nx: number;
+    let nz: number;
+    if (d2 > 1e-10) {
+      const d = Math.sqrt(d2);
+      nx = qx + (dx / d) * radius;
+      nz = qz + (dz / d) * radius;
+    } else {
+      // Center inside: leave through the nearest face.
+      const px = o.hx - Math.abs(lx);
+      const pz = o.hz - Math.abs(lz);
+      if (px < pz) {
+        nx = Math.sign(lx || 1) * (o.hx + radius);
+        nz = lz;
+      } else {
+        nx = lx;
+        nz = Math.sign(lz || 1) * (o.hz + radius);
+      }
+    }
+    dx = nx * o.c + nz * o.s;
+    dz = -nx * o.s + nz * o.c;
+    pos.x = o.cx + dx;
+    pos.z = o.cz + dz;
+    return true;
+  }
+
   private query(minX: number, minZ: number, maxX: number, maxZ: number): void {
     this.candidates.length = 0;
     const stamp = ++this.stamp;
@@ -168,7 +240,19 @@ export class CollisionWorld implements ColliderSink {
 export class PackedColliders implements ColliderSink {
   readonly data: number[] = [];
   addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
-    this.data.push(minX, minZ, maxX, maxZ, minY, maxY);
+    this.data.push((minX + maxX) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2, minY, maxY, 1, 0);
+  }
+
+  addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
+    // sin 0 marks an axis-aligned box on unpacking: nudge exact multiples of π/2 into a true OBB-less box.
+    const s = Math.sin(yaw);
+    if (Math.abs(s) < 1e-3 || Math.abs(Math.cos(yaw)) < 1e-3) {
+      const ax = Math.abs(Math.cos(yaw)) > 0.5 ? hx : hz;
+      const az = Math.abs(Math.cos(yaw)) > 0.5 ? hz : hx;
+      this.addBox(cx - ax, cz - az, cx + ax, cz + az, minY, maxY);
+      return;
+    }
+    this.data.push(cx, cz, hx, hz, minY, maxY, Math.cos(yaw), s);
   }
 }
 

@@ -26,8 +26,6 @@ export interface GrungeOptions {
   size?: number;
   seed?: number;
   kind?: GrungeKind;
-  /** Number of dried blood splatters. */
-  blood?: number;
 }
 
 type Rand = () => number;
@@ -77,7 +75,9 @@ const cellHash = (a: number, b: number) => {
  * Each window is dark glass, smashed (black hole with shard teeth), boarded up, or has a faded curtain.
  * Office towers get full-height glass panels with a mullion instead.
  */
-function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, office: boolean): void {
+/** Draws the window grid; returns the rects of intact glass (not smashed, not boarded). */
+function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, office: boolean): [number, number, number, number][] {
+  const glass: [number, number, number, number][] = [];
   const cell = size / 2;
   for (let fy = 0; fy < 2; fy++) {
     // Slab edge between storeys.
@@ -121,6 +121,7 @@ function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, offi
           g.restore();
         }
       } else {
+        glass.push([x0, y0, w, h]);
         // Dark glass with a faint cold reflection; some with faded curtains behind.
         g.fillStyle = office ? '#1b2329' : '#161b1f';
         g.fillRect(x0, y0, w, h);
@@ -143,6 +144,16 @@ function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, offi
         g.fillRect(x0 + w / 2 - 1, y0, 2, h);
       }
     }
+  }
+  return glass;
+}
+
+/** Alpha 0.4 inside intact panes: near buildings the world shader cuts them out to show the rooms. */
+function markGlass(g: CanvasRenderingContext2D, rects: [number, number, number, number][]): void {
+  for (const [x, y, w, h] of rects) {
+    const img = g.getImageData(x + 1, y + 1, w - 2, h - 2);
+    for (let i = 3; i < img.data.length; i += 4) img.data[i] = 102;
+    g.putImageData(img, x + 1, y + 1);
   }
 }
 
@@ -200,30 +211,9 @@ function wrapped(size: number, draw: (ox: number, oy: number) => void): void {
   for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) draw(dx * size, dy * size);
 }
 
-function bloodSplatter(g: CanvasRenderingContext2D, size: number, rand: Rand): void {
-  const cx = rand() * size;
-  const cy = rand() * size;
-  const r = size * (0.04 + rand() * 0.06);
-  g.fillStyle = `rgba(${48 + rand() * 20}, ${6 + rand() * 6}, ${6 + rand() * 4}, ${0.55 + rand() * 0.3})`;
-  wrapped(size, (ox, oy) => {
-    g.beginPath();
-    g.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
-    g.fill();
-    // Droplets flung around the main blot, plus one drip running down.
-    for (let i = 0; i < 7; i++) {
-      const a = rand() * Math.PI * 2;
-      const d = r * (1.3 + rand() * 1.8);
-      g.beginPath();
-      g.arc(cx + ox + Math.cos(a) * d, cy + oy + Math.sin(a) * d, r * (0.08 + rand() * 0.18), 0, Math.PI * 2);
-      g.fill();
-    }
-    g.fillRect(cx + ox - r * 0.12, cy + oy, r * 0.24, r * (1.5 + rand() * 2));
-  });
-}
-
 /**
  * Procedural grunge: base color + micro-noise + low-frequency grime + per-kind features
- * (wood grain, asphalt grit, rust blooms, plaster drips, fabric weave, scratches) + dried blood.
+ * (wood grain, asphalt grit, rust blooms, plaster drips, fabric weave, scratches).
  * Deterministic per seed; tiles seamlessly; ~1–3 ms per 128² texture.
  */
 export function generateGrungeTexture(
@@ -292,9 +282,10 @@ export function generateGrungeCanvas(
         case 'rust':
         case 'metal': {
           const rust = smooth(kind === 'rust' ? 0.42 : 0.6, kind === 'rust' ? 0.6 : 0.75, blotch(u, v) * 0.6 + n * 0.4);
-          r = r + (112 - r) * rust;
-          gg = gg + (52 - gg) * rust;
-          b = b + (24 - b) * rust;
+          // Brown rust (not red: nothing in the city should read as a stain).
+          r = r + (116 - r) * rust;
+          gg = gg + (82 - gg) * rust;
+          b = b + (50 - b) * rust;
           shade *= 1 - rust * 0.15;
           break;
         }
@@ -303,9 +294,9 @@ export function generateGrungeCanvas(
           const bloom = smooth(0.66, 0.82, blotch(u, v) * 0.6 + n * 0.4);
           const drip = smooth(0.7, 0.9, column(u, 0.5)) * smooth(0.2, 0.9, v);
           const rust = Math.max(bloom, drip * 0.7);
-          r = r + (104 - r) * rust;
-          gg = gg + (54 - gg) * rust;
-          b = b + (30 - b) * rust;
+          r = r + (110 - r) * rust;
+          gg = gg + (80 - gg) * rust;
+          b = b + (52 - b) * rust;
           shade *= 1 - rust * 0.2;
           break;
         }
@@ -331,9 +322,11 @@ export function generateGrungeCanvas(
           else shade *= (Math.floor(x / 16) + Math.floor(y / 16)) % 2 === 0 ? 1.05 : 0.9;
           break;
         case 'skin': {
-          const blush = smooth(0.55, 0.8, blotch(u, v));
-          gg -= blush * 14;
-          b -= blush * 12;
+          // Street dirt, grey-brown and neutral: nothing on the hands should read as a wound.
+          const dirt = smooth(0.62, 0.85, blotch(u, v)) * 0.6;
+          r = r + (96 - r) * dirt * 0.35;
+          gg = gg + (86 - gg) * dirt * 0.35;
+          b = b + (74 - b) * dirt * 0.35;
           break;
         }
         case 'foliage':
@@ -367,8 +360,9 @@ export function generateGrungeCanvas(
   g.putImageData(img, 0, 0);
 
   if (kind === 'glass') drawCracks(g, size, rand);
-  if (kind === 'facadeConcrete' || kind === 'facadeBrick') drawWindows(g, size, rand, false);
-  if (kind === 'facadeOffice') drawWindows(g, size, rand, true);
+  let glass: [number, number, number, number][] = [];
+  if (kind === 'facadeConcrete' || kind === 'facadeBrick') glass = drawWindows(g, size, rand, false);
+  if (kind === 'facadeOffice') glass = drawWindows(g, size, rand, true);
   if (kind === 'metal' || kind === 'rust' || kind === 'carpaint') {
     // Scratches catch the flashlight as thin bright lines.
     g.lineWidth = 1;
@@ -386,7 +380,8 @@ export function generateGrungeCanvas(
       });
     }
   }
-  for (let i = 0; i < (options.blood ?? 0); i++) bloodSplatter(g, size, rand);
+  // Last, so no later overlay restores the alpha.
+  markGlass(g, glass);
   return canvas;
 }
 

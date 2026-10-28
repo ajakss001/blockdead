@@ -3,8 +3,9 @@ import { mulberry32 } from '../../core/random';
 import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
-import { type BuildingDesc, buildHighriseInterior, buildHighriseShell, type FacadeSurface, groundDecal } from './highrise';
-import { BAND, CHUNK, DOWNTOWN_RADIUS, ROAD_HALF, type WorldLayout, type Zone } from './layout';
+import { curbParking, downtownBlock } from './cityFill';
+import { type BuildingDesc, buildHighriseInterior, groundDecal, windowPanes } from './highrise';
+import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
 import { hash3 } from './noise';
 import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
 import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, lampPost, mailbox, PAL, pick, pine, type Rand, trashBins, tree } from './pieces';
@@ -20,6 +21,8 @@ export interface ChunkData {
   containers: (ContainerSpot & { id: number })[];
   /** High-rises of this block (their interiors are streamed separately). */
   buildings: BuildingDesc[];
+  /** Roofed footprints for the climate: [minX, minZ, maxX, maxZ, roofY] each. */
+  shelters: Float32Array;
   /** Generation time in the worker, ms. */
   ms: number;
 }
@@ -70,7 +73,7 @@ export function buildChunk(layout: WorldLayout, i: number, j: number): ChunkData
   const X1 = (i + 1) * CHUNK - BAND;
   const Z1 = (j + 1) * CHUNK - BAND;
   let buildings: BuildingDesc[] = [];
-  if (zone === 'downtown') buildings = downtown(b, layout, i, j, X0, Z0, X1, Z1, rand);
+  if (zone === 'downtown') buildings = downtownBlock(b, i, j, X0, Z0, X1, Z1, rand);
   else if (zone === 'suburb') suburb(b, X0, Z0, X1, Z1, rand);
   else if (zone === 'town') town(b, X0, Z0, X1, Z1, rand);
   else if (zone === 'forest') forest(b, layout, X0, Z0, X1, Z1, rand);
@@ -86,6 +89,7 @@ export function buildChunk(layout: WorldLayout, i: number, j: number): ChunkData
     buildings,
     surfaces: batch.buildBuffers(),
     colliders: new Float32Array(colliders.data),
+    shelters: new Float32Array(b.shelters),
     ms: performance.now() - t0,
   };
 }
@@ -121,7 +125,7 @@ function ground(batch: StaticBatch, layout: WorldLayout, i: number, j: number, z
 function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand): void {
   const x = i * CHUNK;
   const z = j * CHUNK;
-  const SIDEWALK_H = 0.06;
+  const SIDEWALK_H = PAVE.sidewalk;
   // Road along x = X (runs north-south), between this chunk's intersections.
   if (layout.roadX(i, j)) {
     const za = z + BAND;
@@ -136,15 +140,17 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
     }
-    if (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) {
-      if (rand() < 0.8) trafficJam(b, x, 0, false, za, za + len, rand);
-    } else if (rand() < (layout.urbanX(i, j) ? 0.45 : 0.2)) {
-      const along = za + 5 + rand() * (len - 10);
-      const lane = rand() < 0.5 ? -1.8 : 1.8;
-      const yaw = (lane > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() < 0.25 ? (rand() - 0.5) * 1.2 : (rand() - 0.5) * 0.12);
-      buildCar(b.batch, b.colliders, { x: x + lane, z: along, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.4 ? 0.4 : 0 }, b.containers);
+    // Downtown: the queue that never got out; elsewhere cars sit where people left them.
+    const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
+    const pole = layout.urbanX(i, j) && rand() < 0.12;
+    if (pole) carIntoPole(b, x + ROAD_HALF + 1.2, z + CHUNK * 0.25, 0, rand);
+    if (layout.urbanX(i, j)) {
+      for (const side of [-1, 1]) {
+        if (Math.sign(jam) !== side) curbParking(b, false, x + side * CURB_LANE, side, za + 5, za + len - 5, rand, side > 0 && pole ? z + CHUNK * 0.25 : undefined);
+      }
+    } else if (rand() < 0.2) {
+      shoulderCar(b, false, x, za + 6 + rand() * (len - 12), rand);
     }
-    if (layout.urbanX(i, j) && rand() < 0.12) carIntoPole(b, x + ROAD_HALF + 1.2, z + CHUNK * 0.25, 0, rand);
     if (layout.urbanX(i, j)) for (let n = 0; n < 2; n++) if (rand() < 0.6) groundDecal(b, 'decalLitter', x + (rand() < 0.5 ? -1 : 1) * (ROAD_HALF + 1), SIDEWALK_H, za + rand() * len, 1.8, rand);
   }
   // Road along z = Z (runs east-west).
@@ -161,13 +167,11 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
     }
-    if (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) {
-      if (rand() < 0.8) trafficJam(b, 0, z, true, xa, xa + len, rand);
-    } else if (rand() < (layout.urbanZ(i, j) ? 0.45 : 0.2)) {
-      const along = xa + 5 + rand() * (len - 10);
-      const lane = rand() < 0.5 ? -1.8 : 1.8;
-      const yaw = (lane > 0 ? 0 : Math.PI) + (rand() < 0.25 ? (rand() - 0.5) * 1.2 : (rand() - 0.5) * 0.12);
-      buildCar(b.batch, b.colliders, { x: along, z: z + lane, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.4 ? 0.4 : 0 }, b.containers);
+    const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
+    if (layout.urbanZ(i, j)) {
+      for (const side of [-1, 1]) if (Math.sign(jam) !== side) curbParking(b, true, z + side * CURB_LANE, side, xa + 5, xa + len - 5, rand);
+    } else if (rand() < 0.2) {
+      shoulderCar(b, true, xa + 6 + rand() * (len - 12), z, rand);
     }
     if (layout.urbanZ(i, j)) for (let n = 0; n < 2; n++) if (rand() < 0.6) groundDecal(b, 'decalLitter', xa + rand() * len, SIDEWALK_H, z + (rand() < 0.5 ? -1 : 1) * (ROAD_HALF + 1), 1.8, rand);
   }
@@ -195,64 +199,20 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
   }
 }
 
-const FACADES: FacadeSurface[] = ['facadeConcrete', 'facadeBrick', 'facadeOffice'];
-const snap3 = (v: number) => Math.round(v / 3) * 3;
+/** Parked cars hug the curb: lane center this far from the road's center line. */
+const CURB_LANE = ROAD_HALF - 1.05;
 
-/**
- * Downtown block: four high-rises (or a parking lot) on a paved block, taller towards the center.
- * Returns the building descriptors; their interiors are built on demand by buildInterior().
- */
-function downtown(b: Builder, _layout: WorldLayout, i: number, j: number, X0: number, Z0: number, X1: number, Z1: number, rand: Rand): BuildingDesc[] {
-  b.block(0x5e5c56, X0, 0, Z0, X1 - X0, 0.04, Z1 - Z0, 'asphalt');
-  const out: BuildingDesc[] = [];
-  const chunkKey = (i + 32768) * 65536 + (j + 32768);
-  const centrality = 1 - Math.max(Math.abs(i), Math.abs(j)) / (DOWNTOWN_RADIUS + 1);
-  const lw = (X1 - X0) / 2;
-  const ld = (Z1 - Z0) / 2;
-  let n = 0;
-  for (const south of [true, false]) {
-    for (let lx = 0; lx < 2; lx++) {
-      const lotX0 = X0 + lx * lw;
-      const lotZ0 = south ? Z0 : Z0 + ld;
-      if (rand() < 0.12 && !(i === 0 && j === 0)) {
-        // Parking lot: rows of abandoned cars.
-        for (let c = 0; c < 4; c++) {
-          if (rand() < 0.3) continue;
-          trafficJam(b, lotX0 + lw / 2, lotZ0 + 3 + c * 5.5, true, lotX0 + 1, lotX0 + lw - 1, rand);
-        }
-        continue;
-      }
-      const w = pick(rand, [15, 18, 21]);
-      const d = pick(rand, [15, 18, 21]);
-      const x0 = snap3(lotX0 + (lw - w) / 2);
-      const z0 = south ? snap3(lotZ0 + 1) : snap3(lotZ0 + ld - 1 - d);
-      const floors = Math.max(5, Math.min(25, 5 + Math.floor(rand() * (6 + 15 * centrality))));
-      const facade = pick(rand, FACADES);
-      const desc: BuildingDesc = {
-        id: chunkKey * 16 + n++,
-        cx: x0 + w / 2,
-        cz: z0 + d / 2,
-        w,
-        d,
-        floors,
-        facade,
-        flip: !south,
-        kind: facade === 'facadeOffice' ? 'offices' : 'apartments',
-        seed: Math.floor(rand() * 1e9),
-      };
-      buildHighriseShell(b, desc, rand);
-      out.push(desc);
-    }
-  }
-  // Back alley between the rows: dumpsters, rubbish, blood.
-  const zMid = (Z0 + Z1) / 2;
-  for (let k = 0; k < 3; k++) {
-    const dx = X0 + 3 + rand() * (X1 - X0 - 6);
-    b.block(0x3a4a3a, dx, 0, zMid - 0.8, 1.8, 1.3, 1.1, 'metal', true);
-    b.containers.push({ type: 'trash', x: dx + 0.9, z: zMid + 0.5 });
-  }
-  for (let k = 0; k < 4; k++) groundDecal(b, rand() < 0.7 ? 'decalLitter' : 'decalBlood', X0 + rand() * (X1 - X0), 0.04, zMid + (rand() - 0.5) * 3, 2, rand);
-  return out;
+/** Out in the country: a car that pulled over onto the shoulder and was left there. */
+function shoulderCar(b: Builder, alongX: boolean, x: number, z: number, rand: Rand): void {
+  const side = rand() < 0.5 ? -1 : 1;
+  const off = side * (ROAD_HALF + 0.3);
+  const yaw = (alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() - 0.5) * 0.15;
+  buildCar(
+    b.batch,
+    b.colliders,
+    { x: alongX ? x : x + off, z: alongX ? z + off : z, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.4, smashed: rand() < 0.3 ? 0.4 : 0 },
+    b.containers,
+  );
 }
 
 /** Interior of one high-rise (worker side, on demand). */
@@ -263,6 +223,7 @@ export function buildInterior(desc: BuildingDesc): InteriorData {
   const colliders = new PackedColliders();
   const b = new Builder(batch, colliders);
   buildHighriseInterior(b, desc, rand);
+  windowPanes(b, desc);
   b.dispose();
   return {
     buildingId: desc.id,

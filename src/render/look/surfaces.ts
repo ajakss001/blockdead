@@ -14,6 +14,7 @@ export type Surface =
   | 'metal'
   | 'foliage'
   | 'glass'
+  | 'windowGlass'
   | 'carPaint'
   | 'rubber'
   | 'carGlass'
@@ -24,14 +25,15 @@ export type Surface =
   | 'facadeOffice'
   | 'concrete'
   | 'tile'
-  | 'decalBlood'
+  | 'decalSoot'
+  | 'decalOil'
   | 'decalSkid'
   | 'decalBullets'
   | 'decalShards'
   | 'decalLitter';
 
 /** Alpha-cut overlays drawn on top of other surfaces. */
-export type DecalKind = 'blood' | 'skid' | 'bullets' | 'shards' | 'litter';
+export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter';
 
 export interface SurfaceSpec {
   kind: GrungeKind;
@@ -44,12 +46,11 @@ export interface SurfaceSpec {
   tile: number;
   /** Vertical tile size on walls, if different (facades: two storeys per tile). */
   tileV?: number;
-  /** Decals keep their own 0..1 UVs and are alpha-cut. */
+  /** Decals keep their own 0..1 UVs and are alpha-blended with the glass. */
   decal?: DecalKind;
-  blood?: number;
   bump?: number;
-  /** < 1 makes the surface translucent (car glass). */
-  opacity?: number;
+  /** Translucent surface: texture alpha multiplier (car glass, window panes). */
+  alpha?: number;
   castShadow: boolean;
 }
 
@@ -65,9 +66,11 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   glass: { kind: 'grime', detail: 0xbfc4c8, noise: 0.3, roughness: 0.3, metalness: 0.1, tile: 1, castShadow: false },
   // Abandoned cars. Paint: matte, faded, rust blooms and drips; mud/dust come from vertex tints.
   carPaint: { kind: 'carpaint', detail: 0xdad6ce, noise: 0.3, roughness: 0.78, metalness: 0.25, tile: 1.2, bump: 0.4, castShadow: true },
+  // Intact windows and shop glass: clear and lightly tinted, a cold sheen from the flashlight.
+  windowGlass: { kind: 'glass', detail: 0x9aa8b2, noise: 0.2, roughness: 0.1, metalness: 0.35, tile: 3, alpha: 0.35, castShadow: false },
   rubber: { kind: 'grime', detail: 0x9c9a96, noise: 0.5, roughness: 1, metalness: 0, tile: 0.6, castShadow: true },
   // Murky, dusty, cracked; tile is large so a pane shows one crack, not a repeating pattern.
-  carGlass: { kind: 'glass', detail: 0xc4c8cc, noise: 0.35, roughness: 0.9, metalness: 0.1, tile: 2.2, opacity: 0.82, castShadow: false },
+  carGlass: { kind: 'glass', detail: 0xc4c8cc, noise: 0.35, roughness: 0.9, metalness: 0.1, tile: 2.2, alpha: 0.82, castShadow: false },
   // Old chrome and plastic: bumpers, hubcaps, grille.
   trim: { kind: 'metal', detail: 0xd2cec8, noise: 0.35, roughness: 0.5, metalness: 0.55, tile: 0.8, castShadow: true },
   lamp: { kind: 'grime', detail: 0xd8d8d4, noise: 0.25, roughness: 0.35, metalness: 0, tile: 0.4, castShadow: false },
@@ -77,7 +80,8 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   facadeOffice: { kind: 'facadeOffice', detail: 0xb8c0c4, noise: 0.2, roughness: 0.5, metalness: 0.3, tile: 6, tileV: 6.4, castShadow: true },
   concrete: { kind: 'concrete', detail: 0xc4c2bc, noise: 0.4, roughness: 0.95, metalness: 0, tile: 2.5, castShadow: true },
   tile: { kind: 'tile', detail: 0xccc8bc, noise: 0.3, roughness: 0.7, metalness: 0, tile: 1.2, castShadow: false },
-  decalBlood: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.4, metalness: 0, tile: 1, decal: 'blood', castShadow: false },
+  decalSoot: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'soot', castShadow: false },
+  decalOil: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.3, metalness: 0.1, tile: 1, decal: 'oil', castShadow: false },
   decalSkid: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.9, metalness: 0, tile: 1, decal: 'skid', castShadow: false },
   decalBullets: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.9, metalness: 0, tile: 1, decal: 'bullets', castShadow: false },
   decalShards: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.25, metalness: 0.2, tile: 1, decal: 'shards', castShadow: false },
@@ -87,17 +91,28 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];
 
 /**
+ * Window openings painted into the facade textures: one tile = 2 bays (3 m) × 2 storeys (3.2 m),
+ * a window centered in each bay. Offsets in meters from the bay's start / the storey's floor.
+ * The interior generator puts real panes exactly there.
+ */
+export const FACADE_WINDOW = {
+  apartments: { inset: (11 / 64) * 3, width: (42 / 64) * 3, sill: (18 / 64) * 3.2, head: (48 / 64) * 3.2 },
+  offices: { inset: (3 / 64) * 3, width: (58 / 64) * 3, sill: (7 / 64) * 3.2, head: (59 / 64) * 3.2 },
+} as const;
+export const FACADE_BAY = 3;
+
+/**
  * Draw buckets: every chunk becomes at most four meshes regardless of how many surfaces it uses.
  * 'cast' = opaque shadow casters, 'flat' = opaque receivers only (ground, roads, glass, lamps),
- * 'glass' = translucent car windows, 'decal' = alpha-cut overlays (blood, skid marks, bullet holes).
+ * 'glass' = everything alpha-blended: car and window glass, and the decals (soot, oil, skid marks,
+ * litter, bullet holes) — they lie 2–3 cm above their surface, so they need no depth offset of their own.
  */
-export type Bucket = 'cast' | 'flat' | 'glass' | 'decal';
-export const BUCKETS: readonly Bucket[] = ['cast', 'flat', 'glass', 'decal'];
+export type Bucket = 'cast' | 'flat' | 'glass';
+export const BUCKETS: readonly Bucket[] = ['cast', 'flat', 'glass'];
 
 export function bucketOf(surface: Surface): Bucket {
   const s = SURFACES[surface];
-  if (s.decal) return 'decal';
-  if (s.opacity !== undefined) return 'glass';
+  if (s.decal || s.alpha !== undefined) return 'glass';
   return s.castShadow ? 'cast' : 'flat';
 }
 

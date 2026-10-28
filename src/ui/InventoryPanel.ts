@@ -1,10 +1,11 @@
-import { type ItemDef, type ItemId, ITEMS, useVerb, type WearSlot } from '../data/items';
+import { type ItemDef, type ItemId, ITEMS, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
 import type { Inventory } from '../systems/Inventory';
 import type { Survival } from '../systems/Survival';
-import { dollImage, itemIcon } from './pixelart';
+import { CharacterPreview } from './CharacterPreview';
+import { itemIcon } from './pixelart';
 
 export interface InventoryHost {
   inventory: Inventory;
@@ -31,12 +32,14 @@ const BAG_MIN_CELLS = 24;
 const BOX_MIN_CELLS = 12;
 const DRAG_THRESHOLD = 6;
 const DOUBLE_TAP_MS = 320;
+/** E and Esc close every game window (PC); Tab / I toggle the inventory. */
+const CLOSE_KEYS = ['KeyE', 'Escape', 'Tab', 'KeyI'];
 
 const WORDS = ['нет', 'лёгкий', 'сильный', 'критический'];
 const level = (v: number) => (v >= 0.75 ? 3 : v >= 0.5 ? 2 : v >= 0.25 ? 1 : 0);
 
 /**
- * Zomboid-style inventory: paper doll with equipment slots, the backpack grid and the open
+ * Zomboid-style inventory: a 3D figure (drag to turn) with equipment slots, the backpack grid and the open
  * container's grid. Tap selects (item card with actions), double tap does the obvious thing,
  * drag & drop moves between grids and slots (mouse and touch alike). The game is paused while
  * it is open; on PC the pointer lock is released and re-acquired on close.
@@ -46,7 +49,11 @@ export class InventoryPanel {
   private container: ContainerRef | null = null;
   private selected: Place | null = null;
   private readonly root = document.createElement('div');
+  /** 3D figure in the worn clothes; renders only while the panel is open. */
+  private readonly preview = new CharacterPreview();
   private lastTap = { key: '', t: 0 };
+  /** Close keys that were already down when the window opened. */
+  private readonly heldAtOpen = new Set<string>();
   private drag: { place: Place; x: number; y: number; ghost: HTMLImageElement | null; pointer: number } | null = null;
 
   constructor(
@@ -59,12 +66,14 @@ export class InventoryPanel {
     parent.append(this.root);
 
     window.addEventListener('keydown', (e) => {
-      if (!this.isOpen) return;
-      if (e.code === 'Tab' || e.code === 'KeyI' || e.code === 'Escape' || e.code === 'KeyE') {
-        e.preventDefault();
-        this.close();
-      }
+      if (!this.isOpen || !CLOSE_KEYS.includes(e.code)) return;
+      e.preventDefault();
+      // A key still held from before the window opened (holding E through the search) or its
+      // auto-repeat must not close it: only a new press after a release does.
+      if (e.repeat || this.heldAtOpen.has(e.code)) return;
+      this.close();
     });
+    window.addEventListener('keyup', (e) => this.heldAtOpen.delete(e.code));
     this.root.addEventListener('pointermove', (e) => this.onDragMove(e));
     this.root.addEventListener('pointerup', (e) => this.onDragEnd(e));
     this.root.addEventListener('pointercancel', () => this.cancelDrag());
@@ -81,8 +90,12 @@ export class InventoryPanel {
     this.selected = null;
     if (!this.isOpen) {
       this.isOpen = true;
+      this.heldAtOpen.clear();
+      if (this.ctx.input.isHeld('use')) this.heldAtOpen.add('KeyE');
+      if (this.ctx.input.isHeld('inventory')) for (const k of ['Tab', 'KeyI']) this.heldAtOpen.add(k);
       this.root.hidden = false;
       this.ctx.loop.pause('inventory');
+      this.preview.start();
       this.ctx.events.emit('ui:modal', { open: true });
       if (document.pointerLockElement) document.exitPointerLock();
     }
@@ -93,6 +106,7 @@ export class InventoryPanel {
     if (!this.isOpen) return;
     this.cancelDrag();
     this.isOpen = false;
+    this.preview.stop();
     this.root.hidden = true;
     this.container = null;
     this.ctx.loop.resume('inventory');
@@ -130,16 +144,14 @@ export class InventoryPanel {
     const pane = el('div', 'inv__equip');
     const left = el('div', 'inv__slots');
     for (const { slot, label } of SLOTS) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
-    const doll = document.createElement('img');
-    doll.className = 'inv__doll';
-    doll.src = dollImage(inv.worn, inv.hand);
-    doll.alt = '';
-    doll.draggable = false;
+    this.preview.setOutfit(inv.worn, inv.hand);
     const right = el('div', 'inv__slots inv__slots--right');
     right.append(this.slotCell('hand', 'Руки', inv.hand));
-    const bite = this.biteProtection();
-    right.append(el('div', 'inv__armor', `Защита\nот укуса\n${Math.round(bite * 100)}%`));
-    pane.append(left, doll, right);
+    // Totals of every clothing stat (bite protection averaged over the four body slots).
+    const worn = inv.worn;
+    const lines = WEAR_STATS.map(({ key, label, format }) => `${label}\n${format(key === 'bite' ? wornStat(worn, key) / SLOTS.length : wornStat(worn, key))}`);
+    right.append(el('div', 'inv__armor', lines.join('\n\n')));
+    pane.append(left, this.preview.canvas, right);
     return pane;
   }
 
@@ -212,7 +224,7 @@ export class InventoryPanel {
         `Голод: ${WORDS[level(sv.hunger)]}`,
         `Жажда: ${WORDS[level(sv.thirst)]}`,
         `Усталость: ${WORDS[level(sv.fatigue)]}`,
-        sv.bleeding ? 'Кровотечение!' : '',
+        sv.wounded ? 'Рана!' : '',
         `Фонарь ${Math.round(player.battery * 100)}%`,
       ]
         .filter(Boolean)
@@ -462,15 +474,6 @@ export class InventoryPanel {
     return !!a && !!b && placeKey(a) === placeKey(b);
   }
 
-  /** Average bite protection over head, torso, legs, feet (stage 4 rolls per hit body part). */
-  private biteProtection(): number {
-    let sum = 0;
-    for (const { slot } of SLOTS) {
-      const id = this.host.inventory.worn[slot as WearSlot];
-      sum += id ? ITEMS[id].wear!.bite : 0;
-    }
-    return sum / SLOTS.length;
-  }
 }
 
 function placeKey(p: Place): string {
@@ -484,10 +487,10 @@ function describe(def: ItemDef): string {
   if (def.thirst) parts.push(`жажда ${def.thirst < 0 ? '−' : '+'}${Math.round(Math.abs(def.thirst) * 100)}`);
   if (def.fatigue) parts.push(`усталость −${Math.round(Math.abs(def.fatigue) * 100)}`);
   if (def.pain) parts.push('снимает боль');
-  if (def.stopsBleeding) parts.push('останавливает кровь');
+  if (def.dressesWound) parts.push('перевязка раны');
   if (def.health) parts.push(`здоровье +${Math.round(def.health * 100)}`);
   if (def.battery) parts.push('заряд фонаря');
-  if (def.wear) parts.push(`защита от укуса ${Math.round(def.wear.bite * 100)}%`);
+  if (def.wear) for (const { key, label, format } of WEAR_STATS) parts.push(`${label.toLowerCase()} ${format(def.wear.stats[key])}`);
   return parts.join(' · ');
 }
 

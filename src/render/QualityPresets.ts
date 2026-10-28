@@ -22,6 +22,8 @@ export interface QualityPreset {
   lighting: LightingModel;
   /** Fog end distance, m. Hides the streaming edge. */
   fogFar: number;
+  /** High-rise interiors kept loaded at once (each: ~5 draw calls, 13–20k triangles, see-through windows). */
+  interiors: number;
 }
 
 export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high'];
@@ -41,6 +43,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     shadowDistance: 14,
     lighting: 'lambert',
     fogFar: 50,
+    interiors: 1,
   },
   medium: {
     level: 'medium',
@@ -56,6 +59,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     shadowDistance: 20,
     lighting: 'standard',
     fogFar: 66,
+    interiors: 1,
   },
   high: {
     level: 'high',
@@ -71,5 +75,6 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     shadowDistance: 28,
     lighting: 'standard',
     fogFar: 115,
+    interiors: 2,
   },
 };

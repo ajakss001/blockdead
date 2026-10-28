@@ -198,6 +198,22 @@ body {
   cursor: pointer;
 }
 .play-overlay[hidden] { display: none; }
+/* Quiet hint after a game window closed without the pointer lock coming back. */
+.soft-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  z-index: 2;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  font: 13px system-ui, sans-serif;
+  color: rgba(205, 198, 184, 0.75);
+  background: rgba(10, 10, 12, 0.45);
+  pointer-events: none;
+  animation: soft-hint-in 0.4s ease-out;
+}
+.soft-hint[hidden] { display: none; }
+@keyframes soft-hint-in { from { opacity: 0; } to { opacity: 1; } }
 .play-overlay__title { font-size: 26px; font-weight: 700; }
 .play-overlay__controls {
   display: grid;
@@ -279,21 +295,30 @@ body {
 
 .touch__btn--use { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 30px); font-size: 11px; }
 
-/* Zomboid HUD: plain text, muted colors, appears only when it matters. */
-#ui > .moodles,
+/* Zomboid HUD: a row of pixel-art indicators, top right, clear of the phone buttons. */
+#ui > .stats,
 #ui > .action { pointer-events: none; }
-.moodles {
+.stats {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  right: calc(env(safe-area-inset-right, 0px) + 16px);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
   z-index: 2;
-  font: 500 13px system-ui, sans-serif;
-  letter-spacing: 0.04em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  display: flex;
+  gap: 4px;
+  padding: 3px 4px;
+  background: rgba(8, 9, 11, 0.35);
+}
+.stat { position: relative; width: 28px; height: 28px; opacity: 0.6; transition: opacity 0.4s; }
+.stat--warn { opacity: 0.95; }
+.stat--critical { animation: stat-blink 0.8s steps(2, jump-none) infinite; }
+.stat[hidden] { display: none; }
+.stat__img { position: absolute; left: 0; bottom: 0; width: 28px; height: 28px; image-rendering: pixelated; }
+.stat__fill { position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; }
+.stat--wound { position: relative; opacity: 1; animation: stat-blink 1.2s steps(2, jump-none) infinite; }
+@keyframes stat-blink { from { opacity: 1; } to { opacity: 0.25; } }
+@media (max-height: 430px) {
+  .stats { top: calc(env(safe-area-inset-top, 0px) + 6px); right: calc(env(safe-area-inset-right, 0px) + 8px); gap: 3px; }
+  .stat, .stat__img { width: 24px; height: 24px; }
 }
 .action {
   position: absolute;
@@ -382,11 +407,12 @@ body {
 .inv__slots { display: flex; flex-direction: column; gap: 4px; }
 .inv__slots--right { justify-content: center; align-self: center; }
 .inv__doll {
-  width: 96px;
-  height: 192px;
-  image-rendering: pixelated;
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.6));
+  width: 112px;
+  height: 200px;
+  cursor: grab;
+  background: radial-gradient(ellipse at 50% 85%, rgba(120, 112, 96, 0.22), rgba(0, 0, 0, 0) 60%);
 }
+.inv__doll:active { cursor: grabbing; }
 .inv__armor { margin-top: 8px; font-size: 10px; line-height: 1.3; color: #7c7566; text-align: center; white-space: pre-line; }
 
 .inv__pane {
@@ -507,7 +533,7 @@ body {
 /* Phones in landscape: tighter cells, smaller doll. */
 @media (max-height: 430px) {
   .inv { --cell: 40px; gap: 6px; padding-top: calc(env(safe-area-inset-top, 0px) + 6px); padding-bottom: 6px; }
-  .inv__doll { width: 64px; height: 128px; }
+  .inv__doll { width: 78px; height: 142px; }
   .inv__equip { padding: 4px; }
   .inv__slots { gap: 3px; }
   .inv__hint { display: none; }

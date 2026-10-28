@@ -7,20 +7,36 @@ const CONTROLS: [string, string][] = [
   ['C', 'присесть'],
   ['ЛКМ', 'атака'],
   ['F', 'фонарик'],
-  ['E', 'обыскать'],
-  ['1 / 2', 'нож / кулаки'],
+  ['E', 'обыскать / дверь'],
+  ['Tab / I', 'инвентарь'],
+  ['1 / 2', 'оружие / убрать'],
   ['Esc', 'пауза'],
 ];
 
+/** After a window closes, how long the browser gets to hand the pointer lock back before we hint. */
+const RELOCK_GRACE_MS = 450;
+
 /**
- * PC only: "click to play" screen that requests pointer lock. Shown whenever the lock is lost
- * (Esc, alt-tab) — the simulation is soft-paused meanwhile, rendering continues behind it.
+ * PC only. Two ways to be without the pointer lock:
+ * - the player left the game (Esc, alt-tab): full "click to play" screen, simulation soft-paused;
+ * - a game window (inventory, container) just closed and the browser did not give the lock back
+ *   (it refuses after Esc, and needs a moment otherwise): no screen and no pause — a quiet
+ *   "click to continue" line, the keyboard keeps working, a click restores mouse look.
  */
 export class PlayOverlay {
   private readonly root = document.createElement('div');
   private readonly hint = document.createElement('div');
+  private readonly soft = document.createElement('div');
+  private modal = false;
+  /** Lock was released by a game window, not by the player. */
+  private released = false;
+  private graceTimer = 0;
 
-  constructor(ctx: GameContext, kbm: KeyboardMouseInput, parent: HTMLElement) {
+  constructor(
+    private readonly ctx: GameContext,
+    private readonly kbm: KeyboardMouseInput,
+    parent: HTMLElement,
+  ) {
     this.root.className = 'play-overlay';
     const title = document.createElement('div');
     title.className = 'play-overlay__title';
@@ -36,33 +52,61 @@ export class PlayOverlay {
     }
     this.hint.className = 'play-overlay__hint';
     this.root.append(title, list, this.hint);
-    parent.append(this.root);
+    this.soft.className = 'soft-hint';
+    this.soft.textContent = 'Кликните, чтобы продолжить';
+    this.soft.hidden = true;
+    parent.append(this.root, this.soft);
 
     this.root.addEventListener('click', () => {
       this.hint.textContent = '';
       void kbm.requestLock();
     });
-    // Chrome refuses to re-lock for ~1 s after Esc.
+    // In the quiet state any click on the game picks the mouse back up.
+    kbm.canvas.addEventListener('click', () => {
+      if (!this.soft.hidden) void kbm.requestLock();
+    });
     document.addEventListener('pointerlockerror', () => {
-      this.hint.textContent = 'Подождите секунду и нажмите ещё раз';
+      // Chrome refuses to re-lock for ~1 s after Esc.
+      if (!this.root.hidden) this.hint.textContent = 'Подождите секунду и нажмите ещё раз';
+      if (this.released && !this.modal) this.showSoft();
     });
 
-    ctx.events.on('input:active', ({ active }) => this.sync(ctx, active));
-    // The inventory releases the lock on purpose: no "click to play" screen over it.
+    ctx.events.on('input:active', ({ active }) => {
+      if (active) this.released = false;
+      this.sync();
+    });
+    // Game windows release the lock on purpose: never the full screen over them or right after them.
     ctx.events.on('ui:modal', ({ open }) => {
       this.modal = open;
-      this.sync(ctx, ctx.input.active);
+      if (open) {
+        this.released = true;
+        window.clearTimeout(this.graceTimer);
+      } else {
+        this.graceTimer = window.setTimeout(() => {
+          if (!this.ctx.input.active && !this.modal) this.showSoft();
+        }, RELOCK_GRACE_MS);
+      }
+      this.sync();
     });
-    this.sync(ctx, ctx.input.active);
+    this.sync();
   }
 
-  private modal = false;
+  private showSoft(): void {
+    this.soft.hidden = false;
+    this.kbm.keysWithoutLock = true;
+  }
 
-  private sync(ctx: GameContext, active: boolean): void {
-    const show = !active && !this.modal;
-    this.root.hidden = !show;
-    if (show) ctx.loop.pause('menu');
-    else ctx.loop.resume('menu');
+  private sync(): void {
+    const active = this.ctx.input.active;
+    if (active || this.modal) {
+      this.soft.hidden = true;
+      this.kbm.keysWithoutLock = false;
+    }
+    // The full screen only when the player let go of the game themselves.
+    const full = !active && !this.modal && !this.released;
+    this.root.hidden = !full;
+    if (full) this.ctx.loop.pause('menu');
+    else this.ctx.loop.resume('menu');
   }
 }
 

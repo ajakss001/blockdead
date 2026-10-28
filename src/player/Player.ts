@@ -105,8 +105,6 @@ export class Player {
     const strikeNoise = this.viewmodel.consumeStrike();
     if (strikeNoise > 0) this.controller.addNoise(strikeNoise);
 
-    // Being loud makes you anxious (zombie-driven panic arrives in stage 4).
-    this.ctx.hud.setMoodle('anxiety', this.controller.noise > 0.75 ? 2 : this.controller.noise > 0.5 ? 1 : 0);
   }
 
   render(alpha: number, frameDt: number): void {
@@ -152,6 +150,11 @@ export class Player {
   /** Render the shadow map once (used during loading to compile its shaders off-screen). */
   prewarmShadows(): void {
     this.flashlight.shadow.needsUpdate = true;
+  }
+
+  /** The flashlight is actually shining. */
+  get lightOn(): boolean {
+    return this.flashlightOn && this.battery > 0;
   }
 
   rechargeBattery(amount: number): void {
