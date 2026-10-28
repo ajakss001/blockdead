@@ -77,15 +77,23 @@ const W_IDLE = key2h([-0.11, -0.25, -0.46], [0.72, 0.66, -0.2], [0.6, 0, -0.8]);
 const W_SPRINT = key2h([-0.08, -0.27, -0.42], [0.85, 0.5, -0.1], [0.3, 0, -1]);
 /** Wound up: the head lifted back over the right shoulder, the edge leading. */
 const W_WINDUP = key2h([0.08, -0.12, -0.5], [0.35, 0.85, 0.4], [0.1, 0.6, -0.8]);
-/** End of the chop: hands down at the belly, the head forward and low, mostly below the frame. */
-const W_STRIKE = key2h([0.05, -0.19, -0.25], [-0.15, -0.3, -0.94], [0, -1, 0.15]);
+/** End of the chop: down and forward low left, hands and head still in the frame. */
+const W_STRIKE = key2h([0.02, -0.16, -0.4], [-0.35, -0.15, -0.92], [0, -1, 0.15]);
+/** On the way back: brought up low across the front, right of the crosshair, before settling at rest. */
+const W_RECOVER = key2h([-0.05, -0.22, -0.42], [0.55, 0.25, -0.8], [0.4, 0.2, -0.9]);
 /** Elbow directions (from the hand towards the elbow): both elbows bent, down and back, never at the camera. */
 /** Two-bone arms for two-handed grips: shoulders below and just behind the eyes, elbows bent down and out. */
 const SHOULDER_R = new Vector3(0.19, -0.25, -0.05);
 const SHOULDER_L = new Vector3(-0.19, -0.25, -0.05);
 const POLE_R = new Vector3(0.7, -0.6, 0.25).normalize();
 const POLE_L = new Vector3(-0.7, -0.6, 0.25).normalize();
-const UPPER = 0.4;
+const UPPER = 0.52;
+/** Wrist limits, rad: flexion, sideways deviation, twist; the forearm takes up to FOREARM_ROLL of the twist itself. */
+const WRIST_FLEX = (60 * Math.PI) / 180;
+const WRIST_DEV = (25 * Math.PI) / 180;
+const WRIST_TWIST = (40 * Math.PI) / 180;
+const FOREARM_ROLL = (50 * Math.PI) / 180;
+const _z = new Vector3(0, 0, 1);
 const FOREARM = 0.32;
 const HAND_OFFSET = FOREARM + 0.01;
 
@@ -101,6 +109,27 @@ export interface ViewmodelFrame {
 const _v = new Vector3();
 const _m = new Matrix4();
 const _up = new Vector3(0, 1, 0);
+
+/** Twist (rad) of a rotation about local Z (swing–twist decomposition). */
+function twistAngle(q: Quaternion): number {
+  const a = 2 * Math.atan2(q.z, q.w);
+  return a > Math.PI ? a - 2 * Math.PI : a < -Math.PI ? a + 2 * Math.PI : a;
+}
+
+/** Clamp a hand rotation (relative to the forearm) to the wrist's range: flexion, deviation, twist. */
+function limitWrist(q: Quaternion): void {
+  if (q.w < 0) q.set(-q.x, -q.y, -q.z, -q.w);
+  const twist = new Quaternion(0, 0, q.z, q.w).normalize();
+  const swing = q.clone().multiply(twist.clone().invert());
+  const t = clamp(twistAngle(twist), -WRIST_TWIST, WRIST_TWIST);
+  // Where the swing points the hand's forward (−Z): bent up/down (flex) and sideways (deviation).
+  const v = new Vector3(0, 0, -1).applyQuaternion(swing);
+  const flex = clamp(Math.atan2(v.y, -v.z), -WRIST_FLEX, WRIST_FLEX);
+  const dev = clamp(Math.asin(clamp(v.x, -1, 1)), -WRIST_DEV, WRIST_DEV);
+  const c = Math.cos(dev);
+  const target = new Vector3(Math.sin(dev), c * Math.sin(flex), -c * Math.cos(flex));
+  q.setFromUnitVectors(new Vector3(0, 0, -1), target).multiply(new Quaternion().setFromAxisAngle(_z, t));
+}
 
 /** Two-bone IK: elbow for a shoulder, a wrist target, bone lengths a (upper) and b (fore), bent towards pole. */
 function solveElbow(s: Vector3, w: Vector3, a: number, b: number, pole: Vector3, out: Vector3): void {
@@ -366,9 +395,18 @@ export class Viewmodel {
         to = W_STRIKE;
         k = easeInQuad((t - a.windup) / a.strike);
       } else {
-        from = W_STRIKE;
-        to = { hand: w.pos.clone(), q: w.q.clone() };
-        k = easeInOutSine(Math.min(1, (t - a.windup - a.strike) / a.recover));
+        // The return is its own path (not the chop played backwards): up across the front, then an
+        // ease-out into the rest stance.
+        const r = Math.min(1, (t - a.windup - a.strike) / a.recover);
+        if (r < 0.4) {
+          from = W_STRIKE;
+          to = W_RECOVER;
+          k = easeInOutSine(r / 0.4);
+        } else {
+          from = W_RECOVER;
+          to = { hand: w.pos.clone(), q: w.q.clone() };
+          k = easeOutQuad((r - 0.4) / 0.6);
+        }
       }
       w.pos.copy(from.hand).lerp(to.hand, k);
       w.q.copy(from.q).slerp(to.q, k);
@@ -396,19 +434,34 @@ export class Viewmodel {
     const handQ = new Quaternion();
     const wrist = new Vector3();
     const elbow = new Vector3();
-    for (let it = 0; it < 2; it++) {
-      // Hand basis: y = handle axis, z = towards the elbow (perpendicular part), x = y × z.
+    const gripLocal = new Vector3(GRIP_X * side, 0, GRIP_Z);
+    const armQ = new Quaternion();
+    const local = new Quaternion();
+    const actual = new Quaternion();
+    // The fist wants its grip axis along the handle; the wrist only bends so far, so the hand follows
+    // the forearm within the limits, and the arm is re-aimed (IK) so that hand still lands on the grip.
+    for (let it = 0; it < 3; it++) {
+      // Wanted hand basis: y = handle axis, z = towards the elbow (perpendicular part), x = y × z.
       const z = toElbow.clone().addScaledVector(axis, -toElbow.dot(axis)).normalize();
       handQ.setFromRotationMatrix(_m.makeBasis(new Vector3().crossVectors(axis, z), axis, z));
-      wrist.copy(point).sub(new Vector3(GRIP_X * side, 0, GRIP_Z).applyQuaternion(handQ));
+      if (it > 0) actual.copy(armQ).multiply(local);
+      else actual.copy(handQ);
+      wrist.copy(point).sub(gripLocal.clone().applyQuaternion(actual));
       solveElbow(shoulder, wrist, UPPER, HAND_OFFSET, pole, elbow);
       toElbow.subVectors(elbow, wrist).normalize();
+      // Forearm frame (−Z from the elbow to the wrist), then the twist shared: the forearm rolls up to
+      // FOREARM_ROLL, the wrist takes the rest within its own limits.
+      const dir = toElbow.clone().negate();
+      armQ.setFromRotationMatrix(_m.lookAt(elbow, wrist, Math.abs(dir.dot(axis)) > 0.95 ? _up : axis));
+      const twist = twistAngle(armQ.clone().invert().multiply(handQ));
+      armQ.multiply(new Quaternion().setFromAxisAngle(_z, clamp(twist * 0.5, -FOREARM_ROLL, FOREARM_ROLL)));
+      limitWrist(local.copy(armQ).invert().multiply(handQ));
     }
-    // Forearm: from the elbow along its −Z to the wrist; the hand keeps its own (handle) rotation.
+    // The hand sits on the end of the sleeve, always (no gap, no overlap).
     arm.position.copy(elbow);
-    arm.quaternion.setFromRotationMatrix(_m.lookAt(elbow, wrist, axis));
-    hand.position.set(0, 0, -elbow.distanceTo(wrist));
-    hand.quaternion.copy(arm.quaternion).invert().multiply(handQ);
+    arm.quaternion.copy(armQ);
+    hand.position.set(0, 0, -HAND_OFFSET);
+    hand.quaternion.copy(local);
     // Upper arm: shoulder to elbow.
     upper.position.copy(shoulder);
     upper.quaternion.setFromRotationMatrix(_m.lookAt(shoulder, elbow, _up));
