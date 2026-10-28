@@ -21,6 +21,10 @@ export class Interaction {
   private searchRef: ContainerRef | null = null;
   private promptT = 0;
   private lastWeapon: ItemId | null = null;
+  private searchTime = SEARCH_TIME;
+  /** Class: search time multipliers (all containers, car trunks). */
+  searchMul = 1;
+  carMul = 1;
 
   constructor(
     private readonly ctx: GameContext,
@@ -41,6 +45,11 @@ export class Interaction {
     }
     if (input.consumePressed('item1')) this.drawWeapon();
     if (input.consumePressed('item2')) this.putAway();
+    // Touch: one button draws or puts away, whatever is in hand (a class can start armed).
+    if (input.consumePressed('weapon')) {
+      if (this.inventory.hand) this.putAway();
+      else this.drawWeapon();
+    }
 
     const use = input.consumePressed('use');
     if (this.searchT >= 0) {
@@ -48,8 +57,8 @@ export class Interaction {
         this.cancelSearch(true);
       } else {
         this.searchT += dt;
-        hud.showAction(`Обыск: ${this.containers.name(this.searchRef!)}`, this.searchT / SEARCH_TIME);
-        if (this.searchT >= SEARCH_TIME) {
+        hud.showAction(`Обыск: ${this.containers.name(this.searchRef!)}`, this.searchT / this.searchTime);
+        if (this.searchT >= this.searchTime) {
           const ref = this.searchRef!;
           this.searchT = -1;
           this.searchRef = null;
@@ -69,6 +78,7 @@ export class Interaction {
       else if (this.containers.isOpened(ref)) this.panel.open(ref);
       else {
         this.searchT = 0;
+        this.searchTime = SEARCH_TIME * this.searchMul * (ref.type === 'trunk' ? this.carMul : 1);
         this.searchRef = ref;
       }
     }

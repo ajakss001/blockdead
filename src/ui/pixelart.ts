@@ -172,7 +172,7 @@ function shadeRGB(c: number, k: number): number {
 }
 
 /** One draw routine per item. */
-const DRAW: Record<ItemId, (s: Sprite) => void> = {
+const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
   beans: (s) => can(s, 0x8c3a24, 0xd8b070),
   soup: (s) => can(s, 0x3a5a7a, 0xe0dccc),
   chips: (s) => {
@@ -355,6 +355,14 @@ const DRAW: Record<ItemId, (s: Sprite) => void> = {
     s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
     s.line(8, 4, 8, 9, shadeRGB(c, 1.25));
   },
+  soap: (s) => {
+    s.rect(3, 6, 10, 6, 0xd8cfa8);
+    s.rect(4, 5, 8, 1, 0xe8e0bc);
+    s.line(5, 8, 10, 8, 0xb8ae88);
+    s.dot(13, 4, 0xe6e8ea);
+    s.dot(12, 2, 0xe6e8ea);
+    s.dot(14, 1, 0xe6e8ea);
+  },
   tshirt: (s) => {
     const c = ITEMS.tshirt.wear!.color;
     s.rect(4, 3, 8, 11, c);
@@ -370,6 +378,32 @@ const DRAW: Record<ItemId, (s: Sprite) => void> = {
   sneakers: (s) => shoeIcon(s, ITEMS.sneakers.wear!.color, false),
   boots: (s) => shoeIcon(s, ITEMS.boots.wear!.color, true),
 };
+
+/** Generic clothing icon by slot, in the item's color (uniforms and anything without its own sprite). */
+function garment(s: Sprite, id: ItemId): void {
+  const w = ITEMS[id].wear;
+  if (!w) {
+    s.rect(4, 4, 8, 8, 0x6a6458);
+    return;
+  }
+  const c = w.color;
+  switch (w.slot) {
+    case 'head':
+      s.ellipse(8, 9, 6, 5, c);
+      clearRect(s, 1, 10, 15, 6);
+      s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
+      break;
+    case 'torso':
+      top(s, c, false, true, shadeRGB(c, 0.7));
+      break;
+    case 'legs':
+      pants(s, c, true);
+      break;
+    case 'feet':
+      shoeIcon(s, c, w.shoe === 'boots');
+      break;
+  }
+}
 
 function clearEllipse(s: Sprite, cx: number, cy: number, rx: number, ry: number): void {
   for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) {
@@ -475,7 +509,7 @@ export function itemIcon(id: ItemId): string {
   let url = iconCache.get(id);
   if (!url) {
     const s = new Sprite(16, 16);
-    DRAW[id](s);
+    (DRAW[id] ?? ((sp: Sprite) => garment(sp, id)))(s);
     s.finish();
     url = s.toDataURL();
     iconCache.set(id, url);

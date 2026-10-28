@@ -14,12 +14,17 @@ import {
 import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type ItemId, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
+import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
+import { BACKPACK_CAPACITY } from '../data/items';
+import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../player/appearance';
 import { outfitFrom } from '../player/outfit';
+import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
 import type { RightItem } from '../player/Viewmodel';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
 import { airTemperature, Clock, feltTemperature, Shelters } from '../systems/Climate';
+import { dirtSteps, soilClothes } from '../systems/Dirt';
 import { Containers } from '../systems/Containers';
 import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
@@ -29,6 +34,7 @@ import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
 import { Doors } from '../world/Doors';
 import { Interiors } from '../world/Interiors';
+import { WorldLife } from '../world/WorldLife';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
@@ -45,6 +51,10 @@ const NIGHT = {
 } as const;
 
 const DEFAULT_SEED = 1993;
+const BASE_VFOV = 75;
+const MAX_HFOV = 100;
+/** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
+const entranceKey = (chunkKey: number) => -1 - chunkKey;
 /** Sidewalk of the road along z = 0 in the heart of downtown, looking down the street. */
 const SPAWN = new Vector3(20, 0, 4.6);
 const SPAWN_YAW = -Math.PI / 2;
@@ -65,7 +75,7 @@ const HELD: Partial<Record<ItemId, RightItem>> = { knife: 'knife', axe: 'axe', b
 /** The procedural, endless world: chunks stream around the player from a seed (?seed=…). */
 export class WorldScene implements IScene {
   readonly scene = new Scene();
-  readonly camera = new PerspectiveCamera(75, 1, 0.05, 120);
+  readonly camera = new PerspectiveCamera(BASE_VFOV, 1, 0.05, 120);
   overlay?: { scene: Scene; camera: PerspectiveCamera };
 
   private ctx!: GameContext;
@@ -87,10 +97,21 @@ export class WorldScene implements IScene {
   private readonly clock = new Clock();
   private readonly shelters = new Shelters();
   private dread!: AnxietyAudio;
+  /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
+  private life!: WorldLife;
   private indoors = false;
   private air = 0;
   private felt = 0;
   private climateT = 0;
+  /** Visible dirt steps of the worn clothes, to re-dress the body only when a step changes. */
+  private dirtShown = '';
+  /** Who the survivor is: looks and former job (class). */
+  private look: Appearance = { ...DEFAULT_APPEARANCE };
+  private classId: ClassId = DEFAULT_CLASS;
+  /** No save was found: a new game asks for a character first. */
+  private isNewGame = true;
+  /** The editor is open: nothing to save yet (hiding the tab must not save a default survivor). */
+  private creating = false;
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
@@ -117,11 +138,15 @@ export class WorldScene implements IScene {
       this.containers.addChunk(key, data.zone, data.containers);
       this.interiors.addChunk(key, data.buildings);
       this.shelters.add(key, data.shelters);
+      this.doors.add(entranceKey(key), data.doors);
+      this.life?.add(key, data.ambient);
     };
     this.chunks.onChunkUnloaded = (key) => {
       this.containers.removeChunk(key);
       this.interiors.removeChunk(key);
       this.shelters.remove(key);
+      this.doors.remove(entranceKey(key));
+      this.life?.remove(key);
     };
     const syncBody = () => this.syncBody();
     this.panel = new InventoryPanel(
@@ -139,6 +164,8 @@ export class WorldScene implements IScene {
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
     this.saves = new SaveGame(ctx.platform, seed);
     this.dread = new AnxietyAudio(ctx.events, ctx.loop);
+    this.life = new WorldLife(this.scene, this.dread, (x, z) => layout.walkHeightAt(x, z));
+    this.interiors.onAmbient = (owner, spots) => (spots ? this.life.add(owner, spots) : this.life.remove(owner));
     this.inventory.restore(START_KIT);
     this.player.battery = START_KIT.battery;
     this.syncBody();
@@ -176,9 +203,10 @@ export class WorldScene implements IScene {
   private syncBody(): void {
     const hand = this.inventory.hand;
     this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
-    const outfit = outfitFrom(this.inventory.worn);
+    const outfit = outfitFrom(this.inventory.worn, this.look.skin, this.inventory.wornDirt, this.inventory.wornTint);
     this.player.body.setOutfit(outfit);
-    this.player.viewmodel.setSleeves(outfit.sleeves);
+    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso);
+    this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
   /** Restore the save (if any), then wait for the blocks around the player. */
@@ -186,6 +214,11 @@ export class WorldScene implements IScene {
     const save = await this.saves.load();
     const c = this.player.controller;
     if (save) {
+      this.isNewGame = false;
+      // Saves before the editor: the default survivor and class, no editor.
+      this.look = sanitizeAppearance(save.character?.appearance);
+      this.classId = classDef(save.character?.classId).id;
+      this.applyClass();
       c.position.set(save.player.x, save.player.y ?? 0, save.player.z);
       c.prevPosition.copy(c.position);
       c.yaw = save.player.yaw;
@@ -230,7 +263,9 @@ export class WorldScene implements IScene {
     group.position.copy(this.camera.position).addScaledVector(this.lookDir, 0.5);
     this.scene.add(group);
     this.player.prewarmShadows();
+    const lifeDone = this.life.prewarm();
     return () => {
+      lifeDone();
       group.removeFromParent();
       g.dispose();
     };
@@ -252,6 +287,9 @@ export class WorldScene implements IScene {
       this.air = airTemperature(this.clock.hour, this.indoors);
     }
     this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting);
+    // Clothes get dirty: faster running, crawling, rummaging through containers.
+    soilClothes(this.inventory, dt, { moving: c.speed > 0.2, sprinting: c.sprinting, crouching: c.crouched && c.speed > 0.2, searching: this.player.busy, weather: 1 });
+    if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
     const dark = !this.player.lightOn && (this.clock.isNight || this.indoors);
     this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0 });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
@@ -270,8 +308,11 @@ export class WorldScene implements IScene {
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
     this.interaction.render(frameDt);
-    this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z);
+    this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y);
     this.doors.update(frameDt);
+    const p = this.player.controller.position;
+    const zone = this.chunks.zoneAt(p.x, p.z);
+    this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
     if (!this.ctx.loop.paused) {
       this.saveT += frameDt;
       if (this.saveT >= AUTOSAVE_INTERVAL) this.save();
@@ -279,6 +320,7 @@ export class WorldScene implements IScene {
   }
 
   private save(): void {
+    if (this.creating) return;
     this.saveT = 0;
     const c = this.player.controller;
     void this.saves.save({
@@ -287,7 +329,46 @@ export class WorldScene implements IScene {
       inventory: this.inventory.serialize(),
       containers: this.containers.serialize(),
       clock: this.clock.minutes,
+      character: { appearance: this.look, classId: this.classId },
     });
+  }
+
+  /** New game: the character editor over the paused world (?editor=0 skips it with the default survivor). */
+  async createCharacter(): Promise<void> {
+    if (!this.isNewGame || new URLSearchParams(location.search).get('editor') === '0') {
+      this.applyClass();
+      return;
+    }
+    // The editor covers everything; afterwards the usual start screen (PC: click to play) shows.
+    this.ctx.loop.pause('editor');
+    this.creating = true;
+    const choice = await new CharacterEditor(document.getElementById('ui')!).open();
+    this.applyChoice(choice);
+    this.creating = false;
+    this.ctx.loop.resume('editor');
+    this.save();
+  }
+
+  /** Looks, class, uniform or starter outfit (with its color), the class kit. */
+  private applyChoice(choice: CharacterChoice): void {
+    this.look = { ...choice.appearance };
+    this.classId = choice.classId;
+    const cls = classDef(choice.classId);
+    const worn = choiceWorn(choice);
+    this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
+    this.applyClass();
+    this.syncBody();
+  }
+
+  /** Class modifiers into the systems that use them. */
+  private applyClass(): void {
+    const m = classMods(this.classId);
+    this.survival.mods = m;
+    this.inventory.capacity = BACKPACK_CAPACITY + m.carry;
+    this.interaction.searchMul = m.searchSpeed;
+    this.interaction.carMul = m.carSearch;
+    this.player.controller.noiseMul = m.stealth;
+    this.panel.setAppearance(this.look);
   }
 
   dispose(): void {
@@ -296,12 +377,14 @@ export class WorldScene implements IScene {
     this.ctx.debug.delete('world');
     this.ctx.debug.delete('survival');
     this.player.dispose();
+    this.life.dispose();
     this.chunks.dispose();
   }
 
   private applyQuality(): void {
     const preset = this.ctx.quality.preset;
     this.interiors.maxLoaded = preset.interiors;
+    this.life.clothEnabled = preset.lifeCloth;
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();
@@ -310,7 +393,12 @@ export class WorldScene implements IScene {
 
   private resize(width: number, height: number): void {
     if (height === 0) return;
-    this.camera.aspect = width / height;
+    const aspect = width / height;
+    this.camera.aspect = aspect;
+    // Vertical FOV 75°, but never wider than 100° horizontally: on a 812×375 phone a fixed 75° would
+    // be ~117° across, stretching everything near the edges (legs looked long, feet far away).
+    const maxV = (2 * Math.atan(Math.tan((MAX_HFOV * Math.PI) / 360) / aspect) * 180) / Math.PI;
+    this.camera.fov = Math.min(BASE_VFOV, maxV);
     this.camera.updateProjectionMatrix();
     this.player.viewmodel.setAspect(width / height);
   }

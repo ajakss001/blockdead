@@ -24,6 +24,8 @@ export interface QualityPreset {
   fogFar: number;
   /** High-rise interiors kept loaded at once (each: ~5 draw calls, 13–20k triangles, see-through windows). */
   interiors: number;
+  /** Curtains blowing out of windows and paper in the street (one draw call); off on weak phones. */
+  lifeCloth: boolean;
 }
 
 export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high'];
@@ -44,6 +46,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     lighting: 'lambert',
     fogFar: 50,
     interiors: 1,
+    lifeCloth: false,
   },
   medium: {
     level: 'medium',
@@ -60,6 +63,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     lighting: 'standard',
     fogFar: 66,
     interiors: 1,
+    lifeCloth: true,
   },
   high: {
     level: 'high',
@@ -76,5 +80,6 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     lighting: 'standard',
     fogFar: 115,
     interiors: 2,
+    lifeCloth: true,
   },
 };

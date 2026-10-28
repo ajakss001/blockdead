@@ -3,6 +3,7 @@ import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import { worldMaterials } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
 import type { ChunkData, InteriorData } from './gen/buildChunk';
+import type { BodyMode } from './gen/chaos';
 import type { WorkerRequest, WorkerResponse } from './gen/chunkWorker';
 import type { BuildingDesc } from './gen/highrise';
 import { CHUNK, type WorldLayout, type Zone } from './gen/layout';
@@ -143,14 +144,21 @@ export class ChunkManager {
     wanted.sort((a, b) => a.score - b.score);
     for (let n = 0; n < Math.min(capacity, wanted.length); n++) {
       const { i, j } = wanted[n];
-      this.post({ type: 'chunk', seed: this.layout.seed, i, j });
+      this.post({ type: 'chunk', seed: this.layout.seed, i, j, bodies: this.bodies });
       this.pending.add(key(i, j));
     }
   }
 
-  /** Ask a worker for a high-rise interior; it arrives through onInterior. */
-  requestInterior(building: BuildingDesc): void {
-    this.post({ type: 'interior', seed: this.layout.seed, building });
+  /**
+   * Bodies in the chaos scenes: 'mixed' (some visible, whole and clean; some under sheets, in bags) or
+   * 'covered' (all under sheets / in bags, for the age rating). ?bodies=covered or localStorage
+   * blockdead.bodies=covered.
+   */
+  readonly bodies: BodyMode = (new URLSearchParams(location.search).get('bodies') ?? localStorage.getItem('blockdead.bodies')) === 'covered' ? 'covered' : 'mixed';
+
+  /** Ask a worker for a high-rise interior furnished around storey `focus`; it arrives through onInterior. */
+  requestInterior(building: BuildingDesc, focus: number): void {
+    this.post({ type: 'interior', seed: this.layout.seed, building, focus });
   }
 
   private post(msg: WorkerRequest): void {

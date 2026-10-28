@@ -26,6 +26,8 @@ export interface GrungeOptions {
   size?: number;
   seed?: number;
   kind?: GrungeKind;
+  /** Strength of the dark grime patches: 0 clean, 1 default, >1 spreads wider (dirty clothes). */
+  grime?: number;
 }
 
 type Rand = () => number;
@@ -249,6 +251,7 @@ export function generateGrungeCanvas(
   const detail = fbm(rand);
   const column = valueNoise(rand, 16);
   const blotch = valueNoise(rand, 6);
+  const grimeK = options.grime ?? 1;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -343,8 +346,8 @@ export function generateGrungeCanvas(
           break;
       }
 
-      // Grime: low-frequency dark-brown patches over everything.
-      const dirt = smooth(0.5, 0.72, grime(u, v));
+      // Grime: low-frequency dark-brown patches over everything (scaled by options.grime).
+      const dirt = smooth(0.5 - 0.14 * Math.max(0, grimeK - 1), 0.72, grime(u, v)) * Math.min(1, grimeK);
       shade *= 1 - dirt * 0.45;
       r = r + (52 - r) * dirt * 0.35;
       gg = gg + (44 - gg) * dirt * 0.35;

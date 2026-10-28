@@ -11,9 +11,13 @@ export interface ContainerSpot {
   x: number;
   z: number;
   y?: number;
+  /** Explicit id (interior floors: stable whichever floors are furnished). */
+  id?: number;
 }
 
 /** An interior door: hinge position and closed-leaf yaw in world space (leaf extends along +X when yaw = 0). */
+export type DoorStyle = 'wood' | 'glass';
+
 export interface DoorSpot {
   hx: number;
   hz: number;
@@ -23,39 +27,26 @@ export interface DoorSpot {
   swing: number;
   /** Nailed shut from the other side. */
   barricaded: boolean;
+  /** Leaf width, m (default 0.95). */
+  width?: number;
+  style?: DoorStyle;
+  /** Starts open (left ajar by whoever ran). */
+  open?: boolean;
+  /** Double doors: offset to the other leaf in the same list; both swing together. */
+  pair?: number;
 }
 
-/** Muted 90s-suburb-after-the-end palette. */
-export const PAL = {
-  grass: 0x4d5641,
-  dirt: 0x5a5240,
-  asphalt: 0x3a3c3e,
-  dash: 0xa89b66,
-  sidewalk: 0x74736c,
-  curb: 0x85847c,
-  path: 0x6c6a62,
-  trim: 0xb9b4a4,
-  window: 0x1f252a,
-  floor: 0x5e4c39,
-  ceiling: 0x3b3730,
-  counter: 0x6d6250,
-  counterTop: 0x9a9483,
-  fence: 0x6e6352,
-  trunk: 0x4a3b2e,
-  leaves: [0x3f5236, 0x4a5a3a, 0x56603f, 0x4d4f34],
-  metal: 0x3a3c3e,
-  appliance: 0xb5b2a8,
-  fabric: [0x4a3b38, 0x3c4450, 0x564c3c, 0x3e4a3e],
-  bin: 0x3d4f3d,
-  crate: 0x7a6646,
-  sidings: [0x7d8a86, 0x8f7f6a, 0x857a6c, 0x6f7a6e, 0x8a8a80, 0x7a6a62],
-  wallpapers: [0x7d7360, 0x6e7468, 0x7c6a62, 0x6c6858],
-  roofs: [0x4a3f3a, 0x3d4146, 0x463b36, 0x3a3a34],
-  shopFronts: [0x6a6e70, 0x7a6a58, 0x5e6658],
-} as const;
+export interface DoorOptions {
+  width?: number;
+  style?: DoorStyle;
+  open?: boolean;
+  pair?: number;
+}
 
-export type Rand = () => number;
-export const pick = <T>(rand: Rand, list: readonly T[]): T => list[Math.floor(rand() * list.length)];
+export { PAL, pick, type Rand } from './palette';
+import { PAL, pick, type Rand } from './palette';
+import * as F from './furniture';
+import { Place, type Quarter, SHOP_KINDS, SHOP_SIGN } from './furniture';
 
 const WALL_T = 0.2;
 const DOOR_W = 1.0;
@@ -76,6 +67,10 @@ export class Builder {
   readonly doors: DoorSpot[] = [];
   /** Roofed footprints in world space: [minX, minZ, maxX, maxZ, roofY, …] (see systems/Climate). */
   readonly shelters: number[] = [];
+  /** World-life spots, LIFE_STRIDE each: kind, x, y, z, normal x, normal z, w, h, seed (see world/WorldLife). */
+  readonly ambient: number[] = [];
+  private idBase: number | null = null;
+  private idN = 0;
   private flip: { cx: number; cz: number } | null = null;
   private readonly m = new Matrix4();
   private readonly flipM = new Matrix4();
@@ -105,12 +100,25 @@ export class Builder {
 
   /** Register a searchable container at a point in the current frame. */
   container(type: ContainerType, x: number, z: number, y = 0): void {
-    this.containers.push({ type, x: this.wx(x), z: this.wz(z), y });
+    if (this.idBase === null) this.containers.push({ type, x: this.wx(x), z: this.wz(z), y });
+    else this.containers.push({ type, x: this.wx(x), z: this.wz(z), y, id: this.idBase + this.idN++ });
+  }
+
+  /** Containers from here on get ids base, base + 1, … (null: the caller numbers them). */
+  setIdBase(base: number | null): void {
+    this.idBase = base;
+    this.idN = 0;
+  }
+
+  /** World-life spot in the current frame (normal turns with the frame). */
+  life(kind: number, x: number, y: number, z: number, nx: number, nz: number, w: number, h: number, seed: number): void {
+    const s = this.flip ? -1 : 1;
+    this.ambient.push(kind, this.wx(x), y, this.wz(z), nx * s, nz * s, w, h, seed);
   }
 
   /** Register a door by its hinge and closed yaw in the current frame. */
-  door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false): void {
-    this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded });
+  door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false, opts: DoorOptions = {}): void {
+    this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded, ...opts });
   }
 
   /** Box that only blocks within its own vertical extent (storeys, railings, lintels). */
@@ -273,6 +281,14 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
   b.block(PAL.trim, doorX + DOOR_W / 2, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
   b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, DOOR_H, z1, DOOR_W + 0.16, 0.08, 0.03);
+  const doorRoll = rand();
+  if (doorRoll < 0.8) {
+    // Hinge on the left jamb, swings into the hall.
+    b.door(doorX - DOOR_W / 2, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, style: 'wood', open: doorRoll > 0.55 });
+  } else {
+    // Kicked in: the leaf lies in the hall, the way is open.
+    b.block(0x5a4632, doorX - DOOR_W / 2 + 0.1, 0, z1 - WALL_T - 2.1, DOOR_W - 0.05, 0.05, 2.0, 'wood');
+  }
 
   // Rooms.
   // Living room opens into the kitchen (back) and the bedroom (front).
@@ -289,12 +305,22 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'wood');
   b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
 
-  // Living room: sofa against the side wall, coffee table, TV stand on the partition.
-  const fabric = pick(rand, PAL.fabric);
+  // Who lived here and how they left: still at home, fled in a hurry, or the house was ransacked.
+  const roll = rand();
+  const fled = roll >= 0.4 && roll < 0.75;
+  const messy = roll >= 0.75;
+  const open = () => messy || (fled && rand() < 0.6);
+
+  // Living room: sofa against the side wall, coffee table on a rug, lamp, a painting, TV on the back wall.
   const sz = z0 + d * 0.3;
-  b.block(fabric, x0 + 0.25, 0, sz, 0.9, 0.45, 2.0, 'rubber', true);
-  b.block(fabric, x0 + 0.25, 0.45, sz, 0.25, 0.45, 2.0, 'rubber');
-  b.block(PAL.counter, x0 + 1.6, 0, sz + 0.5, 0.6, 0.4, 1.0, 'wood', true);
+  const sofaP = new Place(b, x0 + WALL_T, 0, sz + 1.0, 1);
+  F.sofa(sofaP, rand, 2.0, messy);
+  F.rug(sofaP, rand, 1.35, 1.9, 1.3);
+  F.coffeeTable(sofaP.at(0, 1.05), rand, messy && rand() < 0.6);
+  F.painting(sofaP, rand, 1.55, messy && rand() < 0.4);
+  F.floorLamp(sofaP.at(-1.25, 0.3), rand, messy && rand() < 0.6);
+  F.curtains(new Place(b, x0 + WALL_T, 0, z0 + d * 0.55, 1), rand, 1.1, 1.0, 2.0);
+  F.bookcase(new Place(b, xp, 0, z0 + d * 0.5, 3), rand, messy);
   // TV on a stand against the back wall (kept clear of the doorways on the partition).
   b.block(0x2a2826, x0 + 0.9, 0, z0 + WALL_T + 0.05, 1.2, 0.55, 0.45, 'wood', true);
   b.block(0x161616, x0 + 1.05, 0.55, z0 + WALL_T + 0.1, 0.9, 0.5, 0.35, 'metal');
@@ -317,14 +343,39 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   ] as const) {
     b.block(PAL.counter, xp + 1.2 + lx, 0, tz + lz, 0.05, 0.72, 0.05, 'wood');
   }
+  for (const [cx, cz, r] of [
+    [xp + 1.45, tz - 0.25, 0],
+    [xp + 1.95, tz + 1.05, 2],
+  ] as [number, number, Quarter][]) {
+    if (messy && rand() < 0.6) F.chairDown(new Place(b, cx, 0, cz + (r ? 0.3 : -0.3), r), rand);
+    else F.chair(new Place(b, cx, 0, cz, r), rand);
+  }
+  if (rand() < 0.5) b.block(0xd2cec2, xp + 1.5, 0.77, tz + 0.3, 0.22, 0.015, 0.22, 'plaster');
+  if (!messy && rand() < 0.1) {
+    // A battery radio on the counter, still hissing.
+    b.block(0x2a2826, xp + 0.8, 0.91, z0 + WALL_T + 0.1, 0.3, 0.17, 0.1, 'metal');
+    b.life(3, xp + 0.95, 1.0, z0 + WALL_T + 0.15, 0, 1, 0, 0, rand());
+  }
 
   // Bedroom: bed along the side wall (headboard at the partition), wardrobe against the front wall.
   const bx = x1 - WALL_T - 1.5;
-  b.block(PAL.counter, bx, 0, zp + 0.3, 1.5, 0.32, 2.0, 'wood', true);
-  b.block(pick(rand, PAL.fabric), bx + 0.05, 0.32, zp + 0.35, 1.4, 0.18, 1.9, 'rubber');
-  b.block(PAL.counter, bx, 0, zp + 0.14, 1.5, 0.95, 0.12, 'wood');
-  b.block(PAL.counter, xp + 1.2, 0, z1 - WALL_T - 0.62, 1.2, 2.0, 0.6, 'wood', true);
-  b.container('wardrobe', xp + 1.8, z1 - WALL_T - 0.7);
+  F.bed(new Place(b, bx + 0.75, 0, zp + 0.08, 0), rand, 1.5, messy);
+  F.nightstand(new Place(b, bx - 0.3, 0, zp + 0.08, 0), rand, open());
+  F.wardrobe(new Place(b, xp + 1.8, 0, z1 - WALL_T, 2), rand, open());
+  F.rug(new Place(b, bx + 0.75, 0, zp + 0.08, 0), rand, 2.5, 1.3, 0.8);
+
+  // Leaving: luggage and notes by the front door; ransacked: things everywhere.
+  const hall = new Place(b, doorX, 0, z1 - WALL_T, 2);
+  if (fled) {
+    F.suitcase(hall.at(-0.9, 1.0, Math.floor(rand() * 4)), rand, rand() < 0.4);
+    F.notes(hall.at(1.0, 0), rand, 1 + Math.floor(rand() * 2));
+    if (rand() < 0.4) F.boxes(new Place(b, xp - 0.9, 0, z1 - WALL_T, 2), rand, 2);
+  }
+  if (messy) {
+    F.clothesPile(hall, rand, 0, 2.2, 3);
+    F.papers(new Place(b, x0, 0, z0), rand, 0.5, 0.5, w - 0.5, d - 0.5, 8);
+    hall.decal('decalLitter', (rand() - 0.5) * 1.5, 2.5, 1.8, rand);
+  }
 
   // Gable roof with overhang, ridge along X.
   const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.4 + d * 0.06);
@@ -347,6 +398,8 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   const h = 3.4;
   const front = pick(rand, PAL.shopFronts);
   const paper = pick(rand, PAL.wallpapers);
+  const kind = SHOP_KINDS[Math.floor(rand() * SHOP_KINDS.length)];
+  const messy = rand() < 0.5;
   b.shelter(x0, z0, x1, z1, h);
   if (!s.frontPlusZ) b.beginFlip(x0 + w / 2, z0 + d / 2);
   const doorX = x0 + w * 0.5;
@@ -358,13 +411,24 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
     [x0, wa],
     [wb, x1],
   ] as const) {
-    wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.7, true);
-    b.block(PAL.window, xa + 0.15, 0.7, z1 - 0.12, xb - xa - 0.3, 1.9, 0.04, 'glass');
-    b.block(PAL.trim, xa, 0.7, z1 - WALL_T, 0.15, 1.9, WALL_T, 'metal');
-    b.block(PAL.trim, xb - 0.15, 0.7, z1 - WALL_T, 0.15, 1.9, WALL_T, 'metal');
+    if (rand() < 0.35) {
+      // Smashed: a low sill you can step over, teeth of glass in the frame, glass on the pavement.
+      wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.3, false);
+      glassTeeth(b, xa + 0.15, 0.3, z1 - 0.12, xb - xa - 0.3, 2.3, rand);
+      b.solid(xa, z1 - WALL_T, xa + 0.15, z1);
+      b.solid(xb - 0.15, z1 - WALL_T, xb, z1);
+    } else {
+      wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.7, true);
+      b.block(PAL.window, xa + 0.15, 0.7, z1 - 0.12, xb - xa - 0.3, 1.9, 0.04, 'windowGlass');
+    }
+    b.block(PAL.trim, xa, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');
+    b.block(PAL.trim, xb - 0.15, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');
   }
+  // Glass shop door (sometimes left open), or its frame with the glass kicked out.
+  if (rand() < 0.75) b.door(wa, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, style: 'glass', open: rand() < 0.3 });
+  else glassTeeth(b, wa + 0.05, 0.1, z1 - 0.1, DOOR_W - 0.1, 2.3, rand);
   wallAlongX(b, front, paper, x0, x1, z1 - WALL_T, true, 2.6, h - 2.6, false);
-  b.block(0x2a2c2e, x0 + 0.3, 2.7, z1, w - 0.6, 0.55, 0.06, 'metal');
+  b.block(SHOP_SIGN[kind], x0 + 0.3, 2.7, z1, w - 0.6, 0.55, 0.06, 'metal');
   wallAlongX(b, front, paper, x0, x1, z0, false, 0, h);
   wallAlongZ(b, front, paper, x0, z0 + WALL_T, z1 - WALL_T, false, h);
   wallAlongZ(b, front, paper, x1 - WALL_T, z0 + WALL_T, z1 - WALL_T, true, h);
@@ -372,14 +436,9 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   // Storeroom at the back.
   const zs = z0 + d * 0.28;
   partitionX(b, paper, x0 + WALL_T, x1 - WALL_T, zs, x0 + w * 0.8, h);
-  // Aisles of shelving and a counter by the door.
-  for (let x = x0 + 1.2; x < x1 - 1.6; x += 2.2) {
-    b.block(PAL.metal, x, 0, zs + 1.4, 0.6, 1.7, d * 0.42, 'metal', true);
-    b.container('shelf', x + 0.3, zs + 1.4 + d * 0.21);
-    for (let y = 0.4; y < 1.7; y += 0.45) b.block(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), x + 0.05, y, zs + 1.5, 0.5, 0.18, d * 0.4, 'wood');
-  }
-  b.block(PAL.counter, wb + 0.6, 0, z1 - WALL_T - 2.2, 2.2, 1.0, 0.7, 'wood', true);
-  b.container('shopCounter', wb + 1.7, z1 - WALL_T - 2.2);
+  // The sales floor by trade, and a counter by the door.
+  shopFloor(b, kind, x0 + WALL_T, zs + 0.12, x1 - WALL_T, z1 - WALL_T - 2.4, rand, messy);
+  F.shopCounter(new Place(b, wb + 1.7, 0, z1 - WALL_T - 2.4, 0), rand, kind);
   // Crates and boxes in the storeroom.
   for (let i = 0; i < 4; i++) {
     const cx = x0 + 0.5 + rand() * (w - 2);
@@ -396,6 +455,50 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };
   b.endFrame();
   return result;
+}
+
+/** Town shop sales floor between the storeroom wall (za) and the counter line (zb). */
+function shopFloor(b: Builder, kind: F.ShopKind, xa: number, za: number, xb: number, zb: number, rand: Rand, messy: boolean): void {
+  const w = xb - xa;
+  const d = zb - za;
+  if (kind === 'grocery' || kind === 'pharmacy') {
+    // Aisles back to back, running front to back.
+    const len = Math.max(1.4, d - 1.4);
+    for (let x = xa + 1.4; x < xb - 1.2; x += 2.4) {
+      F.shopShelf(new Place(b, x, 0, za + 0.7 + len / 2, 1), rand, len, kind, messy);
+      F.shopShelf(new Place(b, x, 0, za + 0.7 + len / 2, 3), rand, len, kind, messy);
+    }
+    if (kind === 'grocery') F.cooler(new Place(b, xb, 0, za + d * 0.5, 3), rand);
+  } else if (kind === 'cafe') {
+    for (let x = xa + 1.2; x < xb - 1.0; x += 1.9) for (let z = za + 1.0; z < zb - 0.6; z += 1.9) F.cafeTable(new Place(b, x, 0, z, 0), rand, messy);
+    F.cooler(new Place(b, xa, 0, za + d * 0.5, 1), rand);
+  } else {
+    for (let z = za + 0.5; z < zb - 0.4; z += 0.7) F.washer(new Place(b, xa, 0, z, 1), rand, rand() < 0.3);
+    for (let z = za + 0.5; z < zb - 0.4; z += 0.7) F.washer(new Place(b, xb, 0, z, 3), rand, rand() < 0.3);
+    if (w > 4) {
+      const T = new Place(b, (xa + xb) / 2, 0, za + d / 2, 0);
+      T.box(0x8a8070, 0, 0.8, 0, 0.8, 0.04, 1.6);
+      T.box(0x3a3a3a, 0, 0, -0.7, 0.6, 0.8, 0.05, 'metal');
+      T.box(0x3a3a3a, 0, 0, 0.7, 0.6, 0.8, 0.05, 'metal');
+      T.solid(0, 0, 0.8, 1.6, 0.85);
+      F.clothesPile(T, rand, 0.9, 0, 2);
+    }
+  }
+  if (messy) F.papers(new Place(b, xa, 0, za), rand, 0.3, 0.3, w - 0.3, d - 0.3, 6);
+}
+
+/** Jagged teeth of glass left in a smashed frame (in the plane z, facing ±Z). */
+export function glassTeeth(b: Builder, x: number, y: number, z: number, w: number, h: number, rand: Rand): void {
+  const n = 3 + Math.floor(rand() * 3);
+  for (let i = 0; i < n; i++) {
+    const tw = 0.12 + rand() * 0.3;
+    const th = 0.15 + rand() * 0.5;
+    const tx = x + rand() * Math.max(0.01, w - tw);
+    const fromTop = rand() < 0.5;
+    b.block(0x5a6a72, tx, fromTop ? y + h - th : y, z - 0.01, tw, th, 0.02, 'glass');
+  }
+  // Teeth along the side posts too.
+  for (const sx of [x, x + w - 0.08]) if (rand() < 0.7) b.block(0x5a6a72, sx, y + h * (0.2 + rand() * 0.5), z - 0.01, 0.08, 0.3 + rand() * 0.4, 0.02, 'glass');
 }
 
 /**

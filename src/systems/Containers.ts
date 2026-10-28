@@ -82,6 +82,15 @@ export class Containers {
     return items;
   }
 
+  /** Dirt of the piece `take(ref, id, 1)` would take, 0 if none. */
+  peekDirt(ref: ContainerRef, id: ItemId): number {
+    return this.contents(ref).find((x) => x.id === id)?.dirt ?? 0;
+  }
+
+  peekTint(ref: ContainerRef, id: ItemId): number | undefined {
+    return this.contents(ref).find((x) => x.id === id)?.tint;
+  }
+
   take(ref: ContainerRef, id: ItemId, count: number): void {
     const items = this.contents(ref);
     const s = items.find((x) => x.id === id);
@@ -90,19 +99,29 @@ export class Containers {
     if (s.count <= 0) items.splice(items.indexOf(s), 1);
   }
 
-  put(ref: ContainerRef, id: ItemId, count: number): void {
+  put(ref: ContainerRef, id: ItemId, count: number, dirt?: number, tint?: number): void {
     const items = this.contents(ref);
+    // Clothing stays one piece per stack, with its own dirt.
+    if (dirt !== undefined) {
+      for (let n = 0; n < count; n++) items.push(tint !== undefined ? { id, count: 1, dirt, tint } : { id, count: 1, dirt });
+      return;
+    }
     const s = items.find((x) => x.id === id);
     if (s) s.count += count;
     else items.push({ id, count });
   }
 
-  serialize(): [number, [ItemId, number][]][] {
-    return [...this.opened].map(([id, items]) => [id, items.map((s) => [s.id, s.count] as [ItemId, number])]);
+  serialize(): [number, [ItemId, number, number?, number?][]][] {
+    return [...this.opened].map(([id, items]) => [
+      id,
+      items.map((s) => (s.tint !== undefined ? [s.id, s.count, s.dirt ?? 0, s.tint] : s.dirt !== undefined ? [s.id, s.count, s.dirt] : [s.id, s.count]) as [ItemId, number, number?, number?]),
+    ]);
   }
 
-  restore(data: [number, [ItemId, number][]][]): void {
+  restore(data: [number, [ItemId, number, number?, number?][]][]): void {
     this.opened.clear();
-    for (const [id, items] of data) this.opened.set(id, items.map(([item, count]) => ({ id: item, count })));
+    for (const [id, items] of data) {
+      this.opened.set(id, items.map(([item, count, dirt, tint]) => ({ id: item, count, ...(dirt !== undefined ? { dirt } : {}), ...(tint !== undefined ? { tint } : {}) })));
+    }
   }
 }

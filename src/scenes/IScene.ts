@@ -14,6 +14,8 @@ export interface IScene {
    * compile behind the loading screen. Returns a cleanup to call afterwards.
    */
   prewarm?(): () => void;
+  /** Optional: a new game asks who the survivor is (character editor) before play starts. */
+  createCharacter?(): Promise<void>;
   /** Fixed-rate simulation step. */
   fixedUpdate(dt: number): void;
   /** Per-frame visual update (interpolation, camera look). Drawing itself is done by the caller. */

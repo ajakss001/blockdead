@@ -1,23 +1,47 @@
-import { BoxGeometry, DynamicDrawUsage, InstancedMesh, Matrix4, Quaternion, type Scene, Vector3 } from 'three';
+import {
+  BoxGeometry,
+  type BufferGeometry,
+  Color,
+  Float32BufferAttribute,
+  DoubleSide,
+  DynamicDrawUsage,
+  InstancedMesh,
+  type Material,
+  Matrix4,
+  MeshStandardMaterial,
+  Quaternion,
+  type Scene,
+  Vector3,
+} from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { characterMaterial } from '../render/look/materials';
 import type { CollisionWorld } from './CollisionWorld';
-import type { DoorSpot } from './gen/pieces';
+import type { DoorSpot, DoorStyle } from './gen/pieces';
 
-const LEAF_W = 0.95;
+/** Reference leaf size; each door scales its leaf to its own width. */
+const LEAF_W = 1;
 const LEAF_H = 2.05;
 const SWING_SPEED = 6;
-/** Door collider owners live in their own id range (above chunks and interiors). */
+const START_CAPACITY = 128;
+/** Door collider owners: a private id range, one per door. */
 const DOOR_OWNER_BASE = 3e15;
 
 interface DoorState {
   spot: DoorSpot;
+  width: number;
+  style: DoorStyle;
   open: boolean;
   angle: number;
   owner: number;
+  /** Index inside its style pool (kept dense: removal moves the last door into the hole). */
+  slot: number;
+  set: number;
+  /** Partner leaf of a double door (index inside the same set), or -1. */
+  pair: number;
 }
 
-interface DoorSet {
-  mesh: InstancedMesh;
+interface Pool {
+  meshes: InstancedMesh[];
   doors: DoorState[];
   dirty: boolean;
 }
@@ -33,56 +57,115 @@ const _p = new Vector3();
 const _s = new Vector3(1, 1, 1);
 const _up = new Vector3(0, 1, 0);
 
+/** Vertex color with alpha over the whole geometry (index dropped so the parts merge). */
+function tint(g: BufferGeometry, color: number, alpha: number): BufferGeometry {
+  const out = g.toNonIndexed();
+  const c = new Color(color);
+  const n = out.getAttribute('position').count;
+  const data = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) data.set([c.r, c.g, c.b, alpha], i * 4);
+  out.setAttribute('color', new Float32BufferAttribute(data, 4));
+  return out;
+}
+
 /**
- * Interior doors of the streamed high-rises: one InstancedMesh (one draw call) per building,
- * opened/closed with "use", swinging on their hinge. A closed door is a collider on its storey;
- * an open one is not. Boarded-up doors never open.
+ * Every door in the world: entrance doors of buildings (with their chunk), doors inside streamed
+ * high-rises (with the interior). Opened/closed with "use", swinging on the hinge; a closed door is a
+ * collider on its storey, an open one is not; boarded-up doors never open; double doors open together.
+ *
+ * Draw calls: one shared InstancedMesh per style for the whole world (wood: 1, glass: 1 — frame and pane
+ * in one mesh, opaque frame and see-through pane by vertex alpha),
+ * however many doors are loaded.
  */
 export class Doors {
-  private readonly sets = new Map<number, DoorSet>();
-  private readonly geometry: BoxGeometry;
+  private readonly sets = new Map<number, DoorState[]>();
+  private readonly pools: Record<DoorStyle, Pool>;
+  private nextOwner = 0;
 
   constructor(
     private readonly scene: Scene,
     private readonly world: CollisionWorld,
   ) {
-    this.geometry = new BoxGeometry(LEAF_W, LEAF_H, 0.05);
-    this.geometry.translate(LEAF_W / 2, LEAF_H / 2, 0);
+    const slab = (w: number, h: number, d: number, x: number, y: number, z = 0): BufferGeometry => new BoxGeometry(w, h, d).translate(x, y, z);
+    // Wooden leaf with a handle; hinge at x = 0, leaf along +X.
+    const wood = mergeGeometries([slab(LEAF_W, LEAF_H, 0.05, LEAF_W / 2, LEAF_H / 2), slab(0.04, 0.04, 0.14, LEAF_W - 0.1, 1.0)])!;
+    // Glass door: aluminium frame (stiles, rails, push bar) around a pane.
+    const frame = mergeGeometries([
+      slab(0.07, LEAF_H, 0.06, 0.035, LEAF_H / 2),
+      slab(0.07, LEAF_H, 0.06, LEAF_W - 0.035, LEAF_H / 2),
+      slab(LEAF_W, 0.09, 0.06, LEAF_W / 2, LEAF_H - 0.045),
+      slab(LEAF_W, 0.22, 0.06, LEAF_W / 2, 0.11),
+      slab(LEAF_W * 0.7, 0.04, 0.1, LEAF_W / 2, 1.05),
+    ])!;
+    const pane = slab(LEAF_W - 0.14, LEAF_H - 0.31, 0.012, LEAF_W / 2, 0.22 + (LEAF_H - 0.31) / 2);
+    const glassDoor = mergeGeometries([tint(frame, 0x8a8e90, 1), tint(pane, 0x5c6a72, 0.32)])!;
+    const glass = new MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.4, transparent: true, side: DoubleSide });
+    this.pools = {
+      wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
+      glass: this.pool([[glassDoor, glass]]),
+    };
   }
 
-  add(building: number, spots: DoorSpot[]): void {
-    if (this.sets.has(building) || spots.length === 0) return;
-    const mesh = new InstancedMesh(this.geometry, characterMaterial('handle', 0x5a4632), spots.length);
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    const doors = spots.map((spot, i) => ({ spot, open: false, angle: spot.yaw, owner: DOOR_OWNER_BASE + building * 1024 + i }));
-    const set: DoorSet = { mesh, doors, dirty: true };
-    doors.forEach((d) => this.collide(d, true));
-    this.sets.set(building, set);
-    this.scene.add(mesh);
-    this.write(set);
+  /** Open/closed of a set, in order (to carry over a rebuild of the same layout). */
+  openStates(key: number): boolean[] | null {
+    return this.sets.get(key)?.map((d) => d.open) ?? null;
   }
 
-  remove(building: number): void {
-    const set = this.sets.get(building);
-    if (!set) return;
-    for (const d of set.doors) this.world.removeOwner(d.owner);
-    set.mesh.removeFromParent();
-    set.mesh.dispose();
-    this.sets.delete(building);
+  /** Add a set of doors (an interior, or a chunk's entrances) under a key; `keep`: open states from before. */
+  add(key: number, spots: DoorSpot[], keep: boolean[] | null = null): void {
+    if (this.sets.has(key) || spots.length === 0) return;
+    const same = keep !== null && keep.length === spots.length;
+    const doors: DoorState[] = spots.map((spot, i) => {
+      const style = spot.style ?? 'wood';
+      const open = (same ? keep[i] : !!spot.open) && !spot.barricaded;
+      const d: DoorState = {
+        spot,
+        width: spot.width ?? 0.95,
+        style,
+        open,
+        angle: open ? spot.yaw + spot.swing * Math.PI * 0.48 : spot.yaw,
+        owner: DOOR_OWNER_BASE + this.nextOwner++,
+        slot: -1,
+        set: key,
+        pair: spot.pair !== undefined ? i + spot.pair : -1,
+      };
+      const pool = this.pools[style];
+      d.slot = pool.doors.length;
+      pool.doors.push(d);
+      this.ensureCapacity(pool);
+      this.collide(d, !d.open);
+      return d;
+    });
+    this.sets.set(key, doors);
+    for (const pool of Object.values(this.pools)) this.writeAll(pool);
+  }
+
+  remove(key: number): void {
+    const doors = this.sets.get(key);
+    if (!doors) return;
+    for (const d of doors) {
+      this.world.removeOwner(d.owner);
+      const pool = this.pools[d.style];
+      const last = pool.doors.pop()!;
+      if (last !== d) {
+        pool.doors[d.slot] = last;
+        last.slot = d.slot;
+      }
+    }
+    this.sets.delete(key);
+    for (const pool of Object.values(this.pools)) this.writeAll(pool);
   }
 
   /** Closest door on the player's storey within reach that the player faces. */
   target(x: number, z: number, y: number, dirX: number, dirZ: number, reach = 1.7): DoorRef | null {
     let best: DoorRef | null = null;
     let bestScore = Infinity;
-    for (const [building, set] of this.sets) {
-      set.doors.forEach((d, index) => {
+    for (const [building, doors] of this.sets) {
+      doors.forEach((d, index) => {
         if (Math.abs(d.spot.y - y) > 1.2) return;
         // Middle of the doorway.
-        const mx = d.spot.hx + Math.cos(d.spot.yaw) * LEAF_W * 0.5;
-        const mz = d.spot.hz - Math.sin(d.spot.yaw) * LEAF_W * 0.5;
+        const mx = d.spot.hx + Math.cos(d.spot.yaw) * d.width * 0.5;
+        const mz = d.spot.hz - Math.sin(d.spot.yaw) * d.width * 0.5;
         const dx = mx - x;
         const dz = mz - z;
         const dist = Math.hypot(dx, dz);
@@ -100,57 +183,99 @@ export class Doors {
   }
 
   describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' {
-    const d = this.sets.get(ref.building)?.doors[ref.index];
+    const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return 'closed';
     if (d.spot.barricaded) return 'barricaded';
     return d.open ? 'open' : 'closed';
   }
 
-  /** Returns false if the door is boarded up. */
+  /** Returns false if the door is boarded up. Double doors swing together. */
   toggle(ref: DoorRef): boolean {
-    const set = this.sets.get(ref.building);
-    const d = set?.doors[ref.index];
-    if (!set || !d || d.spot.barricaded) return false;
-    d.open = !d.open;
-    this.collide(d, !d.open);
+    const doors = this.sets.get(ref.building);
+    const d = doors?.[ref.index];
+    if (!doors || !d || d.spot.barricaded) return false;
+    const open = !d.open;
+    for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
+      leaf.open = open;
+      this.collide(leaf, !open);
+    }
     return true;
   }
 
-  /** Animate swinging leaves; only sets with moving doors re-upload their matrices. */
+  /** Animate swinging leaves; only pools with moving doors re-upload their matrices. */
   update(dt: number): void {
-    for (const set of this.sets.values()) {
-      for (const d of set.doors) {
+    for (const pool of Object.values(this.pools)) {
+      for (const d of pool.doors) {
         const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.spot.yaw;
         const diff = target - d.angle;
         if (Math.abs(diff) < 1e-3) continue;
         d.angle += Math.sign(diff) * Math.min(Math.abs(diff), SWING_SPEED * dt);
-        set.dirty = true;
+        this.write(pool, d);
+        pool.dirty = true;
       }
-      if (set.dirty) this.write(set);
+      if (pool.dirty) this.flush(pool);
     }
   }
 
   get count(): number {
     let n = 0;
-    for (const s of this.sets.values()) n += s.doors.length;
+    for (const doors of this.sets.values()) n += doors.length;
     return n;
   }
 
-  private write(set: DoorSet): void {
-    set.doors.forEach((d, i) => {
-      _q.setFromAxisAngle(_up, d.angle);
-      set.mesh.setMatrixAt(i, _m.compose(_p.set(d.spot.hx, d.spot.y, d.spot.hz), _q, _s));
+  private pool(parts: [BufferGeometry, Material][]): Pool {
+    const meshes = parts.map(([g, m]) => this.mesh(g, m, START_CAPACITY));
+    return { meshes, doors: [], dirty: false };
+  }
+
+  private mesh(g: BufferGeometry, m: Material, capacity: number): InstancedMesh {
+    const mesh = new InstancedMesh(g, m, capacity);
+    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    mesh.count = 0;
+    mesh.castShadow = !(m as MeshStandardMaterial).transparent;
+    mesh.receiveShadow = true;
+    // Doors are spread over the whole loaded world: one bounding volume would be meaningless.
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  private ensureCapacity(pool: Pool): void {
+    const cap = pool.meshes[0].instanceMatrix.count;
+    if (pool.doors.length <= cap) return;
+    pool.meshes = pool.meshes.map((old) => {
+      const mesh = this.mesh(old.geometry, old.material as Material, cap * 2);
+      old.removeFromParent();
+      old.dispose();
+      return mesh;
     });
-    set.mesh.instanceMatrix.needsUpdate = true;
-    set.mesh.computeBoundingSphere();
-    set.dirty = false;
+  }
+
+  private write(pool: Pool, d: DoorState): void {
+    _q.setFromAxisAngle(_up, d.angle);
+    _s.set(d.width / LEAF_W, 1, 1);
+    _m.compose(_p.set(d.spot.hx, d.spot.y, d.spot.hz), _q, _s);
+    for (const mesh of pool.meshes) mesh.setMatrixAt(d.slot, _m);
+  }
+
+  private writeAll(pool: Pool): void {
+    for (const d of pool.doors) this.write(pool, d);
+    this.flush(pool);
+  }
+
+  private flush(pool: Pool): void {
+    for (const mesh of pool.meshes) {
+      mesh.count = pool.doors.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    pool.dirty = false;
   }
 
   private collide(d: DoorState, closed: boolean): void {
     this.world.removeOwner(d.owner);
     if (!closed) return;
-    const ex = d.spot.hx + Math.cos(d.spot.yaw) * LEAF_W;
-    const ez = d.spot.hz - Math.sin(d.spot.yaw) * LEAF_W;
+    const ex = d.spot.hx + Math.cos(d.spot.yaw) * d.width;
+    const ez = d.spot.hz - Math.sin(d.spot.yaw) * d.width;
     const t = 0.08;
     this.world.addOwned(
       d.owner,

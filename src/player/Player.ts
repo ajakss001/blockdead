@@ -1,4 +1,4 @@
-import { Object3D, type PerspectiveCamera, type Scene, SpotLight, type Vector3 } from 'three';
+import { Object3D, type PerspectiveCamera, type Scene, SpotLight, Vector3 } from 'three';
 import { clamp, lerp } from '../core/math';
 import type { GameContext } from '../GameContext';
 import type { LookDelta } from '../input/InputManager';
@@ -20,6 +20,16 @@ const FLASHLIGHT = {
   penumbra: 0.35,
   decay: 2,
 } as const;
+
+/**
+ * Where the light sits relative to the eyes: in the left hand (below-left, so shadows fall visibly
+ * behind objects), or as a headlamp just above the eyes when both hands hold a weapon.
+ */
+const HAND_LIGHT = { pos: new Vector3(-0.22, -0.28, 0.05), aim: new Vector3(-0.04, -0.12, -6) };
+const HEAD_LIGHT = { pos: new Vector3(0.02, 0.09, -0.04), aim: new Vector3(0, -0.4, -6) };
+
+/** How far the eyes move forward when looking straight down (neck flexion), m. */
+const NECK_LEAN = 0.14;
 
 /** Full battery lasts this many seconds of light. */
 const BATTERY_LIFE = 480;
@@ -50,6 +60,8 @@ export class Player {
     flashlightOn: false,
   };
   private flickerT = 0;
+  private readonly lightTarget: Object3D;
+  private headlamp = false;
   private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
 
@@ -69,10 +81,11 @@ export class Player {
     // a light exactly at the eye hides every shadow directly behind the object it falls on.
     const f = FLASHLIGHT;
     this.flashlight = new SpotLight(f.color, 0, f.distance, f.angle, f.penumbra, f.decay);
-    this.flashlight.position.set(-0.22, -0.28, 0.05);
+    this.flashlight.position.copy(HAND_LIGHT.pos);
     const target = new Object3D();
-    target.position.set(-0.04, -0.12, -6);
+    target.position.copy(HAND_LIGHT.aim);
     this.flashlight.target = target;
+    this.lightTarget = target;
     // castShadow stays constant (toggling it recompiles shaders); an unlit flashlight simply
     // stops re-rendering its shadow map via shadow.autoUpdate.
     this.flashlight.castShadow = true;
@@ -124,11 +137,22 @@ export class Player {
     const bobX = Math.sin(phase) * 0.02 * amp;
     const cos = Math.cos(c.yaw);
     const sin = Math.sin(c.yaw);
-    this.camera.position.set(x + cos * bobX, y + c.eyeHeight(alpha) + bobY, z - sin * bobX);
+    // Looking down bends the neck: the head (eyes) moves forward over the belly, so you see your
+    // legs and feet, not the top of your own stomach.
+    const lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
+    this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35, z - sin * bobX - cos * lean);
     this.camera.rotation.set(c.pitch, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
 
     this.body.update(x, y, z, c.yaw, phase, c.speed, crouchT);
     this.updateFlicker(frameDt);
+    // Both hands on a weapon: the flashlight is strapped to the forehead (same battery).
+    const head = this.viewmodel.headlamp;
+    if (head !== this.headlamp) {
+      this.headlamp = head;
+      const l = head ? HEAD_LIGHT : HAND_LIGHT;
+      this.flashlight.position.copy(l.pos);
+      this.lightTarget.position.copy(l.aim);
+    }
 
     const f = this.frame;
     f.lookX = this.look.x;

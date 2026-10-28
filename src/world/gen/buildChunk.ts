@@ -4,9 +4,11 @@ import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { curbParking, downtownBlock } from './cityFill';
-import { type BuildingDesc, buildHighriseInterior, groundDecal, windowPanes } from './highrise';
+import { type BuildingDesc, groundDecal, windowPanes } from './highrise';
+import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
 import { hash3 } from './noise';
+import { type BodyMode, chaosScene, sceneAt } from './chaos';
 import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
 import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, lampPost, mailbox, PAL, pick, pine, type Rand, trashBins, tree } from './pieces';
 
@@ -23,6 +25,10 @@ export interface ChunkData {
   buildings: BuildingDesc[];
   /** Roofed footprints for the climate: [minX, minZ, maxX, maxZ, roofY] each. */
   shelters: Float32Array;
+  /** Entrance doors of the block's buildings (houses, shops, high-rise lobbies). */
+  doors: DoorSpot[];
+  /** World-life spots (lit windows, curtains…), see world/WorldLife. */
+  ambient: Float32Array;
   /** Generation time in the worker, ms. */
   ms: number;
 }
@@ -30,15 +36,21 @@ export interface ChunkData {
 /** A streamed high-rise interior. */
 export interface InteriorData {
   buildingId: number;
+  /** Storey the furnishing is centered on. */
+  focus: number;
   surfaces: SurfaceBuffers[];
   colliders: Float32Array;
   containers: (ContainerSpot & { id: number })[];
   doors: DoorSpot[];
+  ambient: Float32Array;
   ms: number;
 }
 
-/** Interior container ids live above every chunk container id. */
-const INTERIOR_ID_BASE = 1e14;
+/**
+ * Interior container ids live above every chunk container id, 128 per storey so they stay the same
+ * whichever storeys are furnished (the range before per-storey furnishing was 1e14…; unused now).
+ */
+const INTERIOR_ID_BASE = 2e14;
 
 const GROUND_COLORS: Record<Zone, [number, number]> = {
   downtown: [0x4a4a46, 0x55524a],
@@ -58,7 +70,7 @@ const _s = new Vector3();
  * south-west intersection) and the zone's content. Runs in the chunk worker; deterministic per
  * (seed, i, j).
  */
-export function buildChunk(layout: WorldLayout, i: number, j: number): ChunkData {
+export function buildChunk(layout: WorldLayout, i: number, j: number, bodies: BodyMode = 'mixed'): ChunkData {
   const t0 = performance.now();
   const rand = mulberry32(hash3(layout.seed, i, j));
   const batch = new StaticBatch();
@@ -67,7 +79,7 @@ export function buildChunk(layout: WorldLayout, i: number, j: number): ChunkData
   const zone = layout.zone(i, j);
 
   ground(batch, layout, i, j, zone, rand);
-  roads(b, layout, i, j, rand);
+  roads(b, layout, i, j, rand, bodies);
   const X0 = i * CHUNK + BAND;
   const Z0 = j * CHUNK + BAND;
   const X1 = (i + 1) * CHUNK - BAND;
@@ -90,6 +102,8 @@ export function buildChunk(layout: WorldLayout, i: number, j: number): ChunkData
     surfaces: batch.buildBuffers(),
     colliders: new Float32Array(colliders.data),
     shelters: new Float32Array(b.shelters),
+    doors: b.doors,
+    ambient: new Float32Array(b.ambient),
     ms: performance.now() - t0,
   };
 }
@@ -122,7 +136,7 @@ function ground(batch: StaticBatch, layout: WorldLayout, i: number, j: number, z
   g.dispose();
 }
 
-function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand): void {
+function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand, bodies: BodyMode): void {
   const x = i * CHUNK;
   const z = j * CHUNK;
   const SIDEWALK_H = PAVE.sidewalk;
@@ -193,7 +207,10 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       // The intersection remembers the day: a pile-up, or the checkpoint that did not hold.
       const core = Math.max(Math.abs(i), Math.abs(j)) <= DOWNTOWN_RADIUS + 1;
       const roll = rand();
-      if (roll < (core ? 0.4 : 0.2)) crashSite(b, x, z, rand);
+      // A big scene (cordon, police line, evacuation, crashed helicopter) on some; otherwise the small ones.
+      const big = sceneAt(layout.seed, i, j, urban, core);
+      if (big) chaosScene(b, big.kind, x, z, big.rand, bodies);
+      else if (roll < (core ? 0.4 : 0.2)) crashSite(b, x, z, rand);
       else if (roll < (core ? 0.55 : 0.25)) checkpoint(b, x, z, rand);
     }
   }
@@ -215,22 +232,23 @@ function shoulderCar(b: Builder, alongX: boolean, x: number, z: number, rand: Ra
   );
 }
 
-/** Interior of one high-rise (worker side, on demand). */
-export function buildInterior(desc: BuildingDesc): InteriorData {
+/** Interior of one high-rise (worker side, on demand), furnished around storey `focus`. */
+export function buildInterior(desc: BuildingDesc, focus: number): InteriorData {
   const t0 = performance.now();
-  const rand = mulberry32(desc.seed);
   const batch = new StaticBatch();
   const colliders = new PackedColliders();
   const b = new Builder(batch, colliders);
-  buildHighriseInterior(b, desc, rand);
+  buildHighriseInterior(b, desc, focus, (k) => INTERIOR_ID_BASE + desc.id * 4096 + k * 128);
   windowPanes(b, desc);
   b.dispose();
   return {
     buildingId: desc.id,
+    focus,
     surfaces: batch.buildBuffers(),
     colliders: new Float32Array(colliders.data),
-    containers: b.containers.map((c, n) => ({ ...c, id: INTERIOR_ID_BASE + desc.id * 512 + n })),
+    containers: b.containers.map((c, n) => ({ ...c, id: c.id ?? INTERIOR_ID_BASE + desc.id * 4096 + 4000 + n })),
     doors: b.doors,
+    ambient: new Float32Array(b.ambient),
     ms: performance.now() - t0,
   };
 }

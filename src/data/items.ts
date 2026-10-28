@@ -39,7 +39,26 @@ export type ItemId =
   | 'cargoPants'
   | 'sneakers'
   | 'boots'
-  | 'tshirt';
+  | 'tshirt'
+  | 'soap'
+  | 'militaryHelmet'
+  | 'militaryJacket'
+  | 'militaryPants'
+  | 'combatBoots'
+  | 'swatHelmet'
+  | 'swatVest'
+  | 'swatPants'
+  | 'policeCap'
+  | 'policeShirt'
+  | 'policePants'
+  | 'fireHelmet'
+  | 'fireCoat'
+  | 'firePants'
+  | 'scrubsTop'
+  | 'scrubsPants'
+  | 'officeShirt'
+  | 'slacks'
+  | 'dressShoes';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -124,6 +143,7 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   lighter: { name: 'Зажигалка', kind: 'tool', weight: 0.05, stack: 3 },
   matches: { name: 'Спички', kind: 'tool', weight: 0.05, stack: 5 },
   junk: { name: 'Хлам', kind: 'junk', weight: 0.3, stack: 10 },
+  soap: { name: 'Мыло', kind: 'tool', weight: 0.1, stack: 5, note: 'Для стирки одежды (скоро)' },
   // Clothing. Warmth in °C of felt temperature: jackets and boots warm the most, a T-shirt and sneakers the least.
   cap: { name: 'Кепка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x2e3a30, stats: { bite: 0.02, warmth: 1 } } },
   beanie: { name: 'Вязаная шапка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x5a2a26, stats: { bite: 0.04, warmth: 4 } } },
@@ -136,7 +156,37 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   cargoPants: { name: 'Штаны карго', kind: 'clothing', weight: 0.8, stack: 1, wear: { slot: 'legs', color: 0x4a4a36, stats: { bite: 0.15, warmth: 5 } } },
   sneakers: { name: 'Кроссовки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'feet', color: 0x5e6266, stats: { bite: 0.05, warmth: 1 }, shoe: 'sneakers' } },
   boots: { name: 'Рабочие ботинки', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'feet', color: 0x4a3626, stats: { bite: 0.3, warmth: 4 }, shoe: 'boots' } },
+  // Uniforms (class starting outfits; also found in the world).
+  militaryHelmet: { name: 'Армейская каска', kind: 'clothing', weight: 1.2, stack: 1, wear: { slot: 'head', color: 0x3e4630, stats: { bite: 0.45, warmth: 2 } } },
+  militaryJacket: { name: 'Армейский китель', kind: 'clothing', weight: 1.3, stack: 1, wear: { slot: 'torso', color: 0x4a5236, stats: { bite: 0.35, warmth: 8 } } },
+  militaryPants: { name: 'Армейские брюки', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'legs', color: 0x4a5236, stats: { bite: 0.2, warmth: 5 } } },
+  combatBoots: { name: 'Берцы', kind: 'clothing', weight: 1.5, stack: 1, wear: { slot: 'feet', color: 0x26231f, stats: { bite: 0.35, warmth: 5 }, shoe: 'boots' } },
+  swatHelmet: { name: 'Шлем SWAT', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'head', color: 0x1c1e22, stats: { bite: 0.5, warmth: 2 } } },
+  swatVest: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.5, stack: 1, wear: { slot: 'torso', color: 0x1e2226, stats: { bite: 0.55, warmth: 6 } } },
+  swatPants: { name: 'Тактические брюки', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'legs', color: 0x23262a, stats: { bite: 0.25, warmth: 5 } } },
+  policeCap: { name: 'Полицейская фуражка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'head', color: 0x1f2533, stats: { bite: 0.02, warmth: 1 } } },
+  policeShirt: { name: 'Полицейская рубашка', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'torso', color: 0x2c3a5a, stats: { bite: 0.1, warmth: 4 } } },
+  policePants: { name: 'Полицейские брюки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'legs', color: 0x1f2533, stats: { bite: 0.12, warmth: 4 } } },
+  fireHelmet: { name: 'Пожарный шлем', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'head', color: 0xb89a32, stats: { bite: 0.4, warmth: 3 } } },
+  fireCoat: { name: 'Боёвка пожарного', kind: 'clothing', weight: 2.2, stack: 1, wear: { slot: 'torso', color: 0x8a7038, stats: { bite: 0.4, warmth: 12 } } },
+  firePants: { name: 'Пожарные брюки', kind: 'clothing', weight: 1.6, stack: 1, wear: { slot: 'legs', color: 0x8a7038, stats: { bite: 0.3, warmth: 8 } } },
+  scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
+  scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
+  officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
+  slacks: { name: 'Брюки', kind: 'clothing', weight: 0.5, stack: 1, wear: { slot: 'legs', color: 0x2a2a30, stats: { bite: 0.08, warmth: 3 } } },
+  dressShoes: { name: 'Туфли', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'feet', color: 0x1e1a18, stats: { bite: 0.08, warmth: 2 }, shoe: 'sneakers' } },
 };
+
+/**
+ * Washing (not in the game yet, data only): what it takes to clean one piece of clothing and how
+ * much dirt it removes. The inventory will offer "Постирать" when both are in the backpack.
+ */
+export const WASHING = { needs: [['water', 1], ['soap', 1]] as [ItemId, number][], removes: 1 } as const;
+
+/** Display: how dirty a piece of clothing looks, in words. */
+export function dirtLabel(dirt: number): string {
+  return dirt < 0.08 ? 'чистая' : dirt < 0.3 ? 'слегка грязная' : dirt < 0.6 ? 'грязная' : 'очень грязная';
+}
 
 /** Sum of a clothing stat over everything worn. */
 export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: keyof WearStats): number {
@@ -151,6 +201,10 @@ export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: k
 export interface ItemStack {
   id: ItemId;
   count: number;
+  /** Clothing only (one per stack): how dirty, 0..1. */
+  dirt?: number;
+  /** Clothing only: color of this piece if it differs from the item's default. */
+  tint?: number;
 }
 
 /** What a use button says for an item, or null if it can't be used directly. */

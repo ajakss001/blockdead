@@ -1,3 +1,4 @@
+import { BASE_MODS, type ClassMods } from '../data/classes';
 import type { ItemDef } from '../data/items';
 import { clamp } from '../core/math';
 import { type Hud, severityOf } from '../ui/Hud';
@@ -82,14 +83,17 @@ export class Survival implements SurvivalState {
   wounded = false;
   bodyTemp: number = COLD.normal;
   anxiety = 0;
+  /** Who the survivor was (class): endurance, appetite, cold, nerves, healing. */
+  mods: ClassMods = { ...BASE_MODS };
   private wasBatteryDead = false;
 
   update(dt: number, speed: number, sprinting: boolean, env: Exposure): void {
     this.updateBodyTemp(dt, env.felt);
     this.updateAnxiety(dt, env);
-    this.hunger = clamp(this.hunger + RATE.hunger * dt, 0, 1);
-    this.thirst = clamp(this.thirst + RATE.thirst * dt * (sprinting ? 1.8 : 1), 0, 1);
-    let tiring = sprinting ? RATE.fatigueSprint : speed > 0.2 ? RATE.fatigueWalk : -RATE.restRecovery;
+    const m = this.mods;
+    this.hunger = clamp(this.hunger + RATE.hunger * m.hunger * dt, 0, 1);
+    this.thirst = clamp(this.thirst + RATE.thirst * m.hunger * dt * (sprinting ? 1.8 : 1), 0, 1);
+    let tiring = sprinting ? RATE.fatigueSprint * m.stamina : speed > 0.2 ? RATE.fatigueWalk * m.stamina : -RATE.restRecovery;
     // Shivering wears you out: more tiring, slower rest.
     if (this.bodyTemp < COLD.cold) tiring = tiring > 0 ? tiring * COLD.fatigueFactor : tiring / COLD.fatigueFactor;
     this.fatigue = clamp(this.fatigue + tiring * dt, 0, 1);
@@ -106,7 +110,7 @@ export class Survival implements SurvivalState {
 
   private updateBodyTemp(dt: number, felt: number): void {
     const deficit = COLD.comfort - felt;
-    if (deficit > 0) this.bodyTemp -= deficit * COLD.coolRate * dt;
+    if (deficit > 0) this.bodyTemp -= deficit * COLD.coolRate * this.mods.cold * dt;
     else this.bodyTemp += Math.min(COLD.warmRate * dt, COLD.normal - this.bodyTemp);
     this.bodyTemp = clamp(this.bodyTemp, COLD.floor, COLD.normal);
   }
@@ -114,8 +118,8 @@ export class Survival implements SurvivalState {
   /** Darkness without a working flashlight frightens; the moment it dies, sharply. */
   private updateAnxiety(dt: number, env: Exposure): void {
     let d = -DREAD.calming;
-    if (env.dark) d = env.batteryDead ? DREAD.deadBattery : DREAD.lightsOff;
-    if (env.batteryDead && !this.wasBatteryDead && env.dark) this.anxiety += DREAD.deadBatteryJump;
+    if (env.dark) d = (env.batteryDead ? DREAD.deadBattery : DREAD.lightsOff) * this.mods.anxiety;
+    if (env.batteryDead && !this.wasBatteryDead && env.dark) this.anxiety += DREAD.deadBatteryJump * this.mods.anxiety;
     this.wasBatteryDead = env.batteryDead;
     this.anxiety = clamp(this.anxiety + d * dt, 0, 1);
   }
@@ -139,8 +143,10 @@ export class Survival implements SurvivalState {
     if (def.hunger) this.hunger = clamp(this.hunger + def.hunger, 0, 1);
     if (def.thirst) this.thirst = clamp(this.thirst + def.thirst, 0, 1);
     if (def.fatigue) this.fatigue = clamp(this.fatigue + def.fatigue, 0, 1);
-    if (def.health) this.health = clamp(this.health + def.health, 0, 1);
-    if (def.pain) this.pain = clamp(this.pain + def.pain, 0, 1);
+    // Medical skill (class): bandages and medicine heal better, painkillers work harder.
+    const medical = def.kind === 'medical' ? this.mods.healing : 1;
+    if (def.health) this.health = clamp(this.health + def.health * medical, 0, 1);
+    if (def.pain) this.pain = clamp(this.pain + def.pain * this.mods.medicine, 0, 1);
     if (def.dressesWound) {
       const was = this.wounded;
       this.wounded = false;

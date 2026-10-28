@@ -3,9 +3,14 @@ import { BACKPACK_CAPACITY, type ItemId, ITEMS, type ItemStack, WEAR_SLOTS, type
 export type Worn = Record<WearSlot, ItemId | null>;
 
 export interface InventoryData {
-  stacks: [ItemId, number][];
+  /** [id, count, dirt?, tint?] — dirt and tint only on clothing. */
+  stacks: [ItemId, number, number?, number?][];
   hand: ItemId | null;
   worn?: Partial<Worn>;
+  /** Dirt of the worn pieces, 0..1 (older saves: clean). */
+  wornDirt?: Partial<Record<WearSlot, number>>;
+  /** Colors of worn pieces that differ from the item default. */
+  wornTint?: Partial<Record<WearSlot, number>>;
 }
 
 /**
@@ -16,10 +21,17 @@ export class Inventory {
   readonly stacks: ItemStack[] = [];
   hand: ItemId | null = 'knife';
   readonly worn: Worn = { head: null, torso: null, legs: null, feet: null };
+  readonly wornDirt: Record<WearSlot, number> = { head: 0, torso: 0, legs: 0, feet: 0 };
+  readonly wornTint: Partial<Record<WearSlot, number>> = {};
   /** Bumped on every change, so UI can redraw lazily. */
   version = 0;
 
-  constructor(readonly capacity = BACKPACK_CAPACITY) {}
+  /** Backpack limit, kg (the class can add or take a little). */
+  capacity: number;
+
+  constructor(capacity = BACKPACK_CAPACITY) {
+    this.capacity = capacity;
+  }
 
   get weight(): number {
     let w = this.hand ? ITEMS[this.hand].weight : 0;
@@ -38,8 +50,8 @@ export class Inventory {
     return Math.max(0, Math.floor((this.capacity - this.weight + 1e-6) / ITEMS[id].weight));
   }
 
-  /** Adds up to `count`; returns how many were actually added. */
-  add(id: ItemId, count = 1): number {
+  /** Adds up to `count`; returns how many were actually added. Clothing keeps its `dirt`. */
+  add(id: ItemId, count = 1, dirt = 0, tint?: number): number {
     const def = ITEMS[id];
     let left = Math.min(count, this.room(id));
     const added = left;
@@ -52,11 +64,23 @@ export class Inventory {
     }
     while (left > 0) {
       const put = Math.min(left, def.stack);
-      this.stacks.push({ id, count: put });
+      this.stacks.push(def.wear ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}) } : { id, count: put });
       left -= put;
     }
     if (added > 0) this.version++;
     return added;
+  }
+
+  /** Dirt of the piece `remove(id, 1)` would take (the last stack of it), 0 if none. */
+  peekDirt(id: ItemId): number {
+    for (let i = this.stacks.length - 1; i >= 0; i--) if (this.stacks[i].id === id) return this.stacks[i].dirt ?? 0;
+    return 0;
+  }
+
+  /** Tint of the piece `remove(id, 1)` would take, if it has one. */
+  peekTint(id: ItemId): number | undefined {
+    for (let i = this.stacks.length - 1; i >= 0; i--) if (this.stacks[i].id === id) return this.stacks[i].tint;
+    return undefined;
   }
 
   /** Removes up to `count` of `id`; returns how many were removed. */
@@ -82,12 +106,19 @@ export class Inventory {
     const slot = ITEMS[id].wear?.slot;
     if (!slot || this.count(id) === 0) return false;
     const old = this.worn[slot];
+    const oldDirt = this.wornDirt[slot];
+    const oldTint = this.wornTint[slot];
+    const dirt = this.peekDirt(id);
+    const tint = this.peekTint(id);
     this.remove(id, 1);
-    if (old && this.add(old, 1) === 0) {
-      this.add(id, 1);
+    if (old && this.add(old, 1, oldDirt, oldTint) === 0) {
+      this.add(id, 1, dirt, tint);
       return false;
     }
     this.worn[slot] = id;
+    this.wornDirt[slot] = dirt;
+    if (tint !== undefined) this.wornTint[slot] = tint;
+    else delete this.wornTint[slot];
     this.version++;
     return true;
   }
@@ -96,8 +127,10 @@ export class Inventory {
   takeOff(slot: WearSlot): boolean {
     const id = this.worn[slot];
     if (!id) return false;
-    if (this.add(id, 1) === 0) return false;
+    if (this.add(id, 1, this.wornDirt[slot], this.wornTint[slot]) === 0) return false;
     this.worn[slot] = null;
+    this.wornDirt[slot] = 0;
+    delete this.wornTint[slot];
     this.version++;
     return true;
   }
@@ -127,16 +160,29 @@ export class Inventory {
   }
 
   serialize(): InventoryData {
-    return { stacks: this.stacks.map((s) => [s.id, s.count]), hand: this.hand, worn: { ...this.worn } };
+    return {
+      stacks: this.stacks.map((s) => (s.tint !== undefined ? [s.id, s.count, s.dirt ?? 0, s.tint] : s.dirt !== undefined ? [s.id, s.count, s.dirt] : [s.id, s.count])),
+      hand: this.hand,
+      worn: { ...this.worn },
+      wornDirt: { ...this.wornDirt },
+      wornTint: { ...this.wornTint },
+    };
   }
 
   restore(data: InventoryData): void {
     this.stacks.length = 0;
-    for (const [id, count] of data.stacks) if (ITEMS[id]) this.stacks.push({ id, count });
+    for (const [id, count, dirt, tint] of data.stacks) {
+      if (!ITEMS[id]) continue;
+      this.stacks.push(ITEMS[id].wear ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count });
+    }
     this.hand = data.hand && ITEMS[data.hand] ? data.hand : null;
     for (const slot of WEAR_SLOTS) {
       const id = data.worn?.[slot] ?? null;
       this.worn[slot] = id && ITEMS[id]?.wear?.slot === slot ? id : null;
+      this.wornDirt[slot] = this.worn[slot] ? Math.min(1, Math.max(0, data.wornDirt?.[slot] ?? 0)) : 0;
+      const tint = data.wornTint?.[slot];
+      if (this.worn[slot] && tint !== undefined) this.wornTint[slot] = tint;
+      else delete this.wornTint[slot];
     }
     this.version++;
   }

@@ -1,5 +1,6 @@
 import type { GameContext } from '../GameContext';
 import type { KeyboardMouseInput } from '../input/KeyboardMouseInput';
+import { openCredits } from './CreditsScreen';
 
 const CONTROLS: [string, string][] = [
   ['WASD', 'движение'],
@@ -51,7 +52,14 @@ export class PlayOverlay {
       list.append(k, span);
     }
     this.hint.className = 'play-overlay__hint';
-    this.root.append(title, list, this.hint);
+    const credits = document.createElement('button');
+    credits.className = 'credits-link';
+    credits.textContent = 'Авторы';
+    credits.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCredits(parent);
+    });
+    this.root.append(title, list, this.hint, credits);
     this.soft.className = 'soft-hint';
     this.soft.textContent = 'Кликните, чтобы продолжить';
     this.soft.hidden = true;

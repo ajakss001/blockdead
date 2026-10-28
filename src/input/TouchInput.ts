@@ -28,7 +28,6 @@ export class TouchInput {
   private lookId = -1;
   private lookLastX = 0;
   private lookLastY = 0;
-  private weaponToggle = false;
 
   constructor(
     private readonly input: InputManager,
@@ -154,18 +153,15 @@ export class TouchInput {
     return btn;
   }
 
-  /** One button cycles knife ↔ fists. */
+  /** One button draws the weapon or puts it away. */
   private weaponButton(): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.className = 'touch__btn touch__btn--weapon';
-    btn.textContent = 'Нож';
+    btn.textContent = 'Оружие';
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      this.weaponToggle = !this.weaponToggle;
-      const action: Action = this.weaponToggle ? 'item2' : 'item1';
-      btn.textContent = this.weaponToggle ? 'Кулаки' : 'Нож';
-      this.input.press(action);
-      this.input.release(action);
+      this.input.press('weapon');
+      this.input.release('weapon');
     });
     return btn;
   }

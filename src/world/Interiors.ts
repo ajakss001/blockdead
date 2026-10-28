@@ -28,9 +28,13 @@ export class Interiors {
   private readonly byChunk = new Map<number, number[]>();
   private readonly loaded = new Map<number, Group>();
   private readonly pending = new Set<number>();
+  /** Storey each loaded interior is furnished around. */
+  private readonly focus = new Map<number, number>();
   private t = 0;
   /** Interiors kept at once (quality preset). */
   maxLoaded = MAX_LOADED;
+  /** World-life spots of an interior arrived / left (radios, corridor lamps). */
+  onAmbient?: (owner: number, spots: Float32Array | null) => void;
 
   constructor(
     private readonly scene: Scene,
@@ -71,7 +75,7 @@ export class Interiors {
     return b ? highriseSurfaceY(b, x, z, y) : null;
   }
 
-  update(dt: number, x: number, z: number): void {
+  update(dt: number, x: number, z: number, y = 0): void {
     this.t -= dt;
     if (this.t > 0) return;
     this.t = CHECK_INTERVAL;
@@ -84,9 +88,11 @@ export class Interiors {
     near.sort((a, c) => a.d - c.d);
     const max = Math.min(this.maxLoaded, MAX_LOADED);
     for (const { b } of near.slice(0, max)) {
-      if (this.loaded.has(b.id) || this.pending.has(b.id)) continue;
+      // Furnished around the player's storey inside, around the street level outside.
+      const want = insideFootprint(b, x, z, 0.5) ? Math.max(0, Math.min(b.floors - 1, Math.round(y / FLOOR_H))) : 0;
+      if (this.pending.has(b.id) || (this.loaded.has(b.id) && this.focus.get(b.id) === want)) continue;
       this.pending.add(b.id);
-      this.chunks.requestInterior(b);
+      this.chunks.requestInterior(b, want);
     }
     // Keep at most `max`: drop the farthest extras.
     if (this.loaded.size > max) {
@@ -96,16 +102,23 @@ export class Interiors {
   }
 
   private onInterior(data: InteriorData): void {
-    this.pending.delete(data.buildingId);
-    if (!this.buildings.has(data.buildingId) || this.loaded.has(data.buildingId)) return;
-    const owner = INTERIOR_OWNER_BASE + data.buildingId;
-    const group = meshesFromBuffers(data.surfaces, `interior ${data.buildingId}`);
+    const id = data.buildingId;
+    this.pending.delete(id);
+    if (!this.buildings.has(id)) return;
+    // A rebuild around another storey replaces the old one in place; doors keep their state.
+    const rebuild = this.loaded.has(id);
+    const keep = rebuild ? this.doors.openStates(id) : null;
+    if (rebuild) this.release(id);
+    const owner = INTERIOR_OWNER_BASE + id;
+    const group = meshesFromBuffers(data.surfaces, `interior ${id}`);
     this.scene.add(group);
     this.world.addPacked(owner, data.colliders);
     this.containers.addChunk(owner, 'downtown', data.containers);
-    this.doors.add(data.buildingId, data.doors);
-    this.loaded.set(data.buildingId, group);
-    this.syncWindows(data.buildingId, true);
+    this.doors.add(id, data.doors, keep);
+    this.onAmbient?.(owner, data.ambient);
+    this.loaded.set(id, group);
+    this.focus.set(id, data.focus);
+    if (!rebuild) this.syncWindows(id, true);
   }
 
   /** Cut the loaded buildings' intact windows open (and only their chunks pay for it). */
@@ -125,6 +138,13 @@ export class Interiors {
   }
 
   private unload(id: number): void {
+    if (!this.loaded.has(id)) return;
+    this.release(id);
+    this.syncWindows(id, false);
+  }
+
+  /** Drop an interior's meshes, colliders, containers, doors and life spots. */
+  private release(id: number): void {
     const group = this.loaded.get(id);
     if (!group) return;
     const owner = INTERIOR_OWNER_BASE + id;
@@ -132,7 +152,8 @@ export class Interiors {
     this.world.removeOwner(owner);
     this.containers.removeChunk(owner);
     this.doors.remove(id);
+    this.onAmbient?.(owner, null);
     this.loaded.delete(id);
-    this.syncWindows(id, false);
+    this.focus.delete(id);
   }
 }

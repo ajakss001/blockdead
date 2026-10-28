@@ -1,10 +1,12 @@
-import { type ItemDef, type ItemId, ITEMS, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
+import { dirtLabel, type ItemDef, type ItemId, ITEMS, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
 import type { Inventory } from '../systems/Inventory';
 import type { Survival } from '../systems/Survival';
+import type { Appearance } from '../player/appearance';
 import { CharacterPreview } from './CharacterPreview';
+import { openCredits } from './CreditsScreen';
 import { itemIcon } from './pixelart';
 
 export interface InventoryHost {
@@ -80,6 +82,11 @@ export class InventoryPanel {
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  /** Looks of the survivor (from the character editor / save) for the 3D figure. */
+  setAppearance(a: Appearance): void {
+    this.preview.setAppearance(a);
+  }
+
   toggle(): void {
     if (this.isOpen) this.close();
     else this.open(null);
@@ -130,11 +137,17 @@ export class InventoryPanel {
     bar.append(fill);
     const close = el('button', 'inv__close', '✕');
     close.addEventListener('click', () => this.close());
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.capacity} кг`), close);
+    const credits = el('button', 'credits-link inv__credits', 'Авторы');
+    credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.capacity} кг`), credits, close);
 
+    // Half the window is the survivor; the other half is the backpack (split with the container
+    // when one is open).
     const main = el('div', 'inv__main');
-    main.append(this.equipment(), this.bagPane());
-    if (this.container) main.append(this.boxPane(this.container));
+    const storage = el('div', 'inv__storage');
+    storage.append(this.bagPane());
+    if (this.container) storage.append(this.boxPane(this.container));
+    main.append(this.equipment(), storage);
 
     this.root.replaceChildren(head, main, this.card());
   }
@@ -142,16 +155,24 @@ export class InventoryPanel {
   private equipment(): HTMLElement {
     const inv = this.host.inventory;
     const pane = el('div', 'inv__equip');
+    // Clothing slots down the left, level with head, torso, legs and feet of the figure.
     const left = el('div', 'inv__slots');
     for (const { slot, label } of SLOTS) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
-    this.preview.setOutfit(inv.worn, inv.hand);
+    this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint);
+    const figure = el('div', 'inv__figure');
+    figure.append(this.preview.canvas, el('div', 'inv__figure-hint', '↔'));
+    // Hands, then the totals of every clothing stat (bite protection averaged over the four body slots).
     const right = el('div', 'inv__slots inv__slots--right');
     right.append(this.slotCell('hand', 'Руки', inv.hand));
-    // Totals of every clothing stat (bite protection averaged over the four body slots).
     const worn = inv.worn;
-    const lines = WEAR_STATS.map(({ key, label, format }) => `${label}\n${format(key === 'bite' ? wornStat(worn, key) / SLOTS.length : wornStat(worn, key))}`);
-    right.append(el('div', 'inv__armor', lines.join('\n\n')));
-    pane.append(left, this.preview.canvas, right);
+    const stats = el('div', 'inv__armor');
+    for (const { key, label, format } of WEAR_STATS) {
+      const row = el('div', 'inv__armor-row');
+      row.append(el('span', '', label), el('b', '', format(key === 'bite' ? wornStat(worn, key) / SLOTS.length : wornStat(worn, key))));
+      stats.append(row);
+    }
+    right.append(stats);
+    pane.append(left, figure, right);
     return pane;
   }
 
@@ -236,7 +257,9 @@ export class InventoryPanel {
     const def = ITEMS[id];
     card.append(icon(id, 'inv__card-icon'));
     const text = el('div', 'inv__card-text');
-    text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', describe(def)));
+    const dirt = def.wear ? this.dirtAt(sel) : null;
+    const info = describe(def) + (dirt !== null ? ` · грязь ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '');
+    text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
     card.append(text);
     const actions = el('div', 'inv__actions');
     for (const [label, fn, quiet] of this.actionsFor(sel, id)) {
@@ -414,8 +437,19 @@ export class InventoryPanel {
   private take(id: ItemId, count: number): boolean {
     const ref = this.container;
     if (!ref) return false;
-    const got = this.host.inventory.add(id, count);
-    if (got > 0) this.host.containers.take(ref, id, got);
+    let got = 0;
+    if (ITEMS[id].wear) {
+      // Clothing: piece by piece, each with its own dirt.
+      for (let n = 0; n < count; n++) {
+        const dirt = this.host.containers.peekDirt(ref, id);
+        if (this.host.inventory.add(id, 1, dirt, this.host.containers.peekTint(ref, id)) === 0) break;
+        this.host.containers.take(ref, id, 1);
+        got++;
+      }
+    } else {
+      got = this.host.inventory.add(id, count);
+      if (got > 0) this.host.containers.take(ref, id, got);
+    }
     if (got < count) this.ctx.hud.toast('Слишком тяжело');
     this.selected = got > 0 ? { from: 'bag', id } : this.selected;
     this.render();
@@ -427,7 +461,7 @@ export class InventoryPanel {
     if (!ref) return;
     let full = false;
     for (const s of [...this.host.containers.contents(ref)]) {
-      const got = this.host.inventory.add(s.id, s.count);
+      const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint);
       if (got > 0) this.host.containers.take(ref, s.id, got);
       if (got < s.count) full = true;
     }
@@ -438,8 +472,17 @@ export class InventoryPanel {
   private store(id: ItemId, count: number): void {
     const ref = this.container;
     if (!ref) return;
-    const n = this.host.inventory.remove(id, count);
-    if (n > 0) this.host.containers.put(ref, id, n);
+    if (ITEMS[id].wear) {
+      for (let k = 0; k < count; k++) {
+        const dirt = this.host.inventory.peekDirt(id);
+        const tint = this.host.inventory.peekTint(id);
+        if (this.host.inventory.remove(id, 1) === 0) break;
+        this.host.containers.put(ref, id, 1, dirt, tint);
+      }
+    } else {
+      const n = this.host.inventory.remove(id, count);
+      if (n > 0) this.host.containers.put(ref, id, n);
+    }
     this.selected = null;
     this.render();
   }
@@ -457,6 +500,14 @@ export class InventoryPanel {
     if (p.from === 'slot') return p.slot === 'hand' ? inv.hand : inv.worn[p.slot];
     if (p.from === 'bag') return inv.count(p.id) > 0 ? p.id : null;
     return this.boxCount(p.id) > 0 ? p.id : null;
+  }
+
+  /** Dirt of the selected piece of clothing (the one an action would move). */
+  private dirtAt(p: Place): number {
+    const inv = this.host.inventory;
+    if (p.from === 'slot') return p.slot === 'hand' ? 0 : inv.wornDirt[p.slot];
+    if (p.from === 'bag') return inv.peekDirt(p.id);
+    return this.container ? this.host.containers.peekDirt(this.container, p.id) : 0;
   }
 
   private exists(p: Place): boolean {

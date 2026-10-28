@@ -1,6 +1,9 @@
 import { CylinderGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
+import { mulberry32 } from '../../core/random';
 import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
-import { type Builder, PAL, pick, type Rand } from './pieces';
+import { SHOP_KINDS, SHOP_SIGN, type ShopKind } from './furniture';
+import { hash3 } from './noise';
+import { type Builder, glassTeeth, PAL, pick, type Rand } from './pieces';
 
 /**
  * Downtown high-rises (5–25 storeys), authored in a local frame with the entrance on the −Z side
@@ -15,18 +18,18 @@ import { type Builder, PAL, pick, type Rand } from './pieces';
  */
 
 export const FLOOR_H = 3.2;
-const WALL = 0.3;
-const CORE_W = 3.2;
+export const WALL = 0.3;
+export const CORE_W = 3.2;
 const CORE_D = 5.4;
 /** Floor-level landing at the corridor side of the core. */
-const NEAR = 1.1;
+export const NEAR = 1.1;
 /** Horizontal run of one flight (10 steps × 0.3 m), rising half a storey. */
-const RUN = 3.0;
-const FLIGHT_W = 1.4;
-const STEPS = 10;
-const CORRIDOR = 1.8;
-const DOOR_W = 1.0;
-const ENTRANCE_W = 2.2;
+export const RUN = 3.0;
+export const FLIGHT_W = 1.4;
+export const STEPS = 10;
+export const CORRIDOR = 1.8;
+export const DOOR_W = 1.0;
+export const ENTRANCE_W = 2.2;
 const ENTRANCE_H = 2.6;
 
 export type FacadeSurface = 'facadeConcrete' | 'facadeBrick' | 'facadeOffice';
@@ -46,7 +49,7 @@ export interface BuildingDesc {
   seed: number;
 }
 
-interface Local {
+export interface Local {
   x0: number;
   z0: number;
   x1: number;
@@ -65,7 +68,7 @@ interface Local {
   doorX: number;
 }
 
-function local(b: BuildingDesc): Local {
+export function local(b: BuildingDesc): Local {
   const x0 = b.cx - b.w / 2;
   const z0 = b.cz - b.d / 2;
   const x1 = x0 + b.w;
@@ -76,6 +79,33 @@ function local(b: BuildingDesc): Local {
   const iz1 = z1 - WALL;
   const cz0 = iz1 - CORE_D;
   return { x0, z0, x1, z1, ix0, iz0, ix1, iz1, cx0: ix0, cz0, cx1: ix0 + CORE_W, cz1: iz1, czA: cz0 - CORRIDOR, doorX: b.cx + b.w * 0.15 };
+}
+
+/** Local X of the window centers on the front and back facades (the grid windowPanes uses). */
+export function windowXs(desc: BuildingDesc): number[] {
+  const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
+  const x0 = desc.cx - desc.w / 2;
+  const x1 = x0 + desc.w;
+  const out: number[] = [];
+  for (let u = Math.ceil(x0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= x1 + 1e-6; u += FACADE_BAY) {
+    const c = u + spec.inset + spec.width / 2;
+    out.push(desc.flip ? 2 * desc.cx - c : c);
+  }
+  return out;
+}
+
+/** Street-level shop left of the lobby (local x from the side wall to x1), if the frontage allows one. */
+export interface GroundShop {
+  kind: ShopKind;
+  x1: number;
+}
+
+export function groundShop(desc: BuildingDesc): GroundShop | null {
+  const L = local(desc);
+  const x1 = L.doorX - ENTRANCE_W / 2 - 1.4;
+  if (x1 - L.ix0 < 4.5) return null;
+  const r = mulberry32(hash3(desc.seed, 0, 404));
+  return { kind: SHOP_KINDS[Math.floor(r() * SHOP_KINDS.length)], x1 };
 }
 
 /** World → building-local (undo the 180° rotation). */
@@ -159,12 +189,33 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   const f = desc.facade;
   const tint = pick(rand, [0xd0ccc4, 0xc4c0b6, 0xbab4aa, 0xd4d0ca]);
 
-  // Facades. Entrance wall split around the doorway; the lintel above blocks only above head height.
+  // Street level is planned first: the ground-floor front wall is built around its real openings.
   const d0 = L.doorX - ENTRANCE_W / 2;
   const d1 = L.doorX + ENTRANCE_W / 2;
-  b.block(tint, L.x0, 0, L.z0, d0 - L.x0, top, WALL, f, true);
-  b.block(tint, d1, 0, L.z0, L.x1 - d1, top, WALL, f, true);
-  b.blockY(tint, d0, ENTRANCE_H, L.z0, ENTRANCE_W, top - ENTRANCE_H, WALL, f);
+  const panes: { x: number; w: number; broken: boolean }[] = [];
+  for (const [a, c] of [
+    [L.x0 + 0.6, d0 - 0.4],
+    [d1 + 0.4, L.x1 - 0.6],
+  ] as const) {
+    for (let x = a; x < c - 1; x += 3) panes.push({ x, w: Math.min(2.8, c - x), broken: rand() < 0.4 });
+  }
+  const roll = rand();
+  const entrance: 'doors' | 'smashed' | 'boarded' = roll < 0.55 ? 'doors' : roll < 0.85 ? 'smashed' : 'boarded';
+  // A boarded-up entrance still leaves a way in: one shop window is always smashed.
+  if (entrance === 'boarded' && panes.length > 0 && !panes.some((p) => p.broken)) panes[Math.floor(rand() * panes.length)].broken = true;
+
+  // Front wall: storeys 1+ in one slab; the ground floor in segments between the openings
+  // (entrance: full height to the lintel; smashed shop windows: over a low sill you can step across).
+  b.blockY(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f);
+  const openings = [{ x0: d0, x1: d1, sill: 0, head: ENTRANCE_H }, ...panes.filter((p) => p.broken).map((p) => ({ x0: p.x, x1: p.x + p.w, sill: 0.3, head: 2.9 }))].sort((a, c) => a.x0 - c.x0);
+  let wx = L.x0;
+  for (const o of openings) {
+    if (o.x0 - wx > 0.01) b.block(tint, wx, 0, L.z0, o.x0 - wx, FLOOR_H, WALL, f, true);
+    b.blockY(tint, o.x0, o.head, L.z0, o.x1 - o.x0, FLOOR_H - o.head, WALL, f);
+    if (o.sill > 0) b.block(tint, o.x0, 0, L.z0, o.x1 - o.x0, o.sill, WALL, f);
+    wx = o.x1;
+  }
+  if (L.x1 - wx > 0.01) b.block(tint, wx, 0, L.z0, L.x1 - wx, FLOOR_H, WALL, f, true);
   b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
   b.block(tint, L.x0, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
   b.block(tint, L.x1 - WALL, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
@@ -197,27 +248,42 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     tank.dispose();
   }
 
-  // Street level: storefront glass in front of the ground-floor facade, entrance frame and canopy.
-  for (const [a, c] of [
-    [L.x0 + 0.6, d0 - 0.4],
-    [d1 + 0.4, L.x1 - 0.6],
-  ] as const) {
-    for (let x = a; x < c - 1; x += 3) {
-      const pw = Math.min(2.8, c - x);
-      const broken = rand() < 0.45;
-      // Frame: four bars round the pane (the glass is see-through now, so no backing plate).
-      b.block(PAL.trim, x - 0.08, 0.35, L.z0 - 0.06, 0.08, 2.55, 0.06, 'metal');
-      b.block(PAL.trim, x + pw, 0.35, L.z0 - 0.06, 0.08, 2.55, 0.06, 'metal');
-      b.block(PAL.trim, x, 0.35, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
-      b.block(PAL.trim, x, 2.8, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
-      if (broken) {
-        b.block(0x050505, x, 0.45, L.z0 - 0.07, pw, 2.35, 0.03, 'glass');
-        shardTeeth(b, x, 0.45, L.z0 - 0.09, pw, 2.35, rand);
-        groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
-      } else {
-        b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass');
-      }
+  // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
+  for (const { x, w: pw, broken } of panes) {
+    // Frame: four bars round the pane.
+    b.block(PAL.trim, x - 0.08, 0.3, L.z0 - 0.06, 0.08, 2.6, 0.06, 'metal');
+    b.block(PAL.trim, x + pw, 0.3, L.z0 - 0.06, 0.08, 2.6, 0.06, 'metal');
+    b.block(PAL.trim, x, 2.8, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
+    if (broken) {
+      glassTeeth(b, x, 0.3, L.z0 - 0.05, pw, 2.5, rand);
+      groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
+      groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 + 1.0, 1.6, rand, 1.2);
+    } else {
+      b.block(PAL.trim, x, 0.3, L.z0 - 0.06, pw, 0.15, 0.06, 'metal');
+      b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass');
     }
+  }
+  if (entrance === 'doors') {
+    // Double doors swinging in; glass on office towers, wood or glass on apartments; sometimes left open.
+    const style = desc.kind === 'offices' || rand() < 0.4 ? 'glass' : 'wood';
+    const open = rand() < 0.25;
+    const half = ENTRANCE_W / 2;
+    b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, style, open, pair: 1 });
+    b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, style, open, pair: -1 });
+    b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
+  } else if (entrance === 'smashed') {
+    // The doors are gone: glass teeth in the frame, glass everywhere, an open way in.
+    glassTeeth(b, d0 + 0.05, 0.05, L.z0 + 0.12, ENTRANCE_W - 0.1, ENTRANCE_H - 0.1, rand);
+    groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
+    groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
+  } else {
+    // Boarded up from outside: planks nailed across the frame, impassable.
+    for (let k = 0; k < 5; k++) {
+      const y = 0.25 + k * 0.48 + (rand() - 0.5) * 0.1;
+      b.block(0x6a5a42, d0 - 0.12, y, L.z0 - 0.06, ENTRANCE_W + 0.24, 0.18, 0.05, 'wood');
+    }
+    b.block(0x161412, d0, 0, L.z0 + 0.05, ENTRANCE_W, ENTRANCE_H, 0.05, 'wood');
+    b.solid(d0, L.z0 - 0.08, d1, L.z0 + WALL);
   }
   b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
   b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
@@ -225,26 +291,47 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'metal');
   if (rand() < 0.5) wallDecalZ(b, 'decalBullets', L.x0 + 2 + rand() * (desc.w - 4), 1.2 + rand() * 1.4, L.z0, 1.4, -1);
   if (rand() < 0.35) groundDecal(b, 'decalLitter', L.doorX + (rand() - 0.5) * 3, 0, L.z0 - 1.5 - rand() * 2, 1.6, rand);
+  const shop = groundShop(desc);
+  if (shop) {
+    // The shop's own sign panel (a color per trade, no names); a pale cross for the pharmacy.
+    b.block(SHOP_SIGN[shop.kind], L.x0 + 1.2, 3.05, L.z0 - 0.13, shop.x1 - L.x0 - 1.4, 0.5, 0.03, 'metal');
+    if (shop.kind === 'pharmacy') {
+      const sx = (L.x0 + shop.x1) / 2;
+      b.block(0x9ad0a8, sx - 0.06, 3.1, L.z0 - 0.15, 0.12, 0.4, 0.02, 'lamp');
+      b.block(0x9ad0a8, sx - 0.2, 3.24, L.z0 - 0.15, 0.4, 0.12, 0.02, 'lamp');
+    }
+  }
+  shellLife(b, desc, L);
   b.endFrame();
 }
 
-/** Jagged teeth of glass left in a smashed frame (front face at z). */
-function shardTeeth(b: Builder, x: number, y: number, z: number, w: number, h: number, rand: Rand): void {
-  const n = 3 + Math.floor(rand() * 3);
-  for (let i = 0; i < n; i++) {
-    const tw = 0.15 + rand() * 0.35;
-    const th = 0.2 + rand() * 0.6;
-    const tx = x + rand() * (w - tw);
-    const fromTop = rand() < 0.5;
-    b.block(0x5a6a72, tx, fromTop ? y + h - th : y, z, tw, th, 0.02, 'glass');
+/**
+ * World life on the facade (own random stream, so the rest of the block stays as it was): a window
+ * or two still lit by someone's generator or candles, flickering; curtains blowing out of broken
+ * windows. Rendered by WorldLife (one draw call each kind for the whole world).
+ */
+function shellLife(b: Builder, desc: BuildingDesc, L: Local): void {
+  const r = mulberry32(hash3(desc.seed, 7, 505));
+  const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
+  const wins = windowXs(desc);
+  if (wins.length === 0 || desc.floors < 3) return;
+  const lit = desc.kind === 'offices' ? (r() < 0.35 ? 1 : 0) : Math.floor(r() * 3);
+  for (let n = 0; n < lit; n++) {
+    const k = 2 + Math.floor(r() * (desc.floors - 2));
+    const back = r() < 0.5;
+    const y = k * FLOOR_H + (spec.sill + spec.head) / 2;
+    b.life(0, pick(r, wins), y, back ? L.z1 + 0.03 : L.z0 - 0.03, 0, back ? 1 : -1, spec.width * 0.9, (spec.head - spec.sill) * 0.9, r());
+  }
+  if (desc.kind !== 'apartments') return;
+  for (let n = 0; n < 3; n++) {
+    if (r() > 0.55) continue;
+    const k = 1 + Math.floor(r() * (desc.floors - 1));
+    const back = r() < 0.5;
+    const x = pick(r, wins) + (r() - 0.5) * spec.width * 0.5;
+    b.life(2, x, k * FLOOR_H + spec.head - 0.05, back ? L.z1 + 0.05 : L.z0 - 0.05, 0, back ? 1 : -1, 0.55 + r() * 0.35, 1.3 + r() * 0.8, r());
   }
 }
 
-/**
- * Interior of every storey: slab with the stair opening, the switchback stair core, a corridor,
- * apartments or offices with doors, furniture and containers; a lobby with a security desk at
- * street level. Colliders are limited to their storey so each floor has its own layout.
- */
 /**
  * Glass panes in every window opening of the facade grid, all storeys, all four walls, set into the
  * middle of the wall. Where the facade texture shows intact glass the wall is cut open near the
@@ -260,11 +347,13 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
   const h = spec.head - spec.sill;
   const pane = new PlaneGeometry(spec.width, h);
   const mid = WALL / 2;
+  // The street front's ground floor is shop windows and the entrance: no panes in that wall.
+  const front = desc.flip ? z1 - mid : z0 + mid;
   for (let k = 0; k < desc.floors; k++) {
     const y = k * FLOOR_H + spec.sill + h / 2;
     for (let u = Math.ceil(x0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= x1 + 1e-6; u += FACADE_BAY) {
       const cx = u + spec.inset + spec.width / 2;
-      for (const z of [z0 + mid, z1 - mid]) b.geo(pane, 0x6c7a84, _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1)), 'windowGlass');
+      for (const z of [z0 + mid, z1 - mid]) if (k > 0 || z !== front) b.geo(pane, 0x6c7a84, _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1)), 'windowGlass');
     }
     _q.setFromAxisAngle(_yAxis, Math.PI / 2);
     for (let u = Math.ceil(z0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= z1 + 1e-6; u += FACADE_BAY) {
@@ -274,153 +363,4 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
     _q.identity();
   }
   pane.dispose();
-}
-
-export function buildHighriseInterior(b: Builder, desc: BuildingDesc, rand: Rand): void {
-  if (desc.flip) b.beginFlip(desc.cx, desc.cz);
-  const L = local(desc);
-  const paperA = pick(rand, PAL.wallpapers);
-  const paperB = pick(rand, PAL.wallpapers);
-  const office = desc.kind === 'offices';
-  const rise = FLOOR_H / 2 / STEPS;
-  const step = RUN / STEPS;
-
-  for (let k = 0; k < desc.floors; k++) {
-    const y = k * FLOOR_H;
-    const h = FLOOR_H - 0.2;
-    // Slab (top at y) around the stair opening; the near landing is part of it.
-    const slabT = k === 0 ? 0.05 : 0.2;
-    const sy = k === 0 ? 0 : y - 0.2;
-    const floorS: Surface = k === 0 ? 'tile' : office ? 'tile' : 'wood';
-    const floorC = k === 0 ? 0x8a867c : office ? 0x7a7a74 : PAL.floor;
-    b.block(floorC, L.ix0, sy, L.iz0, L.ix1 - L.ix0, slabT, L.cz0 + NEAR - L.iz0, floorS);
-    b.block(floorC, L.cx1, sy, L.cz0 + NEAR, L.ix1 - L.cx1, slabT, L.iz1 - L.cz0 - NEAR, floorS);
-
-    // Stair core: flight A up the left side, landing at the back, flight B back down to the next floor.
-    const zf0 = L.cz0 + NEAR;
-    for (let i = 0; i < STEPS; i++) {
-      b.block(0x6a6862, L.cx0, y + i * rise, zf0 + i * step, FLIGHT_W, rise, step, 'concrete');
-      b.block(0x6a6862, L.cx1 - FLIGHT_W, y + FLOOR_H / 2 + i * rise, zf0 + RUN - (i + 1) * step, FLIGHT_W, rise, step, 'concrete');
-    }
-    b.block(0x6a6862, L.cx0, y + FLOOR_H / 2 - 0.2, zf0 + RUN, CORE_W, 0.2, L.cz1 - zf0 - RUN, 'concrete');
-    // Well divider / railing between the flights (blocks crossing), core side wall towards the units.
-    b.blockY(0x3a3c3e, L.cx0 + FLIGHT_W, y, zf0, CORE_W - 2 * FLIGHT_W, FLOOR_H, RUN, 'metal');
-    // Full-depth side wall: the landing opens only onto the corridor, never straight into a unit.
-    b.blockY(paperA, L.cx1, y, L.cz0, 0.15, h, L.cz1 - L.cz0, 'plaster');
-    // Painted storey number by the landing.
-    b.block(0xb0aa98, L.cx1 + 0.16, y + 1.4, L.cz0 + NEAR + 0.2, 0.02, 0.4, 0.3, 'plaster');
-
-    if (k === 0) {
-      lobby(b, L, desc, rand);
-    } else {
-      corridorStorey(b, L, desc, y, h, paperA, paperB, office, rand);
-    }
-  }
-  b.endFrame();
-}
-
-function lobby(b: Builder, L: Local, desc: BuildingDesc, rand: Rand): void {
-  // Security desk, mailboxes, dead elevator doors, an overturned bench, the ashes of a campfire.
-  const dx = L.doorX + 2.5;
-  b.block(PAL.counter, dx, 0, L.iz0 + 3, 2.4, 1.05, 0.7, 'wood', true);
-  b.container('reception', dx + 1.2, L.iz0 + 2.7);
-  b.block(0x5a5e60, L.ix1 - 0.3, 0.9, L.iz0 + 1.5, 0.25, 1.4, 3.2, 'metal');
-  b.block(0x6a6e70, L.cx1 + 0.4, 0, L.cz0 - 0.1, 2.2, 2.4, 0.1, 'metal');
-  b.block(0x1a1c1e, L.cx1 + 1.45, 0, L.cz0 - 0.12, 0.1, 2.4, 0.02, 'metal');
-  b.block(0x4a3b38, L.ix0 + 1.5, 0, L.iz0 + 4.5, 0.6, 0.45, 2.2, 'rubber', true);
-  if (rand() < 0.7) groundDecal(b, 'decalSoot', L.doorX + (rand() - 0.5) * 4, 0.05, L.iz0 + 2 + rand() * 4, 2.2, rand, 1.3);
-  groundDecal(b, 'decalLitter', L.doorX - 2 + rand() * 4, 0.05, L.iz0 + 1.5 + rand() * 5, 2.0, rand);
-  // Back units at street level: storage rooms off the corridor line.
-  backUnits(b, L, desc, 0, FLOOR_H - 0.2, PAL.wallpapers[0], false, rand);
-}
-
-function corridorStorey(b: Builder, L: Local, desc: BuildingDesc, y: number, h: number, paperA: number, paperB: number, office: boolean, rand: Rand): void {
-  // Front units between the facade and the corridor.
-  const width = L.ix1 - L.ix0;
-  const n = Math.max(2, Math.floor(width / 6.5));
-  const uw = width / n;
-  for (let u = 0; u < n; u++) {
-    const ux0 = L.ix0 + u * uw;
-    const ux1 = ux0 + uw;
-    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - L.iz0, 'plaster');
-    // Corridor wall with this unit's doorway.
-    const gx = ux0 + uw / 2 - DOOR_W / 2;
-    b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, 'plaster');
-    b.blockY(paperB, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
-    b.block(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, 'plaster');
-    const barricaded = rand() < 0.12;
-    b.door(gx, L.czA - 0.06, y, 0, 1, barricaded);
-    if (barricaded) {
-      for (let p = 0; p < 3; p++) b.block(0x6a5a42, gx - 0.15, y + 0.5 + p * 0.6, L.czA + 0.02, DOOR_W + 0.3, 0.14, 0.04, 'wood');
-    }
-    furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, office, true, rand);
-  }
-  backUnits(b, L, desc, y, h, paperB, office, rand);
-  // Corridor clutter and storytelling.
-  if (rand() < 0.35) groundDecal(b, 'decalLitter', L.ix0 + 2 + rand() * (width - 4), y, L.czA + CORRIDOR / 2, 1.5, rand, 1.8);
-  if (rand() < 0.5) groundDecal(b, 'decalLitter', L.ix0 + 2 + rand() * (width - 4), y, L.czA + CORRIDOR / 2, 1.6, rand);
-  if (rand() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 2 + rand() * (width - 4), y + 1.3, L.czA, 1.2, 1);
-}
-
-function backUnits(b: Builder, L: Local, desc: BuildingDesc, y: number, h: number, paper: number, office: boolean, rand: Rand): void {
-  const x0 = L.cx1 + 0.15;
-  const width = L.ix1 - x0;
-  if (width < 4) return;
-  const n = Math.max(1, Math.floor(width / 6.5));
-  const uw = width / n;
-  for (let u = 0; u < n; u++) {
-    const ux0 = x0 + u * uw;
-    const ux1 = ux0 + uw;
-    if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0, 0.12, h, L.iz1 - L.cz0, 'plaster');
-    const gx = ux0 + uw / 2 - DOOR_W / 2;
-    b.blockY(paper, ux0, y, L.cz0, gx - ux0, h, 0.12, 'plaster');
-    b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
-    b.block(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
-    b.door(gx, L.cz0 + 0.06, y, 0, -1, rand() < 0.08);
-    furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, office || desc.kind === 'offices', false, rand);
-  }
-}
-
-/** Furniture and containers of one apartment or office. `front`: the unit's door is on its +Z side. */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, office: boolean, front: boolean, rand: Rand): void {
-  const w = x1 - x0;
-  const d = z1 - z0;
-  const doorSideZ = front ? z1 : z0;
-  const farZ = front ? z0 : z1;
-  const inward = front ? 1 : -1; // from the far wall towards the door
-  const farEdge = front ? farZ + 0.1 : farZ - 0.1;
-  if (rand() < 0.15) {
-    // Ransacked and empty, someone burnt furniture for warmth.
-    groundDecal(b, 'decalSoot', x0 + w / 2, y, (z0 + z1) / 2, 1.8, rand, 1.2);
-    return;
-  }
-  if (office) {
-    for (let n = 0; n < 2; n++) {
-      const dx = x0 + 0.6 + n * (w / 2);
-      const dz = farEdge + inward * (1.0 + rand() * 0.6) - (front ? 0 : 0.8);
-      b.blockY(PAL.counter, dx, y, dz, 1.4, 0.75, 0.8, 'wood');
-      b.block(0x1a1a1a, dx + 0.4, y + 0.75, dz + 0.2, 0.5, 0.35, 0.05, 'metal');
-      b.container('desk', dx + 0.7, dz + (front ? 0.95 : -0.15), y);
-    }
-    const cx = x1 - 0.7;
-    b.blockY(0x5a5e60, cx, y, front ? farEdge : farEdge - 0.5, 0.6, 1.3, 0.5, 'metal');
-    b.container('cabinet', cx + 0.3, front ? farEdge + 0.75 : farEdge - 0.75, y);
-    if (rand() < 0.4) groundDecal(b, 'decalLitter', x0 + w / 2, y, (z0 + z1) / 2, 2, rand);
-    return;
-  }
-  // Apartment: bed by the far wall, wardrobe, kitchen corner by the door side.
-  const bedZ = front ? farEdge : farEdge - 2.0;
-  b.blockY(PAL.counter, x0 + 0.2, y, bedZ, 1.5, 0.45, 2.0, 'wood');
-  b.block(pick(rand, PAL.fabric), x0 + 0.25, y + 0.45, bedZ + 0.05, 1.4, 0.15, 1.9, 'rubber');
-  const wz = front ? farEdge : farEdge - 0.6;
-  b.blockY(PAL.counter, x1 - 1.3, y, wz, 1.2, 2.0, 0.6, 'wood');
-  b.container('wardrobe', x1 - 0.7, wz + (front ? 0.75 : -0.15), y);
-  const kz = front ? doorSideZ - 0.75 : doorSideZ + 0.15;
-  if (w > 4.5) {
-    b.blockY(PAL.counter, x0 + 0.2, y, kz, 1.8, 0.88, 0.6, 'wood');
-    b.container('counter', x0 + 1.1, kz + (front ? -0.15 : 0.75), y);
-    b.blockY(PAL.appliance, x0 + 2.1, y, kz, 0.7, 1.8, 0.65, 'metal');
-    b.container('fridge', x0 + 2.45, kz + (front ? -0.15 : 0.8), y);
-  }
-  if (rand() < 0.3) groundDecal(b, 'decalLitter', x0 + w * (0.3 + rand() * 0.4), y, z0 + d * (0.3 + rand() * 0.4), 1.3, rand);
 }

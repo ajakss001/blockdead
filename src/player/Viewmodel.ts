@@ -1,25 +1,28 @@
 import {
-  BoxGeometry,
-  ConeGeometry,
   AmbientLight,
+  type BufferGeometry,
+  CylinderGeometry,
   DirectionalLight,
   Group,
+  type Material,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
   PointLight,
+  Quaternion,
   Scene,
-  type BufferGeometry,
-  type Material,
+  Vector3,
 } from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, damp, easeInOutSine, easeInQuad, easeOutQuad, lerp } from '../core/math';
 import { limbForward } from '../render/lowpoly';
-import { bladeMaterial, characterMaterial } from '../render/look/materials';
+import { characterMaterial } from '../render/look/materials';
+import { GRIP_X, GRIP_Z, handGeometry } from './hand';
+import { buildHeldModel, HELD, type HeldConfig, type HeldId } from './held';
 import { cuffColor, SKIN } from './outfit';
 import { SPEED_WALK } from './PlayerController';
 
-export type RightItem = 'fists' | 'knife' | 'axe' | 'bat' | 'crowbar' | 'hammer';
+export type RightItem = 'fists' | Exclude<HeldId, 'torch'>;
 
 /** Arm root (≈ elbow) transform in viewmodel-camera space: position + Euler XYZ. */
 interface Pose {
@@ -33,7 +36,7 @@ interface Pose {
 
 const pose = (px: number, py: number, pz: number, rx: number, ry: number, rz: number): Pose => ({ px, py, pz, rx, ry, rz });
 
-// Right arm. Elbows sit below the screen edge; only forearm + hand enter the frame.
+// One-handed right arm. Elbows sit below the screen edge; only forearm + hand enter the frame.
 const R_IDLE = pose(0.2, -0.29, -0.16, 0.28, 0.2, 0.08);
 const R_SPRINT = pose(0.24, -0.27, -0.12, 0.05, 0.5, 0.45);
 const R_LOWERED = pose(0.24, -0.62, -0.05, -0.6, 0.3, 0.2);
@@ -46,18 +49,35 @@ const L_IDLE = pose(-0.2, -0.3, -0.15, 0.24, -0.16, -0.1);
 const L_SPRINT = pose(-0.24, -0.27, -0.12, 0.05, -0.5, -0.45);
 const L_LOWERED = pose(-0.26, -0.62, -0.05, -0.6, -0.3, -0.2);
 
-/** Attack timeline, seconds. The hit is registered at the start of `strike`. */
-const ATTACKS: Record<RightItem, { windup: number; strike: number; recover: number; noise: number }> = {
-  knife: { windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
-  fists: { windup: 0.1, strike: 0.07, recover: 0.2, noise: 0.25 },
-  // Stage 4 gives the long weapons their own swing arcs; for now they share the knife's poses.
-  axe: { windup: 0.3, strike: 0.12, recover: 0.45, noise: 0.5 },
-  bat: { windup: 0.24, strike: 0.11, recover: 0.38, noise: 0.45 },
-  crowbar: { windup: 0.26, strike: 0.11, recover: 0.4, noise: 0.5 },
-  hammer: { windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
-};
+const FISTS: HeldConfig = { twoHanded: false, grips: [0], wrist: 0, windup: 0.1, strike: 0.07, recover: 0.2, noise: 0.25 };
 
+/**
+ * Two-handed weapon keyframes in viewmodel-camera space: where the butt is, which way the handle
+ * points, which way the edge faces. Hands are placed on the grips each frame (see placeHand).
+ */
+interface WeaponKey {
+  pos: Vector3;
+  q: Quaternion;
+}
+const key2h = (pos: [number, number, number], axis: [number, number, number], edge: [number, number, number]): WeaponKey => ({
+  pos: new Vector3(...pos),
+  q: basisQuat(new Vector3(...axis), new Vector3(...edge)),
+});
+/** Ready stance on the right: nearly upright, both hands low right in view, head up, edge forward. */
+const W_IDLE = key2h([0.22, -0.3, -0.36], [-0.22, 0.72, -0.66], [0, 0.3, -1]);
+/** Sprinting: shouldered, the head tipped back over the right shoulder. */
+const W_SPRINT = key2h([0.22, -0.32, -0.36], [-0.25, 0.75, 0.6], [0, 0.6, -1]);
+/** Wound up: the head back over the right shoulder, the edge leading. */
+const W_WINDUP = key2h([0.2, -0.16, -0.3], [0.2, 0.62, 0.76], [0, 1, -0.3]);
+/** End of the chop: down and to the left in front, head low, edge down. */
+const W_STRIKE = key2h([0.12, -0.24, -0.34], [-0.38, -0.25, -0.89], [0, -1, 0]);
+/** Elbow directions (from the hand towards the elbow) that pick each forearm's roll. */
+const ELBOW_R = new Vector3(0.5, -0.7, 0.5).normalize();
+const ELBOW_L = new Vector3(-0.55, -0.5, 0.65).normalize();
+/** Wrist bend between the fist's grip axis and the forearm on two-handed grips, rad (right, left). */
+const WRIST_2H = [0.4, 0.75];
 const FOREARM = 0.32;
+const HAND_OFFSET = FOREARM + 0.01;
 
 export interface ViewmodelFrame {
   lookX: number;
@@ -68,10 +88,18 @@ export interface ViewmodelFrame {
   flashlightOn: boolean;
 }
 
+const _v = new Vector3();
+const _w = new Vector3();
+const _q = new Quaternion();
+const _m = new Matrix4();
+
 /**
  * First-person arms, drawn in a second pass with their own camera and FOV after clearing depth:
  * they never clip into walls and their framing doesn't change with the world FOV.
- * Everything is procedural — keyframe poses blended with easing, plus bob, sway and breathing.
+ *
+ * One-handed items (knife, hammer, fists) ride in the right fist with keyframed arm poses; the
+ * flashlight is in the left. Two-handed weapons (axe, bat, crowbar) are posed themselves and both
+ * hands are placed on their grips every frame — the flashlight then moves to the head (`headlamp`).
  */
 export class Viewmodel {
   readonly scene = new Scene();
@@ -80,14 +108,18 @@ export class Viewmodel {
   private readonly root = new Group();
   private readonly armR = new Group();
   private readonly armL = new Group();
-  private readonly knife = new Group();
+  private readonly handR = new Group();
+  private readonly handL = new Group();
   private readonly held = new Map<RightItem, Group>();
+  private readonly torch: Group;
   private readonly sleeves: Mesh[] = [];
   private readonly cuffs: Mesh[] = [];
+  private readonly hands: Mesh[] = [];
   private readonly lens: MeshBasicMaterial;
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
   private readonly bounce = new PointLight(0xfffaed, 0, 1.5, 2);
+  private readonly weapon = { pos: new Vector3(), q: new Quaternion() };
 
   private item: RightItem = 'knife';
   private pendingItem: RightItem | null = null;
@@ -115,42 +147,32 @@ export class Viewmodel {
     this.bounce.position.set(-0.12, -0.12, -0.35);
 
     const skin = characterMaterial('skin', SKIN);
-    this.buildArm(this.armR, 1, skin);
-    this.buildArm(this.armL, -1, skin);
+    this.buildArm(this.armR, this.handR, 1, skin);
+    this.buildArm(this.armL, this.handL, -1, skin);
     this.setSleeves(0x3d4a5c);
 
-    // Kitchen knife in the right fist, blade forward-up.
-    const handle = new Mesh(this.geo(new BoxGeometry(0.024, 0.03, 0.1)), characterMaterial('handle', 0x3b2a1e));
-    const bladeGeo = this.geo(new ConeGeometry(0.03, 0.15, 4));
-    bladeGeo.scale(0.22, 1, 1);
-    bladeGeo.rotateX(-Math.PI / 2);
-    bladeGeo.translate(0, 0, -0.125);
-    // Dark rusty steel with notches (bump) — catches the flashlight only in thin highlights.
-    const blade = new Mesh(bladeGeo, bladeMaterial());
-    this.knife.add(handle, blade);
-    this.knife.position.set(-0.012, 0.015, -0.075);
-    // Tilt forward-up and roll so the flat of the blade faces the camera instead of its edge.
-    this.knife.rotation.set(0.45, 0, 1.1);
-    (this.armR.userData.hand as Group).add(this.knife);
-    this.held.set('knife', this.knife);
-    this.buildHeldTools();
+    // One-handed items sit in the right fist with their grip point on the fist's grip axis.
+    for (const id of ['knife', 'hammer'] as const) {
+      const g = this.inFist(buildHeldModel(id, this.geometries), HELD[id].grips[0], 1);
+      g.visible = id === this.item;
+      this.handR.add(g);
+      this.held.set(id, g);
+    }
+    // Two-handed weapons are posed in the viewmodel space, hands follow them.
+    for (const id of ['axe', 'bat', 'crowbar'] as const) {
+      const g = buildHeldModel(id, this.geometries);
+      g.visible = false;
+      this.root.add(g);
+      this.held.set(id, g);
+    }
 
-    // Flashlight in the left fist, pointing forward.
-    const torch = new Group();
-    // Body and head in one mesh (one draw call).
-    const bodyGeo = limbForward(0.018, 0.018, 0.15, 8);
-    bodyGeo.translate(0, 0, 0.05);
-    const headGeo = limbForward(0.022, 0.028, 0.045, 8);
-    headGeo.translate(0, 0, -0.1);
-    const body = new Mesh(this.geo(mergeGeometries([bodyGeo, headGeo])!), characterMaterial('torch', 0x33363a));
-    bodyGeo.dispose();
-    headGeo.dispose();
+    // Flashlight in the left fist, lens forward.
+    this.torch = this.inFist(buildHeldModel('torch', this.geometries), HELD.torch.grips[0], -1);
     this.lens = this.mat(new MeshBasicMaterial({ color: 0x3a3a34 })) as MeshBasicMaterial;
-    const lens = new Mesh(this.geo(limbForward(0.026, 0.026, 0.004, 8)), this.lens);
-    lens.position.z = -0.145;
-    torch.add(body, lens);
-    torch.position.set(0.012, 0.012, -0.07);
-    (this.armL.userData.hand as Group).add(torch);
+    const lens = new Mesh(this.geo(new CylinderGeometry(0.026, 0.026, 0.004, 8)), this.lens);
+    lens.position.y = 0.197;
+    (this.torch.children[0] as Group).add(lens);
+    this.handL.add(this.torch);
 
     this.root.add(this.armR, this.armL);
     this.scene.add(this.root);
@@ -160,21 +182,27 @@ export class Viewmodel {
     return this.item;
   }
 
+  /** The current weapon needs both hands: the flashlight is worn on the head. */
+  get headlamp(): boolean {
+    return this.config(this.item).twoHanded;
+  }
+
   setAspect(aspect: number): void {
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
   }
 
   /** Jacket sleeves in the worn color, or bare forearms (null). */
-  setSleeves(color: number | null): void {
-    const skin = characterMaterial('skin', SKIN);
-    const sleeve = color === null ? skin : characterMaterial('jacket', color);
-    const cuff = color === null ? skin : characterMaterial('cuff', cuffColor(color));
+  setSleeves(color: number | null, skinColor = SKIN, dirt = 0): void {
+    const skin = characterMaterial('skin', skinColor);
+    const sleeve = color === null ? skin : characterMaterial('jacket', color, false, 0, dirt);
+    const cuff = color === null ? skin : characterMaterial('cuff', cuffColor(color), false, 0, dirt);
     for (const m of this.sleeves) m.material = sleeve;
     for (const m of this.cuffs) {
       m.material = cuff;
       m.visible = color !== null;
     }
+    for (const m of this.hands) m.material = skin;
   }
 
   equip(item: RightItem): void {
@@ -191,7 +219,7 @@ export class Viewmodel {
       }
       return;
     }
-    const a = ATTACKS[this.item];
+    const a = this.config(this.item);
     this.attackT += dt;
     if (!this.strikeFired && this.attackT >= a.windup) {
       this.strikeFired = true;
@@ -207,7 +235,7 @@ export class Viewmodel {
   consumeStrike(): number {
     if (!this.strikePending) return 0;
     this.strikePending = false;
-    return ATTACKS[this.item].noise;
+    return this.config(this.item).noise;
   }
 
   update(dt: number, f: ViewmodelFrame): void {
@@ -222,23 +250,31 @@ export class Viewmodel {
       this.pendingItem = null;
       for (const [id, g] of this.held) g.visible = id === this.item;
     }
+    const twoHanded = this.headlamp;
+    this.torch.visible = !twoHanded;
     this.lens.color.setHex(f.flashlightOn ? 0xfff2c4 : 0x3a3a34);
     this.bounce.intensity = f.flashlightOn ? 0.08 : 0;
-
-    // Right arm: idle/sprint base → lowered for switching → attack overlay.
-    lerpPose(this.base, R_IDLE, R_SPRINT, this.sprintT);
-    // Arms pump in step with the legs while sprinting.
     const pump = Math.sin(f.stepPhase) * this.sprintT;
-    this.base.rx += pump * 0.22;
-    this.base.py += pump * 0.03;
-    lerpPose(this.base, this.base, R_LOWERED, this.rightDown);
-    applyPose(this.armR, this.attackPose(this.base));
 
-    lerpPose(this.tmp, L_IDLE, L_SPRINT, this.sprintT);
-    this.tmp.rx -= pump * 0.22;
-    this.tmp.py -= pump * 0.03;
-    lerpPose(this.tmp, L_LOWERED, this.tmp, this.leftUp);
-    applyPose(this.armL, this.tmp);
+    if (twoHanded) {
+      this.poseWeapon(pump);
+    } else {
+      // Right arm: idle/sprint base → lowered for switching → attack overlay.
+      lerpPose(this.base, R_IDLE, R_SPRINT, this.sprintT);
+      // Arms pump in step with the legs while sprinting.
+      this.base.rx += pump * 0.22;
+      this.base.py += pump * 0.03;
+      lerpPose(this.base, this.base, R_LOWERED, this.rightDown);
+      applyPose(this.armR, this.attackPose(this.base));
+      this.handR.rotation.set(this.config(this.item).wrist, 0, 0);
+
+      lerpPose(this.tmp, L_IDLE, L_SPRINT, this.sprintT);
+      this.tmp.rx -= pump * 0.22;
+      this.tmp.py -= pump * 0.03;
+      lerpPose(this.tmp, L_LOWERED, this.tmp, this.leftUp);
+      applyPose(this.armL, this.tmp);
+      this.handL.rotation.set(HELD.torch.wrist, 0, 0);
+    }
 
     // Sway: arms lag behind camera rotation; bob follows the step phase; idle breathing.
     const inv = 1 / Math.max(dt, 1e-3);
@@ -258,9 +294,73 @@ export class Viewmodel {
     for (const m of this.materials) m.dispose();
   }
 
+  private config(item: RightItem): HeldConfig {
+    return item === 'fists' ? FISTS : HELD[item];
+  }
+
+  /** Two-handed: blend the weapon keyframes (idle/sprint → swing; lowered while switching), then the hands. */
+  private poseWeapon(pump: number): void {
+    const a = this.config(this.item);
+    const w = this.weapon;
+    w.pos.copy(W_IDLE.pos).lerp(W_SPRINT.pos, this.sprintT);
+    w.q.copy(W_IDLE.q).slerp(W_SPRINT.q, this.sprintT);
+    w.pos.y += pump * 0.025;
+    if (this.attackT >= 0) {
+      const t = this.attackT;
+      let from: WeaponKey;
+      let to: WeaponKey;
+      let k: number;
+      if (t < a.windup) {
+        from = { pos: w.pos.clone(), q: w.q.clone() };
+        to = W_WINDUP;
+        k = easeOutQuad(t / a.windup);
+      } else if (t < a.windup + a.strike) {
+        from = W_WINDUP;
+        to = W_STRIKE;
+        k = easeInQuad((t - a.windup) / a.strike);
+      } else {
+        from = W_STRIKE;
+        to = { pos: w.pos.clone(), q: w.q.clone() };
+        k = easeInOutSine(Math.min(1, (t - a.windup - a.strike) / a.recover));
+      }
+      w.pos.copy(from.pos).lerp(to.pos, k);
+      w.q.copy(from.q).slerp(to.q, k);
+    }
+    w.pos.y -= this.rightDown * 0.45;
+    const g = this.held.get(this.item)!;
+    g.position.copy(w.pos);
+    g.quaternion.copy(w.q);
+    this.placeHand(this.armR, this.handR, a.grips[0], ELBOW_R, 1);
+    this.placeHand(this.armL, this.handL, a.grips[1], ELBOW_L, -1);
+  }
+
+  /**
+   * Put a hand on the weapon's handle at distance `grip` from the butt: the fist's grip axis along
+   * the handle, the forearm rolled so it runs back towards `elbowDir`. Arm root = elbow.
+   */
+  private placeHand(arm: Group, hand: Group, grip: number, elbowDir: Vector3, side: number): void {
+    const w = this.weapon;
+    const axis = _v.set(0, 1, 0).applyQuaternion(w.q);
+    const point = _w.set(0, grip, 0).applyQuaternion(w.q).add(w.pos);
+    // Hand basis: y = handle axis, z = towards the elbow (perpendicular part), x = y × z.
+    const z = elbowDir.clone().addScaledVector(axis, -elbowDir.dot(axis)).normalize();
+    const x = new Vector3().crossVectors(axis, z);
+    _m.makeBasis(x, axis, z);
+    _q.setFromRotationMatrix(_m);
+    // Hand origin so that its grip axis passes through the grip point.
+    const gripLocal = new Vector3(GRIP_X * side, 0, GRIP_Z).applyQuaternion(_q);
+    const handOrigin = point.clone().sub(gripLocal);
+    // The wrist is bent: forearm rotation = hand rotation undone by the bend; the elbow behind it.
+    const bend = WRIST_2H[side > 0 ? 0 : 1];
+    hand.rotation.set(bend, 0, 0);
+    const armQ = _q.clone().multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -bend));
+    arm.quaternion.copy(armQ);
+    arm.position.copy(handOrigin).add(new Vector3(0, 0, HAND_OFFSET).applyQuaternion(armQ));
+  }
+
   private attackPose(base: Pose): Pose {
     if (this.attackT < 0) return base;
-    const a = ATTACKS[this.item];
+    const a = this.config(this.item);
     const windup = this.item === 'fists' ? R_FIST_WINDUP : R_KNIFE_WINDUP;
     const strike = this.item === 'fists' ? R_FIST_STRIKE : R_KNIFE_STRIKE;
     const t = this.attackT;
@@ -270,84 +370,27 @@ export class Viewmodel {
     return lerpPose(this.tmp, strike, base, easeInOutSine(r));
   }
 
+  /** Item model placed in a fist: its grip point on the fist's grip axis, handle along it. */
+  private inFist(model: Group, grip: number, side: number): Group {
+    const g = new Group();
+    model.position.set(GRIP_X * side, -grip, GRIP_Z);
+    g.add(model);
+    return g;
+  }
+
   /** side: +1 right, -1 left. Root = elbow; forearm extends along -Z to the hand. */
-  private buildArm(arm: Group, side: number, skin: Material): void {
+  private buildArm(arm: Group, hand: Group, side: number, skin: Material): void {
     const sleeve = new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), skin);
     const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), skin);
     cuffMesh.position.z = -FOREARM + 0.02;
     arm.add(sleeve, cuffMesh);
     this.sleeves.push(sleeve);
     this.cuffs.push(cuffMesh);
-
-    const hand = new Group();
-    hand.position.z = -FOREARM - 0.01;
-    // Palm, curled fingers (the fist closes round a vertical grip on the palm's inner side) and the
-    // thumb: one mesh, one draw call.
-    const palm = new BoxGeometry(0.036, 0.075, 0.085);
-    palm.translate(0, 0, -0.04);
-    const fingers = new BoxGeometry(0.05, 0.072, 0.034);
-    fingers.translate(-side * 0.014, -0.004, -0.088);
-    const thumb = new BoxGeometry(0.022, 0.022, 0.05);
-    thumb.rotateY(side * 0.4);
-    thumb.translate(-side * 0.03, 0.03, -0.06);
-    hand.add(new Mesh(this.geo(mergeGeometries([palm, fingers, thumb])!), skin));
-    palm.dispose();
-    fingers.dispose();
-    thumb.dispose();
+    hand.position.z = -HAND_OFFSET;
+    const fist = new Mesh(this.geo(handGeometry(side)), skin);
+    hand.add(fist);
+    this.hands.push(fist);
     arm.add(hand);
-    arm.userData.hand = hand;
-  }
-
-  /**
-   * Long tools in the right fist: shafts run forward-up out of the grip, heads at the far end.
-   * All share the grungy character materials (wood, dark steel, the knife's rusty blade).
-   */
-  private buildHeldTools(): void {
-    const wood = characterMaterial('handle', 0x6e5034);
-    const steel = characterMaterial('torch', 0x3c4044);
-    const hand = this.armR.userData.hand as Group;
-    const make = (id: RightItem, build: (g: Group) => void) => {
-      const g = new Group();
-      build(g);
-      g.position.set(-0.012, 0.012, -0.075);
-      // Shaft forward and slightly inward, so the head stays in frame on a phone screen.
-      g.rotation.set(0.2, 0.3, 0);
-      g.visible = false;
-      hand.add(g);
-      this.held.set(id, g);
-    };
-    make('axe', (g) => {
-      const shaft = new Mesh(this.geo(limbForward(0.015, 0.013, 0.5, 6)), characterMaterial('handle', 0x8a3a24));
-      shaft.position.z = 0.1;
-      const head = new Mesh(this.geo(new BoxGeometry(0.014, 0.13, 0.06)), bladeMaterial());
-      head.position.set(0, 0.03, -0.37);
-      const spike = new Mesh(this.geo(new ConeGeometry(0.012, 0.06, 4)), steel);
-      spike.position.set(0, -0.06, -0.37);
-      spike.rotation.x = Math.PI;
-      g.add(shaft, head, spike);
-    });
-    make('bat', (g) => {
-      const body = new Mesh(this.geo(limbForward(0.017, 0.036, 0.62, 8)), wood);
-      body.position.z = 0.08;
-      const knob = new Mesh(this.geo(limbForward(0.024, 0.024, 0.015, 8)), wood);
-      knob.position.z = 0.09;
-      g.add(body, knob);
-    });
-    make('crowbar', (g) => {
-      const bar = new Mesh(this.geo(limbForward(0.011, 0.011, 0.55, 6)), steel);
-      bar.position.z = 0.1;
-      const hook = new Mesh(this.geo(limbForward(0.011, 0.008, 0.08, 6)), steel);
-      hook.position.set(0, 0, -0.45);
-      hook.rotation.x = 1.1;
-      g.add(bar, hook);
-    });
-    make('hammer', (g) => {
-      const shaft = new Mesh(this.geo(limbForward(0.013, 0.012, 0.3, 6)), wood);
-      shaft.position.z = 0.06;
-      const head = new Mesh(this.geo(new BoxGeometry(0.028, 0.11, 0.03)), steel);
-      head.position.set(0, 0.02, -0.235);
-      g.add(shaft, head);
-    });
   }
 
   private geo<T extends BufferGeometry>(g: T): T {
@@ -359,6 +402,15 @@ export class Viewmodel {
     this.materials.push(m);
     return m;
   }
+}
+
+/** Rotation whose +Y is `axis` and whose −Z leans towards `edge` (the item's forward / edge side). */
+function basisQuat(axis: Vector3, edge: Vector3): Quaternion {
+  const y = axis.clone().normalize();
+  const f = edge.clone().addScaledVector(y, -edge.dot(y)).normalize();
+  const z = f.negate();
+  const x = new Vector3().crossVectors(y, z);
+  return new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(x, y, z));
 }
 
 function lerpPose(out: Pose, a: Pose, b: Pose, t: number): Pose {

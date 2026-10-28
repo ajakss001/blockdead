@@ -39,6 +39,21 @@ export class AnxietyAudio {
     events.on('loop:resume', () => this.syncMute());
   }
 
+  /** Shared with the ambient sounds (null until the first user gesture). */
+  get context(): AudioContext | null {
+    return this.ac;
+  }
+
+  /** Output muted while the game is paused. */
+  get output(): GainNode | null {
+    return this.master;
+  }
+
+  /** One second of white noise. */
+  get noiseBuffer(): AudioBuffer | null {
+    return this.noise;
+  }
+
   /** Heartbeat envelope 0..1 (1 at the beat), for the screen pulse. */
   get pulse(): number {
     return Math.exp(-this.sinceBeat * 7);

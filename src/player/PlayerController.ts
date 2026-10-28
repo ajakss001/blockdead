@@ -48,6 +48,8 @@ export class PlayerController {
   prevStepPhase = 0;
   /** Current noise emitted by the player, 0..1. */
   noise = 0;
+  /** Class: how loud the footsteps are (1 = normal). */
+  noiseMul = 1;
   /** Set from survival stats each step: exhaustion first slows, then forbids sprinting. */
   canSprint = true;
   sprintFactor = 1;
@@ -115,7 +117,7 @@ export class PlayerController {
     const gait = this.speed < 0.2 ? 0 : this.crouched ? NOISE_CROUCH : this.sprinting ? NOISE_SPRINT : NOISE_WALK;
     this.gaitNoise = damp(this.gaitNoise, gait, 4, dt);
     this.noiseImpulse = Math.max(0, this.noiseImpulse - dt * 1.2);
-    this.noise = Math.max(this.gaitNoise, this.noiseImpulse);
+    this.noise = Math.min(1, Math.max(this.gaitNoise * this.noiseMul, this.noiseImpulse));
   }
 
   eyeHeight(alpha: number): number {

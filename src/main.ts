@@ -110,6 +110,7 @@ async function boot(): Promise<void> {
   new DebugPanel(ctx, uiEl);
 
   if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx } });
+  if (import.meta.env.DEV && scene instanceof WorldScene) void import('./debug/devHarness').then((m) => m.installDevHarness(ctx, scene, draw));
 
   // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.
@@ -126,6 +127,8 @@ async function boot(): Promise<void> {
 
   wireLifecycle(ctx);
   loop.start();
+  // New game: the character editor over the paused world.
+  await scene.createCharacter?.();
 }
 
 /** Pause/resume rules shared by every scene: hidden tab, ads, portrait phone, lost GL context. */
