@@ -10,6 +10,7 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   KeyI: 'inventory',
   Digit1: 'item1',
   Digit2: 'item2',
+  Space: 'jump',
 };
 
 const FORWARD = ['KeyW', 'ArrowUp'];

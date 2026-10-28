@@ -67,7 +67,7 @@ export class Builder {
   readonly doors: DoorSpot[] = [];
   /** Roofed footprints in world space: [minX, minZ, maxX, maxZ, roofY, …] (see systems/Climate). */
   readonly shelters: number[] = [];
-  /** World-life spots, LIFE_STRIDE each: kind, x, y, z, normal x, normal z, w, h, seed (see world/WorldLife). */
+  /** World-life spots, LIFE_STRIDE each: kind, x, y, z, normal x, normal z, w, h, seed, tag (see world/WorldLife). */
   readonly ambient: number[] = [];
   private idBase: number | null = null;
   private idN = 0;
@@ -111,9 +111,9 @@ export class Builder {
   }
 
   /** World-life spot in the current frame (normal turns with the frame). */
-  life(kind: number, x: number, y: number, z: number, nx: number, nz: number, w: number, h: number, seed: number): void {
+  life(kind: number, x: number, y: number, z: number, nx: number, nz: number, w: number, h: number, seed: number, tag = 0): void {
     const s = this.flip ? -1 : 1;
-    this.ambient.push(kind, this.wx(x), y, this.wz(z), nx * s, nz * s, w, h, seed);
+    this.ambient.push(kind, this.wx(x), y, this.wz(z), nx * s, nz * s, w, h, seed, tag);
   }
 
   /** Register a door by its hinge and closed yaw in the current frame. */
@@ -147,7 +147,8 @@ export class Builder {
     this.p.set(x0 + sx / 2, y + sy / 2, z0 + sz / 2);
     this.s.set(sx, sy, sz);
     this.batch.add(this.box, color, this.m.compose(this.p, this.q.identity(), this.s), surface);
-    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz);
+    // Over the block's own height: low ones (crates, sandbags, tables) can be jumped onto.
+    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz, y, y + sy);
   }
 
   /** Arbitrary template with a local transform (in the current frame). */

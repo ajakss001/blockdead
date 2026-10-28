@@ -1,6 +1,7 @@
 import type { GameContext } from '../GameContext';
 import type { KeyboardMouseInput } from '../input/KeyboardMouseInput';
 import { openCredits } from './CreditsScreen';
+import { volumeControl } from './VolumeControl';
 
 const CONTROLS: [string, string][] = [
   ['WASD', 'движение'],
@@ -59,7 +60,7 @@ export class PlayOverlay {
       e.stopPropagation();
       openCredits(parent);
     });
-    this.root.append(title, list, this.hint, credits);
+    this.root.append(title, list, this.hint, volumeControl(), credits);
     this.soft.className = 'soft-hint';
     this.soft.textContent = 'Кликните, чтобы продолжить';
     this.soft.hidden = true;

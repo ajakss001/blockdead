@@ -11,7 +11,8 @@ export type HeldId = 'knife' | 'axe' | 'bat' | 'crowbar' | 'hammer' | 'torch';
 export interface HeldConfig {
   /** Both hands on the handle (the flashlight goes to the head). */
   twoHanded: boolean;
-  /** Distances from the butt along the handle: [main (right) hand, other (left) hand]. */
+  /** Distances from the butt along the handle: [main (right) hand, other (left) hand]. Two-handed: the right
+   * hand is the upper one (about a third of the way down from the head), the left one at the butt. */
   grips: number[];
   /** One-handed: wrist flexion (rad) that tips the handle forward out of the fist. */
   wrist: number;
@@ -26,9 +27,9 @@ export interface HeldConfig {
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
   knife: { twoHanded: false, grips: [0.05], wrist: -1.15, windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
   hammer: { twoHanded: false, grips: [0.07], wrist: -1.0, windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
-  axe: { twoHanded: true, grips: [0.07, 0.4], wrist: 0, windup: 0.34, strike: 0.13, recover: 0.42, noise: 0.5 },
-  bat: { twoHanded: true, grips: [0.07, 0.19], wrist: 0, windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
-  crowbar: { twoHanded: true, grips: [0.08, 0.3], wrist: 0, windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
+  axe: { twoHanded: true, grips: [0.52, 0.06], wrist: 0, windup: 0.34, strike: 0.13, recover: 0.42, noise: 0.5 },
+  bat: { twoHanded: true, grips: [0.3, 0.06], wrist: 0, windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
+  crowbar: { twoHanded: true, grips: [0.36, 0.05], wrist: 0, windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
   torch: { twoHanded: false, grips: [0.06], wrist: -1.5, windup: 0, strike: 0, recover: 0, noise: 0 },
 };
 

@@ -17,6 +17,16 @@ import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
 import type { ContainerSpot } from '../gen/pieces';
+import { type ModelInfo, type ModelLibrary, modelGeometry, pickModel } from '../models';
+
+/** Third-party vehicle and prop models (set in the worker once loaded); null = procedural only. */
+let library: ModelLibrary | null = null;
+export function setModelLibrary(lib: ModelLibrary | null): void {
+  library = lib;
+}
+export function modelLibrary(): ModelLibrary | null {
+  return library;
+}
 
 /** Faded 90s factory colors. */
 export const CAR_PAINTS = {
@@ -38,6 +48,8 @@ export interface CarOptions {
   flatTire?: boolean;
   /** Chance (0..1) for each window to be smashed out, leaving jagged teeth in the frame. */
   smashed?: number;
+  /** Model group (car, van, police, ambulance, wreck…); default: a civilian car or van. */
+  kind?: string;
 }
 
 // Mid-size 90s sedan, meters. Local axes: +X nose, +Y up, +Z left side.
@@ -114,6 +126,25 @@ const _s = new Vector3();
  */
 export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): void {
   const rand = mulberry32(o.seed ?? 1);
+  if (library) {
+    // A model: mostly cars, some vans; a badly smashed one is sometimes a burnt-out wreck.
+    const r = rand();
+    const kind = o.kind ?? ((o.smashed ?? 0) > 0.6 && r < 0.35 ? 'wreck' : r < 0.22 ? 'van' : 'car');
+    const m = pickModel(library, kind, rand()) ?? pickModel(library, 'car', rand());
+    if (m) {
+      const matrix = new Matrix4()
+        .makeTranslation(o.x, 0.01, o.z)
+        .multiply(new Matrix4().makeRotationY(o.yaw))
+        .multiply(new Matrix4().makeRotationFromEuler(new Euler(o.flatTire ? -0.02 : 0, 0, o.flatTire ? -0.01 : 0)));
+      placeModel(batch, m, matrix, m.tint ? paintFor(o.paint, rand) : null, dirt);
+      if (containers) {
+        const t = new Vector3(m.min[0] + 0.25, 0.8, 0).applyMatrix4(matrix);
+        containers.push({ type: 'trunk', x: t.x, z: t.z });
+      }
+      world.addOrientedBox(o.x, o.z, m.size[0] / 2, m.size[2] / 2, o.yaw);
+      return;
+    }
+  }
   // Car transform: position, heading, plus sag towards a flat tire.
   const roll = o.flatTire ? -0.022 : 0;
   const pitch = o.flatTire ? -0.012 : 0;
@@ -236,6 +267,17 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
 
   // Collider: the body itself, rotated with the car (bumper to bumper, mirrors excluded).
   world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH, WIDTH / 2, o.yaw);
+}
+
+/** Faded paint over a model's own texture: a light multiply so the texture keeps its detail. */
+function paintFor(paint: number, rand: () => number): Color {
+  const c = new Color(paint);
+  return c.multiplyScalar(1.7).lerp(new Color(1, 1, 1), 0.35 + rand() * 0.25);
+}
+
+/** A model into the batch: vehicle metal by default, slightly rough. */
+export function placeModel(batch: StaticBatch, m: ModelInfo, matrix: Matrix4, paint: Color | null, tint?: VertexTint, roughness = 0.75, metalness = 0.25): void {
+  batch.addModel(modelGeometry(library!, m), m.layer, matrix, paint, roughness, metalness, tint);
 }
 
 /** Greenhouse faces split into a grid of cells; inner cells are glass, the frame is painted pillars. */

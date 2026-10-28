@@ -1,6 +1,6 @@
 import { BufferAttribute, type BufferGeometry, Color, type ColorRepresentation, type Matrix4 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { type Bucket, bucketOf, type Surface, SURFACES, surfaceLayer } from './look/surfaces';
+import { type Bucket, bucketOf, MODEL_LAYER_BASE, type Surface, SURFACES, surfaceLayer } from './look/surfaces';
 
 /**
  * Per-vertex color modifier, called with world position and the triangle normal.
@@ -75,6 +75,35 @@ export class StaticBatch {
     const list = this.parts.get(bucket);
     if (list) list.push(g);
     else this.parts.set(bucket, [g]);
+  }
+
+  /**
+   * A third-party model (world/models): its own UVs into its atlas layer, its own vertex colors times
+   * `paint` (null keeps the livery), dirt by `tint`. Always an opaque shadow caster.
+   */
+  addModel(model: BufferGeometry, layer: number, matrix: Matrix4, paint: ColorRepresentation | null, roughness: number, metalness: number, tint?: VertexTint): void {
+    const g = model.toNonIndexed();
+    g.applyMatrix4(matrix);
+    const col = g.getAttribute('color') as BufferAttribute;
+    if (paint !== null) {
+      this.color.set(paint);
+      for (let i = 0; i < col.count; i++) col.setXYZ(i, col.getX(i) * this.color.r, col.getY(i) * this.color.g, col.getZ(i) * this.color.b);
+    }
+    if (tint) applyTint(g, tint, this.color);
+    const uv = g.getAttribute('uv');
+    g.setAttribute('aSurfUv', uv.clone());
+    g.deleteAttribute('uv');
+    const n = g.getAttribute('position').count;
+    g.setAttribute('aLayer', new BufferAttribute(new Float32Array(n).fill(MODEL_LAYER_BASE + layer), 1));
+    const pbr = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      pbr[i * 2] = roughness;
+      pbr[i * 2 + 1] = metalness;
+    }
+    g.setAttribute('aPbr', new BufferAttribute(pbr, 2));
+    const list = this.parts.get('cast');
+    if (list) list.push(g);
+    else this.parts.set('cast', [g]);
   }
 
   get partCount(): number {

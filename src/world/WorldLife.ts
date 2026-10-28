@@ -11,6 +11,7 @@ import {
   Matrix4,
   MeshLambertMaterial,
   PlaneGeometry,
+  PointLight,
   Quaternion,
   type Scene,
   ShaderMaterial,
@@ -19,10 +20,12 @@ import {
 import { AmbientAudio } from '../audio/AmbientAudio';
 import type { AnxietyAudio } from '../audio/AnxietyAudio';
 
-/** Spot layout from the generators (Builder.life): kind, x, y, z, normal x, normal z, w, h, seed. */
-export const LIFE_STRIDE = 9;
+/** Spot layout from the generators (Builder.life): kind, x, y, z, normal x, normal z, w, h, seed, tag. */
+export const LIFE_STRIDE = 10;
 /** Spot kinds. */
-export const LIFE = { window: 0, lamp: 1, curtain: 2, radio: 3 } as const;
+export const LIFE = { window: 0, lamp: 1, curtain: 2, radio: 3, shards: 4, room: 5 } as const;
+/** Real lights go to lit rooms within this distance, m. */
+const ROOM_LIGHT_RANGE = 30;
 
 const GLOW_CAP = 192;
 const CLOTH_CAP = 96;
@@ -38,6 +41,19 @@ const _s = new Vector3();
 const _c = new Color();
 const _x = new Vector3(1, 0, 0);
 const _y = new Vector3(0, 1, 0);
+
+/** Same light curve as the glow shader (mode 0 steady with a slight wobble, 1 flickering). */
+function flicker(t: number, phase: number, mode: number): number {
+  const tt = t + phase * 37;
+  if (mode < 0.5) return 0.8 + 0.12 * Math.sin(tt * 6.3) * Math.sin(tt * 2.9) + 0.08 * Math.sin(tt * 13);
+  const hash = (n: number) => {
+    const s = Math.sin(n) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  const fast = hash(Math.floor(tt * 14) + phase * 131);
+  const slow = hash(Math.floor(tt * 1.6) + phase * 71);
+  return slow < 0.18 ? (fast > 0.45 ? 1 : 0) : 1;
+}
 
 const CURTAIN_COLORS = [0x5a4a40, 0x4a5058, 0x6a5a48, 0x5a3e3a, 0x7a7262, 0x4a5a4a];
 
@@ -71,6 +87,12 @@ export class WorldLife {
   private readonly clothUniforms = { uTime: { value: 0 }, uWind: { value: 0.3 } };
   private curtains = 0;
   private readonly radios: number[] = [];
+  /** Broken glass on the ground: x, z, radius. */
+  private readonly shards: number[] = [];
+  /** Lit rooms of the loaded interiors: x, y (lamp), z, flicker mode, phase. */
+  private readonly rooms: number[] = [];
+  /** A few real point lights (quality preset) given to the nearest lit rooms. */
+  private lights: PointLight[] = [];
   private readonly papers: Paper[] = [];
   private papersOn = false;
   private clothOn = true;
@@ -142,6 +164,38 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     for (let i = 0; i < PAPERS; i++) this.papers.push({ x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0.5 + Math.random() });
   }
 
+  /** Number of real point lights for lit rooms (0 on weak phones: the fake glow does it alone). */
+  set roomLights(n: number) {
+    if (n === this.lights.length) return;
+    for (const l of this.lights) this.scene.remove(l);
+    this.lights = Array.from({ length: n }, () => {
+      const l = new PointLight(0xffc887, 0, 9, 2);
+      l.castShadow = false;
+      this.scene.add(l);
+      return l;
+    });
+  }
+
+  /** Wind: direction (rad, xz) and gust 0..1 — the clouds drift with it. */
+  get windDirection(): number {
+    return this.windDir;
+  }
+
+  get windGust(): number {
+    return this.gust;
+  }
+
+  /** Standing on broken glass. */
+  onShards(x: number, z: number, y: number): boolean {
+    if (y > 0.5) return false;
+    if (this.dirty) this.rebuild();
+    for (let i = 0; i < this.shards.length; i += 3) {
+      const r = this.shards[i + 2];
+      if (Math.abs(x - this.shards[i]) < r && Math.abs(z - this.shards[i + 1]) < r) return true;
+    }
+    return false;
+  }
+
   /** Curtains and paper (quality preset): off = no draw call and no paper simulation. */
   set clothEnabled(on: boolean) {
     this.clothOn = on;
@@ -170,6 +224,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.clothUniforms.uTime.value = this.time;
     this.clothUniforms.uWind.value = this.gust;
     this.updatePapers(dt, player, this.clothOn && outdoors && street);
+    this.updateRoomLights(player);
 
     // Nearest radio: a storey apart counts as far; pan from the camera's facing.
     let best = Infinity;
@@ -189,6 +244,27 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.audio.update(dt, { gust: this.gust, outdoors, height: Math.max(0, player.y), radio: best < Infinity ? { dist: best, pan } : null });
   }
 
+  /** The real lights go to the nearest lit rooms; they flicker with their room. */
+  private updateRoomLights(player: Vector3): void {
+    if (this.lights.length === 0) return;
+    const near: [number, number][] = [];
+    for (let i = 0; i < this.rooms.length; i += 5) {
+      const d = Math.hypot(this.rooms[i] - player.x, (this.rooms[i + 1] - player.y - 1.5) * 1.5, this.rooms[i + 2] - player.z);
+      if (d < ROOM_LIGHT_RANGE) near.push([d, i]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    this.lights.forEach((l, n) => {
+      const hit = near[n];
+      if (!hit) {
+        l.intensity = 0;
+        return;
+      }
+      const i = hit[1];
+      l.position.set(this.rooms[i], this.rooms[i + 1] - 0.1, this.rooms[i + 2]);
+      l.intensity = 7 * flicker(this.time, this.rooms[i + 4], this.rooms[i + 3]);
+    });
+  }
+
   private wind(dt: number): void {
     this.gustT -= dt;
     if (this.gustT <= 0) {
@@ -204,6 +280,11 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     let g = 0;
     let c = 0;
     this.radios.length = 0;
+    this.shards.length = 0;
+    this.rooms.length = 0;
+    // Rooms whose interior is here: their facade windows step aside for the real room.
+    const inside = new Set<number>();
+    for (const spots of this.sets.values()) for (let i = 0; i + LIFE_STRIDE <= spots.length; i += LIFE_STRIDE) if (spots[i] === LIFE.room) inside.add(spots[i + 9]);
     const glow = (kind: number, seed: number, mode: number, strength: number) => {
       this.glow.setMatrixAt(g, _m);
       this.glowData.setXYZW(g, kind, seed, mode, strength);
@@ -219,9 +300,23 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
         const w = spots[i + 6];
         const h = spots[i + 7];
         const seed = spots[i + 8];
+        const tag = spots[i + 9];
         if (kind === LIFE.window && g < GLOW_CAP) {
+          if (inside.has(tag)) continue;
+          // All windows of one room share the flicker phase (seed from the room's tag).
           _m.compose(_p.set(x, y, z), _q.setFromAxisAngle(_y, yaw), _s.set(w, h, 1));
-          glow(0, seed, seed < 0.55 ? 0 : 1, 0.55);
+          glow(0, (tag % 997) / 997, seed, 0.9);
+        } else if (kind === LIFE.room && g + 2 < GLOW_CAP) {
+          // The lamp, its glow on the ceiling, the pool of light on the floor.
+          const phase = (tag % 997) / 997;
+          this.rooms.push(x, y, z, seed, phase);
+          _m.compose(_p.set(x, y + 0.02, z), _q.setFromAxisAngle(_x, Math.PI / 2), _s.set(0.7, 0.7, 1));
+          glow(4, phase, seed, 1);
+          _m.compose(_p.set(x, y + 0.45, z), _q.setFromAxisAngle(_x, Math.PI / 2), _s.set(3.2, 3.2, 1));
+          glow(3, phase, seed, 0.35);
+          const pool = Math.min(w, 5);
+          _m.compose(_p.set(x, y - h + 0.03, z), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(pool, pool * 0.85, 1));
+          glow(3, phase, seed, 0.55);
         } else if (kind === LIFE.lamp && g + 1 < GLOW_CAP) {
           _m.compose(_p.set(x, y, z), _q.setFromAxisAngle(_x, Math.PI / 2), _s.set(w, 0.16, 1));
           const mode = seed < 0.6 ? 1 : 2;
@@ -236,6 +331,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
           c++;
         } else if (kind === LIFE.radio) {
           this.radios.push(x, y, z);
+        } else if (kind === LIFE.shards) {
+          this.shards.push(x, z, w);
         }
       }
     }
@@ -332,6 +429,8 @@ varying vec2 vUv;
 varying float vI;
 varying float vKind;
 varying float vDepth;
+varying vec3 vView;
+varying vec2 vSize;
 float hash(float n) { return fract(sin(n) * 43758.5453); }
 void main() {
   vUv = uv;
@@ -345,7 +444,15 @@ void main() {
   else if (mode < 1.5) f = slow < 0.18 ? step(0.45, fast) : 1.0;                         // tube with dropouts
   else f = slow < 0.4 ? step(0.35, fast) : 0.04;                                          // dying, bursts of light
   vI = f * aGlow.w;
-  vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  mat4 mi = modelMatrix * instanceMatrix;
+  vec4 wp = mi * vec4(position, 1.0);
+  // Window rooms: the view ray in the window's frame (x across, y up, z into the room).
+  float sw = length(mi[0].xyz);
+  float sh = length(mi[1].xyz);
+  vec3 view = wp.xyz - cameraPosition;
+  vView = vec3(dot(view, mi[0].xyz / sw), dot(view, mi[1].xyz / sh), -dot(view, normalize(mi[2].xyz)));
+  vSize = vec2(sw, sh);
+  vec4 mvPosition = viewMatrix * wp;
   vDepth = -mvPosition.z;
   gl_Position = projectionMatrix * mvPosition;
 }`;
@@ -358,20 +465,51 @@ varying vec2 vUv;
 varying float vI;
 varying float vKind;
 varying float vDepth;
+varying vec3 vView;
+varying vec2 vSize;
 void main() {
   vec2 c = vUv - 0.5;
   float a;
   vec3 col;
   if (vKind < 0.5) {
-    // Lit window: warm, brighter low (a lamp on a table), curtain folds.
-    a = smoothstep(0.5, 0.36, abs(c.x)) * smoothstep(0.5, 0.33, abs(c.y)) * (0.7 + 0.3 * sin(vUv.x * 11.0)) * (1.1 - vUv.y * 0.5);
-    col = uWarm;
+    // A lit room behind the window (interior mapping): the ray from the eye through the glass hits
+    // the back wall, a side wall, the ceiling or the floor of a 3.6 m deep room; a lamp hangs inside.
+    vec3 r = normalize(vView);
+    r.z = max(r.z, 0.02);
+    vec3 p = vec3(c.x * vSize.x, c.y * vSize.y, 0.0);
+    float hw = vSize.x * 1.4;
+    float fl = -vSize.y * 0.5 - 0.8;
+    float ce = vSize.y * 0.5 + 0.55;
+    float dep = 3.6;
+    float tx = ((r.x > 0.0 ? hw : -hw) - p.x) / (abs(r.x) < 1e-4 ? 1e-4 : r.x);
+    float ty = ((r.y > 0.0 ? ce : fl) - p.y) / (abs(r.y) < 1e-4 ? 1e-4 : r.y);
+    float tz = dep / r.z;
+    float t = min(tx, min(ty, tz));
+    vec3 hp = p + r * t;
+    float face = t >= tz - 1e-3 ? 1.0 : (t >= ty - 1e-3 ? (r.y > 0.0 ? 0.85 : 0.45) : 0.7);
+    vec3 lamp = vec3(0.0, ce - 0.3, dep * 0.55);
+    float dl = length(hp - lamp);
+    float lit = face * (0.25 + 1.1 / (1.0 + dl * dl * 0.4));
+    vec3 toLamp = lamp - p;
+    float along = dot(toLamp, r);
+    float bulb = smoothstep(0.3, 0.04, length(toLamp - r * along)) * step(0.0, along) * step(along, t + 0.01);
+    float curtain = 1.0 - 0.65 * smoothstep(0.26, 0.42, abs(c.x));
+    a = smoothstep(0.5, 0.44, abs(c.x)) * smoothstep(0.5, 0.45, abs(c.y));
+    col = uWarm * (lit * curtain + bulb * 2.5);
   } else if (vKind < 1.5) {
     a = smoothstep(0.5, 0.15, abs(c.y)) * smoothstep(0.5, 0.42, abs(c.x));
     col = uCold * 1.8;
-  } else {
+  } else if (vKind < 2.5) {
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 2.0);
     col = uCold;
+  } else if (vKind < 3.5) {
+    // Warm pool of lamplight (floor, ceiling).
+    a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);
+    col = uWarm;
+  } else {
+    // The lamp: a bright core.
+    a = pow(max(0.0, 1.0 - length(c) * 2.0), 3.0);
+    col = uWarm * 3.0;
   }
   float fog = smoothstep(uFog.x, uFog.y, vDepth);
   gl_FragColor = vec4(col * a * vI * (1.0 - fog), 1.0);

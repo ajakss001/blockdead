@@ -144,10 +144,10 @@ export class Place {
   }
 
   /** World-life spot (radio, lamp…) at a local point; the normal is the piece's front. */
-  life(kind: number, lx: number, ly: number, lz: number, w: number, h: number, seed: number): void {
+  life(kind: number, lx: number, ly: number, lz: number, w: number, h: number, seed: number, tag = 0): void {
     const [cx, cz] = this.pt(lx, lz);
     const n = [[0, 1], [1, 0], [0, -1], [-1, 0]][this.r];
-    this.b.life(kind, cx, this.y + ly, cz, n[0], n[1], w, h, seed);
+    this.b.life(kind, cx, this.y + ly, cz, n[0], n[1], w, h, seed, tag);
   }
 
   /** Searchable spot in front of the piece. */

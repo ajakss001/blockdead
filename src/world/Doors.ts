@@ -182,6 +182,14 @@ export class Doors {
     return best;
   }
 
+  /** Middle of the doorway, style and state (for sounds). */
+  info(ref: DoorRef): { x: number; y: number; z: number; style: DoorStyle; open: boolean } | null {
+    const d = this.sets.get(ref.building)?.[ref.index];
+    if (!d) return null;
+    const s = d.spot;
+    return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open };
+  }
+
   describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return 'closed';

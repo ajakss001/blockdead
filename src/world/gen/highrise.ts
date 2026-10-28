@@ -94,6 +94,62 @@ export function windowXs(desc: BuildingDesc): number[] {
   return out;
 }
 
+/** Local Z of the window centers on the two side walls. */
+export function windowZs(desc: BuildingDesc): number[] {
+  const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
+  const z0 = desc.cz - desc.d / 2;
+  const z1 = z0 + desc.d;
+  const out: number[] = [];
+  for (let u = Math.ceil(z0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= z1 + 1e-6; u += FACADE_BAY) {
+    const c = u + spec.inset + spec.width / 2;
+    out.push(desc.flip ? 2 * desc.cz - c : c);
+  }
+  return out;
+}
+
+/** Unit spans of a storey (the split the interior builds): the front row along the street, the back row by the stairs. */
+export function unitSpans(L: Local, back: boolean): { x0: number; x1: number; z0: number; z1: number }[] {
+  const x0 = back ? L.cx1 + 0.15 : L.ix0;
+  const width = L.ix1 - x0;
+  if (back && width < 4) return [];
+  const n = Math.max(back ? 1 : 2, Math.floor(width / 6.5));
+  const uw = width / n;
+  return Array.from({ length: n }, (_, u) => ({ x0: x0 + u * uw, x1: x0 + (u + 1) * uw, z0: back ? L.cz0 : L.iz0, z1: back ? L.iz1 : L.czA }));
+}
+
+/**
+ * A lit apartment or office (a generator, the last of the power): rare — a third of the apartment
+ * towers have one, a few two, offices seldom. The light lives in the unit: the facade lights all its
+ * windows, the interior hangs the lamp and lights the room. `mode` 1 flickers.
+ */
+export interface LitUnit {
+  k: number;
+  back: boolean;
+  u: number;
+  mode: number;
+  /** Id shared by the facade windows and the room (exact in a float32). */
+  tag: number;
+}
+
+export function litUnits(desc: BuildingDesc): LitUnit[] {
+  if (desc.floors < 3) return [];
+  const r = mulberry32(hash3(desc.seed, 9, 606));
+  const roll = r();
+  const count = desc.kind === 'offices' ? (roll < 0.15 ? 1 : 0) : roll < 0.3 ? 1 : roll < 0.4 ? 2 : 0;
+  const L = local(desc);
+  const out: LitUnit[] = [];
+  for (let n = 0; n < count; n++) {
+    const k = 2 + Math.floor(r() * (desc.floors - 2));
+    const back = r() < 0.4;
+    const spans = unitSpans(L, back);
+    const u = Math.floor(r() * Math.max(1, spans.length));
+    const mode = r() < 0.35 ? 1 : 0;
+    if (!spans.length || out.some((o) => o.k === k && o.back === back && o.u === u)) continue;
+    out.push({ k, back, u, mode, tag: (desc.seed % 40000) * 200 + k * 8 + (back ? 4 : 0) + Math.min(u, 3) + 1 });
+  }
+  return out;
+}
+
 /** Street-level shop left of the lobby (local x from the side wall to x1), if the frontage allows one. */
 export interface GroundShop {
   kind: ShopKind;
@@ -106,6 +162,13 @@ export function groundShop(desc: BuildingDesc): GroundShop | null {
   if (x1 - L.ix0 < 4.5) return null;
   const r = mulberry32(hash3(desc.seed, 0, 404));
   return { kind: SHOP_KINDS[Math.floor(r() * SHOP_KINDS.length)], x1 };
+}
+
+/** On the stair flights / landings of the core (footsteps: concrete, steel in office towers). */
+export function inStairCore(b: BuildingDesc, wx: number, wz: number): boolean {
+  const [x, z] = toLocal(b, wx, wz);
+  const L = local(b);
+  return x >= L.cx0 && x <= L.cx1 && z >= L.cz0 + NEAR && z <= L.cz1;
 }
 
 /** World → building-local (undo the 180° rotation). */
@@ -164,6 +227,7 @@ const _yAxis = new Vector3(0, 1, 0);
 
 /** Decal quad lying on the ground (or a slab), random rotation. */
 export function groundDecal(b: Builder, surface: Surface, x: number, y: number, z: number, size: number, rand: Rand, stretch = 1): void {
+  if (surface === 'decalShards') b.life(4, x, y, z, 0, 0, size * Math.max(1, stretch) * 0.5, 0, 0);
   const g = new PlaneGeometry(size * stretch, size);
   g.rotateX(-Math.PI / 2);
   g.rotateY(rand() * Math.PI * 2);
@@ -315,12 +379,16 @@ function shellLife(b: Builder, desc: BuildingDesc, L: Local): void {
   const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
   const wins = windowXs(desc);
   if (wins.length === 0 || desc.floors < 3) return;
-  const lit = desc.kind === 'offices' ? (r() < 0.35 ? 1 : 0) : Math.floor(r() * 3);
-  for (let n = 0; n < lit; n++) {
-    const k = 2 + Math.floor(r() * (desc.floors - 2));
-    const back = r() < 0.5;
-    const y = k * FLOOR_H + (spec.sill + spec.head) / 2;
-    b.life(0, pick(r, wins), y, back ? L.z1 + 0.03 : L.z0 - 0.03, 0, back ? 1 : -1, spec.width * 0.9, (spec.head - spec.sill) * 0.9, r());
+  // Lit units: every window of the unit, the side ones too on a corner unit.
+  const side = windowZs(desc);
+  const ww = spec.width * 0.92;
+  const wh = (spec.head - spec.sill) * 0.92;
+  for (const lu of litUnits(desc)) {
+    const span = unitSpans(L, lu.back)[lu.u];
+    const y = lu.k * FLOOR_H + (spec.sill + spec.head) / 2;
+    for (const x of wins) if (x > span.x0 + 0.3 && x < span.x1 - 0.3) b.life(0, x, y, lu.back ? L.z1 + 0.03 : L.z0 - 0.03, 0, lu.back ? 1 : -1, ww, wh, lu.mode, lu.tag);
+    const corner = span.x0 - L.ix0 < 0.5 ? -1 : L.ix1 - span.x1 < 0.5 ? 1 : 0;
+    if (corner) for (const z of side) if (z > span.z0 + 0.3 && z < span.z1 - 0.3) b.life(0, corner < 0 ? L.x0 - 0.03 : L.x1 + 0.03, y, z, corner, 0, ww, wh, lu.mode, lu.tag);
   }
   if (desc.kind !== 'apartments') return;
   for (let n = 0; n < 3; n++) {

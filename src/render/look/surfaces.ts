@@ -116,5 +116,8 @@ export function bucketOf(surface: Surface): Bucket {
   return s.castShadow ? 'cast' : 'flat';
 }
 
+/** World-mesh vertices with aLayer ≥ this sample the model atlas (layer − base) instead of a surface. */
+export const MODEL_LAYER_BASE = 64;
+
 /** Layer of the surface in the world texture array. */
 export const surfaceLayer = (surface: Surface): number => SURFACE_LIST.indexOf(surface);

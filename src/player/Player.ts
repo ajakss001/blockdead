@@ -1,5 +1,7 @@
-import { Object3D, type PerspectiveCamera, type Scene, SpotLight, Vector3 } from 'three';
-import { clamp, lerp } from '../core/math';
+import { type Mesh, Object3D, type PerspectiveCamera, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
+import { type HitMaterial, sfx, type SwingKind } from '../audio/Sound';
+import { SURFACE_LIST, type Surface } from '../render/look/surfaces';
+import { clamp, damp, lerp } from '../core/math';
 import type { GameContext } from '../GameContext';
 import type { LookDelta } from '../input/InputManager';
 import type { QualityPreset } from '../render/QualityPresets';
@@ -27,6 +29,24 @@ const FLASHLIGHT = {
  */
 const HAND_LIGHT = { pos: new Vector3(-0.22, -0.28, 0.05), aim: new Vector3(-0.04, -0.12, -6) };
 const HEAD_LIGHT = { pos: new Vector3(0.02, 0.09, -0.04), aim: new Vector3(0, -0.4, -6) };
+
+/** What a swing sounds like hitting each world surface. */
+const MATERIAL: Partial<Record<Surface, HitMaterial>> = {
+  wood: 'wood',
+  roof: 'wood',
+  foliage: 'wood',
+  metal: 'metal',
+  trim: 'metal',
+  carPaint: 'metal',
+  lamp: 'metal',
+  glass: 'glass',
+  windowGlass: 'glass',
+  carGlass: 'glass',
+  rubber: 'soft',
+};
+const _o = new Vector3();
+const _d = new Vector3();
+const _ray = new Raycaster();
 
 /** How far the eyes move forward when looking straight down (neck flexion), m. */
 const NECK_LEAN = 0.14;
@@ -62,13 +82,15 @@ export class Player {
   private flickerT = 0;
   private readonly lightTarget: Object3D;
   private headlamp = false;
+  /** Camera dip after a landing, m (springs back). */
+  private landDip = 0;
   private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
 
   constructor(
     private readonly ctx: GameContext,
     private readonly camera: PerspectiveCamera,
-    scene: Scene,
+    private readonly scene: Scene,
     private readonly world: CollisionWorld,
     spawn: Vector3,
     yaw: number,
@@ -112,12 +134,53 @@ export class Player {
       }
     }
 
+    this.controller.canJump = !this.busy;
     this.controller.fixedUpdate(dt, input, this.world, this.ground);
+    // Landing: the knees take it, the head dips.
+    if (this.controller.landed > 0) this.landDip = Math.max(this.landDip, Math.min(0.09, 0.015 + this.controller.landed * 0.018));
     const attacking = input.isHeld('attack') && !this.controller.sprinting && !this.busy;
     this.viewmodel.fixedUpdate(dt, attacking);
-    const strikeNoise = this.viewmodel.consumeStrike();
-    if (strikeNoise > 0) this.controller.addNoise(strikeNoise);
+    const vm = this.viewmodel;
+    if (vm.swingStarted) {
+      vm.swingStarted = false;
+      const item = vm.currentItem;
+      const kind: SwingKind = item === 'knife' ? 'blade' : item === 'fists' ? 'fist' : 'heavy';
+      sfx.swing(kind, vm.swing.windup + vm.swing.strike, this.camera.position);
+    }
+    const strikeNoise = vm.consumeStrike();
+    if (strikeNoise > 0) {
+      this.controller.addNoise(strikeNoise);
+      this.strikeSound();
+    }
 
+  }
+
+  /** The blow lands: what is in front within reach, and what it is made of (stage 4 adds damage). */
+  private strikeSound(): void {
+    const item = this.viewmodel.currentItem;
+    const reach = item === 'fists' ? 1.1 : item === 'knife' ? 1.3 : 1.75;
+    const o = this.camera.getWorldPosition(_o);
+    const d = this.camera.getWorldDirection(_d);
+    const dist = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, reach);
+    if (dist < 0) return;
+    // The material from the triangle the ray meets in the world meshes near the player.
+    _ray.set(o, d);
+    _ray.far = dist + 0.4;
+    let material: HitMaterial = 'concrete';
+    const targets: Mesh[] = [];
+    this.scene.traverse((obj) => {
+      if ((obj as Mesh).isMesh && /^(chunk|interior)/.test(obj.name)) targets.push(obj as Mesh);
+    });
+    for (const hit of _ray.intersectObjects(targets, false)) {
+      const layer = hit.face ? (hit.object as Mesh).geometry.getAttribute('aLayer')?.getX(hit.face.a) : undefined;
+      if (layer === undefined) continue;
+      const surface = SURFACE_LIST[Math.round(layer)];
+      // Decals lie on top of the real surface.
+      if (surface.startsWith('decal')) continue;
+      material = MATERIAL[surface] ?? 'concrete';
+      break;
+    }
+    sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
   }
 
   render(alpha: number, frameDt: number): void {
@@ -140,7 +203,8 @@ export class Player {
     // Looking down bends the neck: the head (eyes) moves forward over the belly, so you see your
     // legs and feet, not the top of your own stomach.
     const lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
-    this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35, z - sin * bobX - cos * lean);
+    this.landDip = damp(this.landDip, 0, 7, frameDt);
+    this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35 - this.landDip, z - sin * bobX - cos * lean);
     this.camera.rotation.set(c.pitch, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
 
     this.body.update(x, y, z, c.yaw, phase, c.speed, crouchT);

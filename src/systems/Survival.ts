@@ -129,6 +129,17 @@ export class Survival implements SurvivalState {
     return clamp((this.bodyTemp - COLD.hypothermia) / (COLD.normal - COLD.hypothermia), 0, 1);
   }
 
+  /** Jump height factor: full when rested, lower when tired, none when exhausted. */
+  get jumpFactor(): number {
+    if (this.fatigue >= 0.85) return 0;
+    return 1 - clamp((this.fatigue - 0.5) / 0.35, 0, 1) * 0.45;
+  }
+
+  /** A jump costs a little strength. */
+  onJump(): void {
+    this.fatigue = clamp(this.fatigue + 0.012 * this.mods.stamina, 0, 1);
+  }
+
   /** Too tired to run; fatigue also slows the sprint before that. */
   get canSprint(): boolean {
     return this.fatigue < 0.75;

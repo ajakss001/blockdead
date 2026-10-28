@@ -12,6 +12,9 @@ import {
   Vector3,
 } from 'three';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
+import { sfx, type StepSurface } from '../audio/Sound';
+import { FLOOR_H, inStairCore } from '../world/gen/highrise';
+import { CHUNK, ROAD_HALF } from '../world/gen/layout';
 import { type ItemId, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
@@ -35,6 +38,7 @@ import { ChunkManager } from '../world/ChunkManager';
 import { Doors } from '../world/Doors';
 import { Interiors } from '../world/Interiors';
 import { WorldLife } from '../world/WorldLife';
+import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
@@ -99,10 +103,15 @@ export class WorldScene implements IScene {
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
   private life!: WorldLife;
+  /** Clouds and the occasional plane / helicopter overhead. */
+  sky!: Sky;
   private indoors = false;
   private air = 0;
   private felt = 0;
   private climateT = 0;
+  /** Last step index (stepPhase / π) a footstep was played for. */
+  private stepN = 0;
+  private layout!: WorldLayout;
   /** Visible dirt steps of the worn clothes, to re-dress the body only when a step changes. */
   private dirtShown = '';
   /** Who the survivor is: looks and former job (class). */
@@ -121,9 +130,11 @@ export class WorldScene implements IScene {
     const moon = new DirectionalLight(NIGHT.moon.color, NIGHT.moon.intensity);
     moon.position.set(-30, 40, -10);
     this.scene.add(moon);
+    this.sky = new Sky(this.scene, NIGHT.sky, moon.position);
 
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
     const layout = new WorldLayout(seed);
+    this.layout = layout;
     this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius);
     // Standing surface: storeys, stairs and roofs inside high-rises; paving and terrain everywhere else.
     const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
@@ -275,7 +286,16 @@ export class WorldScene implements IScene {
     const c = this.player.controller;
     c.canSprint = this.survival.canSprint;
     c.sprintFactor = this.survival.sprintFactor;
+    c.jumpFactor = this.survival.jumpFactor;
     this.player.fixedUpdate(dt);
+    if (c.jumped) this.survival.onJump();
+    // Footsteps on whatever is underfoot; jump and landing.
+    const feet = { x: c.position.x, y: c.position.y + 0.05, z: c.position.z };
+    const n = Math.floor(c.stepPhase / Math.PI);
+    if (n !== this.stepN && !c.airborne && c.speed > 0.3) sfx.step(this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet);
+    this.stepN = n;
+    if (c.jumped) sfx.jump(feet);
+    if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
     this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
     // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
@@ -285,6 +305,8 @@ export class WorldScene implements IScene {
       const p = c.position;
       this.indoors = this.shelters.covers(p.x, p.z, p.y);
       this.air = airTemperature(this.clock.hour, this.indoors);
+      // Echo: bare rooms ring, the canyon streets downtown a little, open ground hardly at all.
+      sfx.setRoom(this.indoors ? 0.38 : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.2 : 0.06);
     }
     this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting);
     // Clothes get dirty: faster running, crawling, rummaging through containers.
@@ -313,10 +335,38 @@ export class WorldScene implements IScene {
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
+    const wa = this.life.windDirection;
+    const ws = 0.003 + this.life.windGust * 0.006;
+    this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
+    this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
+    const cp = this.camera.position;
+    sfx.setListener(cp.x, cp.y, cp.z, this.lookDir.x, this.lookDir.y, this.lookDir.z);
+    if (!this.ctx.loop.paused) sfx.update(frameDt);
     if (!this.ctx.loop.paused) {
       this.saveT += frameDt;
       if (this.saveT >= AUTOSAVE_INTERVAL) this.save();
     }
+  }
+
+  /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass. */
+  private surfaceAt(x: number, z: number, y: number): StepSurface {
+    if (this.life.onShards(x, z, y)) return 'glass';
+    const b = this.interiors.buildingAt(x, z);
+    if (b) {
+      if (inStairCore(b, x, z)) return b.kind === 'offices' ? 'metal' : 'concrete';
+      if (Math.round(y / FLOOR_H) <= 0) return 'tile';
+      return b.kind === 'offices' ? 'tile' : 'wood';
+    }
+    const zone = this.chunks.zoneAt(x, z);
+    if (this.indoors) return zone === 'town' ? 'tile' : 'wood';
+    const urban = zone === 'downtown' || zone === 'town' || zone === 'suburb';
+    const h = this.layout.walkHeightAt(x, z);
+    if (zone === 'downtown' || zone === 'town') return h > 0.035 ? 'concrete' : 'asphalt';
+    // Suburbs and the country: the roads on the chunk grid, grass and dirt elsewhere.
+    const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
+    const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
+    if (rx < ROAD_HALF || rz < ROAD_HALF) return 'asphalt';
+    return urban && h > 0.05 ? 'concrete' : 'grass';
   }
 
   private save(): void {
@@ -385,6 +435,7 @@ export class WorldScene implements IScene {
     const preset = this.ctx.quality.preset;
     this.interiors.maxLoaded = preset.interiors;
     this.life.clothEnabled = preset.lifeCloth;
+    this.life.roomLights = preset.roomLights;
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();

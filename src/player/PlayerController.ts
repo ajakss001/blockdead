@@ -18,6 +18,11 @@ const STRIDE_SPRINT = 1.15;
 const PITCH_LIMIT = 1.45;
 /** How fast the feet follow the ground (1/s): smooths steps and slope changes. */
 const GROUND_FOLLOW = 18;
+const GRAVITY = 9.8;
+/** Jump apex above the feet, m: a curb, a crate or a sandbag wall, never a car roof. */
+export const JUMP_HEIGHT = 0.45;
+/** A drop bigger than this is a fall (gravity), smaller ones are followed like steps. */
+const FALL_FROM = 0.35;
 
 /** Height of the walkable surface under (x, z) for a body currently at height y (multi-storey). */
 export type GroundFn = (x: number, z: number, y: number) => number;
@@ -53,6 +58,14 @@ export class PlayerController {
   /** Set from survival stats each step: exhaustion first slows, then forbids sprinting. */
   canSprint = true;
   sprintFactor = 1;
+  /** Jumping: allowed now (no window, no search) and how high (fatigue; 0 = too tired). */
+  canJump = true;
+  jumpFactor = 1;
+  airborne = false;
+  vy = 0;
+  /** This step only: took off; landed with this fall speed, m/s (sound, camera, noise). */
+  jumped = false;
+  landed = 0;
 
   private gaitNoise = 0;
   private noiseImpulse = 0;
@@ -93,10 +106,38 @@ export class PlayerController {
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
     world.resolveCircle(this.position, PLAYER_RADIUS);
+    this.jumped = false;
+    this.landed = 0;
+    if (input.consumePressed('jump') && !this.airborne && this.canJump && this.jumpFactor > 0 && !this.crouched) {
+      this.vy = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT * this.jumpFactor);
+      this.airborne = true;
+      this.jumped = true;
+    }
     if (ground) {
-      const target = ground(this.position.x, this.position.z, this.position.y);
-      // Climb quickly (steps), fall a little slower (reads as a drop, not a teleport).
-      this.position.y = damp(this.position.y, target, target > this.position.y ? GROUND_FOLLOW : GROUND_FOLLOW * 0.6, dt);
+      const p = this.position;
+      // The floor, or the top of a crate / table / sandbag under the feet (a bit higher in the air:
+      // the legs tuck up onto it).
+      let target = ground(p.x, p.z, p.y);
+      const top = world.supportAt(p.x, p.z, PLAYER_RADIUS * 0.8, p.y + (this.airborne ? 0.3 : 0.35));
+      if (top > target) target = top;
+      if (this.airborne) {
+        this.vy -= GRAVITY * dt;
+        p.y += this.vy * dt;
+        if (this.vy <= 0 && p.y <= target) {
+          this.landed = -this.vy;
+          p.y = target;
+          this.vy = 0;
+          this.airborne = false;
+          if (this.landed > 2) this.addNoise(Math.min(0.6, this.landed * 0.1));
+        }
+      } else if (target < p.y - FALL_FROM) {
+        // Walked off an edge.
+        this.airborne = true;
+        this.vy = 0;
+      } else {
+        // Climb quickly (steps), fall a little slower (reads as a drop, not a teleport).
+        p.y = damp(p.y, target, target > p.y ? GROUND_FOLLOW : GROUND_FOLLOW * 0.6, dt);
+      }
     }
 
     // Velocity follows the resolved displacement, so pushing into a wall slides instead of building up.

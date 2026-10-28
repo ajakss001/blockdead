@@ -696,3 +696,8 @@ body {
   cursor: pointer;
 }
 .inv__credits { margin-left: 6px; padding: 2px 8px; font-size: 11px; }
+.touch__btn--jump { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 154px); font-size: 11px; }
+.volume { display: inline-flex; align-items: center; gap: 8px; font: 12px system-ui, sans-serif; color: #a9a292; }
+.volume input { width: 120px; accent-color: #b8a46a; }
+.inv__volume input { width: 70px; }
+@media (max-height: 430px) { .inv__volume span { display: none; } }

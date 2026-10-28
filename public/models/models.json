@@ -1,0 +1,956 @@
+{
+ "stride": 20,
+ "atlas": 256,
+ "models": [
+  {
+   "name": "sedan_thunderbolt",
+   "group": "car",
+   "tint": true,
+   "layer": 0,
+   "min": [
+    -2.35,
+    0,
+    -1.0081
+   ],
+   "size": [
+    4.7,
+    1.4472,
+    2.0163
+   ],
+   "vertices": 2433,
+   "indices": 4953,
+   "vOffset": 0,
+   "iOffset": 48660,
+   "normals": true,
+   "title": "Thunderbolt '96 - Retro Styled Model",
+   "author": "Daniel Zhabotinsky",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/thunderbolt-96-retro-styled-model-b99b7f2db19f49638302f4181f06b64a"
+  },
+  {
+   "name": "sedan_kiri",
+   "group": "car",
+   "tint": true,
+   "layer": 1,
+   "min": [
+    -2.3,
+    0,
+    -0.9008
+   ],
+   "size": [
+    4.6,
+    1.5619,
+    1.8016
+   ],
+   "vertices": 2560,
+   "indices": 5427,
+   "vOffset": 58568,
+   "iOffset": 109768,
+   "normals": true,
+   "title": "Kiri '10 - Low poly model",
+   "author": "Daniel Zhabotinsky",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/kiri-10-low-poly-model-7fd6e15785fa4aa9bfd6e31eb7c97ba6"
+  },
+  {
+   "name": "sedan_psx",
+   "group": "car",
+   "tint": true,
+   "layer": 2,
+   "min": [
+    -2.3,
+    0,
+    -1.2246
+   ],
+   "size": [
+    4.6,
+    1.6117,
+    2.4492
+   ],
+   "vertices": 304,
+   "indices": 510,
+   "vOffset": 120624,
+   "iOffset": 126704,
+   "normals": true,
+   "title": "PSX Sedan Car - @jonniemadeit",
+   "author": "jonniemadeit",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/psx-sedan-car-jonniemadeit-90bbcad62e0d480581bf0a191b2f6bd2"
+  },
+  {
+   "name": "small_car",
+   "group": "car",
+   "tint": true,
+   "layer": 3,
+   "min": [
+    -1.9,
+    0,
+    -1.0408
+   ],
+   "size": [
+    3.8,
+    2.0855,
+    2.0815
+   ],
+   "vertices": 8641,
+   "indices": 12291,
+   "vOffset": 127724,
+   "iOffset": 300544,
+   "normals": true,
+   "title": "Low Poly Small car",
+   "author": "scailman",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-small-car-ebe7c5e98a7448b5abb2eaf0cb22b766"
+  },
+  {
+   "name": "hatchback",
+   "group": "car",
+   "tint": true,
+   "layer": 4,
+   "min": [
+    -2.05,
+    0,
+    -1.0794
+   ],
+   "size": [
+    4.1,
+    1.4939,
+    2.1589
+   ],
+   "vertices": 3816,
+   "indices": 8571,
+   "vOffset": 325128,
+   "iOffset": 401448,
+   "normals": true,
+   "title": "Hatchback Concept car",
+   "author": "MaG80",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/hatchback-concept-car-1bae82da97c643efae230cd130f40bfb"
+  },
+  {
+   "name": "pickup",
+   "group": "car",
+   "tint": true,
+   "layer": 5,
+   "min": [
+    -2.65,
+    0,
+    -0.9588
+   ],
+   "size": [
+    5.3,
+    2.305,
+    1.9177
+   ],
+   "vertices": 3415,
+   "indices": 6072,
+   "vOffset": 418592,
+   "iOffset": 486892,
+   "normals": true,
+   "title": "Pickup Truck",
+   "author": "00amza",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/pickup-truck-047615f53e2d45b9a1a2a4dd203d459c"
+  },
+  {
+   "name": "coupe",
+   "group": "car",
+   "tint": true,
+   "layer": 6,
+   "min": [
+    -2.2,
+    0,
+    -0.8786
+   ],
+   "size": [
+    4.4,
+    1.4694,
+    1.7572
+   ],
+   "vertices": 3935,
+   "indices": 6282,
+   "vOffset": 499036,
+   "iOffset": 577736,
+   "normals": true,
+   "title": "Lowpoly car pack",
+   "author": "scailman",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/lowpoly-car-pack-94fcef58d8d04af2b6bf42f2949227eb"
+  },
+  {
+   "name": "traffic_1",
+   "group": "car",
+   "tint": true,
+   "layer": 7,
+   "min": [
+    -2.3,
+    0,
+    -1.0002
+   ],
+   "size": [
+    4.6,
+    1.3618,
+    2.0004
+   ],
+   "vertices": 1266,
+   "indices": 4488,
+   "vOffset": 590300,
+   "iOffset": 615620,
+   "normals": true,
+   "title": "Traffic Car Pack",
+   "author": "JUSTGAME",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4"
+  },
+  {
+   "name": "traffic_2",
+   "group": "car",
+   "tint": true,
+   "layer": 8,
+   "min": [
+    -2.15,
+    0,
+    -0.9677
+   ],
+   "size": [
+    4.3,
+    1.5102,
+    1.9353
+   ],
+   "vertices": 1187,
+   "indices": 4488,
+   "vOffset": 624596,
+   "iOffset": 648336,
+   "normals": true,
+   "title": "Traffic Car Pack",
+   "author": "JUSTGAME",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4"
+  },
+  {
+   "name": "traffic_3",
+   "group": "car",
+   "tint": true,
+   "layer": 9,
+   "min": [
+    -2.2,
+    0,
+    -1.0342
+   ],
+   "size": [
+    4.4,
+    1.5061,
+    2.0685
+   ],
+   "vertices": 1230,
+   "indices": 4488,
+   "vOffset": 657312,
+   "iOffset": 681912,
+   "normals": true,
+   "title": "Traffic Car Pack",
+   "author": "JUSTGAME",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4"
+  },
+  {
+   "name": "traffic_4",
+   "group": "car",
+   "tint": true,
+   "layer": 10,
+   "min": [
+    -1.95,
+    0,
+    -0.9176
+   ],
+   "size": [
+    3.9,
+    1.4884,
+    1.8353
+   ],
+   "vertices": 1227,
+   "indices": 4494,
+   "vOffset": 690888,
+   "iOffset": 715428,
+   "normals": true,
+   "title": "Traffic Car Pack",
+   "author": "JUSTGAME",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4"
+  },
+  {
+   "name": "traffic_5",
+   "group": "car",
+   "tint": true,
+   "layer": 11,
+   "min": [
+    -2.25,
+    0,
+    -0.9616
+   ],
+   "size": [
+    4.5,
+    1.4646,
+    1.9233
+   ],
+   "vertices": 1244,
+   "indices": 4488,
+   "vOffset": 724416,
+   "iOffset": 749296,
+   "normals": true,
+   "title": "Traffic Car Pack",
+   "author": "JUSTGAME",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4"
+  },
+  {
+   "name": "van_delivery",
+   "group": "van",
+   "tint": true,
+   "layer": 12,
+   "min": [
+    -2.4,
+    0,
+    -1.1583
+   ],
+   "size": [
+    4.8,
+    2.534,
+    2.3166
+   ],
+   "vertices": 2142,
+   "indices": 4917,
+   "vOffset": 758272,
+   "iOffset": 801112,
+   "normals": true,
+   "title": "French delivery van - Low poly model",
+   "author": "Daniel Zhabotinsky",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/french-delivery-van-low-poly-model-a350a422d200485ea57778dc42139edc"
+  },
+  {
+   "name": "van_transport",
+   "group": "van",
+   "tint": true,
+   "layer": 13,
+   "min": [
+    -2.5,
+    0,
+    -0.9346
+   ],
+   "size": [
+    5,
+    2.4388,
+    1.8692
+   ],
+   "vertices": 348,
+   "indices": 540,
+   "vOffset": 810948,
+   "iOffset": 817908,
+   "normals": true,
+   "title": "Transport Van - PS1 Low Poly",
+   "author": "Wersaus33",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/transport-van-ps1-low-poly-83b85323614e4adb9212125e5480c756"
+  },
+  {
+   "name": "van_white",
+   "group": "van",
+   "tint": true,
+   "layer": 14,
+   "min": [
+    -2.5,
+    0,
+    -0.9639
+   ],
+   "size": [
+    5,
+    2.2327,
+    1.9278
+   ],
+   "vertices": 255,
+   "indices": 420,
+   "vOffset": 818988,
+   "iOffset": 824088,
+   "normals": true,
+   "title": "White Van - PS1 Low Poly",
+   "author": "Wersaus33",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/white-van-ps1-low-poly-1cac40905d494bae8108a556d870e23e"
+  },
+  {
+   "name": "police_cruiser",
+   "group": "police",
+   "tint": false,
+   "layer": 15,
+   "min": [
+    -2.55,
+    0,
+    -0.9521
+   ],
+   "size": [
+    5.1,
+    1.5227,
+    1.9042
+   ],
+   "vertices": 3378,
+   "indices": 6423,
+   "vOffset": 824928,
+   "iOffset": 892488,
+   "normals": true,
+   "title": "Chapman '73 Cop cruiser - Low poly model",
+   "author": "Daniel Zhabotinsky",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/chapman-73-cop-cruiser-low-poly-model-b71558486d024ecc8dc4abbb1263f022"
+  },
+  {
+   "name": "police_car",
+   "group": "police",
+   "tint": false,
+   "layer": 16,
+   "min": [
+    -2.35,
+    0,
+    -0.9761
+   ],
+   "size": [
+    4.7,
+    1.4838,
+    1.9523
+   ],
+   "vertices": 2804,
+   "indices": 5400,
+   "vOffset": 905336,
+   "iOffset": 961416,
+   "normals": true,
+   "title": "POLICE CAR - LOW POLY",
+   "author": "Jasmin Daniel",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/police-car-low-poly-0f5b12ea1f474887b9664fd7a171c17a"
+  },
+  {
+   "name": "police_suv",
+   "group": "police",
+   "tint": false,
+   "layer": 17,
+   "min": [
+    -2.45,
+    0,
+    -1.2795
+   ],
+   "size": [
+    4.9,
+    1.5171,
+    2.5591
+   ],
+   "vertices": 3727,
+   "indices": 7092,
+   "vOffset": 972216,
+   "iOffset": 1046756,
+   "normals": true,
+   "title": "Lowpoly Generic SUV Police",
+   "author": "mk2design",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/lowpoly-generic-suv-police-259fc16c23d548ba8d5802c563d8ebdc"
+  },
+  {
+   "name": "ambulance",
+   "group": "ambulance",
+   "tint": false,
+   "layer": 18,
+   "min": [
+    -2.8,
+    0,
+    -1.3646
+   ],
+   "size": [
+    5.6,
+    2.9829,
+    2.7293
+   ],
+   "vertices": 3812,
+   "indices": 6966,
+   "vOffset": 1060940,
+   "iOffset": 1137180,
+   "normals": true,
+   "title": "AMBULANCE CAR - LOW POLY",
+   "author": "Jasmin Daniel",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/ambulance-car-low-poly-25392b75045946f7a4c9a03e3bea969e"
+  },
+  {
+   "name": "ambulance_2",
+   "group": "ambulance",
+   "tint": false,
+   "layer": 19,
+   "min": [
+    -2.8,
+    0,
+    -1.3824
+   ],
+   "size": [
+    5.6,
+    2.6716,
+    2.7648
+   ],
+   "vertices": 2294,
+   "indices": 5394,
+   "vOffset": 1151112,
+   "iOffset": 1196992,
+   "normals": true,
+   "title": "Low Poly Ambulance Car Vehicle 3D Model",
+   "author": "DrCG",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-ambulance-car-vehicle-3d-model-bc5c448b2ecc456ba3b0e7c0bf7b9e83"
+  },
+  {
+   "name": "wreck",
+   "group": "wreck",
+   "tint": false,
+   "layer": 20,
+   "min": [
+    -2.3,
+    0,
+    -0.911
+   ],
+   "size": [
+    4.6,
+    1.3842,
+    1.8219
+   ],
+   "vertices": 1442,
+   "indices": 5352,
+   "vOffset": 1207780,
+   "iOffset": 1236620,
+   "normals": true,
+   "title": "Car Wreck Low-Poly",
+   "author": "vinrax",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/car-wreck-low-poly-87cbb2ec7a994c2a9e7bd7a62f1f7ff3"
+  },
+  {
+   "name": "tank",
+   "group": "tank",
+   "tint": false,
+   "layer": 21,
+   "min": [
+    -4.8158,
+    0,
+    -1.8435
+   ],
+   "size": [
+    9.6317,
+    2.4748,
+    3.6869
+   ],
+   "vertices": 1782,
+   "indices": 3054,
+   "vOffset": 1247324,
+   "iOffset": 1282964,
+   "normals": true,
+   "title": "Low-poly Military Vehicles pack",
+   "author": "MedSamer",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-military-vehicles-pack-48137988cfef4ff88f51b08b996ecc1f"
+  },
+  {
+   "name": "apc",
+   "group": "apc",
+   "tint": false,
+   "layer": 22,
+   "min": [
+    -3.8077,
+    0,
+    -1.7829
+   ],
+   "size": [
+    7.6153,
+    2.9345,
+    3.5657
+   ],
+   "vertices": 1212,
+   "indices": 2130,
+   "vOffset": 1289072,
+   "iOffset": 1313312,
+   "normals": true,
+   "title": "Low-poly Military Vehicles pack",
+   "author": "MedSamer",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-military-vehicles-pack-48137988cfef4ff88f51b08b996ecc1f"
+  },
+  {
+   "name": "army_truck",
+   "group": "truck",
+   "tint": false,
+   "layer": 23,
+   "min": [
+    -3.5,
+    0,
+    -1.4253
+   ],
+   "size": [
+    7,
+    2.8229,
+    2.8506
+   ],
+   "vertices": 1283,
+   "indices": 2085,
+   "vOffset": 1317572,
+   "iOffset": 1343232,
+   "normals": true,
+   "title": "low poly military truck",
+   "author": "Kolos Studios",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-military-truck-9fd961a22cb84b9383570869b2f0efa9"
+  },
+  {
+   "name": "army_truck_2",
+   "group": "truck",
+   "tint": false,
+   "layer": 24,
+   "min": [
+    -3.5,
+    0,
+    -1.9333
+   ],
+   "size": [
+    7,
+    4.4058,
+    3.8665
+   ],
+   "vertices": 1623,
+   "indices": 2319,
+   "vOffset": 1347404,
+   "iOffset": 1379864,
+   "normals": true,
+   "title": "Low_poly_TRUCK_Army",
+   "author": "EDMINchi",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-truck-army-7a46794e2eda4e9e9176f2af3220d7c0"
+  },
+  {
+   "name": "helicopter",
+   "group": "heli",
+   "tint": false,
+   "layer": 25,
+   "min": [
+    -6,
+    0,
+    -5.1897
+   ],
+   "size": [
+    12,
+    3.783,
+    10.3793
+   ],
+   "vertices": 3520,
+   "indices": 5790,
+   "vOffset": 1384504,
+   "iOffset": 1454904,
+   "normals": true,
+   "title": "Low Poly Helicopter",
+   "author": "antonmoek",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/low-poly-helicopter-5bbed2de9baa4a13a7faa72653b78b64"
+  },
+  {
+   "name": "sandbag",
+   "group": "sandbag",
+   "tint": false,
+   "layer": 26,
+   "min": [
+    -0.375,
+    0,
+    -0.209
+   ],
+   "size": [
+    0.75,
+    0.227,
+    0.4181
+   ],
+   "vertices": 107,
+   "indices": 360,
+   "vOffset": 1466484,
+   "iOffset": 1468624,
+   "normals": true,
+   "title": "Sandbag [Low Poly Realist]",
+   "author": "Islide",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/sandbag-low-poly-realist-7d52600a15c747749d845d9f906045cf"
+  },
+  {
+   "name": "sandbag_2",
+   "group": "sandbag",
+   "tint": false,
+   "layer": 27,
+   "min": [
+    -0.375,
+    0,
+    -0.1903
+   ],
+   "size": [
+    0.75,
+    0.2415,
+    0.3807
+   ],
+   "vertices": 118,
+   "indices": 360,
+   "vOffset": 1469344,
+   "iOffset": 1471704,
+   "normals": true,
+   "title": "Sandbag",
+   "author": "challe3d",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/sandbag-169d7e568e594e0780f5742c48a9e3b0"
+  },
+  {
+   "name": "jersey",
+   "group": "jersey",
+   "tint": false,
+   "layer": 28,
+   "min": [
+    -1,
+    0,
+    -0.8255
+   ],
+   "size": [
+    2,
+    0.9395,
+    1.651
+   ],
+   "vertices": 108,
+   "indices": 246,
+   "vOffset": 1472424,
+   "iOffset": 1474584,
+   "normals": true,
+   "title": "Lowpoly Concrete Barrier",
+   "author": "l0wpoly",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/lowpoly-concrete-barrier-e0fb4ba5ee434433bbdb4a16aaa2f8fb"
+  },
+  {
+   "name": "barrier_a",
+   "group": "barrier",
+   "tint": false,
+   "layer": 29,
+   "min": [
+    -1.224,
+    0,
+    -0.326
+   ],
+   "size": [
+    2.448,
+    1.107,
+    0.6519
+   ],
+   "vertices": 380,
+   "indices": 780,
+   "vOffset": 1475076,
+   "iOffset": 1482676,
+   "normals": true,
+   "title": "Barrier & Traffic Cone Pack - Part 2",
+   "author": "Sabri Ayeş",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barrier-traffic-cone-pack-part-2-426e2d6eb39b4947856332aec6be4fb4"
+  },
+  {
+   "name": "barrier_b",
+   "group": "barrier",
+   "tint": false,
+   "layer": 30,
+   "min": [
+    -1.9267,
+    0,
+    -0.2553
+   ],
+   "size": [
+    3.8534,
+    0.5297,
+    0.5105
+   ],
+   "vertices": 264,
+   "indices": 768,
+   "vOffset": 1484236,
+   "iOffset": 1489516,
+   "normals": true,
+   "title": "Barrier & Traffic Cone Pack - Part 2",
+   "author": "Sabri Ayeş",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barrier-traffic-cone-pack-part-2-426e2d6eb39b4947856332aec6be4fb4"
+  },
+  {
+   "name": "barrier_low",
+   "group": "barrier",
+   "tint": false,
+   "layer": 31,
+   "min": [
+    -1.1247,
+    0,
+    -0.117
+   ],
+   "size": [
+    2.2493,
+    0.2508,
+    0.2341
+   ],
+   "vertices": 348,
+   "indices": 1080,
+   "vOffset": 1491052,
+   "iOffset": 1498012,
+   "normals": true,
+   "title": "Barrier & Traffic Cone Pack - Part 2",
+   "author": "Sabri Ayeş",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barrier-traffic-cone-pack-part-2-426e2d6eb39b4947856332aec6be4fb4"
+  },
+  {
+   "name": "cone_block",
+   "group": "cone",
+   "tint": false,
+   "layer": 32,
+   "min": [
+    -0.4139,
+    0,
+    -0.3073
+   ],
+   "size": [
+    0.8278,
+    0.5297,
+    0.6147
+   ],
+   "vertices": 383,
+   "indices": 924,
+   "vOffset": 1500172,
+   "iOffset": 1507832,
+   "normals": true,
+   "title": "Barrier & Traffic Cone Pack - Part 2",
+   "author": "Sabri Ayeş",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barrier-traffic-cone-pack-part-2-426e2d6eb39b4947856332aec6be4fb4"
+  },
+  {
+   "name": "cone",
+   "group": "cone",
+   "tint": false,
+   "layer": 33,
+   "min": [
+    -0.291,
+    0,
+    -0.1867
+   ],
+   "size": [
+    0.582,
+    1.0676,
+    0.3734
+   ],
+   "vertices": 246,
+   "indices": 444,
+   "vOffset": 1509680,
+   "iOffset": 1514600,
+   "normals": true,
+   "title": "Barrier & Traffic Cone Pack - Part 2",
+   "author": "Sabri Ayeş",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barrier-traffic-cone-pack-part-2-426e2d6eb39b4947856332aec6be4fb4"
+  },
+  {
+   "name": "barricade",
+   "group": "barricade",
+   "tint": false,
+   "layer": 34,
+   "min": [
+    -1.1,
+    0,
+    -0.3772
+   ],
+   "size": [
+    2.2,
+    1.4389,
+    0.7544
+   ],
+   "vertices": 690,
+   "indices": 2382,
+   "vOffset": 1515488,
+   "iOffset": 1529288,
+   "normals": true,
+   "title": "barricade",
+   "author": "Meshmill",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/barricade-219f2260a31c415e9a65fa1f646f073a"
+  },
+  {
+   "name": "tent_military",
+   "group": "tent",
+   "tint": false,
+   "layer": 35,
+   "min": [
+    -3.25,
+    0,
+    -2.3059
+   ],
+   "size": [
+    6.5,
+    2.0644,
+    4.6119
+   ],
+   "vertices": 3607,
+   "indices": 8349,
+   "vOffset": 1534052,
+   "iOffset": 1606192,
+   "normals": true,
+   "title": "Large militery tent",
+   "author": "challe3d",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/large-militery-tent-bd3d3d8afa3c4a5097d3d22911d6a921"
+  },
+  {
+   "name": "tent_medical",
+   "group": "tent_medical",
+   "tint": false,
+   "layer": 36,
+   "min": [
+    -2.25,
+    0,
+    -1.9867
+   ],
+   "size": [
+    4.5,
+    1.6881,
+    3.9734
+   ],
+   "vertices": 1808,
+   "indices": 3336,
+   "vOffset": 1622892,
+   "iOffset": 1659052,
+   "normals": true,
+   "title": "Medical Tent (Low Poly Style)",
+   "author": "Tiko",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/medical-tent-low-poly-style-85b03ca2e5ae4f09ab06d44d3c623b7b"
+  },
+  {
+   "name": "stretcher",
+   "group": "stretcher",
+   "tint": false,
+   "layer": 37,
+   "min": [
+    -1,
+    0,
+    -0.3622
+   ],
+   "size": [
+    2,
+    0.9854,
+    0.7244
+   ],
+   "vertices": 1017,
+   "indices": 2109,
+   "vOffset": 1665724,
+   "iOffset": 1686064,
+   "normals": true,
+   "title": "OLD Hospital Stretcher",
+   "author": "shubham_mishra",
+   "license": "CC-BY-4.0",
+   "url": "https://sketchfab.com/3d-models/old-hospital-stretcher-f6f350bf2c754644a69dac2ac21e1230"
+  }
+ ]
+}

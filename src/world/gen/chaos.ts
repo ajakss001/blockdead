@@ -1,5 +1,7 @@
 import { mulberry32 } from '../../core/random';
-import { buildCar } from '../props/car';
+import { Color, Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { type ModelInfo, pickModel } from '../models';
+import { buildCar, modelLibrary, placeModel } from '../props/car';
 import * as F from './furniture';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
@@ -50,12 +52,26 @@ function vehicle(b: Builder, x: number, z: number, yaw: number, halfL: number, h
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
+/** A model of a group (nose +X along yaw), optionally tipped and lifted; collider over its footprint. */
+function model(b: Builder, group: string, x: number, z: number, yaw: number, rand: Rand, o: { roll?: number; pitch?: number; lift?: number; collide?: boolean; paint?: number } = {}): ModelInfo | null {
+  const m = pickModel(modelLibrary(), group, rand());
+  if (!m) return null;
+  const mat = new Matrix4().compose(new Vector3(x, (o.lift ?? 0) + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, yaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
+  placeModel(b.batch, m, mat, o.paint !== undefined && m.tint ? new Color(o.paint) : null);
+  if (o.collide !== false) b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, yaw);
+  return m;
+}
+
+/** Yaw of a Place's local +X (quarter turns). */
+const yawOf = (p: Place) => (p.r * Math.PI) / 2;
+
 function wheels(p: Place, xs: number[], halfW: number, r = 0.45, color = 0x1e1e1e): void {
   for (const x of xs) for (const s of [-1, 1]) p.cyl(color, x, r, s * halfW, r, 0.32, 'rubber', Math.PI / 2);
 }
 
 /** Olive tank on tracks, turret turned, the hatch open. */
 function tank(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
+  if (model(b, rand() < 0.6 ? 'tank' : 'apc', x, z, yaw, rand)) return;
   const p = vehicle(b, x, z, yaw, 3.3, 1.7);
   const olive = pick(rand, [0x4a4e38, 0x545a40, 0x3e4434]);
   p.box(0x2a2a26, 0, 0.05, -1.35, 6.4, 0.85, 0.55, 'rubber');
@@ -72,6 +88,7 @@ function tank(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
 
 /** Canvas-covered army truck, tailgate down. */
 function armyTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): Place {
+  if (model(b, 'truck', x, z, yaw, rand)) return new Place(b, x, 0, z, 0).tipped(yaw);
   const p = vehicle(b, x, z, yaw, 3.6, 1.25);
   const olive = pick(rand, [0x4a4e38, 0x545a40]);
   p.box(0x2a2a26, 0, 0.55, 0, 7.0, 0.3, 1.8, 'metal');
@@ -86,6 +103,19 @@ function armyTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): P
 
 /** Sandbag wall along local X. */
 function sandbags(p: Place, lx: number, lz: number, len: number, rand: Rand): void {
+  const lib = modelLibrary();
+  if (pickModel(lib, 'sandbag', 0)) {
+    // Real bags, two staggered layers.
+    const n = Math.max(1, Math.round(len / 0.7));
+    for (let layer = 0; layer < 2; layer++) {
+      for (let i = 0; i < n - layer; i++) {
+        const [x, z] = p.pt(lx - len / 2 + 0.35 + i * 0.7 + layer * 0.35, lz + (rand() - 0.5) * 0.06);
+        model(p.b, 'sandbag', x, z, yawOf(p) + (rand() - 0.5) * 0.25, rand, { lift: layer * 0.22, collide: false });
+      }
+    }
+    p.solid(lx, lz, len, 0.5, 0.45);
+    return;
+  }
   const sand = pick(rand, [0x7a6e56, 0x6e6450, 0x847860]);
   p.box(sand, lx, 0, lz, len, 0.42, 0.7, 'rubber', true);
   p.box(sand, lx, 0.42, lz, len - 0.25, 0.38, 0.6, 'rubber', true);
@@ -94,12 +124,27 @@ function sandbags(p: Place, lx: number, lz: number, len: number, rand: Rand): vo
 
 /** Concrete road barrier along local X. */
 function jersey(p: Place, lx: number, lz: number, len: number): void {
+  if (pickModel(modelLibrary(), 'jersey', 0)) {
+    const n = Math.max(1, Math.round(len / 2));
+    for (let i = 0; i < n; i++) {
+      const [x, z] = p.pt(lx - len / 2 + 1 + i * 2, lz);
+      model(p.b, 'jersey', x, z, yawOf(p), () => 0, { collide: false });
+    }
+    p.solid(lx, lz, len, 0.6, 0.85);
+    return;
+  }
   p.box(0x8a8880, lx, 0, lz, len, 0.35, 0.6, 'concrete', true);
   p.box(0x8a8880, lx, 0.35, lz, len, 0.5, 0.25, 'concrete', true);
 }
 
 /** Striped police / road barrier on two feet. */
 function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = false): void {
+  if (!down && pickModel(modelLibrary(), 'barrier', 0)) {
+    const [x, z] = p.pt(lx, lz);
+    model(p.b, 'barrier', x, z, yawOf(p), () => (len > 2.6 ? 0.6 : 0.1), { collide: false });
+    p.solid(lx, lz, len, 0.3, 1.0);
+    return;
+  }
   const q = down ? p.tipped(0, 0, Math.PI / 2, 0.1) : p;
   q.box(0xc8c2b0, lx, 0.75, lz, len, 0.22, 0.05, 'metal');
   for (let s = 0; s < Math.floor(len / 0.5); s++) q.box(0x8a2a22, lx - len / 2 + 0.15 + s * 0.5, 0.75, lz + 0.001, 0.2, 0.22, 0.055, 'metal');
@@ -112,6 +157,7 @@ function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = fa
 
 /** Field tent: walls, a ridge roof from two slanted sheets, the flap open. */
 function tent(b: Builder, x: number, z: number, yaw: number, rand: Rand, color = pick(rand, [0x4e5240, 0x5a5a48, 0x6a6a5a])): Place {
+  if (model(b, color === 0xb0aca0 ? 'tent_medical' : 'tent', x, z, yaw, rand)) return new Place(b, x, 0, z, 0).tipped(yaw);
   const p = vehicle(b, x, z, yaw, 2.5, 2.0);
   const t = p.tipped(0, 0, 0);
   t.box(color, 0, 0, -1.95, 5.0, 1.4, 0.06, 'rubber');
@@ -135,6 +181,9 @@ function signBoard(p: Place, lx: number, lz: number, color: number, rand: Rand):
 
 /** Box van (SWAT, ambulance, police van): rear doors open, light bar. */
 function van(b: Builder, x: number, z: number, yaw: number, body: number, stripe: number, lights: [number, number]): Place {
+  // White body = an ambulance; otherwise a plain van repainted (SWAT navy).
+  const ambulance = body === 0xc8c4b8;
+  if (model(b, ambulance ? 'ambulance' : 'van', x, z, yaw, () => Math.abs(Math.sin(x * 12.9898 + z * 78.233)), { paint: ambulance ? undefined : body * 1 + 0x101010 })) return new Place(b, x, 0, z, 0).tipped(yaw);
   const p = vehicle(b, x, z, yaw, 2.9, 1.15);
   p.box(0x1e1e1e, 0, 0.3, 0, 5.6, 0.3, 1.9, 'metal');
   p.box(body, -0.4, 0.55, 0, 4.4, 2.0, 2.2, 'carPaint');
@@ -170,8 +219,10 @@ function bus(b: Builder, x: number, z: number, yaw: number, rand: Rand): Place {
 function heliCrash(b: Builder, x: number, z: number, rand: Rand, bodies: BodyMode): void {
   const yaw = rand() * Math.PI * 2;
   const paint = pick(rand, [0x3e4434, 0x2a3440, 0x6a6a62]);
-  const p = vehicle(b, x, z, yaw, 2.4, 1.4);
-  const q = p.tipped(0, 1.25, 0, 0.95);
+  const heli = model(b, 'heli', x, z, yaw, rand, { pitch: -0.22, roll: 0.18, lift: 0.15 });
+  const p = heli ? new Place(b, x, 0, z, 0).tipped(yaw) : vehicle(b, x, z, yaw, 2.4, 1.4);
+  // Procedural stand-in only without the model.
+  const q = heli ? new Place(b, x, -50, z, 0) : p.tipped(0, 1.25, 0, 0.95);
   q.box(paint, 0, -0.9, 0, 3.6, 1.8, 1.9, 'carPaint');
   q.rbox(paint, 2.05, 0.1, 0, 1.0, 1.4, 1.7, 0, 0, -0.5, 'carPaint');
   q.rbox(0x14181a, 2.3, 0.3, 0, 0.9, 1.0, 1.6, 0, 0, -0.6, 'carGlass');
@@ -261,6 +312,10 @@ function policeLine(b: Builder, x: number, z: number, rand: Rand, bodies: BodyMo
 
 /** Patrol car: a sedan in dark blue with a light bar, front doors flung open. */
 function policeCar(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
+  if (modelLibrary()) {
+    buildCar(b.batch, b.colliders, { x, z, yaw, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'police' }, b.containers);
+    return;
+  }
   buildCar(b.batch, b.colliders, { x, z, yaw, paint: pick(rand, [0x1e2a44, 0x2a2e34]), seed: Math.floor(rand() * 1e6), smashed: rand() < 0.5 ? 0.3 : 0 }, b.containers);
   const p = new Place(b, x, 0, z, 0).tipped(yaw);
   p.box(0x2a2a2a, -0.3, 1.4, 0, 0.3, 0.1, 1.1, 'metal');
@@ -324,6 +379,8 @@ function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): v
 }
 
 function stretcher(p: Place, lx: number, lz: number, rand: Rand): void {
+  const [sx, sz] = p.pt(lx, lz);
+  if (model(p.b, 'stretcher', sx, sz, rand() * 6, rand, { collide: false })) return;
   const q = p.at(lx, lz).tipped(rand() * 6);
   q.box(0x8a8a86, 0, 0.0, 0, 1.9, 0.62, 0.05, 'metal');
   q.box(0x8a8a86, 0, 0.62, 0, 1.95, 0.05, 0.6, 'metal');

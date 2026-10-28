@@ -13,6 +13,8 @@ import {
   groundDecal,
   groundShop,
   type Local,
+  type LitUnit,
+  litUnits,
   local,
   NEAR,
   RUN,
@@ -53,6 +55,7 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
   const powered = r0() < 0.3;
   const office = desc.kind === 'offices';
   const wins = windowXs(desc);
+  const lit = litUnits(desc);
   const rise = FLOOR_H / 2 / STEPS;
   const step = RUN / STEPS;
 
@@ -85,7 +88,7 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     b.block(0xb0aa98, L.cx1 + 0.16, y + 1.4, L.cz0 + NEAR + 0.2, 0.02, 0.4, 0.3, 'plaster');
 
     if (k === 0) lobby(b, L, desc, h, rs, rf, paperA, wins);
-    else corridorStorey(b, L, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, wins, powered);
+    else corridorStorey(b, L, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, wins, powered, lit.filter((l) => l.k === k));
   }
   b.setIdBase(null);
   b.endFrame();
@@ -105,7 +108,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
     if (rf) shopInterior(b, L.ix0, L.iz0, sx, L.czA - 0.12, shop.kind, rf);
   }
   // Back units at street level: storerooms off the corridor.
-  backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, wins);
+  backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, wins, []);
   if (!rf) return;
 
   // Concierge desk facing the doors, mailboxes on the side wall, the dead elevator by the stairs.
@@ -124,7 +127,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   groundDecal(b, 'decalLitter', L.doorX - 2 + rf() * 4, 0.05, L.iz0 + 1.5 + rf() * 5, 2.0, rf);
 }
 
-function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], powered: boolean): void {
+function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], powered: boolean, lit: LitUnit[]): void {
   // Front units between the facade and the corridor.
   const width = L.ix1 - L.ix0;
   const n = Math.max(2, Math.floor(width / 6.5));
@@ -133,7 +136,10 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     const ux0 = L.ix0 + u * uw;
     const ux1 = ux0 + uw;
     if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - L.iz0, 'plaster');
-    const st = unitState(rs);
+    // Someone still lives in a lit unit (the random stream advances either way).
+    const light = lit.find((l) => !l.back && l.u === u);
+    const st0 = unitState(rs);
+    const st = light ? 'lived' : st0;
     // Corridor wall with this unit's doorway.
     const gx = ux0 + uw / 2 - DOOR_W / 2;
     b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, 'plaster');
@@ -141,12 +147,12 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     b.block(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
-      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA);
+      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA, light);
       // Notes left on the door for whoever comes looking.
       if (st === 'fled' && rf() < 0.5) F.notes(new Place(b, gx - 0.5, y, L.czA, 0), rf, 1 + Math.floor(rf() * 2));
     }
   }
-  backUnits(b, L, y, h, paperB, mode, rs, rf, wins);
+  backUnits(b, L, y, h, paperB, mode, rs, rf, wins, lit);
   if (!rf) return;
   // Corridor: ceiling lamps (a few flicker on the generator), litter, a lost bag, bullet holes.
   const cz = L.czA + CORRIDOR / 2;
@@ -174,7 +180,7 @@ function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, 
   }
 }
 
-function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[]): void {
+function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], lit: LitUnit[]): void {
   const x0 = L.cx1 + 0.15;
   const width = L.ix1 - x0;
   if (width < 4) return;
@@ -184,13 +190,15 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
     const ux0 = x0 + u * uw;
     const ux1 = ux0 + uw;
     if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0, 0.12, h, L.iz1 - L.cz0, 'plaster');
-    const st = mode === 'storage' ? 'lived' : unitState(rs);
+    const light = lit.find((l) => l.back && l.u === u);
+    const st0 = mode === 'storage' ? 'lived' : unitState(rs);
+    const st = light ? 'lived' : st0;
     const gx = ux0 + uw / 2 - DOOR_W / 2;
     b.blockY(paper, ux0, y, L.cz0, gx - ux0, h, 0.12, 'plaster');
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
     b.block(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
-    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, wins, paper);
+    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, wins, paper, light);
   }
 }
 
@@ -198,7 +206,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
  * One apartment, office or storeroom. Authored in a unit frame: the far wall (facade, windows) at
  * z = 0, the door in the middle of the wall at z = d, x across the unit.
  */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, wins: number[], paper: number): void {
+function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, wins: number[], paper: number, light?: LitUnit): void {
   const w = x1 - x0;
   const d = z1 - z0;
   const cx = (x0 + x1) / 2;
@@ -210,6 +218,14 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
     U.decal('decalSoot', (rf() - 0.5) * w * 0.6, d * 0.3, 1.6, rf);
     for (let i = 0; i < 4; i++) U.rbox(0x1e1a16, (rf() - 0.5) * 0.8, 0.05, d * 0.5 + (rf() - 0.5) * 0.8, 0.9, 0.06, 0.1, rf() * 3, 0, 0.2, 'wood');
     return;
+  }
+  if (light) {
+    // The lamp that is still on: a shade under the ceiling over the open part of the unit.
+    const lz = d * (d >= 7 ? 0.62 : 0.5);
+    U.box(0x2a2a2a, 0, h - 0.35, lz, 0.02, 0.35, 0.02, 'metal');
+    U.cone(0xf0dcb0, 0, h - 0.42, lz, 0.28, 0.2, 'lamp');
+    // The tag ties the room to its windows on the facade (they hide while the room itself is here).
+    U.life(5, 0, h - 0.5, lz, w, h - 0.5, light.mode, light.tag);
   }
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);

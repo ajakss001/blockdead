@@ -9,7 +9,17 @@ export function openCredits(parent: HTMLElement): void {
   const box = el('div', 'credits__box');
   box.append(el('div', 'credits__title', 'Авторы'));
   box.append(el('p', 'credits__note', 'BlockDead: мир, персонажи и звуки созданы процедурно для этой игры.'));
-  box.append(section('Модели', MODEL_CREDITS, 'Сторонних моделей пока нет.'));
+  const models = section('Модели', MODEL_CREDITS, 'Загрузка…');
+  box.append(models);
+  // Authors of the installed models come with the model library (public/models/models.json).
+  void fetch(`${import.meta.env.BASE_URL}models/models.json`)
+    .then((r) => (r.ok ? r.json() : { models: [] }))
+    .catch(() => ({ models: [] }))
+    .then((j: { models: { title: string; author: string; license: string; url: string }[] }) => {
+      const seen = new Map<string, Credit>();
+      for (const m of j.models) if (!seen.has(m.url)) seen.set(m.url, { what: 'Модель', title: m.title, author: m.author, license: m.license === 'CC0-1.0' ? 'CC0' : 'CC BY 4.0', url: m.url, changes: 'упрощена, текстуры уменьшены' });
+      models.replaceWith(section('Модели', [...MODEL_CREDITS, ...seen.values()], 'Сторонних моделей пока нет.'));
+    });
   box.append(section('Библиотеки', LIBRARY_CREDITS, ''));
   const close = el('button', 'credits__close', 'Закрыть');
   box.append(close);

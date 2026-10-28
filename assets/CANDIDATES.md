@@ -1,4 +1,8 @@
-# Кандидаты со Sketchfab — на утверждение
+# Кандидаты со Sketchfab
+
+**Итог:** в игре — всё скачанное, кроме перечисленного ниже (список и авторы — assets/CREDITS.md, настройки — tools/models.config.mjs).
+Не используются: H1, V2, V8, V10, V12, C7, C10 (не скачаны); V1 (это цистерна, не танк); «Yellow Taxi/Cab - PS1 Car» (CC BY-SA — не подходит);
+из V5 — УАЗ, «Урал», «Тигр» (реальные марки); H2–H4 (люди) ждут решения по 9.3. C13 = V9 (одна модель).
 
 Поиск через публичный API Sketchfab (только скачиваемые, лицензии **CC0** и **CC BY**; «Free Standard», NC, ND, Editorial отброшены).
 Отсеяны: реальные марки и модели техники (Humvee/HMMWV, Opel, Isuzu, Chevrolet Monte Carlo, Carbon Motors, AH‑1Z, KA‑50, MD‑500 и т. п.), чужие игровые и киношные IP (Fallout, «Пятый элемент»), всё с кровью/«мёртвым» в названии.
@@ -56,3 +60,36 @@
 3. Сказать мне — дальше оптимизация (`npm run models`), проверка логотипов, LOD, запись в `assets/CREDITS.md` и в экран «Авторы».
 
 Альтернатива: Sketchfab Download API (`GET https://api.sketchfab.com/v3/models/{uid}/download` с личным API‑токеном из настроек аккаунта, заголовок `Authorization: Token …`) — токен вводите вы сами в своём терминале, мне его давать не нужно.
+
+## Блок 7: машины (замена процедурных)
+
+Отсеяны реальные марки и модели (в т. ч. неочевидные: LAZ-699, «Жук», ЗАЗ, РАФ, Checker, Chrysler). У моделей с вымышленными названиями (Daniel Zhabotinsky: «Chapman '73», «Kiri '10», «Thunderbolt '96», «Phoenix '93») после скачивания проверю текстуры на логотипы и номера.
+
+| # | Тип | Модель | Автор | Лицензия | Треуг. | Ссылка |
+|---|---|---|---|---|---|---|
+| C1 | седан | Thunderbolt '96 - Retro Styled Model | Daniel Zhabotinsky | CC BY | 5 017 | https://sketchfab.com/3d-models/b99b7f2db19f49638302f4181f06b64a |
+| C2 | седан | Kiri '10 - Low poly model | Daniel Zhabotinsky | CC BY | 13 035 | https://sketchfab.com/3d-models/7fd6e15785fa4aa9bfd6e31eb7c97ba6 |
+| C3 | седан (PSX) | PSX Sedan Car | jonniemadeit | CC BY | 174 | https://sketchfab.com/3d-models/90bbcad62e0d480581bf0a191b2f6bd2 |
+| C4 | малолитражка | Low Poly Small car | scailman | CC BY | 7 292 | https://sketchfab.com/3d-models/ebe7c5e98a7448b5abb2eaf0cb22b766 |
+| C5 | хэтчбек | Hatchback Concept car | MaG80 | CC BY | 13 162 | https://sketchfab.com/3d-models/1bae82da97c643efae230cd130f40bfb |
+| C6 | пикап | Pickup Truck | 00amza | CC BY | 5 047 | https://sketchfab.com/3d-models/047615f53e2d45b9a1a2a4dd203d459c |
+| C7 | пикап (старый) | Old truck | UlissesVinicios | CC BY | 5 204 | https://sketchfab.com/3d-models/ccc4ed18e7a94bdebf7d1fe46bbe64d9 |
+| C8 | фургон | French delivery van - Low poly model | Daniel Zhabotinsky | CC BY | 6 963 | https://sketchfab.com/3d-models/a350a422d200485ea57778dc42139edc |
+| C9 | фургон (PSX) | Transport Van - PS1 Low Poly | Wersaus33 | CC BY | 180 | https://sketchfab.com/3d-models/83b85323614e4adb9212125e5480c756 |
+| C10 | такси | Taxi | Erbay Çelik | CC BY | 1 460 | https://sketchfab.com/3d-models/9c3fceabe8154a249f0c144b01b83402 |
+| C11 | полиция | Chapman '73 Cop cruiser - Low poly model | Daniel Zhabotinsky | CC BY | 13 812 | https://sketchfab.com/3d-models/b71558486d024ecc8dc4abbb1263f022 |
+| C12 | полиция | POLICE CAR - LOW POLY | Jasmin Daniel | CC BY | 3 942 | https://sketchfab.com/3d-models/0f5b12ea1f474887b9664fd7a171c17a |
+| C13 | скорая | AMBULANCE CAR - LOW POLY (в паре с C12) | Jasmin Daniel | CC BY | 3 654 | https://sketchfab.com/3d-models/25392b75045946f7a4c9a03e3bea969e |
+| C14 | скорая | Low Poly Ambulance Car Vehicle | DrCG | CC BY | 3 006 | https://sketchfab.com/3d-models/bc5c448b2ecc456ba3b0e7c0bf7b9e83 |
+| C15 | разбитая | Car Wreck Low-Poly | vinrax | CC BY | 8 656 | https://sketchfab.com/3d-models/87cbb2ec7a994c2a9e7bd7a62f1f7ff3 |
+| C16 | набор | Lowpoly car pack | scailman | CC BY | 4 774 | https://sketchfab.com/3d-models/94fcef58d8d04af2b6bf42f2949227eb |
+| C17 | набор | Traffic Car Pack | JUSTGAME | CC BY | 9 708 | https://sketchfab.com/3d-models/916a8b149ae24d8b8c9cf12d4a1c64d4 |
+
+Внедорожник и автобус без марки не нашлись — оставлю процедурные (автобус уже есть в сценах эвакуации), либо ищем дальше по вашему запросу.
+Повреждённые варианты (аварии): из любой модели — помятость вершин у точки удара, выбитые стёкла (наши зубья стекла), копоть и ржавчина тем же гранж-шейдером, спущенное колесо; отдельные «разбитые» модели не обязательны.
+
+**Как встраиваю (чтобы не было лишних draw calls и стиль совпал):** модель упрощается до ~2–4k треугольников, её текстура
+кладётся отдельным слоем в текстурный массив мира, а меши — в тот же батч чанка, что и сейчас (UV модели вместо
+мировых). Машина остаётся частью меша чанка: 0 новых draw calls, тот же свет, туман, грязь и ржавчина. Коллайдер —
+повёрнутый бокс по габариту кузова из bounding box модели. Пробки, аварии и парковки вызывают тот же `buildCar`,
+он просто выбирает модель по типу.

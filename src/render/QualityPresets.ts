@@ -26,6 +26,8 @@ export interface QualityPreset {
   interiors: number;
   /** Curtains blowing out of windows and paper in the street (one draw call); off on weak phones. */
   lifeCloth: boolean;
+  /** Real point lights for lit rooms nearby (0: the warm glow alone fakes them). */
+  roomLights: number;
 }
 
 export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high'];
@@ -47,6 +49,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     fogFar: 50,
     interiors: 1,
     lifeCloth: false,
+    roomLights: 0,
   },
   medium: {
     level: 'medium',
@@ -64,6 +67,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     fogFar: 66,
     interiors: 1,
     lifeCloth: true,
+    roomLights: 1,
   },
   high: {
     level: 'high',
@@ -81,5 +85,6 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     fogFar: 115,
     interiors: 2,
     lifeCloth: true,
+    roomLights: 2,
   },
 };

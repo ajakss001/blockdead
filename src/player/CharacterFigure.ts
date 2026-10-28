@@ -151,15 +151,16 @@ export class CharacterFigure {
     const R = this.arms[0];
     const L = this.arms[1];
     if (cfg?.twoHanded && id) {
-      // Carried low across the waist: butt at the right hip, head out past the left side, edge forward.
-      const butt = new Vector3(0.24, 0.84, -0.2);
-      const axis = new Vector3(-0.85, 0.42, -0.3).normalize();
-      const q = basis(axis, new Vector3(0, 0.3, -1));
+      // Diagonally across the body (as in first person): butt at the left hip, head by the right
+      // shoulder, edge out; the right hand up the handle, the left at its end.
+      const axis = new Vector3(0.55, 0.8, -0.05).normalize();
+      const butt = new Vector3(-0.2, 0.86, -0.24);
+      const q = basis(axis, new Vector3(0.6, 0, -1));
       const g = this.held.get(id)!;
       g.position.copy(butt);
       g.quaternion.copy(q);
-      this.gripArm(R, butt.clone().addScaledVector(axis, cfg.grips[0]), axis, new Vector3(0.4, 0.6, 0.6));
-      this.gripArm(L, butt.clone().addScaledVector(axis, cfg.grips[1]), axis, new Vector3(-0.2, 0.7, 0.6));
+      this.gripArm(R, butt.clone().addScaledVector(axis, cfg.grips[0]), axis, new Vector3(0.7, -0.3, 0.5));
+      this.gripArm(L, butt.clone().addScaledVector(axis, cfg.grips[1]), axis, new Vector3(-0.7, -0.2, 0.5));
       return;
     }
     if (cfg && id) {

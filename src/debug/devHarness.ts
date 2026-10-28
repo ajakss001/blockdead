@@ -68,8 +68,47 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
       g.id = '__grid';
       document.body.append(g);
     }
-    g.style.cssText = `position:fixed;inset:0;z-index:100;background:#111;display:grid;grid-template-columns:repeat(${cols},1fr);gap:3px;align-content:start`;
+    g.style.cssText = `position:fixed;inset:0;z-index:99999;background:#111;display:grid;grid-template-columns:repeat(${cols},1fr);gap:3px;align-content:start`;
     g.innerHTML = shots.map((src, i) => `<div style="position:relative"><img src="${src}" style="width:100%;display:block"><span style="position:absolute;left:4px;top:2px;color:#ff0;font:12px sans-serif">${labels[i] ?? ''}</span></div>`).join('');
+  };
+  // Weapon in hand through a swing: idle, walk, windup, strike end, looking down/up (first person).
+  w.__hold = async (id: string) => {
+    const sc = scene as unknown as { inventory: { count(i: string): number; add(i: string, n: number): void; equip(i: string): void; hand: string | null }; syncBody(): void; player: { viewmodel: { attackT: number; strikeFired: boolean } } };
+    const c = s.player.controller as unknown as { pitch: number; yaw: number };
+    const cfg = (await import('../player/held')).HELD[id as 'axe'];
+    if (sc.inventory.hand !== id && sc.inventory.count(id) === 0) sc.inventory.add(id, 1);
+    if (sc.inventory.hand !== id) sc.inventory.equip(id);
+    sc.syncBody();
+    await (w.__fp as (o: object) => Promise<string>)({ x: 14, z: -1.5, yaw: 0.6, pitch: -0.1, frames: 70 });
+    const cap = () => gl.domElement.toDataURL('image/jpeg', 0.8);
+    const step = (n: number, pitch = -0.1) => {
+      for (let i = 0; i < n; i++) {
+        s.fixedUpdate(1 / 60);
+        c.pitch = pitch;
+        c.yaw = 0.6;
+        draw(1, 1 / 60);
+      }
+    };
+    const out: string[] = [];
+    step(10);
+    out.push(cap());
+    ctx.input.setMove(0, 1);
+    step(40);
+    out.push(cap());
+    ctx.input.setMove(0, 0);
+    step(20);
+    sc.player.viewmodel.attackT = 0;
+    sc.player.viewmodel.strikeFired = false;
+    step(Math.round(cfg.windup * 60) - 1);
+    out.push(cap());
+    step(Math.round(cfg.strike * 60));
+    out.push(cap());
+    step(40);
+    step(4, -1.0);
+    out.push(cap());
+    step(4, 0.8);
+    out.push(cap());
+    return out;
   };
   w.__ui = (visible: boolean) => {
     document.querySelectorAll<HTMLElement>('#ui > *').forEach((e) => (e.style.visibility = visible ? '' : 'hidden'));

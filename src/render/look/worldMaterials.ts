@@ -12,7 +12,7 @@ import {
 } from 'three';
 import { generateDecalCanvas } from './decals';
 import { generateGrungeCanvas } from './grunge';
-import { type Bucket, SURFACE_LIST, SURFACES } from './surfaces';
+import { type Bucket, MODEL_LAYER_BASE, SURFACE_LIST, SURFACES } from './surfaces';
 
 export type LightingModel = 'standard' | 'lambert';
 
@@ -25,6 +25,45 @@ const SIZE = 128;
  */
 let materials: (Record<Bucket, Material> & { castCut: Material }) | null = null;
 let texture: DataArrayTexture | null = null;
+/** Atlas of the third-party models (one layer each); a 1-texel placeholder until it loads. */
+const modelAtlas = { value: placeholderAtlas() };
+
+function placeholderAtlas(): DataArrayTexture {
+  const t = new DataArrayTexture(new Uint8Array([200, 200, 200, 255]), 1, 1, 1);
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
+ * The model atlas (public/models/atlas.jpg: layers stacked top to bottom). Loaded before the world
+ * streams; false if the library is not installed (the game then keeps its procedural props).
+ */
+export async function loadModelAtlas(url: string, layerSize: number, anisotropy: number): Promise<boolean> {
+  try {
+    const img = await createImageBitmap(await (await fetch(url)).blob());
+    const canvas = new OffscreenCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    const px = ctx.getImageData(0, 0, img.width, img.height).data;
+    const layers = Math.floor(img.height / layerSize);
+    const row = layerSize * 4;
+    const data = new Uint8Array(layerSize * row * layers);
+    // Each layer's rows flipped to GL order (the UVs were made for that).
+    for (let l = 0; l < layers; l++) for (let y = 0; y < layerSize; y++) data.set(px.subarray((l * layerSize + y) * row, (l * layerSize + y + 1) * row), (l * layerSize + layerSize - 1 - y) * row);
+    const tex = new DataArrayTexture(data, layerSize, layerSize, layers);
+    tex.colorSpace = SRGBColorSpace;
+    tex.wrapS = tex.wrapT = RepeatWrapping;
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = Math.min(4, anisotropy);
+    tex.needsUpdate = true;
+    modelAtlas.value = tex;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Up to two loaded high-rises whose intact windows are cut open (see setWindowCutouts). */
 const MAX_CUTOUTS = 2;
@@ -106,6 +145,7 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
 function patch(m: Material, tex: DataArrayTexture, standard: boolean, cutWindows: boolean): void {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uSurfaces = { value: tex };
+    shader.uniforms.uModels = modelAtlas;
     if (cutWindows) Object.assign(shader.uniforms, cutUniforms);
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -129,6 +169,7 @@ ${cutWindows ? 'vCutPos = (modelMatrix * vec4(transformed, 1.0)).xyz;' : ''}`);
         '#include <common>',
         `#include <common>
 uniform mediump sampler2DArray uSurfaces;
+uniform mediump sampler2DArray uModels;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
@@ -139,7 +180,7 @@ uniform float uCutTop[${MAX_CUTOUTS}];` : ''}`,
       .replace(
         '#include <map_fragment>',
         cutWindows
-            ? `vec4 texel = texture(uSurfaces, vec3(vSurfUv, vLayer));
+            ? `vec4 texel = vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));
 // Intact window glass (alpha-marked) of a loaded building: a hole into the rooms behind.
 if (texel.a < 0.6) {
   for (int i = 0; i < ${MAX_CUTOUTS}; i++) {
@@ -148,7 +189,7 @@ if (texel.a < 0.6) {
   }
 }
 diffuseColor.rgb *= texel.rgb;`
-            : 'diffuseColor *= texture(uSurfaces, vec3(vSurfUv, vLayer));',
+            : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`,
       );
     if (standard) {
       frag = frag

@@ -5,8 +5,10 @@ import type { ContainerRef, Containers } from '../systems/Containers';
 import type { Inventory } from '../systems/Inventory';
 import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
+import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
 import { openCredits } from './CreditsScreen';
+import { volumeControl } from './VolumeControl';
 import { itemIcon } from './pixelart';
 
 export interface InventoryHost {
@@ -56,6 +58,10 @@ export class InventoryPanel {
   private lastTap = { key: '', t: 0 };
   /** Close keys that were already down when the window opened. */
   private readonly heldAtOpen = new Set<string>();
+  /** We are releasing the pointer lock ourselves (opening); any other loss of the lock is the player's Esc. */
+  private releasing = false;
+  /** An Esc keydown reached us (when the browser swallows it to drop the lock, only the keyup arrives). */
+  private escDown = false;
   private drag: { place: Place; x: number; y: number; ghost: HTMLImageElement | null; pointer: number } | null = null;
 
   constructor(
@@ -68,6 +74,7 @@ export class InventoryPanel {
     parent.append(this.root);
 
     window.addEventListener('keydown', (e) => {
+      if (e.code === 'Escape') this.escDown = true;
       if (!this.isOpen || !CLOSE_KEYS.includes(e.code)) return;
       e.preventDefault();
       // A key still held from before the window opened (holding E through the search) or its
@@ -75,7 +82,19 @@ export class InventoryPanel {
       if (e.repeat || this.heldAtOpen.has(e.code)) return;
       this.close();
     });
-    window.addEventListener('keyup', (e) => this.heldAtOpen.delete(e.code));
+    window.addEventListener('keyup', (e) => {
+      this.heldAtOpen.delete(e.code);
+      if (e.code === 'Escape') {
+        if (this.isOpen && !this.escDown) this.close();
+        this.escDown = false;
+      }
+    });
+    // Esc while the mouse was still captured: the browser eats the keydown and just drops the lock.
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement) return;
+      if (this.releasing) this.releasing = false;
+      else if (this.isOpen) this.close();
+    });
     this.root.addEventListener('pointermove', (e) => this.onDragMove(e));
     this.root.addEventListener('pointerup', (e) => this.onDragEnd(e));
     this.root.addEventListener('pointercancel', () => this.cancelDrag());
@@ -101,10 +120,14 @@ export class InventoryPanel {
       if (this.ctx.input.isHeld('use')) this.heldAtOpen.add('KeyE');
       if (this.ctx.input.isHeld('inventory')) for (const k of ['Tab', 'KeyI']) this.heldAtOpen.add(k);
       this.root.hidden = false;
+      if (!container) sfx.item('invOpen');
       this.ctx.loop.pause('inventory');
       this.preview.start();
       this.ctx.events.emit('ui:modal', { open: true });
-      if (document.pointerLockElement) document.exitPointerLock();
+      if (document.pointerLockElement) {
+        this.releasing = true;
+        document.exitPointerLock();
+      }
     }
     this.render();
   }
@@ -115,6 +138,9 @@ export class InventoryPanel {
     this.isOpen = false;
     this.preview.stop();
     this.root.hidden = true;
+    const ref = this.container;
+    if (ref) sfx.containerClose(CONTAINER_SOUND[ref.type] ?? 'shelf', { x: ref.x, y: ref.y + 0.8, z: ref.z });
+    else sfx.item('invClose');
     this.container = null;
     this.ctx.loop.resume('inventory');
     this.ctx.events.emit('ui:modal', { open: false });
@@ -139,7 +165,7 @@ export class InventoryPanel {
     close.addEventListener('click', () => this.close());
     const credits = el('button', 'credits-link inv__credits', 'Авторы');
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.capacity} кг`), credits, close);
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.capacity} кг`), volumeControl('inv__volume'), credits, close);
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).
@@ -316,6 +342,7 @@ export class InventoryPanel {
       const id = this.itemAt(d.place);
       if (!id) return;
       d.ghost = icon(id, 'inv__ghost');
+      sfx.item('drag');
       this.root.append(d.ghost);
     }
     d.ghost.style.transform = `translate(${e.clientX - 24}px, ${e.clientY - 24}px)`;
@@ -330,8 +357,10 @@ export class InventoryPanel {
     if (d.ghost) {
       d.ghost.remove();
       const target = this.dropAt(e.clientX, e.clientY);
-      if (target) this.move(d.place, target.target);
-      else this.render();
+      if (target) {
+        sfx.item('drop');
+        this.move(d.place, target.target);
+      } else this.render();
       return;
     }
     // A tap: select; a second tap on the same item soon after: default action.
@@ -397,6 +426,7 @@ export class InventoryPanel {
     const { inventory, survival, player } = this.host;
     const def = ITEMS[id];
     if (inventory.remove(id, 1) === 0) return;
+    sfx.item(def.kind === 'drink' ? 'drink' : def.kind === 'food' ? 'eat' : def.kind === 'medical' ? 'bandage' : 'pick');
     if (def.battery) {
       player.rechargeBattery(def.battery);
       this.ctx.hud.toast('Фонарь заряжен');
@@ -408,14 +438,20 @@ export class InventoryPanel {
 
   private wear(id: ItemId): void {
     if (!this.host.inventory.wear(id)) this.ctx.hud.toast('Рюкзак переполнен');
-    else this.selected = { from: 'slot', slot: ITEMS[id].wear!.slot };
+    else {
+      sfx.item('cloth');
+      this.selected = { from: 'slot', slot: ITEMS[id].wear!.slot };
+    }
     this.host.syncBody();
     this.render();
   }
 
   private equip(id: ItemId): void {
     if (!this.host.inventory.equip(id)) this.ctx.hud.toast('Рюкзак переполнен');
-    else this.selected = { from: 'slot', slot: 'hand' };
+    else {
+      sfx.item('weapon');
+      this.selected = { from: 'slot', slot: 'hand' };
+    }
     this.host.syncBody();
     this.render();
   }
@@ -427,7 +463,10 @@ export class InventoryPanel {
     if (!id) return;
     const ok = slot === 'hand' ? inv.holster() : inv.takeOff(slot);
     if (!ok) this.ctx.hud.toast('Рюкзак переполнен');
-    else if (toBox) this.store(id, 1);
+    else {
+      sfx.item(slot === 'hand' ? 'move' : 'cloth');
+      if (toBox) this.store(id, 1);
+    }
     this.selected = ok && !toBox ? { from: 'bag', id } : null;
     this.host.syncBody();
     this.render();
@@ -451,6 +490,7 @@ export class InventoryPanel {
       if (got > 0) this.host.containers.take(ref, id, got);
     }
     if (got < count) this.ctx.hud.toast('Слишком тяжело');
+    if (got > 0) sfx.item('pick');
     this.selected = got > 0 ? { from: 'bag', id } : this.selected;
     this.render();
     return got > 0;
@@ -466,6 +506,7 @@ export class InventoryPanel {
       if (got < s.count) full = true;
     }
     if (full) this.ctx.hud.toast('Не всё влезло');
+    sfx.item('pick');
     this.render();
   }
 
@@ -483,6 +524,7 @@ export class InventoryPanel {
       const n = this.host.inventory.remove(id, count);
       if (n > 0) this.host.containers.put(ref, id, n);
     }
+    sfx.item('move');
     this.selected = null;
     this.render();
   }

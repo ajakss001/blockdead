@@ -8,6 +8,8 @@ export const ANY_Y_MIN = -1e4;
 export const ANY_Y_MAX = 1e4;
 /** Obstacles whose top is within this of the feet are stepped over (stairs, kerbs, low clutter). */
 const STEP_UP = 0.4;
+/** Only boxes up to this tall can be stood on (see supportAt). */
+const SUPPORT_MAX_HEIGHT = 1.2;
 /** Packed collider stride: centerX, centerZ, halfX, halfZ, minY, maxY, cos(yaw), sin(yaw). */
 export const COLLIDER_STRIDE = 8;
 
@@ -174,6 +176,50 @@ export class CollisionWorld implements ColliderSink {
       }
       if (!pushed) break;
     }
+  }
+
+  /** Distance along a ray to the first box it enters (marching in 8 cm steps), or −1 within maxDist. */
+  rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): number {
+    for (let d = 0.1; d <= maxDist; d += 0.08) {
+      const x = ox + dx * d;
+      const y = oy + dy * d;
+      const z = oz + dz * d;
+      this.query(x - 0.01, z - 0.01, x + 0.01, z + 0.01);
+      for (let i = 0; i < this.candidates.length; i++) {
+        const b = this.boxes.get(this.candidates[i])!;
+        if (y < b.minY || y > b.maxY) continue;
+        if (b.obb) {
+          const o = b.obb;
+          const wx = x - o.cx;
+          const wz = z - o.cz;
+          if (Math.abs(wx * o.c - wz * o.s) > o.hx || Math.abs(wx * o.s + wz * o.c) > o.hz) continue;
+        } else if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
+        return d;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Standing on things: the top of the highest low box (≤ 1.2 m tall: crates, sandbags, tables, beds)
+   * under a circle, whose top is at most `maxTop`; −∞ if none. Walls, cars and other full-height
+   * colliders never count.
+   */
+  supportAt(x: number, z: number, radius: number, maxTop: number): number {
+    this.query(x - radius, z - radius, x + radius, z + radius);
+    let best = -Infinity;
+    for (let i = 0; i < this.candidates.length; i++) {
+      const b = this.boxes.get(this.candidates[i])!;
+      if (b.maxY > maxTop || b.maxY <= best || b.maxY - b.minY > SUPPORT_MAX_HEIGHT) continue;
+      if (b.obb) {
+        const o = b.obb;
+        const wx = x - o.cx;
+        const wz = z - o.cz;
+        if (Math.abs(wx * o.c - wz * o.s) > o.hx + radius || Math.abs(wx * o.s + wz * o.c) > o.hz + radius) continue;
+      } else if (x + radius <= b.minX || x - radius >= b.maxX || z + radius <= b.minZ || z - radius >= b.maxZ) continue;
+      best = b.maxY;
+    }
+    return best;
   }
 
   /** Circle vs rotated box: solve in the box's frame, push back in world space. */

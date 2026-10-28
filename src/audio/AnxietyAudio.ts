@@ -1,6 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 import type { GameLoop } from '../core/GameLoop';
+import { sfx } from './Sound';
 
 /** Below this anxiety nothing is heard. */
 const HEART_FROM = 0.15;
@@ -78,17 +79,15 @@ export class AnxietyAudio {
     }
   }
 
+  /** On the game's one AudioContext (audio/Sound), into its world bus. */
   private ensure(): void {
     if (this.ac) return;
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return;
-    this.ac = new Ctor();
+    sfx.start();
+    if (!sfx.ac || !sfx.world || !sfx.noise) return;
+    this.ac = sfx.ac;
     this.master = this.ac.createGain();
-    this.master.connect(this.ac.destination);
-    const len = this.ac.sampleRate;
-    this.noise = this.ac.createBuffer(1, len, this.ac.sampleRate);
-    const ch = this.noise.getChannelData(0);
-    for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+    this.master.connect(sfx.world);
+    this.noise = sfx.noise;
     this.syncMute();
   }
 

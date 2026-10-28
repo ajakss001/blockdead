@@ -1,6 +1,7 @@
 import './ui/styles.css';
 import { detectDevice, type DeviceInfo } from './core/device';
 import { EventBus } from './core/EventBus';
+import { sfx } from './audio/Sound';
 import type { GameEvents } from './core/events';
 import { GameLoop } from './core/GameLoop';
 import { Profiler } from './core/Profiler';
@@ -15,7 +16,7 @@ import { pickInitialLevel } from './render/DeviceProfile';
 import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
-import { initWorldMaterials } from './render/look/worldMaterials';
+import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
@@ -51,6 +52,8 @@ async function boot(): Promise<void> {
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
   setMaterialAnisotropy(maxAniso);
   initWorldMaterials(QUALITY_PRESETS[level].lighting, maxAniso);
+  // Third-party vehicles and props (one atlas layer each), before the world streams in.
+  await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, maxAniso);
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);
@@ -78,6 +81,8 @@ async function boot(): Promise<void> {
     events,
   );
 
+  // One sound system: unlocked by the first gesture, muted with the pause reasons.
+  sfx.attach(events, loop);
   const kbm = input.mode === 'kbm' ? new KeyboardMouseInput(input, renderer.gl.domElement) : null;
   const ctx: GameContext = {
     events,
