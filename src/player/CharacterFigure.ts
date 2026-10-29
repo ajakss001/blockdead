@@ -72,6 +72,8 @@ export class CharacterFigure {
   private readonly head = new Group();
   private readonly held = new Map<HeldId, Group>();
   private readonly hats = new Map<ItemId, Group>();
+  /** Vests and bags (low-poly placeholders until real models), keyed by item. */
+  private readonly gear = new Map<ItemId, Group>();
   private look: Appearance = { ...DEFAULT_APPEARANCE };
   private lookKey = '';
   private holding: ItemId | null = null;
@@ -103,6 +105,7 @@ export class CharacterFigure {
     }
     this.root.add(this.head);
     this.buildHats();
+    this.buildGear();
     this.setAppearance(DEFAULT_APPEARANCE);
   }
 
@@ -131,9 +134,10 @@ export class CharacterFigure {
     for (const arm of this.arms) {
       arm.upper.material = o.top !== null ? top : skin;
       arm.fore.material = o.sleeves !== null ? characterMaterial('jacket', o.sleeves, false, 0, o.dirt.torso) : skin;
-      arm.fist.material = skin;
+      arm.fist.material = o.gloves !== null ? characterMaterial('cuff', o.gloves, false, 0, o.dirt.hands) : skin;
     }
     for (const [id, g] of this.hats) g.visible = worn.head === id;
+    for (const [id, g] of this.gear) g.visible = worn.vest === id || worn.back === id;
     this.holding = hand;
     for (const [id, g] of this.held) g.visible = hand === id;
     this.pose();
@@ -281,6 +285,41 @@ export class CharacterFigure {
       case 'bald':
         break;
     }
+  }
+
+  /**
+   * Vests and bags: boxes over the chest and on the back, sized to an average build (they ride on the
+   * torso, so a heavier build widens them too). Pouches on the rig, a strap and a duffel for the sports
+   * bag, a small case at the hip for the medical bag.
+   */
+  private buildGear(): void {
+    const box = (sx: number, sy: number, sz: number) => this.geo(new BoxGeometry(sx, sy, sz));
+    const chestY = SHOULDER_Y - 0.24 - HIP_Y;
+    const make = (id: ItemId, parts: [BufferGeometry, number, number, number, number?][]) => {
+      const g = new Group();
+      const m = characterMaterial('jacket', ITEMS[id].wear!.color);
+      for (const [geo, x, y, z, rz] of parts) {
+        const mesh = new Mesh(geo, m);
+        mesh.position.set(x, y, z);
+        if (rz) mesh.rotation.z = rz;
+        g.add(mesh);
+      }
+      g.visible = false;
+      this.torso.add(g);
+      this.gear.set(id, g);
+    };
+    const vest = box(0.37, 0.4, 0.25);
+    const pouch = box(0.08, 0.1, 0.05);
+    make('swatVest', [[vest, 0, chestY, 0], [box(0.3, 0.12, 0.04), 0, chestY + 0.05, -0.135]]);
+    make('policeVest', [[vest, 0, chestY, 0]]);
+    make('tacticalRig', [[box(0.36, 0.36, 0.24), 0, chestY, 0], [pouch, -0.1, chestY - 0.08, -0.14], [pouch, 0, chestY - 0.08, -0.14], [pouch, 0.1, chestY - 0.08, -0.14]]);
+    const strap = box(0.04, 0.42, 0.02);
+    const backY = chestY - 0.02;
+    make('schoolBackpack', [[box(0.28, 0.34, 0.12), 0, backY, 0.18], [strap, -0.1, backY + 0.02, -0.12], [strap, 0.1, backY + 0.02, -0.12]]);
+    make('hikingBackpack', [[box(0.32, 0.56, 0.2), 0, backY + 0.06, 0.21], [box(0.3, 0.1, 0.16), 0, backY + 0.38, 0.2], [strap, -0.1, backY + 0.02, -0.12], [strap, 0.1, backY + 0.02, -0.12]]);
+    make('armyBackpack', [[box(0.36, 0.46, 0.22), 0, backY + 0.02, 0.22], [box(0.12, 0.18, 0.08), -0.2, backY - 0.06, 0.2], [box(0.12, 0.18, 0.08), 0.2, backY - 0.06, 0.2], [strap, -0.1, backY + 0.02, -0.12], [strap, 0.1, backY + 0.02, -0.12]]);
+    make('sportsBag', [[this.geo(new CylinderGeometry(0.11, 0.11, 0.42, 10).rotateZ(Math.PI / 2)), 0.05, -0.05, 0.16], [box(0.03, 0.6, 0.02), 0, chestY, 0, 0.6]]);
+    make('medBag', [[box(0.22, 0.18, 0.1), 0.24, -0.04, 0.02], [box(0.08, 0.02, 0.105), 0.24, -0.02, 0.02], [box(0.03, 0.6, 0.02), 0, chestY, 0, -0.6]]);
   }
 
   /** Headwear placeholders sized to the head. */

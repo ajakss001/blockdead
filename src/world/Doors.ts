@@ -183,11 +183,13 @@ export class Doors {
   }
 
   /** Middle of the doorway, style and state (for sounds). */
-  info(ref: DoorRef): { x: number; y: number; z: number; style: DoorStyle; open: boolean } | null {
+  info(ref: DoorRef): { x: number; y: number; z: number; style: DoorStyle; open: boolean; creaky: boolean; pitch: number } | null {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return null;
     const s = d.spot;
-    return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open };
+    // The voice of this door, fixed by where it hangs (generated, never changes): 30% creak, pitch ±10%.
+    const h = doorHash(s.hx, s.y, s.hz);
+    return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open, creaky: d.style === 'wood' && h < 0.3, pitch: 0.9 + 0.2 * ((h * 7.31) % 1) };
   }
 
   describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' {
@@ -295,4 +297,11 @@ export class Doors {
       d.spot.y + LEAF_H,
     );
   }
+}
+
+/** 0..1 from a door's hinge position (stable across reloads). */
+function doorHash(x: number, y: number, z: number): number {
+  let n = Math.imul(Math.round(x * 10), 73856093) ^ Math.imul(Math.round(y * 10), 19349663) ^ Math.imul(Math.round(z * 10), 83492791);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }

@@ -30,6 +30,7 @@ export class PlayOverlay {
   private readonly hint = document.createElement('div');
   private readonly soft = document.createElement('div');
   private modal = false;
+  private busy = false;
   /** Lock was released by a game window, not by the player. */
   private released = false;
   private graceTimer = 0;
@@ -80,8 +81,19 @@ export class PlayOverlay {
       if (this.released && !this.modal) this.showSoft();
     });
 
+    // A search holds the mouse: Esc then drops the lock (the browser eats the key). That is "stop
+    // searching", not "leave the game" — the quiet hint, never the pause screen. The flag is cleared a
+    // tick late, so a handler that already cancelled the search in the same event still counts as busy.
+    ctx.events.on('ui:busy', ({ busy }) => {
+      if (busy) this.busy = true;
+      else window.setTimeout(() => (this.busy = false), 0);
+    });
     ctx.events.on('input:active', ({ active }) => {
       if (active) this.released = false;
+      else if (this.busy || this.modal) {
+        this.released = true;
+        this.showSoft();
+      }
       this.sync();
     });
     // Game windows release the lock on purpose: never the full screen over them or right after them.

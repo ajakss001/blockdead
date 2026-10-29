@@ -156,8 +156,8 @@ export class Viewmodel {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Jacket sleeves in the worn color, or bare forearms (null). */
-  setSleeves(color: number | null, skinColor = SKIN, dirt = 0): void {
+  /** Jacket sleeves in the worn color, or bare forearms (null); gloves on the hands (null = bare). */
+  setSleeves(color: number | null, skinColor = SKIN, dirt = 0, gloves: number | null = null, gloveDirt = 0): void {
     const skin = characterMaterial('skin', skinColor);
     const sleeve = color === null ? skin : characterMaterial('jacket', color, false, 0, dirt);
     const cuff = color === null ? skin : characterMaterial('cuff', cuffColor(color), false, 0, dirt);
@@ -166,7 +166,8 @@ export class Viewmodel {
       m.material = cuff;
       m.visible = color !== null;
     }
-    for (const m of this.hands) m.material = skin;
+    const hand = gloves === null ? skin : characterMaterial('cuff', gloves, false, 0, gloveDirt);
+    for (const m of this.hands) m.material = hand;
   }
 
   equip(item: RightItem): void {

@@ -232,20 +232,55 @@ class Sound {
     }
   }
 
-  door(style: 'wood' | 'glass', open: boolean, pos: Pos): void {
-    const v = this.voice(pos, 0.7);
+  /**
+   * A door: a dull latch clunk and a soft brush of air and wood; a creaky door (fixed per door) moans
+   * low and slow all the way open. `pitch` — this door's own ±10%.
+   */
+  door(style: 'wood' | 'glass', open: boolean, pos: Pos, creaky = false, pitch = 1): void {
+    const v = this.voice(pos, creaky && open ? 1.2 : 0.7);
     if (!v) return;
     const [out, t] = v;
-    // Latch click.
-    this.noiseHit(out, t, { type: 'bandpass', f: 3000, q: 3, dur: 0.02, peak: 0.25 });
-    this.tone(out, t, { f: 1900, dur: 0.03, peak: 0.05 });
+    // Latch: a muffled clunk, no click.
+    this.noiseHit(out, t, { type: 'lowpass', f: 900 * pitch, dur: 0.035, peak: 0.3 });
+    this.tone(out, t, { f: 150 * pitch, dur: 0.05, peak: 0.12 });
     if (open) {
-      if (style === 'wood') this.tone(out, t + 0.06, { f: 170 + Math.random() * 30, f2: 260, dur: 0.55, peak: 0.06, type: 'sawtooth', lp: 1100, vibrato: 9 });
-      else for (let i = 0; i < 3; i++) this.tone(out, t + 0.05 + i * 0.04, { f: 3000 + i * 400, dur: 0.05, peak: 0.03 });
+      // The leaf swinging: a quiet rustle.
+      this.noiseHit(out, t + 0.05, { type: 'bandpass', f: (style === 'wood' ? 900 : 1500) * pitch, q: 0.8, dur: 0.45, peak: 0.035, attack: 0.15 });
+      if (creaky && style === 'wood') this.creak(out, t + 0.08, 0.85, pitch);
     } else {
-      this.noiseHit(out, t + 0.02, { type: 'lowpass', f: style === 'wood' ? 260 : 700, dur: 0.12, peak: 0.6 });
-      this.tone(out, t + 0.02, { f: style === 'wood' ? 95 : 180, dur: 0.12, peak: 0.25 });
+      // Shut: the leaf meets the frame.
+      this.noiseHit(out, t + 0.02, { type: 'lowpass', f: (style === 'wood' ? 260 : 700) * pitch, dur: 0.12, peak: 0.5 });
+      this.tone(out, t + 0.02, { f: (style === 'wood' ? 85 : 170) * pitch, dur: 0.12, peak: 0.22 });
     }
+  }
+
+  /**
+   * Wooden creak: a hinge's stick-slip — a slow, uneven train of pulses (40–70 a second) rung through the
+   * door's wooden body (a narrow band around 380 Hz), swelling and fading over the swing.
+   */
+  private creak(out: Out, t: number, dur: number, pitch: number): void {
+    const ac = this.ac!;
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    const steps = 12;
+    const rate = new Float32Array(steps);
+    for (let i = 0; i < steps; i++) rate[i] = (42 + 26 * Math.sin((i / steps) * Math.PI) + (Math.random() - 0.5) * 12) * pitch;
+    osc.frequency.setValueCurveAtTime(rate, t, dur);
+    const body = ac.createBiquadFilter();
+    body.type = 'bandpass';
+    body.frequency.value = 380 * pitch;
+    body.Q.value = 5;
+    const low = ac.createBiquadFilter();
+    low.type = 'lowpass';
+    low.frequency.value = 1200;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.12);
+    g.gain.setValueAtTime(0.22, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(body).connect(low).connect(g).connect(out);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
   }
 
   /** A door that won't give: thumps against the boards, a rattle. */

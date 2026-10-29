@@ -31,7 +31,8 @@ type Tab = 'look' | 'class' | 'outfit';
 /** Worn set for a choice (uniform or starter outfit). */
 export function choiceWorn(c: CharacterChoice): Worn {
   const src = c.outfit === 'uniform' ? classDef(c.classId).uniform : (STARTER_OUTFITS.find((o) => o.id === c.outfit)?.worn ?? {});
-  return { head: src.head ?? null, torso: src.torso ?? null, legs: src.legs ?? null, feet: src.feet ?? null };
+  // Everyone starts with some bag on the back: the class's own, or a school backpack.
+  return { head: src.head ?? null, torso: src.torso ?? null, vest: src.vest ?? null, hands: src.hands ?? null, legs: src.legs ?? null, feet: src.feet ?? null, back: src.back ?? 'schoolBackpack' };
 }
 
 export function choiceTint(c: CharacterChoice): Partial<Record<WearSlot, number>> {

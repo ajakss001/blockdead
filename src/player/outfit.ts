@@ -12,6 +12,8 @@ export interface Outfit {
   pants: number | null;
   shoes: ShoeStyle;
   skin: number;
+  /** Gloves color; null = bare hands. */
+  gloves: number | null;
   /** Dirt of each worn piece, 0..1. */
   dirt: Record<WearSlot, number>;
 }
@@ -19,7 +21,7 @@ export interface Outfit {
 const darker = (c: number, k: number) =>
   (Math.round(((c >> 16) & 255) * k) << 16) | (Math.round(((c >> 8) & 255) * k) << 8) | Math.round((c & 255) * k);
 
-const CLEAN: Record<WearSlot, number> = { head: 0, torso: 0, legs: 0, feet: 0 };
+const CLEAN: Record<WearSlot, number> = { head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
 
 export function outfitFrom(worn: Worn, skin = SKIN, dirt: Record<WearSlot, number> = CLEAN, tint: Partial<Record<WearSlot, number>> = {}): Outfit {
   const tinted = (slot: WearSlot) => {
@@ -39,7 +41,8 @@ export function outfitFrom(worn: Worn, skin = SKIN, dirt: Record<WearSlot, numbe
   } else {
     shoes = { kind: 'barefoot', upper: skin, sole: darker(skin, 0.75), laces: skin, collar: skin };
   }
-  return { top: torso?.color ?? null, sleeves: torso && torso.sleeves !== false ? torso.color : null, pants: legs?.color ?? null, shoes, skin, dirt: { ...dirt } };
+  const hands = tinted('hands');
+  return { top: torso?.color ?? null, sleeves: torso && torso.sleeves !== false ? torso.color : null, pants: legs?.color ?? null, shoes, skin, gloves: hands?.color ?? null, dirt: { ...dirt } };
 }
 
 export function cuffColor(sleeves: number): number {

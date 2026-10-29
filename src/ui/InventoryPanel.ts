@@ -29,8 +29,11 @@ type DropTarget = 'bag' | 'box' | `slot:${Slot}`;
 const SLOTS: { slot: Slot; label: string }[] = [
   { slot: 'head', label: 'Голова' },
   { slot: 'torso', label: 'Торс' },
+  { slot: 'vest', label: 'Жилет' },
+  { slot: 'hands', label: 'Руки' },
   { slot: 'legs', label: 'Ноги' },
   { slot: 'feet', label: 'Обувь' },
+  { slot: 'back', label: 'Рюкзак' },
 ];
 const BAG_MIN_CELLS = 24;
 const BOX_MIN_CELLS = 12;
@@ -155,7 +158,7 @@ export class InventoryPanel {
     if (this.selected && !this.exists(this.selected)) this.selected = null;
 
     const head = el('div', 'inv__head');
-    const ratio = inv.weight / inv.capacity;
+    const ratio = inv.weight / inv.limit;
     const bar = el('div', 'inv__load');
     const fill = el('div', 'inv__load-fill');
     fill.style.width = `${Math.min(100, ratio * 100)}%`;
@@ -165,7 +168,7 @@ export class InventoryPanel {
     close.addEventListener('click', () => this.close());
     const credits = el('button', 'credits-link inv__credits', 'Авторы');
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.capacity} кг`), volumeControl('inv__volume'), credits, close);
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), volumeControl('inv__volume'), credits, close);
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).
@@ -183,18 +186,22 @@ export class InventoryPanel {
     const pane = el('div', 'inv__equip');
     // Clothing slots down the left, level with head, torso, legs and feet of the figure.
     const left = el('div', 'inv__slots');
-    for (const { slot, label } of SLOTS) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
+    // Body down the left (head, torso, legs, feet); what goes over it on the right (vest, gloves, bag).
+    const over = new Set<Slot>(['vest', 'hands', 'back']);
+    for (const { slot, label } of SLOTS) if (!over.has(slot)) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
     this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint);
     const figure = el('div', 'inv__figure');
     figure.append(this.preview.canvas, el('div', 'inv__figure-hint', '↔'));
-    // Hands, then the totals of every clothing stat (bite protection averaged over the four body slots).
+    // In the hand, vest, gloves, bag, then the totals of every clothing stat (bite: over the four body
+    // parts, the vest and gloves adding on top, at most 95%).
     const right = el('div', 'inv__slots inv__slots--right');
-    right.append(this.slotCell('hand', 'Руки', inv.hand));
+    right.append(this.slotCell('hand', 'В руке', inv.hand));
+    for (const { slot, label } of SLOTS) if (over.has(slot)) right.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
     const worn = inv.worn;
     const stats = el('div', 'inv__armor');
     for (const { key, label, format } of WEAR_STATS) {
       const row = el('div', 'inv__armor-row');
-      row.append(el('span', '', label), el('b', '', format(key === 'bite' ? wornStat(worn, key) / SLOTS.length : wornStat(worn, key))));
+      row.append(el('span', '', label), el('b', '', format(key === 'bite' ? Math.min(0.95, wornStat(worn, key) / 4) : wornStat(worn, key))));
       stats.append(row);
     }
     right.append(stats);

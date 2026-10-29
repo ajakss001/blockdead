@@ -1,4 +1,5 @@
-import { CylinderGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
+import { type BufferGeometry, CylinderGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/random';
 import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
 import { SHOP_KINDS, SHOP_SIGN, type ShopKind } from './furniture';
@@ -414,6 +415,8 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
   const z1 = z0 + desc.d;
   const h = spec.head - spec.sill;
   const pane = new PlaneGeometry(spec.width, h);
+  // Frames: the reveal of every opening, so looking in at an angle never shows a slit through the wall.
+  const reveal = revealGeometry(spec.width, h, WALL + 0.02);
   const mid = WALL / 2;
   // The street front's ground floor is shop windows and the entrance: no panes in that wall.
   const front = desc.flip ? z1 - mid : z0 + mid;
@@ -421,14 +424,42 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
     const y = k * FLOOR_H + spec.sill + h / 2;
     for (let u = Math.ceil(x0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= x1 + 1e-6; u += FACADE_BAY) {
       const cx = u + spec.inset + spec.width / 2;
-      for (const z of [z0 + mid, z1 - mid]) if (k > 0 || z !== front) b.geo(pane, 0x6c7a84, _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1)), 'windowGlass');
+      for (const z of [z0 + mid, z1 - mid]) {
+        if (k === 0 && z === front) continue;
+        _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1));
+        b.geo(pane, 0x6c7a84, _m, 'windowGlass');
+        b.geo(reveal, 0x3b3e42, _m, 'metal');
+      }
     }
     _q.setFromAxisAngle(_yAxis, Math.PI / 2);
     for (let u = Math.ceil(z0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= z1 + 1e-6; u += FACADE_BAY) {
       const cz = u + spec.inset + spec.width / 2;
-      for (const x of [x0 + mid, x1 - mid]) b.geo(pane, 0x6c7a84, _m.compose(_p.set(x, y, cz), _q, _s.set(1, 1, 1)), 'windowGlass');
+      for (const x of [x0 + mid, x1 - mid]) {
+        _m.compose(_p.set(x, y, cz), _q, _s.set(1, 1, 1));
+        b.geo(pane, 0x6c7a84, _m, 'windowGlass');
+        b.geo(reveal, 0x3b3e42, _m, 'metal');
+      }
     }
     _q.identity();
   }
   pane.dispose();
+  reveal.dispose();
+}
+
+/**
+ * The reveal of a window opening: the four inner faces of the hole through the wall (sides, sill, head),
+ * facing into the opening, a hair wider than the cut so no slit shows between the wall and the frame.
+ * Centred on the pane, `depth` = the wall's thickness plus a little either side (no z-fighting with
+ * the wall faces). 8 triangles.
+ */
+export function revealGeometry(w: number, h: number, depth: number): BufferGeometry {
+  const hw = w / 2 + 0.01;
+  const hh = h / 2 + 0.01;
+  const side = (rotY: number, x: number) => new PlaneGeometry(depth, h + 0.02).rotateY(rotY).translate(x, 0, 0);
+  const cap = (rotX: number, y: number) => new PlaneGeometry(w + 0.02, depth).rotateX(rotX).translate(0, y, 0);
+  // Normals into the opening: the left jamb faces +X, the right −X, the sill +Y, the head −Y.
+  const parts = [side(Math.PI / 2, -hw), side(-Math.PI / 2, hw), cap(-Math.PI / 2, -hh), cap(Math.PI / 2, hh)];
+  const g = mergeGeometries(parts)!;
+  for (const p of parts) p.dispose();
+  return g;
 }

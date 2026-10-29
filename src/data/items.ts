@@ -58,13 +58,28 @@ export type ItemId =
   | 'scrubsPants'
   | 'officeShirt'
   | 'slacks'
-  | 'dressShoes';
+  | 'dressShoes'
+  // Equipment slots (vest, gloves, back) and uniforms that use them.
+  | 'swatShirt'
+  | 'gorkaJacket'
+  | 'gorkaPants'
+  | 'policeVest'
+  | 'tacticalRig'
+  | 'workGloves'
+  | 'fireGloves'
+  | 'tacticalGloves'
+  | 'medGloves'
+  | 'schoolBackpack'
+  | 'sportsBag'
+  | 'hikingBackpack'
+  | 'armyBackpack'
+  | 'medBag';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
 /** Body slots for clothing; the weapon goes to the hand. */
-export type WearSlot = 'head' | 'torso' | 'legs' | 'feet';
-export const WEAR_SLOTS: readonly WearSlot[] = ['head', 'torso', 'legs', 'feet'];
+export type WearSlot = 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back';
+export const WEAR_SLOTS: readonly WearSlot[] = ['head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back'];
 
 /** What a piece of clothing does. Every field is summed over the worn set. */
 export interface WearStats {
@@ -89,6 +104,10 @@ export interface WearDef {
   sleeves?: boolean;
   /** Feet only: which shoe model the legs get. */
   shoe?: 'sneakers' | 'boots';
+  /** Back only: a bag — how much it holds (kg) and how much lighter it makes what is in it (0..1). */
+  pack?: { capacity: number; reduce: number };
+  /** Head only: placeholder shape on the figure. */
+  hat?: 'cap' | 'beanie' | 'helmet' | 'hardhat';
 }
 
 export interface ItemDef {
@@ -114,7 +133,8 @@ export interface ItemDef {
   note?: string;
 }
 
-export const BACKPACK_CAPACITY = 15;
+/** What you carry with no bag at all (pockets, hands), kg; bags (`back` slot) and vests add to it. */
+export const BACKPACK_CAPACITY = 8;
 
 export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   beans: { name: 'Консервы: фасоль', kind: 'food', weight: 0.45, stack: 6, hunger: -0.35, thirst: 0.04 },
@@ -162,7 +182,8 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   militaryPants: { name: 'Армейские брюки', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'legs', color: 0x4a5236, stats: { bite: 0.2, warmth: 5 } } },
   combatBoots: { name: 'Берцы', kind: 'clothing', weight: 1.5, stack: 1, wear: { slot: 'feet', color: 0x26231f, stats: { bite: 0.35, warmth: 5 }, shoe: 'boots' } },
   swatHelmet: { name: 'Шлем SWAT', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'head', color: 0x1c1e22, stats: { bite: 0.5, warmth: 2 } } },
-  swatVest: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.5, stack: 1, wear: { slot: 'torso', color: 0x1e2226, stats: { bite: 0.55, warmth: 6 } } },
+  swatVest: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.5, stack: 1, wear: { slot: 'vest', color: 0x1e2226, stats: { bite: 0.5, warmth: 3 } } },
+  swatShirt: { name: 'Тактическая куртка', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'torso', color: 0x262a30, stats: { bite: 0.2, warmth: 6 } } },
   swatPants: { name: 'Тактические брюки', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'legs', color: 0x23262a, stats: { bite: 0.25, warmth: 5 } } },
   policeCap: { name: 'Полицейская фуражка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'head', color: 0x1f2533, stats: { bite: 0.02, warmth: 1 } } },
   policeShirt: { name: 'Полицейская рубашка', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'torso', color: 0x2c3a5a, stats: { bite: 0.1, warmth: 4 } } },
@@ -170,6 +191,19 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   fireHelmet: { name: 'Пожарный шлем', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'head', color: 0xb89a32, stats: { bite: 0.4, warmth: 3 } } },
   fireCoat: { name: 'Боёвка пожарного', kind: 'clothing', weight: 2.2, stack: 1, wear: { slot: 'torso', color: 0x8a7038, stats: { bite: 0.4, warmth: 12 } } },
   firePants: { name: 'Пожарные брюки', kind: 'clothing', weight: 1.6, stack: 1, wear: { slot: 'legs', color: 0x8a7038, stats: { bite: 0.3, warmth: 8 } } },
+  gorkaJacket: { name: 'Куртка «Горка»', kind: 'clothing', weight: 1.3, stack: 1, wear: { slot: 'torso', color: 0x5b5a3e, stats: { bite: 0.35, warmth: 9 } } },
+  gorkaPants: { name: 'Брюки «Горка»', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'legs', color: 0x5b5a3e, stats: { bite: 0.22, warmth: 5 } } },
+  policeVest: { name: 'Полицейский жилет', kind: 'clothing', weight: 2.0, stack: 1, wear: { slot: 'vest', color: 0x1f2533, stats: { bite: 0.35, warmth: 2 } } },
+  tacticalRig: { name: 'Разгрузка', kind: 'clothing', weight: 1.2, stack: 1, wear: { slot: 'vest', color: 0x4a4f36, stats: { bite: 0.15, warmth: 1 }, pack: { capacity: 3, reduce: 0 } }, note: 'Подсумки: +3 кг к переноске.' },
+  workGloves: { name: 'Рабочие перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x8a7650, stats: { bite: 0.15, warmth: 2 } } },
+  fireGloves: { name: 'Перчатки пожарного', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'hands', color: 0x6b5a32, stats: { bite: 0.3, warmth: 4 } } },
+  tacticalGloves: { name: 'Тактические перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x1c1d20, stats: { bite: 0.25, warmth: 2 } } },
+  medGloves: { name: 'Медицинские перчатки', kind: 'clothing', weight: 0.05, stack: 1, wear: { slot: 'hands', color: 0x8fb6c8, stats: { bite: 0.02, warmth: 0 } } },
+  schoolBackpack: { name: 'Школьный рюкзак', kind: 'clothing', weight: 0.5, stack: 1, wear: { slot: 'back', color: 0x3b4d6b, stats: { bite: 0.05, warmth: 1 }, pack: { capacity: 7, reduce: 0 } }, note: 'Вмещает +7 кг.' },
+  sportsBag: { name: 'Спортивная сумка', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'back', color: 0x2a2c30, stats: { bite: 0, warmth: 0 }, pack: { capacity: 10, reduce: 0 } }, note: 'Вмещает +10 кг.' },
+  hikingBackpack: { name: 'Туристический рюкзак', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'back', color: 0x7a3a2a, stats: { bite: 0.05, warmth: 2 }, pack: { capacity: 14, reduce: 0.2 } }, note: 'Вмещает +14 кг, вещи в нём легче на 20%.' },
+  armyBackpack: { name: 'Армейский рюкзак', kind: 'clothing', weight: 1.8, stack: 1, wear: { slot: 'back', color: 0x4a4f36, stats: { bite: 0.1, warmth: 2 }, pack: { capacity: 16, reduce: 0.25 } }, note: 'Вмещает +16 кг, вещи в нём легче на 25%.' },
+  medBag: { name: 'Медицинская сумка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'back', color: 0x8a2a2a, stats: { bite: 0, warmth: 0 }, pack: { capacity: 6, reduce: 0.1 } }, note: 'Вмещает +6 кг, вещи в нём легче на 10%.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },

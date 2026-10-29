@@ -402,6 +402,35 @@ function garment(s: Sprite, id: ItemId): void {
     case 'feet':
       shoeIcon(s, c, w.shoe === 'boots');
       break;
+    case 'vest':
+      // Sleeveless body, a collar cut, pouches on the rig.
+      s.rect(4, 3, 8, 11, c);
+      clearRect(s, 6, 3, 4, 3);
+      s.rect(4, 3, 1, 11, shadeRGB(c, 0.8));
+      s.rect(11, 3, 1, 11, shadeRGB(c, 0.8));
+      if (w.pack) for (const x of [4, 7, 10]) s.rect(x, 9, 2, 3, shadeRGB(c, 0.65));
+      break;
+    case 'hands':
+      // A glove: palm, four fingers, a thumb.
+      s.rect(5, 7, 6, 6, c);
+      for (let i = 0; i < 4; i++) s.rect(5 + i * 1.5, 3, 1, 4, c);
+      s.rect(11, 7, 2, 3, c);
+      s.rect(5, 12, 6, 2, shadeRGB(c, 0.7));
+      break;
+    case 'back':
+      // A bag: body, flap, straps; the duffel lies on its side.
+      if (id === 'sportsBag') {
+        s.rect(2, 7, 12, 6, c);
+        s.rect(5, 4, 6, 1, shadeRGB(c, 0.6));
+        s.rect(5, 4, 1, 3, shadeRGB(c, 0.6));
+        s.rect(10, 4, 1, 3, shadeRGB(c, 0.6));
+      } else {
+        const tall = id === 'hikingBackpack' ? 1 : 0;
+        s.rect(4, 3 - tall, 8, 11 + tall, c);
+        s.rect(4, 3 - tall, 8, 3, shadeRGB(c, 0.8));
+        s.rect(6, 9, 4, 3, shadeRGB(c, 0.7));
+      }
+      break;
   }
 }
 

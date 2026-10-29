@@ -16,7 +16,7 @@ const RATE = {
 } as const;
 
 /** Where dirt lands: feet first, the head last. */
-const SLOT_WEIGHT: Record<WearSlot, number> = { head: 0.4, torso: 0.9, legs: 1.4, feet: 2.2 };
+const SLOT_WEIGHT: Record<WearSlot, number> = { head: 0.4, torso: 0.9, vest: 0.8, hands: 1.2, legs: 1.4, feet: 2.2, back: 0.6 };
 
 export interface Activity {
   moving: boolean;

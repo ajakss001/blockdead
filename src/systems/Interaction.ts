@@ -75,6 +75,7 @@ export class Interaction {
         if (this.searchT >= this.searchTime) {
           const ref = this.searchRef!;
           this.searchT = -1;
+          this.ctx.events.emit('ui:busy', { busy: false });
           this.searchRef = null;
           hud.hideAction();
           sfx.searching(null);
@@ -89,7 +90,7 @@ export class Interaction {
         if (!this.doors.toggle(door)) {
           hud.toast('Заколочено с той стороны', 1200);
           if (at) sfx.doorStuck(at);
-        } else if (at) sfx.door(at.style, !at.open, at);
+        } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
         this.player.busy = false;
         return;
       }
@@ -103,6 +104,7 @@ export class Interaction {
         sfx.containerOpen(kind, spot(ref));
         sfx.searching(kind, spot(ref));
         this.searchT = 0;
+        this.ctx.events.emit('ui:busy', { busy: true });
         this.searchTime = SEARCH_TIME * this.searchMul * (ref.type === 'trunk' ? this.carMul : 1);
         this.searchRef = ref;
       }
@@ -155,6 +157,7 @@ export class Interaction {
     if (this.searchT < 0) return;
     sfx.searching(null);
     this.searchT = -1;
+    this.ctx.events.emit('ui:busy', { busy: false });
     this.searchRef = null;
     if (notify) this.ctx.hud.toast('Прервано', 900);
     else this.ctx.hud.hideAction();

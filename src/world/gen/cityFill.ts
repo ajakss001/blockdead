@@ -47,6 +47,8 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
   const parkingLot = !(i === 0 && j === 0) && rand() < 0.25 ? Math.floor(rand() * 4) : -1;
   const rows: Row[] = [];
   let n = 0;
+  // Fire escapes are placed last, only where they clear every building volume of the block.
+  const escapes: EscapeSpec[] = [];
 
   for (const south of [true, false]) {
     const d = pick(rand, [18, 21, 24]);
@@ -87,18 +89,19 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
       // Fire escape over the back courtyard on most towers.
       if (rand() < 0.75) {
         const u0 = x0 + 3 + Math.floor(rand() * Math.max(1, (w - 9) / 3)) * 3;
-        fireEscape(b, 'z', south ? row.z1 : row.z0, south ? 1 : -1, u0, Math.min(floors - 1, 6));
+        escapes.push({ axis: 'z', wall: south ? row.z1 : row.z0, outward: south ? 1 : -1, u0, storeys: Math.min(floors - 1, 6) });
       }
     });
-    sideAlley(b, xa + wW, xb, row, rand, built[1]);
+    sideAlley(b, xa + wW, xb, row, rand, built[1], escapes);
     eastGap(b, xb + wE, X1, row, rand);
   }
   backCourtyard(b, X0, X1, rows[0].z1, rows[1].z0, rand);
+  for (const e of escapes) if (escapeClear(e, out)) fireEscape(b, e.axis, e.wall, e.outward, e.u0, e.storeys);
   return out;
 }
 
 /** 3 m slot between two towers: a dumpster, litter, maybe a gate at the street, maybe walled off at the back. */
-function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, escape: boolean): void {
+function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, escape: boolean, escapes: EscapeSpec[]): void {
   const streetZ = row.south ? row.z0 : row.z1;
   const courtZ = row.south ? row.z1 : row.z0;
   const inward = row.south ? 1 : -1;
@@ -112,7 +115,7 @@ function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, esc
   if (rand() < 0.4) sheetFence(b, xL, streetZ + inward * 0.3, xR, streetZ + inward * 0.3, rand() < 0.6 ? (xL + xR) / 2 : undefined, 1.2);
   // Dead end: walled off at the courtyard.
   if (rand() < 0.3) brickWall(b, xL, courtZ - inward * 0.3, xR, courtZ - inward * 0.3);
-  if (escape && rand() < 0.6) fireEscape(b, 'x', xR, -1, row.z0 + 3, 4);
+  if (escape && rand() < 0.6) escapes.push({ axis: 'x', wall: xR, outward: -1, u0: row.z0 + 3, storeys: 4 });
 }
 
 /** The strip left at the east end of a row: a service gap behind a gate. */
@@ -256,12 +259,34 @@ function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, ga
  * between the landings, the bottom ladder pulled up out of reach. Purely visual (all above 2 m).
  * `axis` is the wall's normal axis; `outward` its sign; `u0` the start along the wall.
  */
+interface EscapeSpec {
+  axis: 'x' | 'z';
+  wall: number;
+  outward: 1 | -1;
+  u0: number;
+  storeys: number;
+}
+
+/** Gap between a fire escape and its wall. */
+const ESCAPE_GAP = 0.12;
+
+/**
+ * A fire escape only outside: its whole box (landings, flights, ladder) must not enter any building of the
+ * block (footprints, i.e. the rooms and stairwells inside), touching the wall it hangs on excepted.
+ */
+function escapeClear(e: EscapeSpec, buildings: readonly BuildingDesc[]): boolean {
+  const v0 = e.outward > 0 ? e.wall + 0.02 : e.wall - ESCAPE_GAP - 1.2 - 0.05;
+  const v1 = e.outward > 0 ? e.wall + ESCAPE_GAP + 1.2 + 0.05 : e.wall - 0.02;
+  const [minX, maxX, minZ, maxZ] = e.axis === 'z' ? [e.u0 - 0.05, e.u0 + 3.05, v0, v1] : [v0, v1, e.u0 - 0.05, e.u0 + 3.05];
+  return buildings.every((d) => maxX <= d.cx - d.w / 2 || minX >= d.cx + d.w / 2 || maxZ <= d.cz - d.d / 2 || minZ >= d.cz + d.d / 2);
+}
+
 export function fireEscape(b: Builder, axis: 'x' | 'z', wall: number, outward: 1 | -1, u0: number, storeys: number): void {
   const L = 3;
   const D = 1.2;
   const box = (u: number, v: number, y: number, du: number, dv: number, dy: number) => {
     // (u along the wall, v away from it) → world, min corner and size.
-    const v0 = outward > 0 ? wall + v : wall - v - dv;
+    const v0 = outward > 0 ? wall + ESCAPE_GAP + v : wall - ESCAPE_GAP - v - dv;
     if (axis === 'z') b.block(ESCAPE, u, y, v0, du, dy, dv, 'metal');
     else b.block(ESCAPE, v0, y, u, dv, dy, du, 'metal');
   };
@@ -284,7 +309,7 @@ function flight(b: Builder, axis: 'x' | 'z', wall: number, outward: number, uSta
   const len = Math.hypot(run, FLOOR_H);
   const angle = Math.atan2(FLOOR_H, run) * dir;
   const uc = uStart + (dir * run) / 2;
-  const vc = wall + outward * v;
+  const vc = wall + outward * (ESCAPE_GAP + v);
   // Rotate about the wall normal, tilt along u.
   if (axis === 'z') {
     _p.set(uc, y + FLOOR_H / 2, vc);

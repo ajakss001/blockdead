@@ -83,7 +83,7 @@ const START_KIT: InventoryData & { battery: number } = {
     ['chocolate', 1],
   ],
   hand: 'knife',
-  worn: { head: null, torso: 'hoodie', legs: 'jeans', feet: 'sneakers' },
+  worn: { head: null, torso: 'hoodie', legs: 'jeans', feet: 'sneakers', back: 'schoolBackpack' },
   battery: 0.6,
 };
 /** Hand items with a first-person model. */
@@ -258,7 +258,7 @@ export class WorldScene implements IScene {
     this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
     const outfit = outfitFrom(this.inventory.worn, this.look.skin, this.inventory.wornDirt, this.inventory.wornTint);
     this.player.body.setOutfit(outfit);
-    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso);
+    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso, outfit.gloves, outfit.dirt.hands);
     this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
@@ -484,7 +484,7 @@ export class WorldScene implements IScene {
     const inv = this.inventory;
     for (const id of ['axe', 'bat', 'crowbar', 'knife', 'hammer'] as const) {
       if (inv.count(id) > 0 || inv.hand === id) continue;
-      inv.capacity = Math.max(inv.capacity, inv.weight + ITEMS[id].weight + 0.01);
+      if (inv.room(id) < 1) inv.capacity += ITEMS[id].weight;
       inv.add(id, 1);
     }
     this.syncBody();

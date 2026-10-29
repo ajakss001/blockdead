@@ -20,8 +20,8 @@ export interface InventoryData {
 export class Inventory {
   readonly stacks: ItemStack[] = [];
   hand: ItemId | null = 'knife';
-  readonly worn: Worn = { head: null, torso: null, legs: null, feet: null };
-  readonly wornDirt: Record<WearSlot, number> = { head: 0, torso: 0, legs: 0, feet: 0 };
+  readonly worn: Worn = { head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
+  readonly wornDirt: Record<WearSlot, number> = { head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
   readonly wornTint: Partial<Record<WearSlot, number>> = {};
   /** Bumped on every change, so UI can redraw lazily. */
   version = 0;
@@ -33,10 +33,32 @@ export class Inventory {
     this.capacity = capacity;
   }
 
+  /** What the bag weighs as carried: the contents, made lighter by a good backpack. */
   get weight(): number {
+    return this.rawWeight * (1 - this.reduce);
+  }
+
+  /** The contents as they are. */
+  get rawWeight(): number {
     let w = this.hand ? ITEMS[this.hand].weight : 0;
     for (const s of this.stacks) w += ITEMS[s.id].weight * s.count;
     return w;
+  }
+
+  /** Carry limit: pockets and the class (`capacity`) plus the bag on the back and a vest's pouches. */
+  get limit(): number {
+    let l = this.capacity;
+    for (const slot of WEAR_SLOTS) {
+      const id = this.worn[slot];
+      if (id) l += ITEMS[id].wear?.pack?.capacity ?? 0;
+    }
+    return l;
+  }
+
+  /** How much lighter the bag makes its contents (0..1). */
+  get reduce(): number {
+    const id = this.worn.back;
+    return id ? (ITEMS[id].wear?.pack?.reduce ?? 0) : 0;
   }
 
   count(id: ItemId): number {
@@ -47,7 +69,7 @@ export class Inventory {
 
   /** How many of `id` fit by weight. */
   room(id: ItemId): number {
-    return Math.max(0, Math.floor((this.capacity - this.weight + 1e-6) / ITEMS[id].weight));
+    return Math.max(0, Math.floor((this.limit - this.weight + 1e-6) / (ITEMS[id].weight * (1 - this.reduce))));
   }
 
   /** Adds up to `count`; returns how many were actually added. Clothing keeps its `dirt`. */
@@ -127,6 +149,12 @@ export class Inventory {
   takeOff(slot: WearSlot): boolean {
     const id = this.worn[slot];
     if (!id) return false;
+    // A bag (or pouches) can come off only if everything still fits without it.
+    const pack = ITEMS[id].wear?.pack;
+    if (pack) {
+      const reduce = slot === 'back' ? 0 : this.reduce;
+      if ((this.rawWeight + ITEMS[id].weight) * (1 - reduce) > this.limit - pack.capacity + 1e-6) return false;
+    }
     if (this.add(id, 1, this.wornDirt[slot], this.wornTint[slot]) === 0) return false;
     this.worn[slot] = null;
     this.wornDirt[slot] = 0;
@@ -176,8 +204,20 @@ export class Inventory {
       this.stacks.push(ITEMS[id].wear ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count });
     }
     this.hand = data.hand && ITEMS[data.hand] ? data.hand : null;
+    // Older saves: a piece that moved to another slot (the SWAT vest) goes there; no bag slot yet → the
+    // school backpack everyone had built in.
+    const saved: Partial<Worn> = { ...data.worn };
     for (const slot of WEAR_SLOTS) {
-      const id = data.worn?.[slot] ?? null;
+      const id = saved[slot];
+      const real = id ? ITEMS[id]?.wear?.slot : undefined;
+      if (id && real && real !== slot && !saved[real]) {
+        saved[real] = id;
+        saved[slot] = null;
+      }
+    }
+    if (data.worn && !('back' in data.worn)) saved.back = 'schoolBackpack';
+    for (const slot of WEAR_SLOTS) {
+      const id = saved[slot] ?? null;
       this.worn[slot] = id && ITEMS[id]?.wear?.slot === slot ? id : null;
       this.wornDirt[slot] = this.worn[slot] ? Math.min(1, Math.max(0, data.wornDirt?.[slot] ?? 0)) : 0;
       const tint = data.wornTint?.[slot];
