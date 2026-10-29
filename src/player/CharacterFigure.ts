@@ -159,8 +159,8 @@ export class CharacterFigure {
       const g = this.held.get(id)!;
       g.position.copy(butt);
       g.quaternion.copy(q);
-      this.gripArm(R, butt.clone().addScaledVector(axis, cfg.grips[0]), axis, new Vector3(0.7, -0.3, 0.5));
-      this.gripArm(L, butt.clone().addScaledVector(axis, cfg.grips[1]), axis, new Vector3(-0.7, -0.2, 0.5));
+      this.gripArm(R, butt.clone().addScaledVector(axis, cfg.main.along), axis, new Vector3(0.7, -0.3, 0.5));
+      this.gripArm(L, butt.clone().addScaledVector(axis, (cfg.off ?? cfg.main).along), axis, new Vector3(-0.7, -0.2, 0.5));
       return;
     }
     if (cfg && id) {
@@ -169,7 +169,7 @@ export class CharacterFigure {
       const gripPoint = new Vector3(0.25, 0.84, -0.12);
       const g = this.held.get(id)!;
       g.quaternion.copy(basis(axis, new Vector3(0, -1, 0)));
-      g.position.copy(gripPoint).addScaledVector(axis, -cfg.grips[0]);
+      g.position.copy(gripPoint).addScaledVector(axis, -cfg.main.along);
       this.gripArm(R, gripPoint, axis, new Vector3(0.15, 1, 0.3));
     } else {
       this.gripArm(R, new Vector3(0.245, 0.8, 0.0), new Vector3(0, 0, -1), new Vector3(0.1, 1, 0.1));

@@ -93,6 +93,11 @@ export class WorldScene implements IScene {
 
   private ctx!: GameContext;
   private player!: Player;
+
+  /** The first-person arms (?animdebug). */
+  get viewmodel(): Player['viewmodel'] {
+    return this.player.viewmodel;
+  }
   private chunks!: ChunkManager;
   private readonly world = new CollisionWorld();
   private readonly lookDir = new Vector3();

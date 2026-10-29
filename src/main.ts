@@ -115,6 +115,10 @@ async function boot(): Promise<void> {
   new DebugPanel(ctx, uiEl);
 
   if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx } });
+  if (params.has('animdebug') && scene instanceof WorldScene) {
+    const vm = scene.viewmodel;
+    void import('./debug/animDebug').then((m) => m.installAnimDebug(vm, uiEl));
+  }
   if (import.meta.env.DEV && scene instanceof WorldScene) void import('./debug/devHarness').then((m) => m.installDevHarness(ctx, scene, draw));
 
   // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for

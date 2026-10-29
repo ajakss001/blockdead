@@ -4,18 +4,62 @@ import { bladeMaterial, characterMaterial } from '../render/look/materials';
 /** Things that go in the hands: weapons and tools, plus the flashlight (left hand). */
 export type HeldId = 'knife' | 'axe' | 'bat' | 'crowbar' | 'hammer' | 'torch';
 
+type V3 = readonly [number, number, number];
+
+/**
+ * A hand's place on the handle (grip_main / grip_off): `along` from the butt, and the hand's turn about
+ * the handle. The hand frame at the socket: its grip axis (+Y, thumb side) along the handle towards the
+ * head, its reach (−Z, wrist → knuckles) the item's −Z turned by `roll` about the handle (rad, about +Y).
+ * The hand is rigid with its socket: when the item turns, the hand turns with it as one piece.
+ */
+export interface Socket {
+  along: number;
+  roll: number;
+  /** Where the hand slides to along the handle in poses with `slide` 1 (the top hand of an axe chop runs down to the bottom one). */
+  slide?: number;
+}
+
+/** Pose of an item in viewmodel-camera space: where its anchor socket is, the handle (+Y) and edge (−Z) directions. */
+export interface Key {
+  at: V3;
+  axis: V3;
+  edge: V3;
+  /** Turn of the shoulders (torso) about the chest, a rotation vector (rad); none by default. */
+  body?: V3;
+  /** 0..1: how far the main hand has slid along the handle towards `main.slide`. */
+  slide?: number;
+}
+
+/**
+ * Key poses of an item: rest, sprint, lowered (switching), and the swing — windup → strike → recover → rest.
+ * `anchor` names the socket whose position the keys give, so items of different lengths share the poses.
+ */
+export interface KeySet {
+  anchor: 'main' | 'off';
+  idle: Key;
+  sprint: Key;
+  lowered: Key;
+  windup?: Key;
+  strike?: Key;
+  /** Waypoint of the return after the blow (its own path, not the strike played backwards). */
+  recover?: Key;
+}
+
 /**
  * How an item is held. Every model is authored the same way: the handle runs along +Y from the
  * butt at y = 0, the blade / striking face points to −Z ("forward", away from the holder).
+ * A new item is a config — sockets, key poses, timing; the arms are solved for it (player/armRig).
  */
 export interface HeldConfig {
   /** Both hands on the handle (the flashlight goes to the head). */
   twoHanded: boolean;
-  /** Distances from the butt along the handle: [main (right) hand, other (left) hand]. Two-handed: the right
-   * hand is the upper one (about a third of the way down from the head), the left one at the butt. */
-  grips: number[];
-  /** One-handed: wrist flexion (rad) that tips the handle forward out of the fist. */
-  wrist: number;
+  /** The main (right) hand; the item is its child. */
+  main: Socket;
+  /** The other (left) hand of two-handed items, brought to the handle by IK. */
+  off?: Socket;
+  keys: KeySet;
+  /** The striking end in the item frame: stays in the frame through every animation (test:anim). */
+  head: V3;
   /** Swing timing, seconds; the blow lands at the start of `strike`. */
   windup: number;
   strike: number;
@@ -24,14 +68,84 @@ export interface HeldConfig {
   noise: number;
 }
 
-export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
-  knife: { twoHanded: false, grips: [0.05], wrist: -1.15, windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
-  hammer: { twoHanded: false, grips: [0.07], wrist: -1.0, windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
-  axe: { twoHanded: true, grips: [0.52, 0.06], wrist: 0, windup: 0.34, strike: 0.13, recover: 0.42, noise: 0.5 },
-  bat: { twoHanded: true, grips: [0.3, 0.06], wrist: 0, windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
-  crowbar: { twoHanded: true, grips: [0.36, 0.05], wrist: 0, windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
-  torch: { twoHanded: false, grips: [0.06], wrist: -1.5, windup: 0, strike: 0, recover: 0, noise: 0 },
+const key = (at: V3, axis: V3, edge: V3, body?: V3, slide?: number): Key => ({ at, axis, edge, body, slide });
+
+/**
+ * Two-handed poses (axe, bat, crowbar), anchored on the lower (left) hand at the end of the handle: it
+ * always stays low left in the frame, the right hand and the head sit further up by each weapon's length.
+ * Diagonally across the body: the head up on the right, the handle down to the left hand, below the crosshair.
+ * Poses come from the tuner (debug/animTune.ts) within the wrist limits; edit them through it, then test:anim.
+ */
+const TWO_HANDED: KeySet = {
+  anchor: 'off',
+  idle: key([-0.157, -0.388, -0.713], [0.525, 0.709, 0.47], [-0.104, 0.601, -0.792], [-0.473, 0.081, 0.435]),
+  sprint: key([-0.251, -0.298, -0.637], [0.826, 0.545, 0.14], [-0.2, 0.517, -0.832], [-0.31, 0.054, 0.362]),
+  lowered: key([-0.157, -0.788, -0.563], [0.525, 0.845, -0.098], [-0.104, -0.05, -0.993], [-0.473, 0.081, 0.435]),
+  // Wound up: the head lifted high on the right, the edge leading.
+  windup: key([0.089, -0.382, -0.697], [0.292, 0.943, 0.156], [-0.245, 0.232, -0.941], [-0.124, -0.194, 0.324]),
+  // End of the chop: across to the left, the top hand slid down to the bottom one, edge forward.
+  strike: key([0.269, -0.381, -0.698], [-0.851, 0.408, 0.331], [-0.378, -0.037, -0.925], [-0.718, -0.595, 0.21], 1),
+  // On the way back: low across the front, the top hand sliding back up.
+  recover: key([0.258, -0.403, -0.732], [-0.806, 0.398, 0.439], [-0.338, 0.299, -0.892], [-0.83, -0.552, 0.104], 0.6),
 };
+
+/** Knife: held up by the right of the crosshair, a quick cut across and down to the centre. */
+const KNIFE: KeySet = {
+  anchor: 'main',
+  idle: key([-0.005, -0.181, -0.362], [0.764, 0.637, -0.104], [-0.617, 0.673, -0.408], [0.148, -0.139, -0.121]),
+  sprint: key([0.103, -0.282, -0.644], [-0.4, 0.721, 0.566], [-0.475, 0.365, -0.8], [-0.054, 0.121, 0.025]),
+  lowered: key([-0.005, -0.581, -0.212], [0.764, 0.42, -0.49], [-0.617, 0.252, -0.746], [0.148, -0.139, -0.121]),
+  windup: key([0.178, -0.116, -0.503], [0.006, 0.898, 0.44], [-0.611, 0.352, -0.709], [-0.06, 0, 0.044]),
+  strike: key([-0.037, -0.234, -0.596], [-0.185, 0.728, 0.66], [-0.711, 0.365, -0.602], [0.024, 0.186, -0.076]),
+  recover: key([-0.01, -0.296, -0.615], [-0.171, 0.793, 0.585], [-0.709, 0.313, -0.632], [-0.141, 0.033, 0.061]),
+};
+
+/** Hammer: the knife's arc with a heavier head. */
+const HAMMER: KeySet = {
+  anchor: 'main',
+  idle: key([0.191, -0.173, -0.363], [-0.947, 0.303, -0.102], [0.191, 0.28, -0.941], [0.243, 0.388, 0.672]),
+  sprint: key([0.104, -0.27, -0.582], [-0.429, 0.637, 0.64], [-0.523, 0.403, -0.751], [0.091, 0.055, 0.047]),
+  lowered: key([0.191, -0.573, -0.213], [-0.947, 0.166, -0.273], [0.191, -0.392, -0.9], [0.243, 0.388, 0.672]),
+  windup: key([0.163, -0.046, -0.584], [-0.383, 0.744, 0.548], [-0.396, 0.404, -0.825], [0.007, -0.092, -0.11]),
+  strike: key([-0.046, -0.271, -0.68], [-0.488, 0.784, 0.383], [-0.431, 0.166, -0.887], [0.146, 0.339, -0.044]),
+  recover: key([0.093, -0.309, -0.602], [-0.452, 0.717, 0.531], [-0.542, 0.253, -0.801], [0.1, 0.001, -0.224]),
+};
+
+/** Fists: a short jab; the "handle" is the fist's own grip axis. */
+const FIST: KeySet = {
+  anchor: 'main',
+  idle: key([0.092, -0.153, -0.383], [-0.161, -0.446, 0.88], [-0.891, -0.318, -0.324], [-0.351, 0.102, 0.016]),
+  sprint: key([-0.004, -0.193, -0.522], [-0.417, 0.865, 0.279], [-0.199, 0.212, -0.957], [0.124, -0.315, 0.128]),
+  lowered: key([0.092, -0.553, -0.233], [-0.161, 0.226, 0.961], [-0.891, -0.452, -0.043], [-0.351, 0.102, 0.016]),
+  windup: key([0.164, -0.196, -0.457], [-0.334, 0.598, 0.729], [-0.457, 0.574, -0.68], [-0.066, 0.186, 0.318]),
+  strike: key([-0.039, -0.179, -0.678], [-0.838, 0.064, 0.542], [-0.494, 0.334, -0.803], [-0.172, -0.101, 0.387]),
+  recover: key([0.119, -0.192, -0.513], [-0.696, 0.69, 0.198], [-0.337, -0.07, -0.939], [0.411, 0.036, 0.138]),
+};
+
+/** Flashlight in the left hand: raised (on) or lowered out of view (off). */
+const TORCH: KeySet = {
+  anchor: 'main',
+  idle: key([-0.145, -0.169, -0.348], [0.546, -0.075, -0.834], [-0.395, 0.855, -0.335], [0.452, 0.357, -0.528]),
+  sprint: key([-0.193, -0.274, -0.586], [0.287, 0.51, -0.811], [-0.782, -0.365, -0.506], [0.38, -0.011, -0.381]),
+  lowered: key([-0.145, -0.569, -0.198], [0.546, -0.594, -0.59], [-0.395, 0.438, -0.807], [0.452, 0.357, -0.528]),
+};
+
+const DEG = Math.PI / 180;
+/** Two-handed grips: the right hand up the handle (the bat: hands together at the knob), the left at the butt, both thumbs towards the head. */
+const ROLL_R = -3.2 * DEG;
+const ROLL_L = -34.8 * DEG;
+
+export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
+  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
+  hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
+  axe: { twoHanded: true, main: { along: 0.52, roll: ROLL_R, slide: 0.2 }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, -0.075], windup: 0.34, strike: 0.13, recover: 0.42, noise: 0.5 },
+  bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
+  crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.66, -0.06], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
+  torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0 },
+};
+
+/** Bare fists: an item without a model; the fist's grip axis is its handle. */
+export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0, 0], windup: 0.1, strike: 0.07, recover: 0.2, noise: 0.25 };
 
 /** Model of a held item in its grip frame (see HeldConfig). Geometries are collected for disposal. */
 export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {

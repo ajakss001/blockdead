@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "models": "node tools/optimize-models.mjs",
-    "prep-models": "node tools/prep-models.mjs"
+    "prep-models": "node tools/prep-models.mjs",
+    "test:anim": "node tools/vite-run.mjs src/debug/animTest.ts"
   },
   "dependencies": {
     "three": "^0.186.1"

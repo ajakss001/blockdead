@@ -110,43 +110,39 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
     out.push(cap());
     return out;
   };
-  // Per-frame numbers of a swing (left arm): forearm roll against the elbow plane, wrist angles, handle misfit.
-  w.__swingData = async (id: string, right = false, shots: number[] = []) => {
-    await (w.__hold as (i: string) => Promise<string[]>)(id);
-    const sc = scene as unknown as { player: { viewmodel: Record<string, any> } };
+  // Swing of a weapon at the given times (s), first person: plays the swing up to each time (the arm
+  // solver keeps its frame-to-frame state) and shoots; `__grid` lays them out.
+  w.__swingShots = async (id: string, times: number[], pitch = -0.15) => {
+    const sc = scene as unknown as { inventory: { count(i: string): number; add(i: string, n: number): void; equip(i: string): void; hand: string | null }; syncBody(): void; player: { viewmodel: { scrubT: number | null } } };
     const vm = sc.player.viewmodel;
-    const cfg = (await import('../player/held')).HELD[id as 'axe'];
-    const T = await import('three');
-    const d = (r: number) => Math.round((r * 180) / Math.PI);
-    const rows: number[][] = [];
-    const caps: string[] = [];
-    vm.attackT = 0;
-    vm.strikeFired = false;
-    const n = Math.round((cfg.windup + cfg.strike + cfg.recover) * 60) + 4;
-    for (let i = 0; i < n; i++) {
-      s.fixedUpdate(1 / 60);
-      (s.player.controller as unknown as { pitch: number }).pitch = -0.1;
-      draw(1, 1 / 60);
-      const arm = right ? vm.armR : vm.armL, hand = right ? vm.handR : vm.handL, up = vm.uppers[right ? 0 : 1];
-      const fz = new T.Vector3(0, 0, 1).applyQuaternion(arm.quaternion);
-      const fy = new T.Vector3(0, 1, 0).applyQuaternion(arm.quaternion);
-      const uz = new T.Vector3(0, 0, -1).applyQuaternion(up.quaternion);
-      const ref = uz.clone().addScaledVector(fz, -uz.dot(fz)).normalize();
-      const roll = Math.atan2(new T.Vector3().crossVectors(ref, fy).dot(fz), ref.dot(fy));
-      const l = hand.quaternion.clone();
-      if (l.w < 0) l.set(-l.x, -l.y, -l.z, -l.w);
-      const tw = 2 * Math.atan2(l.z, l.w);
-      const v = new T.Vector3(0, 0, -1).applyQuaternion(l);
-      const hq = arm.quaternion.clone().multiply(hand.quaternion);
-      const hy = new T.Vector3(0, 1, 0).applyQuaternion(hq);
-      const ax = new T.Vector3(0, 1, 0).applyQuaternion(vm.weapon.q);
-      if (shots.includes(i)) caps.push(gl.domElement.toDataURL("image/jpeg", 0.7));
-      rows.push([i, d(roll), d(tw), d(Math.atan2(v.y, -v.z)), d(Math.asin(v.x)), d(Math.acos(Math.min(1, Math.abs(hy.dot(ax)))))]);
+    const c = s.player.controller as unknown as { pitch: number; yaw: number };
+    if (sc.inventory.hand !== id && id !== 'fists') {
+      if (sc.inventory.count(id) === 0) sc.inventory.add(id, 1);
+      sc.inventory.equip(id);
+      sc.syncBody();
     }
-    return shots.length ? caps : rows.map((r) => r.join(' ')).join('\n');
-  };
-  w.__ui = (visible: boolean) => {
-    document.querySelectorAll<HTMLElement>('#ui > *').forEach((e) => (e.style.visibility = visible ? '' : 'hidden'));
-    document.getElementById('__grid')?.remove();
+    const step = (n: number) => {
+      for (let k = 0; k < n; k++) {
+        s.fixedUpdate(1 / 60);
+        c.pitch = pitch;
+        c.yaw = 0.6;
+        draw(1, 1 / 60);
+      }
+    };
+    vm.scrubT = null;
+    step(60);
+    const shots: string[] = [];
+    for (const t of times) {
+      vm.scrubT = -1;
+      step(20);
+      for (let k = 0; k <= Math.round(t * 60); k++) {
+        vm.scrubT = Math.min(t, k / 60);
+        step(1);
+      }
+      shots.push(gl.domElement.toDataURL('image/jpeg', 0.85));
+    }
+    vm.scrubT = null;
+    step(5);
+    return shots;
   };
 }
