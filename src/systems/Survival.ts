@@ -44,8 +44,8 @@ export const COLD = {
 const DREAD = {
   deadBatteryJump: 0.3,
   deadBattery: 0.06,
-  lightsOff: 0.006,
-  calming: 0.02,
+  lightsOff: 0.004,
+  calming: 0.035,
 } as const;
 
 /** What the world does to the body this step (computed by the scene). */
@@ -138,7 +138,7 @@ export class Survival implements SurvivalState {
     if (env.dark) d = (env.batteryDead ? DREAD.deadBattery : DREAD.lightsOff) * this.mods.anxiety;
     if (env.batteryDead && !this.wasBatteryDead && env.dark) this.anxiety += DREAD.deadBatteryJump * this.mods.anxiety;
     // Zombies after you: fear rises fast, the closer the faster.
-    if (env.threat) d = Math.max(d, env.threat * 0.12 * this.mods.anxiety);
+    if (env.threat) d = Math.max(d, env.threat * 0.08 * this.mods.anxiety);
     this.wasBatteryDead = env.batteryDead;
     this.anxiety = clamp(this.anxiety + d * dt, 0, 1);
   }

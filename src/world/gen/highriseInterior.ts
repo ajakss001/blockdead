@@ -102,7 +102,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
     const gz = (L.iz0 + L.czA) / 2 - DOOR_W / 2;
     b.blockY(paper, sx, 0, L.iz0, 0.12, h, gz - L.iz0, 'plaster');
     b.blockY(paper, sx, 0, gz + DOOR_W, 0.12, h, L.czA - gz - DOOR_W, 'plaster');
-    b.block(paper, sx, 2.1, gz, 0.12, h - 2.1, DOOR_W, 'plaster');
+    b.blockY(paper, sx, 2.1, gz, 0.12, h - 2.1, DOOR_W, 'plaster');
     b.door(sx + 0.06, gz, 0, -Math.PI / 2, 1, false, { open: rs() < 0.5 });
     b.blockY(paper, L.ix0, 0, L.czA - 0.12, sx - L.ix0 + 0.12, h, 0.12, 'plaster');
     if (rf) shopInterior(b, L.ix0, L.iz0, sx, L.czA - 0.12, shop.kind, rf);
@@ -144,7 +144,7 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     const gx = ux0 + uw / 2 - DOOR_W / 2;
     b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, 'plaster');
     b.blockY(paperB, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
-    b.block(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, 'plaster');
+    b.blockY(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
       furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA, light);
@@ -196,7 +196,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
     const gx = ux0 + uw / 2 - DOOR_W / 2;
     b.blockY(paper, ux0, y, L.cz0, gx - ux0, h, 0.12, 'plaster');
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
-    b.block(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
+    b.blockY(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
     if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, wins, paper, light);
   }

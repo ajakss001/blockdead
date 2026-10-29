@@ -363,7 +363,7 @@ export class WorldScene implements IScene {
     c.jumpFactor = this.survival.jumpFactor;
     // Tired: the swing is slower.
     this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
-    this.player.fixedUpdate(dt);
+    if (!this.dead) this.player.fixedUpdate(dt);
     // Zombies hear and see the player as it is after this step.
     _zs.pos.copy(c.position);
     _zs.eye = c.crouched ? 1.0 : 1.6;
@@ -374,7 +374,7 @@ export class WorldScene implements IScene {
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
-    for (const dmg of this.zombies.attacks) this.hurt(dmg, 'Вас загрызли');
+    for (const a of this.zombies.attacks) this.hurt(a.damage, 'Вас загрызли', false, a.from.pos);
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
     // Zombies are solid to the player (and the walls still win).
     for (const z of this.zombies.list) {
@@ -400,7 +400,7 @@ export class WorldScene implements IScene {
     this.stepN = n;
     if (c.jumped) sfx.jump(feet);
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
-    this.interaction.fixedUpdate(dt);
+    if (!this.dead) this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
     // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
     this.climateT -= dt;
@@ -416,7 +416,8 @@ export class WorldScene implements IScene {
     // Clothes get dirty: faster running, crawling, rummaging through containers.
     soilClothes(this.inventory, dt, { moving: c.speed > 0.2, sprinting: c.sprinting, crouching: c.crouched && c.speed > 0.2, searching: this.player.busy, weather: 1 });
     if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
-    const dark = !this.player.lightOn && (this.clock.isNight || this.indoors);
+    // Dark = night without a light of your own (rooms by day get light through the windows).
+    const dark = !this.player.lightOn && this.clock.isNight;
     this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat: this.zombies.threat(c.position) });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
@@ -577,7 +578,7 @@ export class WorldScene implements IScene {
   }
 
   /** The player takes `hp` of 100 (a bite, a fall); clothes soften bites. */
-  private hurt(hp: number, cause: string, ignoreArmor = false): void {
+  private hurt(hp: number, cause: string, ignoreArmor = false, from?: Vector3): void {
     if (this.dead) return;
     const armor = ignoreArmor ? 0 : Math.min(0.5, (wornStat(this.inventory.worn, 'bite') / 4) * 0.6);
     this.survival.health = Math.max(0, this.survival.health - (hp * (1 - armor)) / 100);
@@ -586,7 +587,7 @@ export class WorldScene implements IScene {
     const c = this.player.controller.position;
     sfx.zombie('hit', { x: c.x, y: c.y + 1.2, z: c.z }, 1.3);
     this.deathCause = cause;
-    if (this.survival.health <= 0) this.die(cause);
+    if (this.survival.health <= 0) this.die(cause, from);
   }
 
   /** Dead survivors near the player get up as zombies (once, until killed). */
@@ -616,9 +617,12 @@ export class WorldScene implements IScene {
    * Death (as in Project Zomboid): the survivor rises again as a zombie in their clothes with their things;
    * the screen says how it ended; a new survivor starts. The world, its opened containers and the twins stay.
    */
-  private die(cause: string): void {
+  private die(cause: string, killer?: Vector3): void {
     if (this.dead) return;
     this.dead = true;
+    // First see it happen: the survivor goes down, looking at what got them; then the screen.
+    this.player.startDeath(killer ?? null);
+    window.setTimeout(() => this.showDeathScreen(cause), 2600);
     const c = this.player.controller.position;
     const inv = this.inventory;
     const items: ItemStack[] = inv.stacks.map((s) => ({ ...s }));
@@ -630,6 +634,9 @@ export class WorldScene implements IScene {
     const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
     this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: c.x, y: c.y, z: c.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items });
     this.save();
+  }
+
+  private showDeathScreen(cause: string): void {
     this.ctx.loop.pause('menu');
     if (document.pointerLockElement) document.exitPointerLock();
     const minutes = Math.max(0, this.clock.minutes - this.bornAt);

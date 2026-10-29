@@ -33,6 +33,16 @@ export interface Pos {
 }
 
 const MAX_VOICES = 22;
+/** Soft clipping for throats (growls): tanh-like. */
+const DISTORT = (() => {
+  const n = 1024;
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    c[i] = Math.tanh(x * 3.2);
+  }
+  return c;
+})();
 const VOLUME_KEY = 'blockdead.volume';
 
 /** Container type (data/loot) → the sound of opening it and of rummaging inside. */
@@ -297,30 +307,31 @@ class Sound {
     const f = (hz: number) => hz * pitch * (0.93 + Math.random() * 0.14);
     switch (kind) {
       case 'moan': {
-        // Three shapes: a long fall, a rise and fall, a broken double moan.
-        const base = f(95);
-        if (r < 0.34) this.tone(out, t, { f: base * 1.2, f2: base * 0.75, dur: 1.3, peak: 0.2, type: 'sawtooth', lp: 480, vibrato: 6 });
+        // A hungry growl, low in the chest: three shapes — a long rolling growl, a rise into a snarl, two
+        // short grunting growls.
+        const g = f(70);
+        if (r < 0.34) this.growl(out, t, { f: g, f2: g * 0.8, dur: 1.4, peak: 0.34, flutter: 26 + r * 10, form: f(420), form2: f(330) });
         else if (r < 0.67) {
-          this.tone(out, t, { f: base, f2: base * 1.3, dur: 0.6, peak: 0.18, type: 'sawtooth', lp: 520, vibrato: 5 });
-          this.tone(out, t + 0.55, { f: base * 1.3, f2: base * 0.8, dur: 0.8, peak: 0.16, type: 'sawtooth', lp: 480, vibrato: 7 });
+          this.growl(out, t, { f: g, f2: g * 1.25, dur: 0.6, peak: 0.3, flutter: 30, form: f(380), form2: f(520) });
+          this.growl(out, t + 0.55, { f: g * 1.25, f2: g * 0.85, dur: 0.75, peak: 0.34, flutter: 38, form: f(560), form2: f(380), breath: 0.9 });
         } else {
-          for (let i = 0; i < 2; i++) this.tone(out, t + i * 0.45, { f: base * (1.1 - i * 0.15), f2: base * 0.85, dur: 0.4, peak: 0.17, type: 'sawtooth', lp: 450, vibrato: 9 });
+          for (let i = 0; i < 2; i++) this.growl(out, t + i * 0.42, { f: g * (1.05 - i * 0.1), f2: g * 0.8, dur: 0.38, peak: 0.32, flutter: 34, form: f(400), attack: 0.03 });
         }
-        this.noiseHit(out, t, { type: 'bandpass', f: f(650), q: 1.4, dur: 1.0, peak: 0.04, attack: 0.2 });
         break;
       }
       case 'alarm':
-        this.tone(out, t, { f: f(90), f2: f(150), dur: 1.2, peak: 0.32, type: 'sawtooth', lp: 620, vibrato: 7 });
-        this.tone(out, t + 0.02, { f: f(140), f2: f(200), dur: 1.0, peak: 0.1, type: 'triangle', lp: 900, vibrato: 5 });
-        this.noiseHit(out, t, { type: 'bandpass', f: f(800), q: 1.2, dur: 1.1, peak: 0.07, attack: 0.15 });
+        // It has seen you: a rising roar into a shriek.
+        this.growl(out, t, { f: f(80), f2: f(170), dur: 1.3, peak: 0.5, flutter: 42, form: f(500), form2: f(1100), breath: 1, attack: 0.04 });
+        this.growl(out, t + 0.05, { f: f(160), f2: f(320), dur: 1.0, peak: 0.16, flutter: 55, form: f(1300), breath: 0.4 });
         break;
       case 'rasp':
-        // Breath scraping a dry throat, in and out.
-        for (let i = 0; i < 2; i++) this.noiseHit(out, t + i * (0.5 + r * 0.2), { type: 'bandpass', f: f(i ? 1100 : 750), f2: f(i ? 700 : 1000), q: 3, dur: 0.45, peak: 0.12, attack: 0.12 });
-        this.tone(out, t, { f: f(70), dur: 0.9, peak: 0.06, type: 'sawtooth', lp: 300, vibrato: 11 });
+        // Following you: a wet snarl through bared teeth, a snap of the jaw.
+        this.growl(out, t, { f: f(95), f2: f(120), dur: 0.7 + r * 0.4, peak: 0.36, flutter: 48 + r * 12, form: f(800), form2: f(650), breath: 1.2, attack: 0.03 });
+        this.noiseHit(out, t + 0.6 + r * 0.3, { type: 'bandpass', f: f(2200), q: 4, dur: 0.03, peak: 0.16 });
         break;
       case 'teeth':
-        // Chattering: a quick run of hard little clicks.
+        // Snapping jaws: hard clacks over a low growl.
+        this.growl(out, t, { f: f(75), f2: f(70), dur: 0.6, peak: 0.2, flutter: 30, form: f(380) });
         for (let i = 0, n = 5 + Math.floor(r * 5); i < n; i++) this.noiseHit(out, t + i * (0.055 + Math.random() * 0.02), { type: 'bandpass', f: f(2400), q: 5, dur: 0.02, peak: 0.14 });
         break;
       case 'step':
@@ -353,8 +364,9 @@ class Sound {
         this.tone(out, t + 0.45, { f: 60, dur: 0.2, peak: 0.35 });
         break;
       case 'swing':
-        this.noiseHit(out, t, { type: 'bandpass', f: 500, f2: 900, q: 0.8, dur: 0.25, peak: 0.06, attack: 0.08 });
-        this.tone(out, t, { f: f(110), f2: f(160), dur: 0.45, peak: 0.16, type: 'sawtooth', lp: 600, vibrato: 8 });
+        // The lunge: a short barking snarl, the jaws snapping shut.
+        this.growl(out, t, { f: f(110), f2: f(150), dur: 0.4, peak: 0.42, flutter: 50, form: f(900), form2: f(700), breath: 1.1, attack: 0.02 });
+        this.noiseHit(out, t + 0.35, { type: 'bandpass', f: f(2500), q: 5, dur: 0.025, peak: 0.2 });
         break;
     }
   }
@@ -616,6 +628,70 @@ class Sound {
   }
 
   /** Filtered noise burst with an exponential tail; optional filter sweep f → f2. */
+  /**
+   * An animal throat: a buzzing voice (sawtooth) and torn breath (noise) through two vocal-tract
+   * resonances, chopped by a fast flutter (the rattle of a growl), driven into distortion. `f` → `f2`
+   * the voice's pitch, `form` the first resonance (low = a growl, high = a snarl or a shriek).
+   */
+  private growl(out: Out, t: number, o: { f: number; f2: number; dur: number; peak: number; flutter: number; form: number; form2?: number; breath?: number; attack?: number }): void {
+    const ac = this.ac!;
+    const end = t + o.dur;
+    const voice = ac.createOscillator();
+    voice.type = 'sawtooth';
+    voice.frequency.setValueAtTime(o.f, t);
+    voice.frequency.exponentialRampToValueAtTime(o.f2, end);
+    // Pitch wobble: an unsteady, strained throat.
+    const wob = ac.createOscillator();
+    wob.frequency.value = 5 + Math.random() * 4;
+    const wobG = ac.createGain();
+    wobG.gain.value = o.f * 0.06;
+    wob.connect(wobG).connect(voice.frequency);
+    const breath = ac.createBufferSource();
+    breath.buffer = this.noise;
+    breath.loop = true;
+    const breathG = ac.createGain();
+    breathG.gain.value = o.breath ?? 0.6;
+    const mix = ac.createGain();
+    voice.connect(mix);
+    breath.connect(breathG).connect(mix);
+    // Flutter: amplitude chopped 20–60 times a second — what makes it a growl, not a moan.
+    const chop = ac.createGain();
+    chop.gain.value = 0.55;
+    const flutter = ac.createOscillator();
+    flutter.type = 'square';
+    flutter.frequency.value = o.flutter;
+    const depth = ac.createGain();
+    depth.gain.value = 0.45;
+    flutter.connect(depth).connect(chop.gain);
+    // Throat: two resonances, the first sliding a little (the mouth opening).
+    const f1 = ac.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.Q.value = 3;
+    f1.frequency.setValueAtTime(o.form, t);
+    f1.frequency.exponentialRampToValueAtTime(o.form2 ?? o.form * 0.8, end);
+    const f2 = ac.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.Q.value = 5;
+    f2.frequency.value = o.form * 2.6;
+    const body = ac.createGain();
+    // Rough: soft clipping.
+    const shaper = ac.createWaveShaper();
+    shaper.curve = DISTORT;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(o.peak, t + (o.attack ?? 0.06));
+    g.gain.setValueAtTime(o.peak, t + o.dur * 0.65);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    mix.connect(chop);
+    chop.connect(f1).connect(body);
+    chop.connect(f2).connect(body);
+    body.connect(shaper).connect(g).connect(out);
+    for (const n of [voice, wob, breath, flutter]) {
+      n.start(t);
+      n.stop(end + 0.03);
+    }
+  }
+
   private noiseHit(out: Out, t: number, o: { type: BiquadFilterType; f: number; f2?: number; q?: number; dur: number; peak: number; attack?: number }): void {
     const ac = this.ac!;
     if (o.peak <= 0.001) return;

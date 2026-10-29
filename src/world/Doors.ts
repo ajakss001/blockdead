@@ -302,7 +302,7 @@ export class Doors {
 
   private write(pool: Pool, d: DoorState): void {
     _q.setFromAxisAngle(_up, d.angle);
-    _s.set(d.width / LEAF_W, 1, 1);
+    _s.set(d.width / LEAF_W, (d.spot.height ?? LEAF_H) / LEAF_H, 1);
     _m.compose(_p.set(d.spot.hx, d.spot.y, d.spot.hz), _q, _s);
     for (const mesh of pool.meshes) mesh.setMatrixAt(d.slot, _m);
   }

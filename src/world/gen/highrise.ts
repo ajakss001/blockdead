@@ -333,8 +333,8 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     const style = desc.kind === 'offices' || rand() < 0.4 ? 'glass' : 'wood';
     const open = rand() < 0.25;
     const half = ENTRANCE_W / 2;
-    b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, style, open, pair: 1 });
-    b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, style, open, pair: -1 });
+    b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, height: ENTRANCE_H, style, open, pair: 1 });
+    b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, height: ENTRANCE_H, style, open, pair: -1 });
     b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
   } else if (entrance === 'smashed') {
     // The doors are gone: glass teeth in the frame, glass everywhere, an open way in.

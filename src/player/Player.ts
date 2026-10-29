@@ -89,6 +89,50 @@ export class Player {
   /** The blow lands (contact frame): true if it hit something that is not the world (a zombie). */
   onStrike: ((item: string) => boolean) | null = null;
 
+  /** Seconds since the survivor went down (−1 = alive); what killed them, to look at as they fall. */
+  private deathT = -1;
+  private deathLook: Vector3 | null = null;
+  private readonly deathFrom = new Vector3();
+  private deathYaw = 0;
+  private deathPitch = 0;
+
+  /** Dying: the body drops (camera to the floor, rolling onto its side), the eyes on the killer. */
+  startDeath(killer: Vector3 | null): void {
+    this.deathT = 0;
+    this.deathLook = killer ? killer.clone() : null;
+    this.deathFrom.copy(this.camera.position);
+    this.deathYaw = this.controller.yaw;
+    this.deathPitch = this.controller.pitch;
+    this.flashlight.intensity *= 0.6;
+  }
+
+  private renderDeath(dt: number): void {
+    this.deathT += dt;
+    const k = Math.min(1, this.deathT / 1.1);
+    const fall = k * k * (3 - 2 * k);
+    const c = this.controller;
+    // The head comes down to the floor, a little back; the view rolls onto its side.
+    const floor = c.position.y + 0.22;
+    const back = 0.35 * fall;
+    this.camera.position.set(this.deathFrom.x + Math.sin(this.deathYaw) * back, this.deathFrom.y + (floor - this.deathFrom.y) * fall, this.deathFrom.z + Math.cos(this.deathYaw) * back);
+    // Eyes on whatever did it (its head), else up at the ceiling / sky.
+    let yaw = this.deathYaw;
+    let pitch = this.deathPitch + (0.6 - this.deathPitch) * fall;
+    if (this.deathLook) {
+      const dx = this.deathLook.x - this.camera.position.x;
+      const dz = this.deathLook.z - this.camera.position.z;
+      const dy = this.deathLook.y + 1.5 - this.camera.position.y;
+      let ty = Math.atan2(-dx, -dz);
+      ty = this.deathYaw + Math.atan2(Math.sin(ty - this.deathYaw), Math.cos(ty - this.deathYaw));
+      yaw = this.deathYaw + (ty - this.deathYaw) * Math.min(1, this.deathT / 0.8);
+      pitch = this.deathPitch + (Math.atan2(dy, Math.hypot(dx, dz)) - this.deathPitch) * fall;
+    }
+    // A jolt on every bite while it goes on.
+    const shake = this.deathLook ? Math.sin(this.deathT * 23) * 0.02 * (1 - fall * 0.5) : 0;
+    this.camera.rotation.set(pitch + shake, yaw, 1.25 * fall, 'YXZ');
+    this.viewmodel.scene.visible = this.deathT < 0.35;
+  }
+
   /** A blow taken: the camera jolts. */
   hurt(strength = 1): void {
     this.hitKick = Math.max(this.hitKick, -0.05 * strength);
@@ -198,6 +242,10 @@ export class Player {
   render(alpha: number, frameDt: number): void {
     const c = this.controller;
     this.ctx.input.consumeLook(this.look);
+    if (this.deathT >= 0) {
+      this.renderDeath(frameDt);
+      return;
+    }
     c.applyLook(this.look.x, this.look.y);
 
     const x = lerp(c.prevPosition.x, c.position.x, alpha);
@@ -214,7 +262,12 @@ export class Player {
     const sin = Math.sin(c.yaw);
     // Looking down bends the neck: the head (eyes) moves forward over the belly, so you see your
     // legs and feet, not the top of your own stomach.
-    const lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
+    let lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
+    // …but never into a wall: only as far as there is room in front of the face.
+    if (lean > 0) {
+      const room = this.world.rayHit(x, y + c.eyeHeight(alpha), z, -sin, 0, -cos, NECK_LEAN + 0.2);
+      if (room >= 0) lean = Math.min(lean, Math.max(0, room - 0.18));
+    }
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
     this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35 - this.landDip, z - sin * bobX - cos * lean);

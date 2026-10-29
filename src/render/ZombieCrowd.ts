@@ -94,11 +94,13 @@ export class ZombieCrowd {
           mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
           // The pose of a vertex: joint swing, then the whole upper body leaning from the hips.
           vec3 zpose(vec3 p, out mat3 r) {
-            float ph = aAnim.x, g = aAnim.y, v = aAnim.z;
+            float ph = aAnim.x, g = max(0.0, aAnim.y), v = aAnim.z;
+            // Dead (negative gait): how far it has gone limp — legs fold at the hips, arms trail, head lolls back.
+            float dead = max(0.0, -aAnim.y);
             float sw = sin(ph) * g;
             r = mat3(1.0);
             if (aJoint > 0.5 && aJoint < 2.5) {
-              float a = (aJoint < 1.5 ? sw : -sw) * 0.45;
+              float a = (aJoint < 1.5 ? sw : -sw) * 0.45 + dead * (aJoint < 1.5 ? 0.55 : 0.35);
               r = rotX(a);
               p = r * (p - vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0)) + vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
               return p;
@@ -107,20 +109,20 @@ export class ZombieCrowd {
               // Arms half raised forward, swinging a little against the legs, the left one hanging lower.
               float side = aJoint < 3.5 ? -1.0 : 1.0;
               float lift = -0.55 - 0.25 * v - (side < 0.0 ? 0.0 : 0.25) + 0.12 * sin(uTime * 1.3 + v * 6.0);
-              float a = lift + (aJoint < 3.5 ? -sw : sw) * 0.18;
+              float a = mix(lift + (aJoint < 3.5 ? -sw : sw) * 0.18, aJoint < 3.5 ? -2.6 : -2.2, dead);
               r = rotX(a);
               vec3 sh = vec3(0.25 * side, ${SHOULDER_Y.toFixed(2)}, 0.0);
               p = r * (p - sh) + sh;
             }
             if (aJoint > 4.5) {
               // Head lolling to one side.
-              mat3 h = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0)) * rotX(0.2);
+              mat3 h = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0) * (1.0 - dead) + dead * 0.5 * (v - 0.5)) * rotX(0.2 - dead * 0.9);
               vec3 nk = vec3(0.0, 1.46, 0.0);
               p = h * (p - nk) + nk;
               r = h;
             }
             // Torso: leaning forward and rocking with the steps.
-            mat3 t = rotZ(0.06 * sin(ph) * g) * rotX(0.22 + 0.08 * g);
+            mat3 t = rotZ(0.06 * sin(ph) * g) * rotX((0.22 + 0.08 * g) * (1.0 - dead));
             p = t * (p - vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0)) + vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
             r = t * r;
             return p;
@@ -159,12 +161,12 @@ export class ZombieCrowd {
       _pos.copy(z.pos);
       if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
       _q.setFromAxisAngle(_up, z.yaw);
-      if (z.fall > 0) _q.multiply(_qf.setFromAxisAngle(_xAxis, -(Math.PI / 2) * easeFall(z.fall)));
+      if (z.state === 'dead') _q.multiply(_qf.setFromAxisAngle(_zAxis, z.roll * z.fall)).multiply(_qf2.setFromAxisAngle(_xAxis, -(Math.PI / 2) * z.fall));
       else if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
       m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' ? 0.9 : 1), s, s));
       this.mesh.setMatrixAt(i, m);
       a[i * 3] = z.phase;
-      a[i * 3 + 1] = z.gait;
+      a[i * 3 + 1] = z.state === 'dead' ? -Math.min(1, z.fall * 1.3) : z.gait;
       a[i * 3 + 2] = (z.look % 97) / 97;
       if (this.ids[i] !== z.id) {
         this.ids[i] = z.id;
@@ -205,7 +207,8 @@ const _pos = new Vector3();
 const _sc = new Vector3();
 const _qf = new Quaternion();
 const _xAxis = new Vector3(1, 0, 0);
-const easeFall = (t: number) => t * t;
+const _qf2 = new Quaternion();
+const _zAxis = new Vector3(0, 0, 1);
 
 function setColor(attr: InstancedBufferAttribute, i: number, hex: number, k: number): void {
   attr.setXYZ(i, (((hex >> 16) & 255) / 255) * k, (((hex >> 8) & 255) / 255) * k, ((hex & 255) / 255) * k);

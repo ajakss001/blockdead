@@ -27,9 +27,11 @@ export interface DoorSpot {
   swing: number;
   /** Nailed shut from the other side. */
   barricaded: boolean;
-  /** Leaf width, m (default 0.95). */
+  /** Leaf width = the opening's width, m (default 1.0). */
   width?: number;
   style?: DoorStyle;
+  /** Height of the opening the leaf fills, m (default 2.1). */
+  height?: number;
   /** Starts open (left ajar by whoever ran). */
   open?: boolean;
   /** Double doors: offset to the other leaf in the same list; both swing together. */
@@ -41,6 +43,8 @@ export interface DoorOptions {
   style?: DoorStyle;
   open?: boolean;
   pair?: number;
+  /** Height of the opening the leaf fills, m (default 2.1). */
+  height?: number;
 }
 
 export { PAL, pick, type Rand } from './palette';
@@ -118,7 +122,8 @@ export class Builder {
 
   /** Register a door by its hinge and closed yaw in the current frame. */
   door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false, opts: DoorOptions = {}): void {
-    this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded, ...opts });
+    // The leaf fills the opening: 1 × 2.1 m unless told otherwise (no slits round a closed door).
+    this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded, width: 1.0, height: 2.1, ...opts });
   }
 
   /** Box that only blocks within its own vertical extent (storeys, railings, lintels). */
@@ -297,7 +302,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const doorRoll = rand();
   if (doorRoll < 0.8) {
     // Hinge on the left jamb, swings into the hall.
-    b.door(doorX - DOOR_W / 2, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, style: 'wood', open: doorRoll > 0.55 });
+    b.door(doorX - DOOR_W / 2, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, height: DOOR_H, style: 'wood', open: doorRoll > 0.55 });
   } else {
     // Kicked in: the leaf lies in the hall, the way is open.
     b.block(0x5a4632, doorX - DOOR_W / 2 + 0.1, 0, z1 - WALL_T - 2.1, DOOR_W - 0.05, 0.05, 2.0, 'wood');
@@ -446,7 +451,7 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
     b.block(PAL.trim, xb - 0.15, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');
   }
   // Glass shop door (sometimes left open), or its frame with the glass kicked out.
-  if (rand() < 0.75) b.door(wa, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, style: 'glass', open: rand() < 0.3 });
+  if (rand() < 0.75) b.door(wa, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, height: 2.6, style: 'glass', open: rand() < 0.3 });
   else glassTeeth(b, wa + 0.05, 0.1, z1 - 0.1, DOOR_W - 0.1, 2.3, rand);
   wallAlongX(b, front, paper, x0, x1, z1 - WALL_T, true, 2.6, h - 2.6, false);
   b.block(SHOP_SIGN[kind], x0 + 0.3, 2.7, z1, w - 0.6, 0.55, 0.06, 'metal');

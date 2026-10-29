@@ -62,6 +62,9 @@ export interface Zombie {
   hp: number;
   /** 0..1 how far it has fallen (dead); hit shake (s left). */
   fall: number;
+  /** Falling (dead): angular speed of the topple (per quarter turn), and a sideways twist to land on. */
+  fallV: number;
+  roll: number;
   shake: number;
   /** Search: the point it looks around and where its eyes are now. */
   lookYaw: number;
@@ -153,7 +156,7 @@ export class ZombieSim {
   readonly list: Zombie[] = [];
   /** This step: sounds to play (who, what) and blows that reached the player (HP). */
   readonly sounds: { z: Zombie; kind: ZombieSound }[] = [];
-  readonly attacks: number[] = [];
+  readonly attacks: { damage: number; from: Zombie }[] = [];
   /** Twins killed this step (the scene drops their loot). */
   readonly killedTwins: Zombie[] = [];
   /** Kept for back-compat: groaning zombies of this step. */
@@ -219,6 +222,8 @@ export class ZombieSim {
       groanCd: 2 + r() * 8,
       hp: T.hp,
       fall: 0,
+      fallV: 0,
+      roll: 0,
       shake: 0,
       lookYaw: 0,
       swing: 0,
@@ -243,7 +248,16 @@ export class ZombieSim {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const z = this.list[i];
       if (z.state === 'dead') {
-        z.fall = Math.min(1, z.fall + dt * 2.2);
+        // Topples like a body, not a plank turning: slow at first, faster under its own weight, a
+        // bounce off the ground, then still.
+        if (z.fall < 1 || Math.abs(z.fallV) > 0.01) {
+          z.fallV += 5.5 * Math.sin((z.fall * Math.PI) / 2) * dt + (z.fall < 0.05 ? 1.5 * dt : 0);
+          z.fall += z.fallV * dt;
+          if (z.fall >= 1) {
+            z.fall = 1;
+            z.fallV = Math.abs(z.fallV) > 0.6 ? -z.fallV * 0.22 : 0;
+          }
+        }
         z.timer -= dt;
         if (z.timer <= 0) this.list.splice(i, 1);
         continue;
@@ -387,8 +401,10 @@ export class ZombieSim {
   private ambient(z: Zombie, dist: number): void {
     if (dist > 22) return;
     const r = this.rnd;
-    if (z.groanCd <= 0 && r() < 0.02) {
-      z.groanCd = 5 + r() * 9;
+    const hunting = z.state === 'chase' || z.state === 'bang';
+    if (z.groanCd <= 0 && r() < (hunting ? 0.08 : 0.02)) {
+      // After you: snarling all the time; otherwise a growl now and then.
+      z.groanCd = hunting ? 1.4 + r() * 2 : 4 + r() * 8;
       this.sounds.push({ z, kind: z.state === 'chase' ? 'rasp' : dist < 3.5 ? 'teeth' : 'moan' });
     }
   }
@@ -411,7 +427,7 @@ export class ZombieSim {
     if (z.state === 'attack') {
       z.timer -= dt;
       if (z.timer <= 0) {
-        if (dist < T.reach + 0.2 && Math.abs(p.pos.y - z.pos.y) < 1) this.attacks.push(T.damage[0] + this.rnd() * (T.damage[1] - T.damage[0]));
+        if (dist < T.reach + 0.2 && Math.abs(p.pos.y - z.pos.y) < 1) this.attacks.push({ damage: T.damage[0] + this.rnd() * (T.damage[1] - T.damage[0]), from: z });
         z.swing = T.cooldown;
         z.state = 'chase';
       }
@@ -457,7 +473,10 @@ export class ZombieSim {
     z.target.set(fromX, z.pos.y, fromZ);
     if (z.hp <= 0) {
       z.state = 'dead';
-      z.fall = 0;
+      z.fall = 0.02;
+      // The blow starts the fall: harder blows knock it down faster; it twists a little as it goes.
+      z.fallV = 0.5 + Math.min(1.2, damage / 60);
+      z.roll = (this.rnd() - 0.5) * 0.9;
       z.timer = T.corpse;
       z.speed = 0;
       // Falls away from the blow.

@@ -4,16 +4,15 @@ import type { GameLoop } from '../core/GameLoop';
 import { sfx } from './Sound';
 
 /** Below this anxiety nothing is heard. */
-const HEART_FROM = 0.15;
-const BREATH_FROM = 0.3;
+const HEART_FROM = 0.45;
 const smooth = (e0: number, e1: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
 
 /**
- * Anxiety you can hear: a heartbeat that quickens and heavy breathing, synthesized with WebAudio
- * (no audio files: a decaying low sine for "lub-dub", band-passed noise for breath). The beat
+ * Anxiety you can hear: a heartbeat that quickens (from 45% anxiety), synthesized with WebAudio
+ * (no audio files: a decaying low sine for "lub-dub"; no breathing — the world's sounds matter more). The beat
  * timeline also drives the pulsing screen edges. Silent while the game is paused for any reason
  * (menus, inventory, ads, hidden tab). The AudioContext starts on the first user gesture.
  */
@@ -22,7 +21,6 @@ export class AnxietyAudio {
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private beatPhase = 0;
-  private breathPhase = 0;
   private sinceBeat = 10;
   private muted = false;
 
@@ -70,13 +68,7 @@ export class AnxietyAudio {
       this.sinceBeat = 0;
       if (anxiety > HEART_FROM) this.heartbeat(smooth(HEART_FROM, 0.9, anxiety), 60 / bpm);
     }
-    // Breath cycle from a slow 4.5 s to a panicked 1.4 s.
-    const period = 4.5 - 3.1 * anxiety;
-    this.breathPhase += dt / period;
-    if (this.breathPhase >= 1) {
-      this.breathPhase -= 1;
-      if (anxiety > BREATH_FROM) this.breath(smooth(BREATH_FROM, 1, anxiety), period);
-    }
+    // No breathing sounds: the heartbeat only, and only when it is really bad.
   }
 
   /** On the game's one AudioContext (audio/Sound), into its world bus. */
@@ -120,32 +112,4 @@ export class AnxietyAudio {
     osc.stop(t + 0.2);
   }
 
-  /** One breath: a brighter inhale, a duller exhale. */
-  private breath(volume: number, period: number): void {
-    if (!this.ac || !this.master || !this.noise || this.muted || this.ac.state !== 'running') return;
-    const ac = this.ac;
-    const t = ac.currentTime + 0.02;
-    const phases: [number, number, number, number][] = [
-      // start, length, band center, loudness
-      [0, period * 0.38, 1300, 0.16],
-      [period * 0.45, period * 0.45, 650, 0.22],
-    ];
-    for (const [start, len, freq, loud] of phases) {
-      const src = ac.createBufferSource();
-      src.buffer = this.noise;
-      src.loop = true;
-      const band = ac.createBiquadFilter();
-      band.type = 'bandpass';
-      band.frequency.value = freq;
-      band.Q.value = 0.7;
-      const g = ac.createGain();
-      const t0 = t + start;
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(loud * volume, t0 + len * 0.4);
-      g.gain.linearRampToValueAtTime(0, t0 + len);
-      src.connect(band).connect(g).connect(this.master);
-      src.start(t0, Math.random() * 0.5);
-      src.stop(t0 + len + 0.05);
-    }
-  }
 }
