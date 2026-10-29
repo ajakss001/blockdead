@@ -86,6 +86,14 @@ export class Player {
   private landDip = 0;
   /** Camera jolt when a blow lands (rad). */
   private hitKick = 0;
+  /** The blow lands (contact frame): true if it hit something that is not the world (a zombie). */
+  onStrike: ((item: string) => boolean) | null = null;
+
+  /** A blow taken: the camera jolts. */
+  hurt(strength = 1): void {
+    this.hitKick = Math.max(this.hitKick, -0.05 * strength);
+    this.landDip = Math.max(this.landDip, 0.04 * strength);
+  }
   private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
 
@@ -152,7 +160,8 @@ export class Player {
     const strikeNoise = vm.consumeStrike();
     if (strikeNoise > 0) {
       this.controller.addNoise(strikeNoise);
-      this.strikeSound();
+      // A zombie in the way takes the blow (the scene checks); otherwise the world does.
+      if (!this.onStrike?.(this.viewmodel.currentItem)) this.strikeSound();
       this.hitKick = 0.03;
     }
 

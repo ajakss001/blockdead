@@ -205,12 +205,13 @@ export class CollisionWorld implements ColliderSink {
    * under a circle, whose top is at most `maxTop`; −∞ if none. Walls, cars and other full-height
    * colliders never count.
    */
-  supportAt(x: number, z: number, radius: number, maxTop: number): number {
+  supportAt(x: number, z: number, radius: number, maxTop: number, standY = -Infinity): number {
     this.query(x - radius, z - radius, x + radius, z + radius);
     let best = -Infinity;
     for (let i = 0; i < this.candidates.length; i++) {
       const b = this.boxes.get(this.candidates[i])!;
-      if (b.maxY > maxTop || b.maxY <= best || b.maxY - b.minY > SUPPORT_MAX_HEIGHT) continue;
+      // Low boxes can be stepped onto; anything taller only holds you once you are on top (climbed up).
+      if (b.maxY > maxTop || b.maxY <= best || (b.maxY - b.minY > SUPPORT_MAX_HEIGHT && b.maxY > standY + 0.06)) continue;
       if (b.obb) {
         const o = b.obb;
         const wx = x - o.cx;
@@ -220,6 +221,46 @@ export class CollisionWorld implements ColliderSink {
       best = b.maxY;
     }
     return best;
+  }
+
+  /** The underside of the lowest box above `fromY` over a circle (a ceiling, a lintel, a beam), or +∞. */
+  ceilingAt(x: number, z: number, radius: number, fromY: number): number {
+    this.query(x - radius, z - radius, x + radius, z + radius);
+    let best = Infinity;
+    for (let i = 0; i < this.candidates.length; i++) {
+      const b = this.boxes.get(this.candidates[i])!;
+      if (b.minY < fromY || b.minY >= best || !this.overlapsCircle(b, x, z, radius)) continue;
+      best = b.minY;
+    }
+    return best;
+  }
+
+  /**
+   * A ledge to climb onto in front: the top of a box `reach` m ahead whose top is between `minRise` and
+   * `maxRise` above the feet, with room to crouch on it (nothing in the 1.2 m above). −1 if none.
+   */
+  ledgeAhead(x: number, z: number, dirX: number, dirZ: number, feetY: number, minRise: number, maxRise: number, reach = 0.55): number {
+    const lx = x + dirX * reach;
+    const lz = z + dirZ * reach;
+    this.query(lx - 0.15, lz - 0.15, lx + 0.15, lz + 0.15);
+    let top = -1;
+    for (let i = 0; i < this.candidates.length; i++) {
+      const b = this.boxes.get(this.candidates[i])!;
+      if (b.maxY < feetY + minRise || b.maxY > feetY + maxRise || b.maxY <= top || !this.overlapsCircle(b, lx, lz, 0.15)) continue;
+      top = b.maxY;
+    }
+    if (top < 0) return -1;
+    return this.ceilingAt(lx, lz, 0.25, top + 0.01) > top + 1.2 ? top : -1;
+  }
+
+  private overlapsCircle(b: Box, x: number, z: number, radius: number): boolean {
+    if (b.obb) {
+      const o = b.obb;
+      const wx = x - o.cx;
+      const wz = z - o.cz;
+      return Math.abs(wx * o.c - wz * o.s) <= o.hx + radius && Math.abs(wx * o.s + wz * o.c) <= o.hz + radius;
+    }
+    return x + radius > b.minX && x - radius < b.maxX && z + radius > b.minZ && z - radius < b.maxZ;
   }
 
   /** Circle vs rotated box: solve in the box's frame, push back in world space. */

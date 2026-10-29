@@ -2,9 +2,9 @@
  * Time of day and air temperature; the scene lights the world from the same clock (day / night).
  */
 
-/** Daytime 06:00–20:00 passes in 20 real minutes, the night 20:00–06:00 in 30. */
-const DAY_RATE = (14 * 60) / (20 * 60);
-const NIGHT_RATE = (10 * 60) / (30 * 60);
+/** Daytime 06:00–20:00 passes in 10 real minutes, the night 20:00–06:00 in 20 (dawn and dusk blend smoothly). */
+const DAY_RATE = (14 * 60) / (10 * 60);
+const NIGHT_RATE = (10 * 60) / (20 * 60);
 /** A new survivor starts at 07:00, the day ahead. */
 export const START_MINUTE = 7 * 60;
 

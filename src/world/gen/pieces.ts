@@ -204,7 +204,10 @@ function wallAlongX(b: Builder, siding: number, paper: number, xa: number, xb: n
   const half = WALL_T / 2;
   b.block(siding, xa, y, z + (outerAtPlusZ ? half : 0), xb - xa, h, half);
   b.block(paper, xa, y, z + (outerAtPlusZ ? 0 : half), xb - xa, h, half);
+  // Full height; a strip above an opening (y > 0) is solid only over its own height (a lintel: the head
+  // stops under it, the doorway stays open).
   if (solid) b.solid(xa, z, xb, z + WALL_T);
+  else if (y > 0) b.solid(xa, z, xb, z + WALL_T, y, y + h);
 }
 
 function wallAlongZ(b: Builder, siding: number, paper: number, x: number, za: number, zb: number, outerAtPlusX: boolean, h = 2.7): void {
@@ -220,10 +223,19 @@ function partitionZ(b: Builder, paper: number, x: number, za: number, zb: number
   for (const dz of doors) {
     const d0 = dz - 0.45;
     b.block(paper, x, 0, from, 0.12, h, d0 - from, 'plaster', true);
-    b.block(paper, x, DOOR_H, d0, 0.12, h - DOOR_H, 0.9);
+    b.block(paper, x, DOOR_H, d0, 0.12, h - DOOR_H, 0.9, 'plaster', true);
     from = dz + 0.45;
   }
   b.block(paper, x, 0, from, 0.12, h, zb - from, 'plaster', true);
+}
+
+/** A table jammed across a doorway (its top ~0.78 m), centred on the doorway, long side along the wall. */
+function tableBarricade(b: Builder, cx: number, cz: number, wallAlongX: boolean): void {
+  const hx = wallAlongX ? 0.55 : 0.45;
+  const hz = wallAlongX ? 0.45 : 0.55;
+  b.block(0x6b5136, cx - hx, 0.72, cz - hz, hx * 2, 0.06, hz * 2, 'wood', true);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.block(0x5a4430, cx + sx * (hx - 0.06) - 0.025, 0, cz + sz * (hz - 0.06) - 0.025, 0.05, 0.72, 0.05, 'wood');
+  b.solid(cx - hx, cz - hz, cx + hx, cz + hz, 0, 0.72);
 }
 
 function partitionX(b: Builder, paper: number, xa: number, xb: number, z: number, doorX: number, h: number): void {
@@ -231,7 +243,7 @@ function partitionX(b: Builder, paper: number, xa: number, xb: number, z: number
   const d1 = doorX + 0.45;
   b.block(paper, xa, 0, z, d0 - xa, h, 0.12, 'plaster', true);
   b.block(paper, d1, 0, z, xb - d1, h, 0.12, 'plaster', true);
-  b.block(paper, d0, DOOR_H, z, 0.9, h - DOOR_H, 0.12);
+  b.block(paper, d0, DOOR_H, z, 0.9, h - DOOR_H, 0.12, 'plaster', true);
 }
 
 /** Window on a wall facing ±Z (glass proud of the trim, both slightly outside the siding). */
@@ -294,7 +306,15 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   // Rooms.
   // Living room opens into the kitchen (back) and the bedroom (front).
   partitionZ(b, paperA, xp, z0 + WALL_T, z1 - WALL_T, [z0 + d * 0.25, z0 + d * 0.75], h);
-  partitionX(b, paperB, xp + 0.12, x1 - WALL_T, zp, xp + 0.12 + 0.9 + rand() * 0.6, h);
+  const bedDoorX = xp + 0.12 + 0.9 + rand() * 0.6;
+  partitionX(b, paperB, xp + 0.12, x1 - WALL_T, zp, bedDoorX, h);
+  // A shelter: sometimes the bedroom doorway is blocked with a table. Up onto it, crouch, squeeze under
+  // the lintel — a zombie can't climb.
+  // Both ways into the bedroom: from the kitchen and from the living room.
+  if (rand() < 0.3) {
+    tableBarricade(b, bedDoorX, zp + 0.06, true);
+    tableBarricade(b, xp + 0.06, z0 + d * 0.75, false);
+  }
 
   // Windows: bedroom front, kitchen back, living room and bedroom sides.
   windowZ(b, x0 + w * 0.76, z1, 1);

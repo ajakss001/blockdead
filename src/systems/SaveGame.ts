@@ -1,4 +1,5 @@
-import type { ItemId } from '../data/items';
+import type { ItemId, ItemStack } from '../data/items';
+import type { ContainerRef } from './Containers';
 import type { Appearance } from '../player/appearance';
 import type { InventoryData } from './Inventory';
 import type { IPlatform } from '../platform/IPlatform';
@@ -20,6 +21,23 @@ export interface SaveV1 {
   clock?: number;
   /** Touched containers only; untouched ones are re-rolled from the seed. */
   containers: [number, [ItemId, number, number?, number?][]][];
+  /** The survivor died: the next start is a new character (the world, twins and bodies stay). */
+  dead?: boolean;
+  /** Dead survivors walking, and the bodies of those killed again (their things inside). */
+  twins?: TwinRecord[];
+  bodies?: ContainerRef[];
+  /** In-game minute this survivor started (for "survived …"). */
+  bornAt?: number;
+}
+
+/** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */
+export interface TwinRecord {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  colors: [number, number, number];
+  items: ItemStack[];
 }
 
 /**

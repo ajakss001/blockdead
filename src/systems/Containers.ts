@@ -20,6 +20,8 @@ export interface ContainerRef {
 export class Containers {
   private readonly byChunk = new Map<number, ContainerRef[]>();
   private readonly opened = new Map<number, ItemStack[]>();
+  /** Containers that are not part of any chunk (a fallen twin's body), with their contents. */
+  private readonly loose: ContainerRef[] = [];
 
   constructor(readonly seed: number) {}
 
@@ -45,7 +47,7 @@ export class Containers {
   target(x: number, z: number, dirX: number, dirZ: number, y = 0, reach = 1.9): ContainerRef | null {
     let best: ContainerRef | null = null;
     let bestScore = Infinity;
-    for (const list of this.byChunk.values()) {
+    for (const list of [...this.byChunk.values(), this.loose]) {
       for (const c of list) {
         if (Math.abs(c.y - y) > 1.4) continue;
         const dx = c.x - x;
@@ -62,6 +64,17 @@ export class Containers {
       }
     }
     return best;
+  }
+
+  /** A container of its own (a body) with these contents; its id must not clash with the chunks' (≥ 2e9). */
+  addLoose(ref: ContainerRef, items: ItemStack[]): void {
+    if (this.loose.some((c) => c.id === ref.id)) return;
+    this.loose.push(ref);
+    if (!this.opened.has(ref.id)) this.opened.set(ref.id, items);
+  }
+
+  get looseRefs(): readonly ContainerRef[] {
+    return this.loose;
   }
 
   name(ref: ContainerRef): string {

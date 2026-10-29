@@ -463,3 +463,52 @@ export function revealGeometry(w: number, h: number, depth: number): BufferGeome
   for (const p of parts) p.dispose();
   return g;
 }
+
+/**
+ * Where to walk next inside / into / out of a high-rise on the way from `from` to `to` (zombies): to the
+ * entrance from outside, along the two flights of the stair core between storeys (one landing at a
+ * time), out through the lobby. False when the way is straight (same storey, or neither end inside).
+ */
+export function routeHighrise(b: BuildingDesc, from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }, out: { set(x: number, y: number, z: number): unknown }): boolean {
+  const fromIn = insideFootprint(b, from.x, from.z, -0.05);
+  const toIn = insideFootprint(b, to.x, to.z, -0.05);
+  if (!fromIn && !toIn) return false;
+  const L = local(b);
+  const kf = Math.max(0, Math.round(from.y / FLOOR_H));
+  const kt = toIn ? Math.max(0, Math.round(to.y / FLOOR_H)) : 0;
+  const put = (x: number, z: number, k: number) => {
+    const [wx, wz] = toLocal(b, x, z);
+    out.set(wx, k * FLOOR_H, wz);
+    return true;
+  };
+  // Into the building: the entrance from outside, then on.
+  if (!fromIn) {
+    const [lx, lz] = toLocal(b, from.x, from.z);
+    return Math.hypot(lx - L.doorX, lz - (L.z0 - 0.8)) > 1.2 ? put(L.doorX, L.z0 - 0.8, 0) : put(L.doorX, L.iz0 + 1.2, 0);
+  }
+  const target = toIn ? kt : 0;
+  if (kf === target) {
+    if (toIn) return false;
+    // Out through the lobby door.
+    const [lx, lz] = toLocal(b, from.x, from.z);
+    return Math.hypot(lx - L.doorX, lz - (L.iz0 + 1.2)) > 1 ? put(L.doorX, L.iz0 + 1.2, 0) : put(L.doorX, L.z0 - 0.8, 0);
+  }
+  const [x, z] = toLocal(b, from.x, from.z);
+  const zf0 = L.cz0 + NEAR;
+  const left = L.cx0 + FLIGHT_W / 2;
+  const right = L.cx1 - FLIGHT_W / 2;
+  const mid = zf0 + RUN + 0.5;
+  const entry = zf0 - 0.4;
+  const inCore = x >= L.cx0 - 0.2 && x <= L.cx1 + 0.2 && z >= zf0 - 0.1 && z <= L.cz1 + 0.2;
+  const k = Math.floor(from.y / FLOOR_H + 0.05);
+  if (target > kf) {
+    if (!inCore) return put(left, entry, kf);
+    if (z < zf0 + RUN && x < L.cx0 + FLIGHT_W) return put(left, mid, k);
+    if (z >= zf0 + RUN) return x < L.cx1 - FLIGHT_W ? put(right, mid, k) : put(right, entry, k + 1);
+    return put(right, entry, k + 1);
+  }
+  if (!inCore) return put(right, entry, kf);
+  if (x > L.cx1 - FLIGHT_W && z < zf0 + RUN) return put(right, mid, k);
+  if (z >= zf0 + RUN) return x > L.cx0 + FLIGHT_W ? put(left, mid, k) : put(left, entry, k);
+  return put(left, entry, k);
+}

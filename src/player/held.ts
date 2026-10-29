@@ -95,6 +95,10 @@ export interface HeldConfig {
   recover: number;
   /** How loud a swing is, 0..1. */
   noise: number;
+  /** Damage of a blow to a zombie (of 100 HP), min–max; a blow to the head counts double. */
+  damage: readonly [number, number];
+  /** How far a blow reaches from the eye, m. */
+  reach: number;
 }
 
 const key = (at: V3, axis: V3, edge: V3, body?: V3, slide?: number): Key => ({ at, axis, edge, body, slide });
@@ -207,16 +211,16 @@ const AXE_R = 1.0 * DEG;
 const AXE_L = -50.4 * DEG;
 
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
-  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 7 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.2 },
-  hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
-  axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5 },
-  bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
-  crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.66, -0.06], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
-  torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0 },
+  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 7 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.2, damage: [10, 15], reach: 1.3 },
+  hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4, damage: [15, 20], reach: 1.4 },
+  axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5, damage: [35, 45], reach: 1.8 },
+  bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45, damage: [20, 30], reach: 1.8 },
+  crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.66, -0.06], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5, damage: [20, 25], reach: 1.7 },
+  torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0, damage: [0, 0], reach: 1 },
 };
 
 /** Bare fists: an item without a model; the fist's grip axis is its handle. */
-export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0.05, 0], windup: 6 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.25 };
+export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0.05, 0], windup: 6 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.25, damage: [4, 7], reach: 1.1 };
 
 /** Model of a held item in its grip frame (see HeldConfig). Geometries are collected for disposal. */
 export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {

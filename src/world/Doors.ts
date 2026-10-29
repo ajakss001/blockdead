@@ -38,6 +38,9 @@ interface DoorState {
   set: number;
   /** Partner leaf of a double door (index inside the same set), or -1. */
   pair: number;
+  /** How much beating it takes (zombies); broken doors hang open for good. */
+  hp: number;
+  broken: boolean;
 }
 
 interface Pool {
@@ -128,6 +131,8 @@ export class Doors {
         slot: -1,
         set: key,
         pair: spot.pair !== undefined ? i + spot.pair : -1,
+        hp: spot.barricaded ? 220 : style === 'glass' ? 60 : 110,
+        broken: false,
       };
       const pool = this.pools[style];
       d.slot = pool.doors.length;
@@ -203,11 +208,45 @@ export class Doors {
   toggle(ref: DoorRef): boolean {
     const doors = this.sets.get(ref.building);
     const d = doors?.[ref.index];
-    if (!doors || !d || d.spot.barricaded) return false;
+    if (!doors || !d || d.spot.barricaded || d.broken) return false;
     const open = !d.open;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.open = open;
       this.collide(leaf, !open);
+    }
+    return true;
+  }
+
+  /** The nearest closed (unbroken) door within `r` on that storey: a handle and the doorway's middle. */
+  closedNear(x: number, y: number, z: number, r: number): { ref: DoorRef; x: number; z: number } | null {
+    let best: { ref: DoorRef; x: number; z: number } | null = null;
+    let bestD = r;
+    for (const [building, doors] of this.sets) {
+      doors.forEach((d, index) => {
+        if (d.open || d.broken || Math.abs(d.spot.y - y) > 1.2) return;
+        const mx = d.spot.hx + Math.cos(d.spot.yaw) * d.width * 0.5;
+        const mz = d.spot.hz - Math.sin(d.spot.yaw) * d.width * 0.5;
+        const dist = Math.hypot(mx - x, mz - z);
+        if (dist < bestD) {
+          bestD = dist;
+          best = { ref: { building, index }, x: mx, z: mz };
+        }
+      });
+    }
+    return best;
+  }
+
+  /** A zombie's blow. True when the door gives way: it swings open for good (both leaves of a pair). */
+  damage(ref: DoorRef, amount: number): boolean {
+    const doors = this.sets.get(ref.building);
+    const d = doors?.[ref.index];
+    if (!doors || !d || d.broken || d.open) return true;
+    d.hp -= amount;
+    if (d.hp > 0) return false;
+    for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
+      leaf.broken = true;
+      leaf.open = true;
+      this.collide(leaf, false);
     }
     return true;
   }

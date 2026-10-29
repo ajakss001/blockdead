@@ -15,7 +15,7 @@ import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { sfx, type StepSurface } from '../audio/Sound';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
 import { CHUNK, ROAD_HALF } from '../world/gen/layout';
-import { type ItemId, wornStat } from '../data/items';
+import { type ItemId, type ItemStack, WEAR_SLOTS, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
@@ -43,7 +43,13 @@ import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
 import { ZombieCrowd } from '../render/ZombieCrowd';
-import { type PlayerSense, ZombieSim } from '../systems/zombies';
+import { blowDamage, type PlayerSense, type Zombie, ZombieSim } from '../systems/zombies';
+import { Dust } from '../render/Dust';
+import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
+import { routeHighrise } from '../world/gen/highrise';
+import type { DoorRef } from '../world/Doors';
+import type { ContainerRef } from '../systems/Containers';
+import type { TwinRecord } from '../systems/SaveGame';
 
 /**
  * Night setup. Ambient sits at the floor; a weak cold moon keeps silhouettes and roof lines
@@ -68,6 +74,8 @@ const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
+const _so = new Vector3();
+const _sd = new Vector3();
 const BASE_VFOV = 75;
 const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
@@ -142,6 +150,15 @@ export class WorldScene implements IScene {
   private classId: ClassId = DEFAULT_CLASS;
   /** No save was found: a new game asks for a character first. */
   private isNewGame = true;
+  private readonly dust = new Dust();
+  /** Dead survivors walking (saved until killed), and the bodies they left with their things. */
+  private twins: TwinRecord[] = [];
+  private bodies: ContainerRef[] = [];
+  private dead = false;
+  private deathCause = '';
+  /** In-game minute this survivor started. */
+  private bornAt = 0;
+  private readonly twinZombies = new Map<number, Zombie>();
   /** The editor is open: nothing to save yet (hiding the tab must not save a default survivor). */
   private creating = false;
 
@@ -171,16 +188,24 @@ export class WorldScene implements IScene {
     const zcount = zq !== null ? Math.max(0, Number(zq) || 0) : ctx.quality.preset.zombiesActive;
     this.zombies = new ZombieSim(
       {
-        groundY: (x, z) => layout.walkHeightAt(x, z),
+        groundY: (x, z, y) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
         resolveCircle: (p, r, h) => this.world.resolveCircle(p, r, h),
         rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
         indoors: (x, z) => this.interiors.surfaceY(x, z, 0) != null,
+        route: (from, to, out) => {
+          const b = this.interiors.buildingAt(from.x, from.z) ?? this.interiors.buildingAt(to.x, to.z);
+          return b ? routeHighrise(b, from, to, out) : false;
+        },
+        doorNear: (x, y, z, r) => this.doors.closedNear(x, y, z, r),
+        hitDoor: (ref, d) => this.doors.damage(ref as DoorRef, d),
       },
       zcount,
       seed,
     );
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
-    this.scene.add(this.crowd.mesh);
+    this.scene.add(this.crowd.mesh, this.dust.points);
+    // A blow at its contact frame: a zombie in reach takes it (the head counts double).
+    this.player.onStrike = (item) => this.strikeZombie(item);
 
     // Survival layer: containers follow their chunks; the inventory screen pauses the game.
     this.containers = new Containers(seed);
@@ -267,6 +292,15 @@ export class WorldScene implements IScene {
     const save = await this.saves.load();
     const c = this.player.controller;
     if (save) {
+      // The world remembers the dead and their bodies; containers stay as they were.
+      this.twins = save.twins ?? [];
+      this.bodies = save.bodies ?? [];
+      this.containers.restore(save.containers);
+      for (const b of this.bodies) this.containers.addLoose(b, []);
+      if (save.clock !== undefined) this.clock.minutes = save.clock;
+      this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
+    }
+    if (save && !save.dead) {
       this.isNewGame = false;
       // Saves before the editor: the default survivor and class, no editor.
       this.look = sanitizeAppearance(save.character?.appearance);
@@ -276,11 +310,9 @@ export class WorldScene implements IScene {
       c.prevPosition.copy(c.position);
       c.yaw = save.player.yaw;
       this.player.battery = save.player.battery;
-      if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.survival.restore(save.stats);
       // Saves from before clothing existed: keep the starting clothes on.
       this.inventory.restore({ ...save.inventory, worn: save.inventory.worn ?? START_KIT.worn });
-      this.containers.restore(save.containers);
       this.syncBody();
     }
     const { x, z } = c.position;
@@ -341,7 +373,24 @@ export class WorldScene implements IScene {
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
-    for (const z of this.zombies.groans) sfx.groan(z.pos, z.state === 'chase');
+    for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
+    for (const dmg of this.zombies.attacks) this.hurt(dmg, 'Вас загрызли');
+    for (const z of this.zombies.killedTwins) this.lootTwin(z);
+    // Zombies are solid to the player (and the walls still win).
+    for (const z of this.zombies.list) {
+      if (z.state === 'dead' || Math.abs(z.pos.y - c.position.y) > 1.2) continue;
+      const dx = c.position.x - z.pos.x;
+      const dz = c.position.z - z.pos.z;
+      const d = Math.hypot(dx, dz);
+      const min = 0.3 + 0.32;
+      if (d < min && d > 1e-4) {
+        c.position.x += (dx / d) * (min - d);
+        c.position.z += (dz / d) * (min - d);
+        this.world.resolveCircle(c.position, 0.3);
+      }
+    }
+    this.twinsNear(c.position);
+    if (c.fallDamage > 0) this.hurt(c.fallDamage * 100, 'Разбились при падении', true);
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
     // Footsteps on whatever is underfoot; jump and landing.
@@ -373,6 +422,7 @@ export class WorldScene implements IScene {
     const a = this.survival.anxiety;
     this.dread.update(dt, a);
     this.ctx.fx.setDread(a * 0.8 + this.dread.pulse * a * 0.25);
+    if (this.survival.health <= 0 && !this.dead) this.die(this.survival.hunger <= 0 || this.survival.thirst <= 0 ? 'Истощение' : 'Раны');
     this.moodleT -= dt;
     if (this.moodleT <= 0) {
       this.moodleT = 0.25;
@@ -382,6 +432,7 @@ export class WorldScene implements IScene {
 
   render(alpha: number, frameDt: number): void {
     this.crowd.update(this.zombies.list, frameDt);
+    this.dust.update(frameDt);
     this.player.render(alpha, frameDt);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
@@ -457,6 +508,10 @@ export class WorldScene implements IScene {
       containers: this.containers.serialize(),
       clock: this.clock.minutes,
       character: { appearance: this.look, classId: this.classId },
+      dead: this.dead || undefined,
+      twins: this.twins,
+      bodies: this.bodies,
+      bornAt: this.bornAt,
     });
   }
 
@@ -501,6 +556,98 @@ export class WorldScene implements IScene {
     this.syncBody();
   }
 
+  /**
+   * The player's blow at its contact frame: the nearest zombie in reach along the view (no wall between)
+   * takes the weapon's damage — double on the head — with the class's strength. True if one was hit.
+   */
+  private strikeZombie(item: string): boolean {
+    const cfg = item === 'fists' ? FISTS : HELD_CFG[item as HeldId];
+    if (!cfg || cfg.damage[1] <= 0) return false;
+    const o = this.camera.getWorldPosition(_so);
+    const d = this.camera.getWorldDirection(_sd);
+    const res = this.zombies.hitTest(o, d, cfg.reach);
+    if (!res) return false;
+    const wall = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, res.dist);
+    if (wall >= 0 && wall < res.dist - 0.1) return false;
+    const strength = classMods(this.classId).strength;
+    const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
+    this.zombies.hit(res.zombie, dmg, o.x, o.z);
+    this.dust.burst(res.point, res.head ? 14 : 10);
+    return true;
+  }
+
+  /** The player takes `hp` of 100 (a bite, a fall); clothes soften bites. */
+  private hurt(hp: number, cause: string, ignoreArmor = false): void {
+    if (this.dead) return;
+    const armor = ignoreArmor ? 0 : Math.min(0.5, (wornStat(this.inventory.worn, 'bite') / 4) * 0.6);
+    this.survival.health = Math.max(0, this.survival.health - (hp * (1 - armor)) / 100);
+    this.survival.anxiety = Math.min(1, this.survival.anxiety + 0.08);
+    this.player.hurt(Math.min(1, hp / 15));
+    const c = this.player.controller.position;
+    sfx.zombie('hit', { x: c.x, y: c.y + 1.2, z: c.z }, 1.3);
+    this.deathCause = cause;
+    if (this.survival.health <= 0) this.die(cause);
+  }
+
+  /** Dead survivors near the player get up as zombies (once, until killed). */
+  private twinsNear(p: Vector3): void {
+    for (const t of this.twins) {
+      if (this.twinZombies.has(t.id) || Math.hypot(t.x - p.x, t.z - p.z) > 70) continue;
+      const z = this.zombies.spawnAt(t.x, t.z, 'idle', 'man', t.y);
+      z.twin = { id: t.id, x: t.x, y: t.y, z: t.z, colors: t.colors };
+      this.twinZombies.set(t.id, z);
+    }
+  }
+
+  /** A twin killed: their body stays where it fell, with everything they had. */
+  private lootTwin(z: Zombie): void {
+    const i = this.twins.findIndex((t) => t.id === z.twin!.id);
+    if (i < 0) return;
+    const t = this.twins[i];
+    this.twins.splice(i, 1);
+    this.twinZombies.delete(t.id);
+    const ref: ContainerRef = { id: t.id, type: 'bodyTwin', x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z) };
+    this.bodies.push(ref);
+    this.containers.addLoose(ref, t.items);
+    this.save();
+  }
+
+  /**
+   * Death (as in Project Zomboid): the survivor rises again as a zombie in their clothes with their things;
+   * the screen says how it ended; a new survivor starts. The world, its opened containers and the twins stay.
+   */
+  private die(cause: string): void {
+    if (this.dead) return;
+    this.dead = true;
+    const c = this.player.controller.position;
+    const inv = this.inventory;
+    const items: ItemStack[] = inv.stacks.map((s) => ({ ...s }));
+    if (inv.hand) items.push({ id: inv.hand, count: 1 });
+    for (const slot of WEAR_SLOTS) {
+      const id = inv.worn[slot];
+      if (id) items.push({ id, count: 1, dirt: inv.wornDirt[slot], ...(inv.wornTint[slot] !== undefined ? { tint: inv.wornTint[slot] } : {}) });
+    }
+    const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: c.x, y: c.y, z: c.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items });
+    this.save();
+    this.ctx.loop.pause('menu');
+    if (document.pointerLockElement) document.exitPointerLock();
+    const minutes = Math.max(0, this.clock.minutes - this.bornAt);
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const el = document.createElement('div');
+    el.className = 'death-screen';
+    el.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(6,6,8,.88);color:#d8d2c4;font:16px/1.4 system-ui,sans-serif;text-align:center';
+    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вот как вы умерли</div><div style="opacity:.85">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.7">Прожито: ${days} д ${hours} ч</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>`;
+    const btn = document.createElement('button');
+    btn.className = 'death-screen__new';
+    btn.textContent = 'Новый персонаж';
+    btn.style.cssText = 'margin-top:10px;padding:12px 26px;font:inherit;font-size:18px;background:#3a3630;color:#eee;border:1px solid #6a6458;border-radius:4px;cursor:pointer';
+    btn.addEventListener('click', () => location.reload());
+    el.append(btn);
+    (document.getElementById('ui') ?? document.body).append(el);
+  }
+
   /** Class modifiers into the systems that use them. */
   private applyClass(): void {
     const m = classMods(this.classId);
@@ -514,6 +661,7 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.crowd.dispose();
+    this.dust.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');

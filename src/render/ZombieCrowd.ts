@@ -10,7 +10,7 @@ import {
   Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { Zombie } from '../systems/zombies';
+import { type Zombie, ZombieSim } from '../systems/zombies';
 import { characterMaterial } from './look/materials';
 
 /**
@@ -154,7 +154,14 @@ export class ZombieCrowd {
     const a = this.anim.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const z = list[i];
-      m.compose(z.pos, _q.setFromAxisAngle(_up, z.yaw), _one);
+      // Kind (size, slimmer women), a shudder when hit, and the fall when dead (backwards, from the feet).
+      const s = ZombieSim.scale(z);
+      _pos.copy(z.pos);
+      if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
+      _q.setFromAxisAngle(_up, z.yaw);
+      if (z.fall > 0) _q.multiply(_qf.setFromAxisAngle(_xAxis, -(Math.PI / 2) * easeFall(z.fall)));
+      else if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
+      m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' ? 0.9 : 1), s, s));
       this.mesh.setMatrixAt(i, m);
       a[i * 3] = z.phase;
       a[i * 3 + 1] = z.gait;
@@ -162,9 +169,16 @@ export class ZombieCrowd {
       if (this.ids[i] !== z.id) {
         this.ids[i] = z.id;
         const l = z.look;
-        setColor(this.cloth, i, SHIRTS[l % SHIRTS.length], 0.75 + ((l >> 3) % 5) * 0.06);
-        setColor(this.pants, i, PANTS_C[(l >> 2) % PANTS_C.length], 0.8 + ((l >> 5) % 4) * 0.05);
-        setColor(this.skin, i, SKINS[(l >> 4) % SKINS.length], 1);
+        if (z.twin) {
+          // The dead survivor: their own clothes and skin.
+          setColor(this.cloth, i, z.twin.colors[0], 0.85);
+          setColor(this.pants, i, z.twin.colors[1], 0.85);
+          setColor(this.skin, i, z.twin.colors[2], 0.8);
+        } else {
+          setColor(this.cloth, i, SHIRTS[l % SHIRTS.length], 0.75 + ((l >> 3) % 5) * 0.06);
+          setColor(this.pants, i, PANTS_C[(l >> 2) % PANTS_C.length], 0.8 + ((l >> 5) % 4) * 0.05);
+          setColor(this.skin, i, SKINS[(l >> 4) % SKINS.length], 1);
+        }
       }
     }
     this.mesh.count = n;
@@ -187,7 +201,11 @@ export class ZombieCrowd {
 const _m = new Matrix4();
 const _q = new Quaternion();
 const _up = new Vector3(0, 1, 0);
-const _one = new Vector3(1, 1, 1);
+const _pos = new Vector3();
+const _sc = new Vector3();
+const _qf = new Quaternion();
+const _xAxis = new Vector3(1, 0, 0);
+const easeFall = (t: number) => t * t;
 
 function setColor(attr: InstancedBufferAttribute, i: number, hex: number, k: number): void {
   attr.setXYZ(i, (((hex >> 16) & 255) / 255) * k, (((hex >> 8) & 255) / 255) * k, ((hex & 255) / 255) * k);

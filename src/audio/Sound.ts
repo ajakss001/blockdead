@@ -283,6 +283,82 @@ class Sound {
     osc.stop(t + dur + 0.02);
   }
 
+  /**
+   * Zombie sounds, 3D, each in a few variants with the zombie's own pitch (men low, women higher, teens
+   * highest): moans, rasps, chattering teeth, shuffling steps, the alarm, blows on a door (heavy, heard
+   * far: a thud, wood groaning, a crack when it gives), being hit, falling, a lunge.
+   */
+  zombie(kind: 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing', pos: Pos, pitch = 1): void {
+    const far = kind === 'bang' || kind === 'crack';
+    const v = this.voice(pos, far ? 1.4 : 1.6, far ? 7 : kind === 'step' ? 1 : 2);
+    if (!v) return;
+    const [out, t] = v;
+    const r = Math.random();
+    const f = (hz: number) => hz * pitch * (0.93 + Math.random() * 0.14);
+    switch (kind) {
+      case 'moan': {
+        // Three shapes: a long fall, a rise and fall, a broken double moan.
+        const base = f(95);
+        if (r < 0.34) this.tone(out, t, { f: base * 1.2, f2: base * 0.75, dur: 1.3, peak: 0.2, type: 'sawtooth', lp: 480, vibrato: 6 });
+        else if (r < 0.67) {
+          this.tone(out, t, { f: base, f2: base * 1.3, dur: 0.6, peak: 0.18, type: 'sawtooth', lp: 520, vibrato: 5 });
+          this.tone(out, t + 0.55, { f: base * 1.3, f2: base * 0.8, dur: 0.8, peak: 0.16, type: 'sawtooth', lp: 480, vibrato: 7 });
+        } else {
+          for (let i = 0; i < 2; i++) this.tone(out, t + i * 0.45, { f: base * (1.1 - i * 0.15), f2: base * 0.85, dur: 0.4, peak: 0.17, type: 'sawtooth', lp: 450, vibrato: 9 });
+        }
+        this.noiseHit(out, t, { type: 'bandpass', f: f(650), q: 1.4, dur: 1.0, peak: 0.04, attack: 0.2 });
+        break;
+      }
+      case 'alarm':
+        this.tone(out, t, { f: f(90), f2: f(150), dur: 1.2, peak: 0.32, type: 'sawtooth', lp: 620, vibrato: 7 });
+        this.tone(out, t + 0.02, { f: f(140), f2: f(200), dur: 1.0, peak: 0.1, type: 'triangle', lp: 900, vibrato: 5 });
+        this.noiseHit(out, t, { type: 'bandpass', f: f(800), q: 1.2, dur: 1.1, peak: 0.07, attack: 0.15 });
+        break;
+      case 'rasp':
+        // Breath scraping a dry throat, in and out.
+        for (let i = 0; i < 2; i++) this.noiseHit(out, t + i * (0.5 + r * 0.2), { type: 'bandpass', f: f(i ? 1100 : 750), f2: f(i ? 700 : 1000), q: 3, dur: 0.45, peak: 0.12, attack: 0.12 });
+        this.tone(out, t, { f: f(70), dur: 0.9, peak: 0.06, type: 'sawtooth', lp: 300, vibrato: 11 });
+        break;
+      case 'teeth':
+        // Chattering: a quick run of hard little clicks.
+        for (let i = 0, n = 5 + Math.floor(r * 5); i < n; i++) this.noiseHit(out, t + i * (0.055 + Math.random() * 0.02), { type: 'bandpass', f: f(2400), q: 5, dur: 0.02, peak: 0.14 });
+        break;
+      case 'step':
+        // A dragged, shuffling foot.
+        this.noiseHit(out, t, { type: 'lowpass', f: 380 * (0.8 + r * 0.4), dur: 0.09, peak: 0.16 });
+        this.noiseHit(out, t + 0.05, { type: 'bandpass', f: 900, q: 0.8, dur: 0.22, peak: 0.035, attack: 0.05 });
+        break;
+      case 'bang':
+        // A body thrown against a door: a deep boom, the leaf groaning in its frame, a moan behind it.
+        this.noiseHit(out, t, { type: 'lowpass', f: 160, dur: 0.35, peak: 0.9 });
+        this.tone(out, t, { f: 55 + r * 15, dur: 0.3, peak: 0.6 });
+        this.noiseHit(out, t + 0.03, { type: 'bandpass', f: 420, q: 4, dur: 0.25, peak: 0.12 });
+        if (r < 0.5) this.tone(out, t + 0.15, { f: f(90), f2: f(70), dur: 0.9, peak: 0.12, type: 'sawtooth', lp: 400, vibrato: 6 });
+        break;
+      case 'crack':
+        // It gives: a crack of splitting wood, the boom, splinters.
+        this.noiseHit(out, t, { type: 'highpass', f: 1500, dur: 0.12, peak: 0.6 });
+        this.noiseHit(out, t + 0.02, { type: 'lowpass', f: 200, dur: 0.5, peak: 0.9 });
+        for (let i = 0; i < 6; i++) this.noiseHit(out, t + 0.08 + i * 0.05 * Math.random(), { type: 'bandpass', f: 2000 + Math.random() * 1500, q: 4, dur: 0.04, peak: 0.12 });
+        break;
+      case 'hit':
+        this.noiseHit(out, t, { type: 'lowpass', f: 320, dur: 0.12, peak: 0.6 });
+        this.tone(out, t, { f: 85, dur: 0.1, peak: 0.3 });
+        this.tone(out, t + 0.05, { f: f(130), f2: f(90), dur: 0.35, peak: 0.12, type: 'sawtooth', lp: 500 });
+        break;
+      case 'die':
+        // Dropping: a last breath, the body hitting the ground.
+        this.noiseHit(out, t, { type: 'bandpass', f: f(600), f2: f(300), q: 1.5, dur: 0.6, peak: 0.08, attack: 0.05 });
+        this.noiseHit(out, t + 0.45, { type: 'lowpass', f: 220, dur: 0.3, peak: 0.7 });
+        this.tone(out, t + 0.45, { f: 60, dur: 0.2, peak: 0.35 });
+        break;
+      case 'swing':
+        this.noiseHit(out, t, { type: 'bandpass', f: 500, f2: 900, q: 0.8, dur: 0.25, peak: 0.06, attack: 0.08 });
+        this.tone(out, t, { f: f(110), f2: f(160), dur: 0.45, peak: 0.16, type: 'sawtooth', lp: 600, vibrato: 8 });
+        break;
+    }
+  }
+
   /** A door that won't give: thumps against the boards, a rattle. */
   /** A zombie groans: a low, wavering moan through the nose; `alarm` — it has seen you (louder, rising). */
   groan(pos: Pos, alarm: boolean): void {
@@ -514,7 +590,7 @@ class Sound {
    * A voice: its own gain into the world bus (through a panner if positioned) or the UI bus. Returns
    * the node to play into and the start time, or null when muted / over the voice limit.
    */
-  private voice(pos: Pos | null, life: number): [Out, number] | null {
+  private voice(pos: Pos | null, life: number, ref = 1.5): [Out, number] | null {
     const ac = this.ac;
     if (!ac || ac.state !== 'running' || this.hardMute || !this.world || !this.ui) return null;
     if (pos && this.worldMute) return null;
@@ -526,7 +602,7 @@ class Sound {
       const p = ac.createPanner();
       p.panningModel = 'equalpower';
       p.distanceModel = 'inverse';
-      p.refDistance = 1.5;
+      p.refDistance = ref;
       p.maxDistance = 60;
       p.rolloffFactor = 1.1;
       if (p.positionX) {

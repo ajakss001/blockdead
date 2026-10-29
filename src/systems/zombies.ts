@@ -3,99 +3,136 @@ import { clamp } from '../core/math';
 import { mulberry32 } from '../core/random';
 
 /**
- * Zombies, stage 4.1: perception (hearing, sight), wandering, investigating, following the player.
- * No attacks yet. Pure simulation (no meshes): the crowd renderer draws `list`.
+ * Zombies: perception, wandering, searching, following, fighting, doors (pure simulation, no meshes:
+ * the crowd renderer draws `list`, the scene plays `sounds` and applies `attacks`).
  *
- * Hearing — the player's noise (steps, sprint, landing, blows, doors) is heard within `noise × HEAR_RANGE` m;
- * a zombie that hears goes to look where the sound came from (a few metres off), and groans, which draws
- * those near it. Sight — within the view cone and range (shorter at night, longer if the player's light
- * is on, shorter crouching), with a clear line (no walls between): awareness grows over time, faster the
- * closer; at 1 the zombie follows. Losing sight it walks to the last place it saw the player, looks around,
- * then wanders off. Zombies stay on the ground: a player up a high-rise draws them to its foot.
+ * Sight — only along a clear line (raycast through the colliders: no walls between the eyes and the
+ * player), in the view cone and range (shorter at night, longer if the player's light is on, shorter
+ * crouching); awareness grows over time, at 1 the zombie follows.
+ * Hearing — a noise is heard within `noise × 30` m, through walls too: the zombie goes to where it came
+ * from and searches there (turning, short steps), it does not follow.
+ * Following — slower than the player's run (teens a little quicker). Out of sight for ~5 s it goes to
+ * where it last saw the player, searches 10–15 s and loses interest.
+ * Closed doors in the way are beaten on until they give. Inside high-rises the world routes it along
+ * the stairs between storeys (waypoints), outside to the entrance.
  */
 
-export type ZombieState = 'idle' | 'wander' | 'investigate' | 'chase';
+export type ZombieKind = 'man' | 'woman' | 'teen';
+export type ZombieState = 'idle' | 'wander' | 'investigate' | 'search' | 'chase' | 'attack' | 'bang' | 'stagger' | 'dead';
+
+/** Body of a dead survivor walking: the clothes and what was carried (saved; looted when it falls). */
+export interface TwinData {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Colors on the body: top, trousers, skin. */
+  colors: [number, number, number];
+}
 
 export interface Zombie {
   id: number;
+  kind: ZombieKind;
   pos: Vector3;
-  /** Facing (rad, 0 = +Z… as Object3D.rotation.y). */
+  /** Facing (rad), 0 looks along +Z (Object3D.rotation.y). */
   yaw: number;
   speed: number;
   state: ZombieState;
+  /** Where it is going (the player, a noise, the last place it saw the player, a wander point). */
   target: Vector3;
-  /** 0..1 how sure it is the player is there (sight). */
+  /** The next step towards it (stairs, an entrance), from the world's routing. */
+  steer: Vector3;
   awareness: number;
-  /** Seconds left in the current state / pause. */
+  /** Seconds left in the current state. */
   timer: number;
-  /** Walk cycle phase (rad) and how much it walks (0 standing … 1 shambling). */
+  /** Seconds the player has been out of sight while following. */
+  unseen: number;
   phase: number;
   gait: number;
-  /** Looks: clothes and skin variant, walk style. */
   look: number;
-  /** Shamble speed of this one, m/s. */
+  /** Own pace factor (± 15%). */
   pace: number;
-  /** Next perception update (time-sliced far away). */
+  /** Voice pitch factor. */
+  pitch: number;
   nextThink: number;
   sees: boolean;
-  /** Time spent not getting closer to the target (unsticking). */
   stuck: number;
   lastDist: number;
-  /** Seconds until it may groan again. */
   groanCd: number;
+  hp: number;
+  /** 0..1 how far it has fallen (dead); hit shake (s left). */
+  fall: number;
+  shake: number;
+  /** Search: the point it looks around and where its eyes are now. */
+  lookYaw: number;
+  /** Attack windup / door blow cooldown, s. */
+  swing: number;
+  door: unknown;
+  twin?: TwinData;
 }
 
-/** What the zombies need from the world. */
 export interface ZombieWorld {
-  /** Ground height. */
-  groundY(x: number, z: number): number;
-  /** Pushes a circle out of the static colliders (in place). */
+  /** Standing height at (x, z) for something whose feet are at y (floors and stairs inside high-rises). */
+  groundY(x: number, z: number, y: number): number;
   resolveCircle(pos: Vector3, radius: number, height?: number): void;
-  /** Distance to the first wall along the ray, or −1. */
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): number;
-  /** The point is indoors (inside a building's interior). */
   indoors?(x: number, z: number): boolean;
+  /** The next point to walk to on the way from `from` to `to` (stairs, entrances); false = straight there. */
+  route?(from: Vector3, to: Vector3, out: Vector3): boolean;
+  /** A closed door within `r` of (x, y, z): a handle and the doorway's middle. */
+  doorNear?(x: number, y: number, z: number, r: number): { ref: unknown; x: number; z: number } | null;
+  /** Hit a door; true when it gives way. */
+  hitDoor?(ref: unknown, damage: number): boolean;
 }
 
-/** Player as the zombies perceive it. */
 export interface PlayerSense {
   pos: Vector3;
-  /** Eye height above pos. */
   eye: number;
-  /** 0..1 loudness this step. */
   noise: number;
   crouched: boolean;
-  /** Light on the player's side: 0 dark night … 1 day / flashlight. */
   lit: number;
-  /** Daylight 0..1. */
   daylight: number;
 }
+
+export type ZombieSound = 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing';
+
+const KIND: Record<ZombieKind, { chase: number; scale: number; pitch: number; weight: number }> = {
+  man: { chase: 1.4, scale: 1, pitch: 0.85, weight: 0.45 },
+  woman: { chase: 1.35, scale: 0.93, pitch: 1.2, weight: 0.4 },
+  teen: { chase: 2.1, scale: 0.86, pitch: 1.45, weight: 0.15 },
+};
 
 export const ZOMBIE_TUNING = {
   radius: 0.32,
   height: 1.75,
-  /** Hearing: noise 1 is heard this far (m). */
+  hp: 100,
   hearRange: 30,
-  /** Sight range by day / by night (m); a lit player is seen at the day range. */
   sightDay: 28,
   sightNight: 11,
-  /** Half view angle. */
   fov: (65 * Math.PI) / 180,
-  /** Awareness per second at point blank (falls off with distance). */
   notice: 2.2,
-  /** Awareness lost per second out of sight. */
   forget: 0.25,
-  /** Speeds, m/s: wandering, investigating, following (each zombie ± 15%). */
   wander: 0.55,
   investigate: 0.9,
-  chase: 1.35,
-  /** Groan: how far other zombies hear it (m). */
+  /** Out of sight this long while following → off to the last place it saw the player. */
+  lose: 5,
+  /** Searching after losing the player, s. */
+  searchMin: 10,
+  searchMax: 15,
   groanRange: 9,
-  /** Spawn / despawn rings around the player (m). */
+  /** Attack: reach, windup, cooldown, damage to the player (HP of 100). */
+  reach: 1.15,
+  windup: 0.55,
+  cooldown: 1.3,
+  damage: [8, 14] as const,
+  /** Door blows: every so often, this much. */
+  doorEvery: 1.4,
+  doorDamage: [8, 14] as const,
   spawnMin: 34,
   spawnMax: 70,
   despawn: 95,
-  /** Perception rate far away (Hz); within `nearThink` m every step. */
+  /** Bodies lie this long before they go. */
+  corpse: 90,
   farHz: 4,
   nearThink: 20,
 };
@@ -103,17 +140,30 @@ export const ZOMBIE_TUNING = {
 const T = ZOMBIE_TUNING;
 const _d = new Vector3();
 const _p = new Vector3();
+const _hit = new Vector3();
+
+export interface HitResult {
+  zombie: Zombie;
+  head: boolean;
+  dist: number;
+  point: Vector3;
+}
 
 export class ZombieSim {
   readonly list: Zombie[] = [];
-  /** Events of this step for sound: zombies that groaned. */
+  /** This step: sounds to play (who, what) and blows that reached the player (HP). */
+  readonly sounds: { z: Zombie; kind: ZombieSound }[] = [];
+  readonly attacks: number[] = [];
+  /** Twins killed this step (the scene drops their loot). */
+  readonly killedTwins: Zombie[] = [];
+  /** Kept for back-compat: groaning zombies of this step. */
   readonly groans: Zombie[] = [];
-  /** How many want to be around the player (quality preset; 0 = none). */
   target: number;
   private time = 0;
   private nextId = 1;
   private readonly rnd: () => number;
   private spawnTimer = 0;
+  private readonly heardAt = new Vector3();
 
   constructor(
     private readonly world: ZombieWorld,
@@ -124,73 +174,100 @@ export class ZombieSim {
     this.rnd = mulberry32(seed ^ 0x2b1d);
   }
 
-  /** Zombies following the player / seeing it now. */
   get chasing(): number {
-    return this.list.reduce((n, z) => n + (z.state === 'chase' ? 1 : 0), 0);
+    return this.list.reduce((n, z) => n + (z.state === 'chase' || z.state === 'attack' ? 1 : 0), 0);
   }
 
   get seeing(): number {
     return this.list.reduce((n, z) => n + (z.sees ? 1 : 0), 0);
   }
 
-  /** 0..1: how threatening it is right now (the nearest zombie that follows the player). */
   threat(player: Vector3): number {
     let t = 0;
     for (const z of this.list) {
-      if (z.state !== 'chase' && !z.sees) continue;
+      if (z.state === 'dead' || (z.state !== 'chase' && z.state !== 'attack' && !z.sees)) continue;
       const d = Math.hypot(z.pos.x - player.x, z.pos.z - player.z);
-      t = Math.max(t, clamp(1 - (d - 3) / 25, 0, 1) * (z.state === 'chase' ? 1 : 0.5));
+      t = Math.max(t, clamp(1 - (d - 3) / 25, 0, 1) * (z.state === 'chase' || z.state === 'attack' ? 1 : 0.5));
     }
     return t;
   }
 
-  /** Place one zombie (tests, debug). */
-  spawnAt(x: number, z: number, state: ZombieState = 'idle'): Zombie {
+  spawnAt(x: number, z: number, state: ZombieState = 'idle', kind?: ZombieKind, y = 0): Zombie {
     const r = this.rnd;
+    const k = kind ?? (r() < KIND.man.weight ? 'man' : r() < 0.73 ? 'woman' : 'teen');
     const zb: Zombie = {
       id: this.nextId++,
-      pos: new Vector3(x, this.world.groundY(x, z), z),
+      kind: k,
+      pos: new Vector3(x, this.world.groundY(x, z, y), z),
       yaw: r() * Math.PI * 2,
       speed: 0,
       state,
-      target: new Vector3(x, 0, z),
+      target: new Vector3(x, y, z),
+      steer: new Vector3(x, y, z),
       awareness: 0,
       timer: 1 + r() * 4,
+      unseen: 0,
       phase: r() * Math.PI * 2,
       gait: 0,
       look: Math.floor(r() * 1024),
       pace: 0.85 + r() * 0.3,
+      pitch: KIND[k].pitch * (0.9 + r() * 0.2),
       nextThink: 0,
       sees: false,
       stuck: 0,
       lastDist: Infinity,
-      groanCd: 2 + r() * 6,
+      groanCd: 2 + r() * 8,
+      hp: T.hp,
+      fall: 0,
+      shake: 0,
+      lookYaw: 0,
+      swing: 0,
+      door: null,
     };
     this.list.push(zb);
     return zb;
   }
 
+  /** Body scale of a zombie's kind (renderer). */
+  static scale(z: Zombie): number {
+    return KIND[z.kind].scale;
+  }
+
   update(dt: number, p: PlayerSense, viewDir?: Vector3): void {
     this.time += dt;
+    this.sounds.length = 0;
+    this.attacks.length = 0;
+    this.killedTwins.length = 0;
     this.groans.length = 0;
     this.populate(dt, p, viewDir);
-    for (const z of this.list) {
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const z = this.list[i];
+      if (z.state === 'dead') {
+        z.fall = Math.min(1, z.fall + dt * 2.2);
+        z.timer -= dt;
+        if (z.timer <= 0) this.list.splice(i, 1);
+        continue;
+      }
+      if (z.shake > 0) z.shake -= dt;
       const dist = Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z);
       if (this.time >= z.nextThink) {
         const step = dist < T.nearThink ? dt : 1 / T.farHz;
         this.think(z, p, dist, step);
         z.nextThink = this.time + step - 1e-6;
       }
-      this.move(z, dt);
+      this.act(z, p, dist, dt);
+      this.move(z, dt, dist);
       if (z.groanCd > 0) z.groanCd -= dt;
+      this.ambient(z, dist);
     }
     this.separate();
   }
 
-  /** Perception and state changes (`dt` = time since this zombie last thought). */
+  // ── Perception and decisions ────────────────────────────────────────────────────────────────────
+
   private think(z: Zombie, p: PlayerSense, dist: number, dt: number): void {
     const r = this.rnd;
-    // Sight.
+    if (z.state === 'stagger' || z.state === 'attack') return;
     z.sees = this.canSee(z, p, dist);
     if (z.sees) {
       const range = this.sightRange(p);
@@ -198,42 +275,65 @@ export class ZombieSim {
     } else z.awareness = Math.max(0, z.awareness - T.forget * dt);
 
     if (z.sees && z.awareness >= 1) {
-      if (z.state !== 'chase') this.groan(z, true);
-      z.state = 'chase';
+      if (z.state !== 'chase' && z.state !== 'bang') this.groan(z, true);
+      if (z.state !== 'bang') z.state = 'chase';
       z.target.copy(p.pos);
-      z.timer = 6;
-    } else if (z.state === 'chase') {
-      // Lost it: on to where it was last seen, then look around.
-      z.timer -= dt;
-      if (z.timer <= 0 || this.reached(z, 0.8)) this.enter(z, 'investigate', 4 + r() * 4);
+      z.unseen = 0;
+    } else if (z.state === 'chase' || z.state === 'bang') {
+      z.unseen += dt;
+      // Lost: to the last place it saw the player (target stays there), then search.
+      if (z.unseen >= T.lose || (z.state === 'chase' && this.reached(z, 0.9))) this.searchAt(z, z.target);
     }
 
-    // Hearing (not while following: it already knows where to go).
-    if (z.state !== 'chase' && p.noise > 0.02) {
+    // Hearing: go and look, never follow (a wall between is fine — sound goes through).
+    if (z.state !== 'chase' && z.state !== 'bang' && p.noise > 0.02) {
       const heard = p.noise * T.hearRange;
       if (dist < heard) {
         const err = (dist / heard) * 4;
-        z.target.set(p.pos.x + (r() - 0.5) * err, 0, p.pos.z + (r() - 0.5) * err);
-        if (z.state !== 'investigate') this.groan(z, false);
-        this.enter(z, 'investigate', 8 + r() * 6);
+        this.heardAt.set(p.pos.x + (r() - 0.5) * err, p.pos.y, p.pos.z + (r() - 0.5) * err);
+        if (z.state !== 'investigate' || this.heardAt.distanceTo(z.target) > 3) {
+          z.target.copy(this.heardAt);
+          if (z.state !== 'investigate' && z.state !== 'search') this.groan(z, false);
+          this.enter(z, 'investigate', 20);
+        }
         z.awareness = Math.max(z.awareness, 0.35);
       }
     }
 
-    // Idle ↔ wander, investigate → idle.
-    if (z.state === 'idle' || z.state === 'wander' || z.state === 'investigate') {
-      z.timer -= dt;
-      if (z.state === 'investigate' && this.reached(z, 1.2)) z.timer = Math.min(z.timer, 2.5);
-      if (z.timer <= 0) {
-        if (z.state === 'wander' || z.state === 'investigate') this.enter(z, 'idle', 2 + r() * 6);
-        else {
+    z.timer -= dt;
+    switch (z.state) {
+      case 'investigate':
+        if (this.reached(z, 1.3) || z.timer <= 0) this.searchAt(z, z.target, 6 + r() * 4);
+        break;
+      case 'search':
+        if (z.timer <= 0) this.enter(z, 'idle', 3 + r() * 6);
+        else if (this.reached(z, 0.5) && r() < dt * 0.7) {
+          // A few steps somewhere near the spot, then look around again.
+          const a = r() * Math.PI * 2;
+          z.steer.set(z.target.x + Math.cos(a) * 2.5, z.target.y, z.target.z + Math.sin(a) * 2.5);
+        }
+        break;
+      case 'idle':
+        if (z.timer <= 0) {
           const a = r() * Math.PI * 2;
           const d = 4 + r() * 10;
-          z.target.set(z.pos.x + Math.cos(a) * d, 0, z.pos.z + Math.sin(a) * d);
+          z.target.set(z.pos.x + Math.cos(a) * d, z.pos.y, z.pos.z + Math.sin(a) * d);
           this.enter(z, 'wander', 6 + r() * 8);
         }
-      }
+        break;
+      case 'wander':
+        if (z.timer <= 0 || this.reached(z, 0.5)) this.enter(z, 'idle', 2 + r() * 6);
+        break;
     }
+  }
+
+  /** Lost the player / arrived at a noise: look around this spot for a while. */
+  private searchAt(z: Zombie, at: Vector3, seconds = T.searchMin + this.rnd() * (T.searchMax - T.searchMin)): void {
+    z.target.copy(at);
+    z.steer.copy(at);
+    z.lookYaw = z.yaw;
+    this.enter(z, 'search', seconds);
+    z.awareness = Math.min(z.awareness, 0.6);
   }
 
   private enter(z: Zombie, s: ZombieState, timer: number): void {
@@ -241,10 +341,11 @@ export class ZombieSim {
     z.timer = timer;
     z.stuck = 0;
     z.lastDist = Infinity;
+    z.door = null;
   }
 
   private reached(z: Zombie, r: number): boolean {
-    return Math.hypot(z.target.x - z.pos.x, z.target.z - z.pos.z) < r;
+    return Math.hypot(z.target.x - z.pos.x, z.target.z - z.pos.z) < r && Math.abs(z.target.y - z.pos.y) < 1.6;
   }
 
   sightRange(p: PlayerSense): number {
@@ -252,90 +353,211 @@ export class ZombieSim {
     return base * (p.crouched ? 0.6 : 1);
   }
 
-  /** In the view cone, in range, nothing solid between the eyes and the player. */
+  /** In the view cone, in range, and a clear line from the eyes to the player's eyes. */
   canSee(z: Zombie, p: PlayerSense, dist: number): boolean {
-    const range = this.sightRange(p);
-    if (dist > range) return false;
+    if (dist > this.sightRange(p) || Math.abs(p.pos.y - z.pos.y) > 6) return false;
     const dx = p.pos.x - z.pos.x;
     const dz = p.pos.z - z.pos.z;
-    // Facing: yaw 0 looks along +Z.
-    const fx = Math.sin(z.yaw);
-    const fz = Math.cos(z.yaw);
-    const cos = (dx * fx + dz * fz) / Math.max(dist, 1e-3);
-    // Right next to it, it notices whatever the facing.
-    if (dist > 2 && cos < Math.cos(T.fov)) return false;
-    const ex = z.pos.x;
+    const cos = (dx * Math.sin(z.yaw) + dz * Math.cos(z.yaw)) / Math.max(dist, 1e-3);
+    if (dist > 1.5 && cos < Math.cos(T.fov)) return false;
     const ey = z.pos.y + 1.6;
-    const ez = z.pos.z;
-    _d.set(p.pos.x - ex, p.pos.y + p.eye - ey, p.pos.z - ez);
+    _d.set(p.pos.x - z.pos.x, p.pos.y + p.eye - ey, p.pos.z - z.pos.z);
     const len = _d.length();
     _d.divideScalar(len);
-    const hit = this.world.rayHit(ex, ey, ez, _d.x, _d.y, _d.z, len);
+    const hit = this.world.rayHit(z.pos.x, ey, z.pos.z, _d.x, _d.y, _d.z, len);
     return hit < 0 || hit > len - 0.3;
   }
 
-  /** A groan: other zombies near hear it and come to look (the herd draws itself in). */
   private groan(z: Zombie, alarm: boolean): void {
-    // The sound has a cooldown; the alarm itself always spreads.
     if (z.groanCd <= 0) {
       z.groanCd = alarm ? 4 : 7;
       this.groans.push(z);
+      this.sounds.push({ z, kind: alarm ? 'alarm' : 'moan' });
     }
     if (!alarm) return;
     for (const o of this.list) {
-      if (o === z || o.state === 'chase') continue;
+      if (o === z || o.state === 'chase' || o.state === 'dead' || o.state === 'attack') continue;
       if (Math.hypot(o.pos.x - z.pos.x, o.pos.z - z.pos.z) > T.groanRange) continue;
       o.target.copy(z.target);
-      this.enter(o, 'investigate', 8 + this.rnd() * 6);
+      this.enter(o, 'investigate', 20);
     }
   }
 
-  private move(z: Zombie, dt: number): void {
-    const want = z.state === 'chase' ? T.chase : z.state === 'investigate' ? T.investigate : z.state === 'wander' ? T.wander : 0;
-    const dx = z.target.x - z.pos.x;
-    const dz = z.target.z - z.pos.z;
+  /** Idle sounds: moans now and then, rasps while following, teeth when close, shuffling steps. */
+  private ambient(z: Zombie, dist: number): void {
+    if (dist > 22) return;
+    const r = this.rnd;
+    if (z.groanCd <= 0 && r() < 0.02) {
+      z.groanCd = 5 + r() * 9;
+      this.sounds.push({ z, kind: z.state === 'chase' ? 'rasp' : dist < 3.5 ? 'teeth' : 'moan' });
+    }
+  }
+
+  // ── Actions: attacking, doors, getting hit ──────────────────────────────────────────────────────
+
+  private act(z: Zombie, p: PlayerSense, dist: number, dt: number): void {
+    if (z.swing > 0) z.swing -= dt;
+    if (z.state === 'stagger') {
+      z.timer -= dt;
+      if (z.timer <= 0) z.state = z.awareness >= 1 ? 'chase' : 'investigate';
+      return;
+    }
+    // Attack: close, sees the player, on the same level.
+    if (z.state === 'chase' && dist < T.reach && Math.abs(p.pos.y - z.pos.y) < 1 && z.swing <= 0) {
+      z.state = 'attack';
+      z.timer = T.windup;
+      this.sounds.push({ z, kind: 'swing' });
+    }
+    if (z.state === 'attack') {
+      z.timer -= dt;
+      if (z.timer <= 0) {
+        if (dist < T.reach + 0.2 && Math.abs(p.pos.y - z.pos.y) < 1) this.attacks.push(T.damage[0] + this.rnd() * (T.damage[1] - T.damage[0]));
+        z.swing = T.cooldown;
+        z.state = 'chase';
+      }
+      return;
+    }
+    // A closed door in the way (stuck in front of it while going somewhere): beat on it.
+    if ((z.state === 'chase' || z.state === 'investigate') && z.stuck > 0.8 && this.world.doorNear) {
+      const d = this.world.doorNear(z.pos.x, z.pos.y, z.pos.z, 1.4);
+      if (d) {
+        z.state = 'bang';
+        z.door = d.ref;
+        z.yaw = Math.atan2(d.x - z.pos.x, d.z - z.pos.z);
+        z.swing = 0.3;
+      }
+    }
+    if (z.state === 'bang') {
+      if (z.swing <= 0) {
+        z.swing = T.doorEvery * (0.85 + this.rnd() * 0.3);
+        const broke = this.world.hitDoor?.(z.door, T.doorDamage[0] + this.rnd() * (T.doorDamage[1] - T.doorDamage[0])) ?? true;
+        this.sounds.push({ z, kind: broke ? 'crack' : 'bang' });
+        if (broke) {
+          z.state = z.awareness >= 1 ? 'chase' : 'investigate';
+          z.door = null;
+          z.stuck = 0;
+        }
+      }
+    }
+  }
+
+  /** A blow from the player. Returns true if it killed. */
+  hit(z: Zombie, damage: number, fromX: number, fromZ: number): boolean {
+    if (z.state === 'dead') return false;
+    z.hp -= damage;
+    z.shake = 0.25;
+    // Knocked back a little, away from the blow.
+    const dx = z.pos.x - fromX;
+    const dz = z.pos.z - fromZ;
+    const d = Math.hypot(dx, dz) || 1;
+    z.pos.x += (dx / d) * 0.25;
+    z.pos.z += (dz / d) * 0.25;
+    this.world.resolveCircle(z.pos, T.radius, T.height);
+    z.awareness = 1.2;
+    z.target.set(fromX, z.pos.y, fromZ);
+    if (z.hp <= 0) {
+      z.state = 'dead';
+      z.fall = 0;
+      z.timer = T.corpse;
+      z.speed = 0;
+      // Falls away from the blow.
+      z.yaw = Math.atan2(-dx, -dz);
+      this.sounds.push({ z, kind: 'die' });
+      if (z.twin) this.killedTwins.push(z);
+      return true;
+    }
+    z.state = 'stagger';
+    z.timer = 0.4;
+    z.speed = 0;
+    this.sounds.push({ z, kind: 'hit' });
+    return false;
+  }
+
+  /**
+   * What a swing from `o` along `dir` meets within `reach`: the nearest living zombie whose head
+   * (a sphere) or body (an upright cylinder) the ray passes, a little forgiving (`slack`).
+   */
+  hitTest(o: Vector3, dir: Vector3, reach: number, slack = 0.12): HitResult | null {
+    let best: HitResult | null = null;
+    for (const z of this.list) {
+      if (z.state === 'dead') continue;
+      const s = ZombieSim.scale(z);
+      // Head: sphere at the top.
+      const hc = _p.set(z.pos.x, z.pos.y + 1.63 * s, z.pos.z);
+      const th = raySphere(o, dir, hc, 0.13 * s + slack * 0.5);
+      if (th >= 0 && th <= reach && (!best || th < best.dist)) {
+        best = { zombie: z, head: true, dist: th, point: o.clone().addScaledVector(dir, th) };
+        continue;
+      }
+      // Body: vertical cylinder from the feet to the neck.
+      const tb = rayCylinder(o, dir, z.pos, T.radius + slack, z.pos.y, z.pos.y + 1.5 * s);
+      if (tb >= 0 && tb <= reach && (!best || tb < best.dist)) best = { zombie: z, head: false, dist: tb, point: o.clone().addScaledVector(dir, tb) };
+    }
+    return best;
+  }
+
+  // ── Movement ────────────────────────────────────────────────────────────────────────────────────
+
+  private move(z: Zombie, dt: number, dist: number): void {
+    const k = KIND[z.kind];
+    let want = 0;
+    if (z.state === 'chase') want = k.chase;
+    else if (z.state === 'investigate') want = T.investigate;
+    else if (z.state === 'wander') want = T.wander;
+    else if (z.state === 'search') want = T.wander * 0.8;
+    // Steering point: the world routes along stairs / to entrances; otherwise straight at the target.
+    if (z.state !== 'search' || this.reached(z, 0.5)) {
+      if (!(this.world.route?.(z.pos, z.target, z.steer) ?? false) && z.state !== 'search') z.steer.copy(z.target);
+    }
+    const dx = z.steer.x - z.pos.x;
+    const dz = z.steer.z - z.pos.z;
     const d = Math.hypot(dx, dz);
-    const go = want > 0 && d > (z.state === 'chase' ? 0.9 : 0.4);
+    const go = want > 0 && d > (z.state === 'chase' ? 0.8 : 0.4) && !(z.state === 'chase' && dist < 0.9);
     z.speed += ((go ? want * z.pace : 0) - z.speed) * Math.min(1, dt * 3);
     if (go) {
-      // Turn towards the target (shuffling, not snapping).
       const yaw = Math.atan2(dx, dz);
       let dy = yaw - z.yaw;
       dy -= Math.PI * 2 * Math.round(dy / (Math.PI * 2));
       z.yaw += clamp(dy, -2.5 * dt, 2.5 * dt);
-      // Unstick: not getting closer for a while → a side step somewhere else.
       if (d > z.lastDist - 0.02 * dt) z.stuck += dt;
       else z.stuck = Math.max(0, z.stuck - dt);
       z.lastDist = d;
-      if (z.stuck > 2.5 && z.state !== 'chase') {
+      if (z.stuck > 2.5 && (z.state === 'wander' || z.state === 'search')) {
         const a = z.yaw + (this.rnd() < 0.5 ? 1 : -1) * (1 + this.rnd());
-        z.target.set(z.pos.x + Math.sin(a) * 5, 0, z.pos.z + Math.cos(a) * 5);
+        z.target.set(z.pos.x + Math.sin(a) * 5, z.pos.y, z.pos.z + Math.cos(a) * 5);
         z.stuck = 0;
         z.lastDist = Infinity;
       }
+    } else if (z.state === 'search') {
+      // Looking around: the head and body turn one way, then the other.
+      z.yaw = z.lookYaw + Math.sin(this.time * 0.9 + z.look) * 1.4;
     }
     if (z.speed > 0.01) {
-      const fx = Math.sin(z.yaw);
-      const fz = Math.cos(z.yaw);
       _p.copy(z.pos);
-      z.pos.x += fx * z.speed * dt;
-      z.pos.z += fz * z.speed * dt;
+      z.pos.x += Math.sin(z.yaw) * z.speed * dt;
+      z.pos.z += Math.cos(z.yaw) * z.speed * dt;
       this.world.resolveCircle(z.pos, T.radius, T.height);
-      // Walk cycle: one stride per ~1.1 m.
+      const before = z.phase;
       z.phase += (_p.distanceTo(z.pos) / 1.1) * Math.PI * 2;
+      // A shuffle at every footfall (two per stride).
+      if (dist < 15 && Math.floor(before / Math.PI) !== Math.floor(z.phase / Math.PI)) this.sounds.push({ z, kind: 'step' });
     }
-    z.pos.y = this.world.groundY(z.pos.x, z.pos.z);
+    // Floors and stairs: the new height may be up or down at most a step from the old one.
+    const gy = this.world.groundY(z.pos.x, z.pos.z, z.pos.y);
+    z.pos.y = gy > z.pos.y + 0.6 ? z.pos.y : gy;
     z.gait += (clamp(z.speed / 0.8, 0, 1) - z.gait) * Math.min(1, dt * 4);
   }
 
-  /** Keep them from walking into each other (few dozen: pairwise is fine). */
   private separate(): void {
     const l = this.list;
     const min = T.radius * 2;
     for (let i = 0; i < l.length; i++) {
+      if (l[i].state === 'dead') continue;
       for (let j = i + 1; j < l.length; j++) {
+        if (l[j].state === 'dead') continue;
         const a = l[i].pos;
         const b = l[j].pos;
+        if (Math.abs(a.y - b.y) > 1.5) continue;
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const d2 = dx * dx + dz * dz;
@@ -346,18 +568,22 @@ export class ZombieSim {
         a.z -= (dz / d) * push;
         b.x += (dx / d) * push;
         b.z += (dz / d) * push;
+        // Pushed into a wall? The walls win.
+        this.world.resolveCircle(a, T.radius, T.height);
+        this.world.resolveCircle(b, T.radius, T.height);
       }
     }
   }
 
-  /** Keep about `target` around the player: spawn out of sight in a ring, drop the ones left far behind. */
   private populate(dt: number, p: PlayerSense, viewDir?: Vector3): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const z = this.list[i];
+      if (z.twin) continue;
       if (Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z) > T.despawn && z.state !== 'chase') this.list.splice(i, 1);
     }
     this.spawnTimer -= dt;
-    if (this.list.length >= this.target || this.spawnTimer > 0) return;
+    const alive = this.list.reduce((n, z) => n + (z.state !== 'dead' && !z.twin ? 1 : 0), 0);
+    if (alive >= this.target || this.spawnTimer > 0) return;
     this.spawnTimer = 0.25;
     const r = this.rnd;
     for (let tries = 0; tries < 6; tries++) {
@@ -365,17 +591,51 @@ export class ZombieSim {
       const d = T.spawnMin + r() * (T.spawnMax - T.spawnMin);
       const x = p.pos.x + Math.cos(a) * d;
       const z = p.pos.z + Math.sin(a) * d;
-      // Not in front of the player within the fog (no popping in), not inside walls or buildings.
       if (viewDir && d < T.spawnMax * 0.8) {
         const c = (Math.cos(a) * viewDir.x + Math.sin(a) * viewDir.z) / Math.max(1e-3, Math.hypot(viewDir.x, viewDir.z));
         if (c > 0.3) continue;
       }
       if (this.world.indoors?.(x, z)) continue;
-      _p.set(x, this.world.groundY(x, z), z);
-      this.world.resolveCircle(_p, T.radius, T.height);
-      if (Math.hypot(_p.x - x, _p.z - z) > 0.01) continue;
+      _hit.set(x, this.world.groundY(x, z, 0), z);
+      this.world.resolveCircle(_hit, T.radius, T.height);
+      if (Math.hypot(_hit.x - x, _hit.z - z) > 0.01) continue;
       this.spawnAt(x, z, r() < 0.4 ? 'wander' : 'idle');
       return;
     }
   }
+}
+
+/** Damage of one blow: the weapon's range (min–max, `roll` 0..1), the class's strength, double on the head. */
+export function blowDamage(range: readonly [number, number], strength: number, head: boolean, roll: number): number {
+  return (range[0] + roll * (range[1] - range[0])) * strength * (head ? 2 : 1);
+}
+
+/** Distance along a ray (unit dir) to a sphere, or −1. */
+function raySphere(o: Vector3, d: Vector3, c: Vector3, r: number): number {
+  const ox = o.x - c.x;
+  const oy = o.y - c.y;
+  const oz = o.z - c.z;
+  const b = ox * d.x + oy * d.y + oz * d.z;
+  const cc = ox * ox + oy * oy + oz * oz - r * r;
+  const disc = b * b - cc;
+  if (disc < 0) return -1;
+  const t = -b - Math.sqrt(disc);
+  return t >= 0 ? t : cc < 0 ? 0 : -1;
+}
+
+/** Distance along a ray to an upright cylinder (axis through `c`, from y0 to y1), or −1. */
+function rayCylinder(o: Vector3, d: Vector3, c: Vector3, r: number, y0: number, y1: number): number {
+  const ox = o.x - c.x;
+  const oz = o.z - c.z;
+  const a = d.x * d.x + d.z * d.z;
+  if (a < 1e-9) return -1;
+  const b = ox * d.x + oz * d.z;
+  const cc = ox * ox + oz * oz - r * r;
+  const disc = b * b - a * cc;
+  if (disc < 0) return -1;
+  let t = (-b - Math.sqrt(disc)) / a;
+  if (t < 0) t = cc < 0 ? 0 : -1;
+  if (t < 0) return -1;
+  const y = o.y + d.y * t;
+  return y >= y0 && y <= y1 ? t : -1;
 }

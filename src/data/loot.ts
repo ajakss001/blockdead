@@ -5,6 +5,8 @@ import { type ItemId, ITEMS, type ItemStack } from './items';
 
 export type ContainerType =
   | 'fridge'
+  // A dead survivor of yours, killed again: what they wore and carried (filled by the scene, never rolled).
+  | 'bodyTwin'
   | 'counter'
   | 'wardrobe'
   | 'tvstand'
@@ -99,6 +101,7 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   bodyMilitary: { name: 'Погибший военный', empty: 0.2, rolls: [1, 3], items: [['militaryHelmet', 1], ['militaryJacket', 0.8], ['combatBoots', 0.6], ['bandage', 2], ['water', 2], ['crackers', 2], ['batteries', 1.5], ['rope', 1], ['knife', 0.6], ['gorkaJacket', 0.4], ['gorkaPants', 0.4], ['tacticalRig', 0.5], ['armyBackpack', 0.4]] },
   bodyPolice: { name: 'Погибший полицейский', empty: 0.25, rolls: [1, 3], items: [['policeCap', 1], ['swatHelmet', 0.4], ['swatVest', 0.3], ['batteries', 2], ['bandage', 1.5], ['tape', 1], ['bat', 0.6], ['water', 1], ['policeVest', 0.5], ['swatShirt', 0.3], ['tacticalGloves', 0.4]] },
   bodyMedic: { name: 'Погибший медик', empty: 0.2, rolls: [1, 3], items: [['bandage', 3], ['painkillers', 2.5], ['antibiotics', 1.5], ['scrubsTop', 0.6], ['soap', 1], ['water', 1], ['medGloves', 1], ['medBag', 0.5]] },
+  bodyTwin: { name: 'Ваш прошлый выживший', empty: 1, rolls: [0, 0], items: [] },
   bodyFire: { name: 'Погибший пожарный', empty: 0.25, rolls: [1, 3], items: [['fireHelmet', 1], ['fireCoat', 0.5], ['axe', 0.4], ['rope', 1.5], ['water', 1.5], ['bandage', 1], ['fireGloves', 0.6]] },
   reception: { name: 'Стойка охраны', empty: 0.2, rolls: [1, 3], items: [['batteries', 4], ['bat', 1], ['bandage', 2], ['painkillers', 2], ['soda', 2], ['crowbar', 0.6], ['axe', 0.5], ['hardhat', 0.5], ['cap', 1]] },
 };

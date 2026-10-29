@@ -1,5 +1,10 @@
 import { Vector3 } from 'three';
-import { type PlayerSense, type ZombieWorld, ZombieSim } from '../systems/zombies';
+import { blowDamage, type PlayerSense, type ZombieWorld, ZombieSim } from '../systems/zombies';
+import { CollisionWorld } from '../world/CollisionWorld';
+import { InputManager } from '../input/InputManager';
+import { EventBus } from '../core/EventBus';
+import type { GameEvents } from '../core/events';
+import { PlayerController } from '../player/PlayerController';
 
 /**
  * npm run test:zombies — perception and behaviour on a flat test ground with one wall (x 4..5, z −20..20).
@@ -155,6 +160,99 @@ export function main(): number {
     check(front === 0, 'no spawns in view nearby');
     run(sim, player(0, 400), 1);
     check(sim.list.length <= 20 && sim.list.every((z) => Math.hypot(z.pos.x, z.pos.z - 400) <= 95 || z.state === 'chase'), 'far ones dropped');
+  }
+  // 11. Behind a wall, noisy → comes to look, never follows (no sight through the wall).
+  {
+    const sim = new ZombieSim(world, 0);
+    const z = sim.spawnAt(0, 0);
+    z.yaw = Math.PI / 2;
+    run(sim, player(10, 0, { noise: 0.6 }), 6);
+    check(z.state !== 'chase' && z.state !== 'attack', 'noise behind a wall → searches, does not follow');
+  }
+  // 12. Out of sight: after ~5 s off to the last place, searches 10–15 s, then gives up.
+  {
+    const sim = new ZombieSim(world, 0);
+    const z = sim.spawnAt(0, 0, 'idle', 'man');
+    z.yaw = 0;
+    run(sim, player(0, 8), 2);
+    const chased = z.state === 'chase';
+    // The player is suddenly far behind the wall, in the dark (never seen again).
+    let tSearch = -1;
+    let tIdle = -1;
+    for (let i = 0; i < 60 * 40; i++) {
+      sim.update(1 / 60, player(30, 30, { daylight: 0 }));
+      if (tSearch < 0 && z.state === 'search') tSearch = i / 60;
+      if (tSearch >= 0 && tIdle < 0 && (z.state === 'idle' || z.state === 'wander')) tIdle = i / 60;
+    }
+    check(chased && tSearch >= 0 && tSearch <= 6.5, `out of sight → searches after ${tSearch.toFixed(1)} s (≤ ~5 s + walk)`);
+    check(tIdle >= 0 && tIdle - tSearch >= 9.5 && tIdle - tSearch <= 15.5, `searches ${(tIdle - tSearch).toFixed(1)} s, then loses interest`);
+  }
+  // 13. Slower than the player's run (4.6 m/s): even a teen.
+  {
+    const sim = new ZombieSim(world, 0);
+    const z = sim.spawnAt(0, 0, 'chase', 'teen');
+    z.yaw = 0;
+    z.awareness = 2;
+    let max = 0;
+    for (let i = 0; i < 300; i++) {
+      sim.update(1 / 60, player(0, 10 + i * 0.05));
+      max = Math.max(max, z.speed);
+    }
+    check(max > 1.5 && max < 4.6 * 0.6, `a teen follows at ${max.toFixed(2)} m/s: quicker than the others, slower than the run`);
+  }
+  // 14. Head ×2, and the hit test finds the head.
+  {
+    const sim = new ZombieSim(world, 0);
+    const z = sim.spawnAt(0, -1.5, 'idle', 'man');
+    const head = sim.hitTest(new Vector3(0, 1.63, 0), new Vector3(0, 0, -1), 2);
+    const body = sim.hitTest(new Vector3(0, 1.0, 0), new Vector3(0, 0, -1), 2);
+    check(head?.zombie === z && head.head && body?.zombie === z && !body.head, 'hit test: head at the top, body below');
+    check(blowDamage([20, 20], 1, true, 0) === 2 * blowDamage([20, 20], 1, false, 0), 'blow to the head = ×2');
+    sim.hit(z, blowDamage([35, 45], 1, true, 1), 0, 0);
+    const after = z.hp;
+    z.state = 'idle';
+    sim.hit(z, blowDamage([35, 45], 1, false, 0), 0, 0);
+    check(after === 10 && (z.state as string) === 'dead', `axe to the head: 100 → ${after} HP, the next blow kills`);
+  }
+  // 15. Bites: close and seen → it attacks, the blow reaches the player.
+  {
+    const sim = new ZombieSim(world, 0);
+    const z = sim.spawnAt(0, 0, 'idle', 'man');
+    z.yaw = 0;
+    let bites = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      sim.update(1 / 60, player(0, 0.9));
+      bites += sim.attacks.length;
+    }
+    check(bites >= 1, `close → bites (${bites} in 4 s)`);
+  }
+  // 16. Jumping at a wall and under a lintel: no passing through, the head stops under it.
+  {
+    const cw = new CollisionWorld();
+    cw.addBox(1, -3, 1.3, 3, 0, 3); // a wall at x 1..1.3
+    cw.addBox(-3, 3, 3, 3.3, 2.1, 3); // a lintel over a doorway along x at z 3..3.3, from 2.1 m up
+    const input = new InputManager('kbm', new EventBus<GameEvents>());
+    const c = new PlayerController(new Vector3(0, 0, 0), -Math.PI / 2); // facing +X
+    const ground = () => 0;
+    let maxX = 0;
+    for (let i = 0; i < 120; i++) {
+      input.setMove(0, 1);
+      if (i % 30 === 0) input.press('jump');
+      c.fixedUpdate(1 / 60, input, cw, ground);
+      input.release('jump');
+      maxX = Math.max(maxX, c.position.x);
+    }
+    check(maxX < 1 - 0.29, `jumping at a wall: stays in front of it (x ${maxX.toFixed(2)})`);
+    const d = new PlayerController(new Vector3(0, 0, 3.15), 0);
+    let headTop = 0;
+    for (let i = 0; i < 60; i++) {
+      input.setMove(0, 0);
+      if (i === 0) input.press('jump');
+      d.fixedUpdate(1 / 60, input, cw, ground);
+      input.release('jump');
+      headTop = Math.max(headTop, d.position.y + 1.78);
+    }
+    check(headTop <= 2.1 + 1e-3 || d.position.z < 3 - 0.29 || d.position.z > 3.3 + 0.29, `jumping under a lintel: the head stops under it (top ${headTop.toFixed(2)})`);
   }
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');
   return fails.length ? 1 : 0;

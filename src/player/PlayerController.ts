@@ -20,7 +20,17 @@ const PITCH_LIMIT = 1.45;
 const GROUND_FOLLOW = 18;
 const GRAVITY = 9.8;
 /** Jump apex above the feet, m: a curb, a crate or a sandbag wall, never a car roof. */
-export const JUMP_HEIGHT = 0.45;
+export const JUMP_HEIGHT = 0.6;
+/** Body height standing / crouched (walls, ceilings, squeezing under a lintel from a table). */
+export const HEIGHT_STAND = 1.78;
+export const HEIGHT_CROUCH = 1.2;
+/** Climbing onto ledges (cars, tables, crates, parapets): rise above the feet, and how long it takes. */
+export const MANTLE_MIN = 0.5;
+export const MANTLE_MAX = 1.5;
+const MANTLE_TIME = 0.45;
+/** Falls: harmless below 4 m, deadly from 10 m. */
+export const FALL_HURT = 4;
+export const FALL_DEADLY = 10;
 /** A drop bigger than this is a fall (gravity), smaller ones are followed like steps. */
 const FALL_FROM = 0.35;
 
@@ -67,6 +77,14 @@ export class PlayerController {
   jumped = false;
   landed = 0;
 
+  /** This step only: fall damage as a share of health (0..1+), from the height dropped. */
+  fallDamage = 0;
+  /** Climbing onto a ledge: progress 0..1 (−1 = not climbing), from where to where. */
+  mantleT = -1;
+  private readonly mantleFrom = new Vector3();
+  private readonly mantleTo = new Vector3();
+  /** Highest point of the current time in the air (fall height). */
+  private peakY = 0;
   private gaitNoise = 0;
   private noiseImpulse = 0;
 
@@ -87,7 +105,37 @@ export class PlayerController {
   }
 
   fixedUpdate(dt: number, input: InputManager, world: CollisionWorld, ground?: GroundFn): void {
-    if (input.consumePressed('crouch')) this.crouched = !this.crouched;
+    if (input.consumePressed('crouch')) {
+      // Standing up needs headroom (under a table-top lintel you stay down).
+      if (!this.crouched) this.crouched = true;
+      else if (world.ceilingAt(this.position.x, this.position.z, PLAYER_RADIUS * 0.9, this.position.y + HEIGHT_CROUCH - 0.05) > this.position.y + HEIGHT_STAND) this.crouched = false;
+    }
+    const height = this.crouched ? HEIGHT_CROUCH : HEIGHT_STAND;
+    this.jumped = false;
+    this.landed = 0;
+    this.fallDamage = 0;
+    if (this.mantleT >= 0) {
+      // Climbing: up first, then over the edge; no control meanwhile.
+      this.prevPosition.copy(this.position);
+      this.mantleT = Math.min(1, this.mantleT + dt / MANTLE_TIME);
+      const t = this.mantleT;
+      const up = Math.min(1, t / 0.65);
+      const over = Math.max(0, (t - 0.35) / 0.65);
+      this.position.set(
+        this.mantleFrom.x + (this.mantleTo.x - this.mantleFrom.x) * over,
+        this.mantleFrom.y + (this.mantleTo.y - this.mantleFrom.y) * (1 - (1 - up) * (1 - up)),
+        this.mantleFrom.z + (this.mantleTo.z - this.mantleFrom.z) * over,
+      );
+      this.velocity.set(0, 0, 0);
+      if (t >= 1) {
+        this.mantleT = -1;
+        this.airborne = false;
+        this.vy = 0;
+        this.landed = 1;
+      }
+      this.speed = damp(this.speed, 0, 10, dt);
+      return;
+    }
     const mx = input.moveX;
     const my = input.moveY;
     this.sprinting = input.isHeld('sprint') && my > 0.3 && !this.crouched && this.canSprint;
@@ -105,35 +153,59 @@ export class PlayerController {
     this.prevPosition.copy(this.position);
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
-    world.resolveCircle(this.position, PLAYER_RADIUS);
-    this.jumped = false;
-    this.landed = 0;
-    if (input.consumePressed('jump') && !this.airborne && this.canJump && this.jumpFactor > 0 && !this.crouched) {
+    world.resolveCircle(this.position, PLAYER_RADIUS, height);
+    const jump = input.consumePressed('jump');
+    // Jump at a ledge in front (or still rising from a jump): climb onto it.
+    if (jump || (this.airborne && this.vy > 0 && my > 0.3)) {
+      const fx = -sin;
+      const fz = -cos;
+      const top = this.canJump ? world.ledgeAhead(this.position.x, this.position.z, fx, fz, this.position.y, MANTLE_MIN, MANTLE_MAX) : -1;
+      if (top > 0 && (jump || my > 0.3)) {
+        this.mantleFrom.copy(this.position);
+        this.mantleTo.set(this.position.x + fx * 0.6, top, this.position.z + fz * 0.6);
+        this.mantleT = 0;
+        this.crouched = world.ceilingAt(this.mantleTo.x, this.mantleTo.z, PLAYER_RADIUS * 0.9, top + 0.05) <= top + HEIGHT_STAND;
+        this.jumped = jump;
+        return;
+      }
+    }
+    if (jump && !this.airborne && this.canJump && this.jumpFactor > 0 && !this.crouched) {
       this.vy = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT * this.jumpFactor);
       this.airborne = true;
       this.jumped = true;
+      this.peakY = this.position.y;
     }
     if (ground) {
       const p = this.position;
       // The floor, or the top of a crate / table / sandbag under the feet (a bit higher in the air:
       // the legs tuck up onto it).
       let target = ground(p.x, p.z, p.y);
-      const top = world.supportAt(p.x, p.z, PLAYER_RADIUS * 0.8, p.y + (this.airborne ? 0.3 : 0.35));
+      const top = world.supportAt(p.x, p.z, PLAYER_RADIUS * 0.8, p.y + (this.airborne ? 0.3 : 0.35), p.y);
       if (top > target) target = top;
       if (this.airborne) {
         this.vy -= GRAVITY * dt;
         p.y += this.vy * dt;
+        this.peakY = Math.max(this.peakY, p.y);
+        // The head stops at whatever is above (a lintel, a ceiling, the top of a wall opening).
+        const ceil = world.ceilingAt(p.x, p.z, PLAYER_RADIUS * 0.9, p.y + 0.4);
+        if (p.y + height > ceil) {
+          p.y = ceil - height - 0.01;
+          if (this.vy > 0) this.vy = 0;
+        }
         if (this.vy <= 0 && p.y <= target) {
           this.landed = -this.vy;
           p.y = target;
           this.vy = 0;
           this.airborne = false;
           if (this.landed > 2) this.addNoise(Math.min(0.6, this.landed * 0.1));
+          const drop = this.peakY - p.y;
+          if (drop >= FALL_HURT) this.fallDamage = drop >= FALL_DEADLY ? 1 : 0.15 + (0.85 * (drop - FALL_HURT)) / (FALL_DEADLY - FALL_HURT);
         }
       } else if (target < p.y - FALL_FROM) {
         // Walked off an edge.
         this.airborne = true;
         this.vy = 0;
+        this.peakY = p.y;
       } else {
         // Climb quickly (steps), fall a little slower (reads as a drop, not a teleport).
         p.y = damp(p.y, target, target > p.y ? GROUND_FOLLOW : GROUND_FOLLOW * 0.6, dt);
