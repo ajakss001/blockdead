@@ -50,6 +50,8 @@ export interface KeySet {
    * at the end of the follow-through), the item's edge faces along the arc.
    */
   swing?: SwingPoint[];
+  /** A thrust (knife): the item points along the path, tip first, its edge kept down — not along the arc. */
+  stab?: boolean;
 }
 
 /** One waypoint of a swing path, viewmodel-camera space. */
@@ -135,7 +137,7 @@ const AXE: KeySet = {
   ],
 };
 
-/** Knife: held up by the right of the crosshair, a quick cut across and down to the centre. */
+/** Knife: a stab — straight forward through the crosshair, tip first. */
 const KNIFE: KeySet = {
   anchor: 'main',
   idle: key([-0.005, -0.181, -0.362], [0.764, 0.637, -0.104], [-0.617, 0.673, -0.408], [0.148, -0.139, -0.121]),
@@ -144,14 +146,16 @@ const KNIFE: KeySet = {
   windup: key([0.178, -0.116, -0.503], [0.006, 0.898, 0.44], [-0.611, 0.352, -0.709], [-0.06, 0, 0.044]),
   strike: key([-0.037, -0.234, -0.596], [-0.185, 0.728, 0.66], [-0.711, 0.365, -0.602], [0.024, 0.186, -0.076]),
   recover: key([-0.01, -0.296, -0.615], [-0.171, 0.793, 0.585], [-0.709, 0.313, -0.632], [-0.141, 0.033, 0.061]),
-  // Slash: cocked up by the right shoulder, the edge across the crosshair down to the left, back low.
+  // Stab: the hand pulls back by the hip, the knife already pointing forward; a straight thrust, the tip
+  // leading, through the crosshair ~0.75 m out, a little past, pulled back. The edge stays down.
+  stab: true,
   swing: [
-    { head: [0.197, -0.086, -0.424], hand: [0.109, -0.168, -0.444], roll: 0.04, body: [0.114, 0.229, -0.226] },
-    { head: [0.219, -0.022, -0.371], hand: [0.194, -0.22, -0.486], roll: 0.345, body: [-0.114, 0.12, -0.262] },
-    { head: [0.157, 0.016, -0.516], hand: [0.094, -0.212, -0.518], roll: 0.315, body: [-0.075, 0.262, -0.178] },
-    { head: [-0.009, -0.001, -0.599], hand: [0.013, -0.188, -0.592], roll: -0.057, body: [-0.184, 0.069, -0.22] },
-    { head: [-0.123, -0.125, -0.623], hand: [-0.102, -0.288, -0.626], roll: -0.163, body: [-0.286, -0.125, 0.008] },
-    { head: [0.113, -0.119, -0.424], hand: [-0.053, -0.369, -0.566], roll: -0.122, body: [0.155, 0.231, -0.123] },
+    { head: [0.137, -0.045, -0.505], hand: [-0.001, -0.298, -0.374], roll: 0.358, body: [0.145, 0.061, 0.049] },
+    { head: [0.205, -0.041, -0.53], hand: [0.228, -0.285, -0.362], roll: 0.492, body: [0.149, -0.144, -0.032] },
+    { head: [0.073, -0.026, -0.617], hand: [0.142, -0.136, -0.502], roll: 0.168, body: [0.005, 0.043, -0.001] },
+    { head: [-0.002, -0.007, -0.772], hand: [0.078, -0.17, -0.585], roll: 0.038, body: [0.212, 0.116, 0.092] },
+    { head: [0.008, 0.002, -0.734], hand: [0.147, -0.177, -0.523], roll: -0.48, body: [0.175, -0.134, 0.147] },
+    { head: [0.114, 0.027, -0.514], hand: [0.164, -0.41, -0.432], roll: 0.258, body: [0.213, 0.446, -0.183], slide: 0.006 },
   ],
 };
 
@@ -203,7 +207,7 @@ const AXE_R = 1.0 * DEG;
 const AXE_L = -50.4 * DEG;
 
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
-  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 8 / 60, strike: 6 / 60, follow: 4 / 60, recover: 14 / 60, noise: 0.2 },
+  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 7 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.2 },
   hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
   axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5 },
   bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },

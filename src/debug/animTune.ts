@@ -506,7 +506,7 @@ export function main(args: string[]): number {
 
 /** Screen targets (16:9 NDC) of the axe's path waypoints: windup half, windup top (partly over the top right
  * edge), strike half, contact (the crosshair, 1 m out), follow-through end (below the middle), recover half (low right). */
-const PATH_TARGETS_BY: Record<string, [number, number][]> = { axe: [], knife: [[0.45, -0.35], [0.6, -0.1], [0.3, 0.05], [0, 0], [-0.4, -0.45], [0.35, -0.55]], fists: [[0.35, -0.55], [0.4, -0.55], [0.15, -0.25], [0, 0], [-0.02, 0], [0.2, -0.45]] };
+const PATH_TARGETS_BY: Record<string, [number, number][]> = { axe: [], knife: [[0.3, -0.3], [0.35, -0.35], [0.1, -0.12], [0, 0], [-0.02, 0.02], [0.25, -0.3]], fists: [[0.35, -0.55], [0.4, -0.55], [0.15, -0.25], [0, 0], [-0.02, 0], [0.2, -0.45]] };
 const PATH_TARGETS: [number, number][] = [
   [0.6, 0.55],
   [0.8, 0.98],
@@ -550,7 +550,7 @@ function pathCost(cfg: HeldConfig): number {
   rig.reset();
   rig.update(cfg, { ...rest, attackT: hitTime(cfg) }, HELD.torch, rest);
   const head = _h.set(...cfg.head).applyQuaternion(rig.item.q).add(rig.item.pos);
-  c += 3000 * (head.x ** 2 + head.y ** 2) + 50 * (head.length() - (cfg.twoHanded ? 1 : cfg.main.along > 0 ? 0.6 : 0.7)) ** 2;
+  c += 3000 * (head.x ** 2 + head.y ** 2) + 50 * (head.length() - (cfg.twoHanded ? 1 : cfg.keys.stab ? 0.75 : 0.7)) ** 2;
   return c;
 }
 

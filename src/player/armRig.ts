@@ -425,6 +425,7 @@ function pathPose(cfg: HeldConfig, t: number, rest: CompiledKey, outPos: Vector3
     _D[i].add(_hn).normalize();
   }
   _D[0].copy(restEdge);
+  if (cfg.keys.stab) for (let j = 1; j < 7; j++) _D[j].set(0, -1, 0);
   // Out of rest the edge stays half with the rest pose (no quick turn of the blade about the handle).
   _D[1].add(restEdge).normalize();
   _D[7].copy(restEdge);
@@ -456,7 +457,8 @@ function pathPose(cfg: HeldConfig, t: number, rest: CompiledKey, outPos: Vector3
   hermiteD(_P[i], _MP[i], _P[i + 1], _MP[i + 1], a, _vel).multiplyScalar(SENSE[i]);
   // Handle from the hand to the head; edge: along the arc, faded to the chord directions when slow.
   _ax.subVectors(head, hand).normalize();
-  const k = smooth(Math.min(1, _vel.length() / 0.35));
+  // A stab does not follow the arc: the edge turns from the rest pose to down and back (the knife turns only as the hand does).
+  const k = cfg.keys.stab ? 0 : smooth(Math.min(1, _vel.length() / 0.35));
   _ed.copy(_D[i]).lerp(_D[i + 1], smooth(a)).multiplyScalar(1 - k);
   if (k > 0) _ed.addScaledVector(_vel.normalize(), k);
   basisQuat(_ax, _ed, outQ);
