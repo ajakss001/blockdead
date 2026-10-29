@@ -81,18 +81,20 @@ const W_WINDUP = key2h([0.08, -0.12, -0.5], [0.35, 0.85, 0.4], [0.1, 0.6, -0.8])
 const W_STRIKE = key2h([0.02, -0.16, -0.4], [-0.35, -0.15, -0.92], [0, -1, 0.15]);
 /** On the way back: brought up low across the front, right of the crosshair, before settling at rest. */
 const W_RECOVER = key2h([-0.05, -0.22, -0.42], [0.55, 0.25, -0.8], [0.4, 0.2, -0.9]);
-/** Elbow directions (from the hand towards the elbow): both elbows bent, down and back, never at the camera. */
+/** Elbow directions (from the hand towards the elbow), never at the camera: the right one down and out, the left one out to the side and back so the left forearm crosses the handle instead of running along it. */
 /** Two-bone arms for two-handed grips: shoulders below and just behind the eyes, elbows bent down and out. */
 const SHOULDER_R = new Vector3(0.19, -0.25, -0.05);
 const SHOULDER_L = new Vector3(-0.19, -0.25, -0.05);
 const POLE_R = new Vector3(0.7, -0.6, 0.25).normalize();
-const POLE_L = new Vector3(-0.7, -0.6, 0.25).normalize();
+const POLE_L = new Vector3(-0.8, -0.2, 0.55).normalize();
 const UPPER = 0.52;
 /** Wrist limits, rad: flexion, sideways deviation, twist; the forearm takes up to FOREARM_ROLL of the twist itself. */
 const WRIST_FLEX = (60 * Math.PI) / 180;
 const WRIST_DEV = (25 * Math.PI) / 180;
 const WRIST_TWIST = (40 * Math.PI) / 180;
-const FOREARM_ROLL = (50 * Math.PI) / 180;
+const FOREARM_ROLL = (70 * Math.PI) / 180;
+/** Neutral forearm roll against the elbow plane (mirrored per side): the middle of what a swing needs. */
+const ROLL0 = (60 * Math.PI) / 180;
 const _z = new Vector3(0, 0, 1);
 const FOREARM = 0.32;
 const HAND_OFFSET = FOREARM + 0.01;
@@ -449,13 +451,23 @@ export class Viewmodel {
       wrist.copy(point).sub(gripLocal.clone().applyQuaternion(actual));
       solveElbow(shoulder, wrist, UPPER, HAND_OFFSET, pole, elbow);
       toElbow.subVectors(elbow, wrist).normalize();
-      // Forearm frame (−Z from the elbow to the wrist), then the twist shared: the forearm rolls up to
-      // FOREARM_ROLL, the wrist takes the rest within its own limits.
-      const dir = toElbow.clone().negate();
-      armQ.setFromRotationMatrix(_m.lookAt(elbow, wrist, Math.abs(dir.dot(axis)) > 0.95 ? _up : axis));
-      const twist = twistAngle(armQ.clone().invert().multiply(handQ));
-      armQ.multiply(new Quaternion().setFromAxisAngle(_z, clamp(twist * 0.5, -FOREARM_ROLL, FOREARM_ROLL)));
-      limitWrist(local.copy(armQ).invert().multiply(handQ));
+      // Forearm frame from the elbow plane, never from the handle (so the sleeve does not spin with the
+      // weapon): −Z from the elbow to the wrist, Y the upper arm's direction across it, then the neutral
+      // roll. The twist the grip asks for is shared: the forearm rolls up to FOREARM_ROLL, the wrist the rest.
+      const fz = toElbow.clone();
+      const fy = _v.subVectors(elbow, shoulder);
+      fy.addScaledVector(fz, -fy.dot(fz));
+      if (fy.lengthSq() < 1e-6) fy.copy(_up).addScaledVector(fz, -fz.y);
+      fy.normalize();
+      armQ.setFromRotationMatrix(_m.makeBasis(new Vector3().crossVectors(fy, fz), fy, fz));
+      armQ.multiply(new Quaternion().setFromAxisAngle(_z, ROLL0 * side));
+      // Wanted hand: the neutral hand turned the shortest way until its grip axis (Y) lies along the
+      // handle, so the twist stays defined (and smooth) even when the handle runs along the forearm.
+      local.setFromUnitVectors(_up, axis.clone().applyQuaternion(armQ.clone().invert()));
+      const twist = twistAngle(local);
+      const roll = clamp(twist - clamp(twist, -WRIST_TWIST * 0.5, WRIST_TWIST * 0.5), -FOREARM_ROLL, FOREARM_ROLL);
+      armQ.multiply(new Quaternion().setFromAxisAngle(_z, roll));
+      limitWrist(local.premultiply(new Quaternion().setFromAxisAngle(_z, -roll)));
     }
     // The hand sits on the end of the sleeve, always (no gap, no overlap).
     arm.position.copy(elbow);
