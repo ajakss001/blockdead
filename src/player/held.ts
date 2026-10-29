@@ -144,6 +144,15 @@ const KNIFE: KeySet = {
   windup: key([0.178, -0.116, -0.503], [0.006, 0.898, 0.44], [-0.611, 0.352, -0.709], [-0.06, 0, 0.044]),
   strike: key([-0.037, -0.234, -0.596], [-0.185, 0.728, 0.66], [-0.711, 0.365, -0.602], [0.024, 0.186, -0.076]),
   recover: key([-0.01, -0.296, -0.615], [-0.171, 0.793, 0.585], [-0.709, 0.313, -0.632], [-0.141, 0.033, 0.061]),
+  // Slash: cocked up by the right shoulder, the edge across the crosshair down to the left, back low.
+  swing: [
+    { head: [0.197, -0.086, -0.424], hand: [0.109, -0.168, -0.444], roll: 0.04, body: [0.114, 0.229, -0.226] },
+    { head: [0.219, -0.022, -0.371], hand: [0.194, -0.22, -0.486], roll: 0.345, body: [-0.114, 0.12, -0.262] },
+    { head: [0.157, 0.016, -0.516], hand: [0.094, -0.212, -0.518], roll: 0.315, body: [-0.075, 0.262, -0.178] },
+    { head: [-0.009, -0.001, -0.599], hand: [0.013, -0.188, -0.592], roll: -0.057, body: [-0.184, 0.069, -0.22] },
+    { head: [-0.123, -0.125, -0.623], hand: [-0.102, -0.288, -0.626], roll: -0.163, body: [-0.286, -0.125, 0.008] },
+    { head: [0.113, -0.119, -0.424], hand: [-0.053, -0.369, -0.566], roll: -0.122, body: [0.155, 0.231, -0.123] },
+  ],
 };
 
 /** Hammer: the knife's arc with a heavier head. */
@@ -166,6 +175,15 @@ const FIST: KeySet = {
   windup: key([0.164, -0.196, -0.457], [-0.334, 0.598, 0.729], [-0.457, 0.574, -0.68], [-0.066, 0.186, 0.318]),
   strike: key([-0.039, -0.179, -0.678], [-0.838, 0.064, 0.542], [-0.494, 0.334, -0.803], [-0.172, -0.101, 0.387]),
   recover: key([0.119, -0.192, -0.513], [-0.696, 0.69, 0.198], [-0.337, -0.07, -0.939], [0.411, 0.036, 0.138]),
+  // Jab: pulled back by the shoulder, straight out to the crosshair, a little past it, back low.
+  swing: [
+    { head: [0.15, -0.136, -0.376], hand: [0.204, -0.213, -0.453], roll: -0.039, body: [-0.014, -0.116, 0.185] },
+    { head: [0.15, -0.137, -0.376], hand: [0.101, -0.258, -0.394], roll: 0.483, body: [0.048, -0.08, -0.038] },
+    { head: [0.094, -0.082, -0.508], hand: [0.076, -0.114, -0.529], roll: 0.121, body: [0.105, 0.047, 0.096], slide: 0.11 },
+    { head: [0, 0, -0.665], hand: [-0.074, -0.112, -0.697], roll: -0.12, body: [-0.157, 0.011, 0.007] },
+    { head: [-0.009, -0.037, -0.674], hand: [-0.048, -0.148, -0.727], roll: -0.121, body: [-0.082, 0.212, 0.021], slide: 0.084 },
+    { head: [0.069, -0.128, -0.479], hand: [0.121, -0.143, -0.604], roll: 0.244, body: [-0.22, 0.113, -0.001], slide: 0.053 },
+  ],
 };
 
 /** Flashlight in the left hand: raised (on) or lowered out of view (off). */
@@ -185,7 +203,7 @@ const AXE_R = 1.0 * DEG;
 const AXE_L = -50.4 * DEG;
 
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
-  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
+  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 8 / 60, strike: 6 / 60, follow: 4 / 60, recover: 14 / 60, noise: 0.2 },
   hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
   axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5 },
   bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
@@ -194,7 +212,7 @@ export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
 };
 
 /** Bare fists: an item without a model; the fist's grip axis is its handle. */
-export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0, 0], windup: 0.1, strike: 0.07, recover: 0.2, noise: 0.25 };
+export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0.05, 0], windup: 6 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.25 };
 
 /** Model of a held item in its grip frame (see HeldConfig). Geometries are collected for disposal. */
 export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {

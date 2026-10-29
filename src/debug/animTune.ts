@@ -259,7 +259,9 @@ function gauss(): number {
 
 export function main(args: string[]): number {
   const which = args[0] ?? 'twoHanded';
-  if (which === 'axePath') return tunePath(args);
+  if (which === 'axePath') return tunePath(args, 'axe');
+  if (which === 'knifePath') return tunePath(args, 'knife');
+  if (which === 'fistPath') return tunePath(args, 'fists');
   const iters = Number(args[1] ?? 2500);
   const base: Record<string, HeldConfig[]> = {
     twoHanded: [HELD.axe, HELD.bat, HELD.crowbar],
@@ -504,6 +506,7 @@ export function main(args: string[]): number {
 
 /** Screen targets (16:9 NDC) of the axe's path waypoints: windup half, windup top (partly over the top right
  * edge), strike half, contact (the crosshair, 1 m out), follow-through end (below the middle), recover half (low right). */
+const PATH_TARGETS_BY: Record<string, [number, number][]> = { axe: [], knife: [[0.45, -0.35], [0.6, -0.1], [0.3, 0.05], [0, 0], [-0.4, -0.45], [0.35, -0.55]], fists: [[0.35, -0.55], [0.4, -0.55], [0.15, -0.25], [0, 0], [-0.02, 0], [0.2, -0.45]] };
 const PATH_TARGETS: [number, number][] = [
   [0.6, 0.55],
   [0.8, 0.98],
@@ -512,6 +515,7 @@ const PATH_TARGETS: [number, number][] = [
   [-0.38, -0.38],
   [0.42, -0.2],
 ];
+PATH_TARGETS_BY.axe = PATH_TARGETS;
 const _s1 = new Vector3();
 const _s2 = new Vector3();
 const ndc = (p: Vector3, out: Vector3) => out.copy(p).project(cams[0]);
@@ -531,11 +535,11 @@ function pathCost(cfg: HeldConfig): number {
     const it = rig.item;
     const head = _h.set(...cfg.head).applyQuaternion(it.q).add(it.pos);
     const h = ndc(head, _s1);
-    c += 50 * Math.max(0, -0.55 - h.y) ** 2;
+    if (cfg.twoHanded) c += 50 * Math.max(0, -0.55 - h.y) ** 2;
     if (!Number.isNaN(px)) c += 2000 * Math.max(0, Math.hypot(h.x - px, ((h.y - py) * 9) / 16) / 2 - 0.07) ** 2;
     px = h.x;
     py = h.y;
-    if (rig.phase === 'recover') {
+    if (cfg.twoHanded && rig.phase === 'recover') {
       const hand = ndc(_g.copy(rig.targetL.grip), _s2);
       const dx = h.x - hand.x;
       const dy = ((h.y - hand.y) * 9) / 16;
@@ -546,13 +550,15 @@ function pathCost(cfg: HeldConfig): number {
   rig.reset();
   rig.update(cfg, { ...rest, attackT: hitTime(cfg) }, HELD.torch, rest);
   const head = _h.set(...cfg.head).applyQuaternion(rig.item.q).add(rig.item.pos);
-  c += 3000 * (head.x ** 2 + head.y ** 2) + 50 * (head.length() - 1) ** 2;
+  c += 3000 * (head.x ** 2 + head.y ** 2) + 50 * (head.length() - (cfg.twoHanded ? 1 : cfg.main.along > 0 ? 0.6 : 0.7)) ** 2;
   return c;
 }
 
-function tunePath(args: string[]): number {
+function tunePath(args: string[], item: 'axe' | 'knife' | 'fists'): number {
   const iters = Number(args[1] ?? 10000);
-  const base = HELD.axe;
+  const base = item === 'fists' ? FISTS : HELD[item];
+  const arms = base.twoHanded ? [0, 1] : [0];
+  const targets = PATH_TARGETS_BY[item];
   const pts0 = base.keys.swing!;
   const P = 11;
   const dims = pts0.length * P + 2;
@@ -572,7 +578,7 @@ function tunePath(args: string[]): number {
       ...base,
       keys: { ...base.keys, swing: pts },
       main: { ...base.main, roll: base.main.roll + x[dims - 2] },
-      off: { ...base.off!, roll: base.off!.roll + x[dims - 1] },
+      off: base.off ? { ...base.off, roll: base.off.roll + x[dims - 1] } : undefined,
     };
     return cfg;
   };
@@ -581,15 +587,15 @@ function tunePath(args: string[]): number {
     let look = 0;
     cfg.keys.swing!.forEach((p, i) => {
       const h = ndc(_s1.set(...p.head), _s1);
-      look += (i === 5 ? 30 : 3) * ((h.x - PATH_TARGETS[i][0]) ** 2 + (h.y - PATH_TARGETS[i][1]) ** 2);
+      look += (i === 5 && base.twoHanded ? 30 : 3) * ((h.x - targets[i][0]) ** 2 + (h.y - targets[i][1]) ** 2);
       look += 0.05 * v3(p.body ?? [0, 0, 0]).lengthSq() + 0.02 * (p.roll ?? 0) ** 2;
       look += 30 * Math.max(0, NEAR - v3(p.head).length()) ** 2;
     });
-    return cost([cfg], HELD.torch, [0, 1]) + pathCost(cfg) + look;
+    return cost([cfg], HELD.torch, arms) + pathCost(cfg) + look;
   };
   let x = new Array(dims).fill(0);
   let fx = total(x);
-  console.log(`start: cost ${fx.toFixed(3)}, breaks ${cost([build(x)], HELD.torch, [0, 1], true)}`, JSON.stringify(tally));
+  console.log(`start: cost ${fx.toFixed(3)}, breaks ${cost([build(x)], HELD.torch, arms, true)}`, JSON.stringify(tally));
   for (const k in tally) delete tally[k];
   let sigma = 0.06;
   for (let it = 0; it < iters; it++) {
@@ -602,13 +608,13 @@ function tunePath(args: string[]): number {
     } else sigma = Math.max(0.002, sigma * 0.97);
   }
   const cfg = build(x);
-  console.log(`end: cost ${fx.toFixed(3)}, breaks ${cost([cfg], HELD.torch, [0, 1], true)}`, JSON.stringify(tally));
+  console.log(`end: cost ${fx.toFixed(3)}, breaks ${cost([cfg], HELD.torch, arms, true)}`, JSON.stringify(tally));
   if (args.includes('--write')) {
     type Fs = { readFileSync(p: string, e: string): string; writeFileSync(p: string, d: string): void };
     const fs = (globalThis as unknown as { process: { getBuiltinModule(m: string): Fs } }).process.getBuiltinModule('node:fs');
     const file = 'src/player/held.ts';
     let src = fs.readFileSync(file, 'utf8');
-    const a = src.indexOf('  swing: [', src.indexOf('const AXE: KeySet'));
+    const a = src.indexOf('  swing: [', src.indexOf(`const ${({ axe: 'AXE', knife: 'KNIFE', fists: 'FIST' } as const)[item]}: KeySet`));
     const b = src.indexOf('  ],', a) + 4;
     const line = (p: SwingPoint) => {
       const parts = [`head: ${arr(v3(p.head))}`, `hand: ${arr(v3(p.hand))}`];
@@ -619,8 +625,8 @@ function tunePath(args: string[]): number {
       return `    { ${parts.join(', ')} },`;
     };
     src = src.slice(0, a) + `  swing: [\n${cfg.keys.swing!.map(line).join('\n')}\n  ],` + src.slice(b);
-    src = src.replace(/const AXE_R = .*;/, `const AXE_R = ${(cfg.main.roll / DEG).toFixed(1)} * DEG;`);
-    src = src.replace(/const AXE_L = .*;/, `const AXE_L = ${(cfg.off!.roll / DEG).toFixed(1)} * DEG;`);
+    if (base.twoHanded) src = src.replace(/const AXE_R = .*;/, `const AXE_R = ${(cfg.main.roll / DEG).toFixed(1)} * DEG;`);
+    if (base.twoHanded) src = src.replace(/const AXE_L = .*;/, `const AXE_L = ${(cfg.off!.roll / DEG).toFixed(1)} * DEG;`);
     fs.writeFileSync(file, src);
     console.log('written');
   }

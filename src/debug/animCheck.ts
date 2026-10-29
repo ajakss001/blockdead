@@ -197,7 +197,7 @@ class Sampler {
     if (checkFrame) {
       const cfg = cfgOf(item);
       const obj = item === 'fists' ? v.handR : (v.held.get(item)!.children[0] as Group);
-      const head = item === 'fists' ? _a.set(GRIP_X, 0, GRIP_Z) : _a.set(...cfg.head);
+      const head = item === 'fists' ? _a.set(GRIP_X, cfg.head[1], GRIP_Z) : _a.set(...cfg.head);
       headInFrame = inView(vm, head.applyMatrix4(obj.matrixWorld));
     }
     // The head on a 16:9 screen (NDC), for the path-swing checks.
@@ -205,16 +205,17 @@ class Sampler {
     let hy = 0;
     let bx = 0;
     let by = 0;
-    if (item !== 'fists') {
-      const obj = v.held.get(item)!.children[0] as Group;
+    {
+      const obj = item === 'fists' ? v.handR : (v.held.get(item)!.children[0] as Group);
       const cam = vm.camera;
       const prev = cam.aspect;
       cam.aspect = 16 / 9;
       cam.updateProjectionMatrix();
-      const p = _a.set(...cfgOf(item).head).applyMatrix4(obj.matrixWorld).project(cam);
+      const hp = item === 'fists' ? _a.set(GRIP_X, cfgOf(item).head[1], GRIP_Z) : _a.set(...cfgOf(item).head);
+      const p = hp.applyMatrix4(obj.matrixWorld).project(cam);
       hx = p.x;
       hy = p.y;
-      const b = _a.set(0, 0, 0).applyMatrix4(obj.matrixWorld).project(cam);
+      const b = (item === 'fists' ? _a.set(GRIP_X, 0, GRIP_Z) : _a.set(0, 0, 0)).applyMatrix4(obj.matrixWorld).project(cam);
       bx = b.x;
       by = b.y;
       cam.aspect = prev;
@@ -310,6 +311,8 @@ export function failures(item: string, anim: string, rows: FrameRow[]): Failure[
   const out: Failure[] = [];
   const add = (frame: number, what: string) => out.push({ item, anim, frame, what });
   const path = !!cfgOf(item as RightItem).keys.swing;
+  // The bottom-20% and upright-handle rules are the two-handed chop's.
+  const twoH = cfgOf(item as RightItem).twoHanded;
   let prev: FrameRow | null = null;
   for (const r of rows) {
     for (const [name, h] of [['R', r.R], ['L', r.L]] as const) {
@@ -332,9 +335,9 @@ export function failures(item: string, anim: string, rows: FrameRow[]): Failure[
     // Path swings (the axe's chop): distances in screen widths, 16:9.
     const dist = (x: number, y: number) => Math.hypot(x, (y * 9) / 16) / 2;
     if (r.contact && dist(r.headX, r.headY) > LIMITS.contactOff) add(r.frame, `contact: blade ${(dist(r.headX, r.headY) * 100).toFixed(1)}% of the width off the crosshair`);
-    if (r.headY < LIMITS.lowest && r.phase !== 'rest') add(r.frame, `head in the bottom 20% of the screen (y ${r.headY.toFixed(2)})`);
+    if (twoH && r.headY < LIMITS.lowest && r.phase !== 'rest') add(r.frame, `head in the bottom 20% of the screen (y ${r.headY.toFixed(2)})`);
     // The return runs low: the handle never stands (near) upright on screen.
-    if (r.phase === 'recover') {
+    if (twoH && r.phase === 'recover') {
       const dx = r.headX - r.butX;
       const dy = ((r.headY - r.butY) * 9) / 16;
       if (dy > 0 && Math.abs(dx) / Math.hypot(dx, dy) < LIMITS.uprightSin) add(r.frame, `recover: handle upright on screen (${((Math.asin(Math.abs(dx) / Math.hypot(dx, dy)) * 180) / Math.PI).toFixed(0)}° from vertical)`);
@@ -347,7 +350,7 @@ export function failures(item: string, anim: string, rows: FrameRow[]): Failure[
   }
   if (path && anim === 'swing') {
     const strike = rows.filter((r) => r.phase === 'strike').length;
-    if (strike < LIMITS.strikeFrames) add(0, `strike lasts ${strike} frames < ${LIMITS.strikeFrames}`);
+    if (cfgOf(item as RightItem).twoHanded && strike < LIMITS.strikeFrames) add(0, `strike lasts ${strike} frames < ${LIMITS.strikeFrames}`);
     if (!rows.some((r) => r.contact)) add(0, 'no contact frame');
   }
   return out;

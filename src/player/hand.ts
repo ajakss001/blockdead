@@ -29,6 +29,9 @@ export function handGeometry(side: number): BufferGeometry {
     box(0.017, h, 0.036 * shrink, -0.05, y, -0.056);
     box(0.024 * shrink, h, 0.015, -0.036, y, -0.03);
   }
+  // Solid core of the fist, a little inside the finger segments: no see-through gaps between the palm,
+  // the curled fingers and the rows of fingers from any side (a handle passes through it unseen).
+  box(0.05, 0.07, 0.056, -0.028, 0.0, -0.055);
   // Thumb: from the heel of the palm, across the index and middle fingers.
   box(0.02, 0.022, 0.034, -0.012, 0.03, -0.02, 0.35 * side);
   box(0.03, 0.018, 0.018, -0.04, 0.036, -0.042, -0.25 * side);
