@@ -42,6 +42,8 @@ import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
+import { ZombieCrowd } from '../render/ZombieCrowd';
+import { type PlayerSense, ZombieSim } from '../systems/zombies';
 
 /**
  * Night setup. Ambient sits at the floor; a weak cold moon keeps silhouettes and roof lines
@@ -64,6 +66,8 @@ const DAY = {
 
 const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
+const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
+const _zView = new Vector3();
 const BASE_VFOV = 75;
 const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
@@ -129,6 +133,8 @@ export class WorldScene implements IScene {
   /** Last step index (stepPhase / π) a footstep was played for. */
   private stepN = 0;
   private layout!: WorldLayout;
+  private zombies!: ZombieSim;
+  private crowd!: ZombieCrowd;
   /** Visible dirt steps of the worn clothes, to re-dress the body only when a step changes. */
   private dirtShown = '';
   /** Who the survivor is: looks and former job (class). */
@@ -159,6 +165,22 @@ export class WorldScene implements IScene {
     const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
     this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, ground);
     this.overlay = this.player.viewmodel;
+
+    // Zombies (stage 4.1): ?zombies=N overrides the preset count, ?zombies=0 turns them off.
+    const zq = new URLSearchParams(location.search).get('zombies');
+    const zcount = zq !== null ? Math.max(0, Number(zq) || 0) : ctx.quality.preset.zombiesActive;
+    this.zombies = new ZombieSim(
+      {
+        groundY: (x, z) => layout.walkHeightAt(x, z),
+        resolveCircle: (p, r, h) => this.world.resolveCircle(p, r, h),
+        rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
+        indoors: (x, z) => this.interiors.surfaceY(x, z, 0) != null,
+      },
+      zcount,
+      seed,
+    );
+    this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
+    this.scene.add(this.crowd.mesh);
 
     // Survival layer: containers follow their chunks; the inventory screen pauses the game.
     this.containers = new Containers(seed);
@@ -222,6 +244,7 @@ export class WorldScene implements IScene {
       const s = this.survival;
       return `время ${this.clock.label}  ${this.indoors ? 'внутри' : 'снаружи'}  воздух ${this.air.toFixed(1)}°  ощущается ${this.felt.toFixed(1)}°  тело ${s.bodyTemp.toFixed(2)}°  тревога ${Math.round(s.anxiety * 100)}%`;
     });
+    ctx.debug.set('zombies', () => `зомби ${this.zombies.list.length}/${this.zombies.target}  видят ${this.zombies.seeing}  идут за мной ${this.zombies.chasing}  шум ${this.player.controller.noise.toFixed(2)}`);
     ctx.debug.set('survival', () => {
       const v = this.survival;
       const pct = (x: number) => Math.round(x * 100);
@@ -309,6 +332,16 @@ export class WorldScene implements IScene {
     // Tired: the swing is slower.
     this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
     this.player.fixedUpdate(dt);
+    // Zombies hear and see the player as it is after this step.
+    _zs.pos.copy(c.position);
+    _zs.eye = c.crouched ? 1.0 : 1.6;
+    _zs.noise = c.noise;
+    _zs.crouched = c.crouched;
+    _zs.lit = this.player.flashlightOn && this.player.battery > 0 ? 0.7 : 0;
+    _zs.daylight = this.clock.daylight;
+    _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
+    this.zombies.update(dt, _zs, _zView);
+    for (const z of this.zombies.groans) sfx.groan(z.pos, z.state === 'chase');
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
     // Footsteps on whatever is underfoot; jump and landing.
@@ -335,7 +368,7 @@ export class WorldScene implements IScene {
     soilClothes(this.inventory, dt, { moving: c.speed > 0.2, sprinting: c.sprinting, crouching: c.crouched && c.speed > 0.2, searching: this.player.busy, weather: 1 });
     if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
     const dark = !this.player.lightOn && (this.clock.isNight || this.indoors);
-    this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0 });
+    this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat: this.zombies.threat(c.position) });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
     this.dread.update(dt, a);
@@ -348,6 +381,7 @@ export class WorldScene implements IScene {
   }
 
   render(alpha: number, frameDt: number): void {
+    this.crowd.update(this.zombies.list, frameDt);
     this.player.render(alpha, frameDt);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
@@ -479,6 +513,7 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
+    this.crowd.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');

@@ -249,6 +249,18 @@ class Sound {
   }
 
   /** A door that won't give: thumps against the boards, a rattle. */
+  /** A zombie groans: a low, wavering moan through the nose; `alarm` — it has seen you (louder, rising). */
+  groan(pos: Pos, alarm: boolean): void {
+    const v = this.voice(pos, alarm ? 1.6 : 1.3);
+    if (!v) return;
+    const [out, t] = v;
+    const f = 85 + Math.random() * 35;
+    const dur = alarm ? 1.3 : 1.0 + Math.random() * 0.4;
+    this.tone(out, t, { f, f2: alarm ? f * 1.35 : f * 0.8, dur, peak: alarm ? 0.32 : 0.2, type: 'sawtooth', lp: 520, vibrato: 7 });
+    this.tone(out, t + 0.02, { f: f * 1.5, f2: f * 1.2, dur: dur * 0.8, peak: 0.08, type: 'triangle', lp: 900, vibrato: 5 });
+    this.noiseHit(out, t, { type: 'bandpass', f: 700, q: 1.2, dur: dur * 0.9, peak: 0.06, attack: 0.15 });
+  }
+
   doorStuck(pos: Pos): void {
     const v = this.voice(pos, 0.7);
     if (!v) return;

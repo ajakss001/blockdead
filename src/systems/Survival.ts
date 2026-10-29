@@ -56,6 +56,8 @@ export interface Exposure {
   dark: boolean;
   /** The flashlight has no charge left (darkness not by choice). */
   batteryDead: boolean;
+  /** 0..1: zombies seeing or following the player, how close. */
+  threat?: number;
 }
 
 
@@ -135,6 +137,8 @@ export class Survival implements SurvivalState {
     let d = -DREAD.calming;
     if (env.dark) d = (env.batteryDead ? DREAD.deadBattery : DREAD.lightsOff) * this.mods.anxiety;
     if (env.batteryDead && !this.wasBatteryDead && env.dark) this.anxiety += DREAD.deadBatteryJump * this.mods.anxiety;
+    // Zombies after you: fear rises fast, the closer the faster.
+    if (env.threat) d = Math.max(d, env.threat * 0.12 * this.mods.anxiety);
     this.wasBatteryDead = env.batteryDead;
     this.anxiety = clamp(this.anxiety + d * dt, 0, 1);
   }
