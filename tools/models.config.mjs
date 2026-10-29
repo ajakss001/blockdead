@@ -18,7 +18,6 @@ export const MODELS = [
   { src: 'C2_kiri', name: 'sedan_kiri', group: 'car', length: 4.6, budget: 1500, tint: true },
   { src: 'C3_psx_sedan', name: 'sedan_psx', group: 'car', length: 4.6, budget: 1500, tint: true },
   { src: 'C4_small_car', name: 'small_car', group: 'car', length: 3.8, budget: 1500, tint: true },
-  { src: 'C5_hatchback', name: 'hatchback', flip: true, group: 'car', length: 4.1, budget: 1500, tint: true },
   { src: 'C6_pickup', name: 'pickup', group: 'car', length: 5.3, budget: 1500, tint: true },
   { src: 'C16_car_pack', name: 'coupe', group: 'car', length: 4.4, budget: 1500, tint: true },
   { src: 'C17_traffic_pack', node: 'Car_1', name: 'traffic_1', flip: true, group: 'car', length: 4.6, budget: 1500, tint: true },

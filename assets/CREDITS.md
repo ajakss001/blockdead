@@ -9,7 +9,6 @@
 | Kiri '10 - Low poly model | Daniel Zhabotinsky | https://sketchfab.com/3d-models/kiri-10-low-poly-model-7fd6e15785fa4aa9bfd6e31eb7c97ba6 | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: sedan_kiri |
 | PSX Sedan Car - @jonniemadeit | jonniemadeit | https://sketchfab.com/3d-models/psx-sedan-car-jonniemadeit-90bbcad62e0d480581bf0a191b2f6bd2 | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: sedan_psx |
 | Low Poly Small car | scailman | https://sketchfab.com/3d-models/low-poly-small-car-ebe7c5e98a7448b5abb2eaf0cb22b766 | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: small_car |
-| Hatchback Concept car | MaG80 | https://sketchfab.com/3d-models/hatchback-concept-car-1bae82da97c643efae230cd130f40bfb | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: hatchback |
 | Pickup Truck | 00amza | https://sketchfab.com/3d-models/pickup-truck-047615f53e2d45b9a1a2a4dd203d459c | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: pickup |
 | Lowpoly car pack | scailman | https://sketchfab.com/3d-models/lowpoly-car-pack-94fcef58d8d04af2b6bf42f2949227eb | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: coupe |
 | Traffic Car Pack | JUSTGAME | https://sketchfab.com/3d-models/traffic-car-pack-916a8b149ae24d8b8c9cf12d4a1c64d4 | CC BY 4.0 | упрощена, текстуры в атлас 256 px; в игре: traffic_1, traffic_2, traffic_3, traffic_4, traffic_5 |
