@@ -1,7 +1,7 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { damp } from '../core/math';
-import { type ArmPose, basisQuat, FOREARM_ROLL, HandsRig, type ItemState, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
-import { FISTS, HELD, type HeldConfig, type Key, type KeySet } from '../player/held';
+import { type ArmPose, basisQuat, FOREARM_ROLL, HandsRig, hitTime, type ItemState, swingTime, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
+import { FISTS, HELD, type HeldConfig, type Key, type KeySet, type SwingPoint } from '../player/held';
 
 /**
  * Key-pose tuner (dev tool): nudges the key poses (and two-handed socket rolls) of a key set as little
@@ -48,7 +48,7 @@ interface Frame {
 function frames(cfg: HeldConfig): Frame[] {
   const out: Frame[] = [];
   const rest = (): ItemState => ({ attackT: -1, sprint: 0, pump: 0, lower: 0 });
-  const total = cfg.windup + cfg.strike + cfg.recover;
+  const total = swingTime(cfg);
   const still = new Vector3();
   for (let i = 0; i <= Math.ceil(total * 60) + 1; i++) out.push({ st: { ...rest(), attackT: i / 60 > total ? -1 : i / 60 }, ts: rest(), check: true, first: i === 0, bob: still });
   let s = 0;
@@ -133,7 +133,7 @@ function cost(cfgs: HeldConfig[], torch: HeldConfig, arms: number[], report = fa
         const it = rig.item;
         const head = _h.set(...cfg.head).applyQuaternion(it.q).add(it.pos).add(f.bob);
         const fc =
-          (arms.includes(0) ? frameCost(head, HEAD_MARGIN) + frameCost(_g.copy(rig.targetR.grip).add(f.bob)) : 0) + (arms.includes(1) ? frameCost(_g.copy(rig.targetL.grip).add(f.bob)) : 0);
+          (arms.includes(0) ? (cfg.keys.swing && rig.phase === 'windup' ? 0 : frameCost(head, HEAD_MARGIN)) + frameCost(_g.copy(rig.targetR.grip).add(f.bob)) : 0) + (arms.includes(1) ? frameCost(_g.copy(rig.targetL.grip).add(f.bob)) : 0);
         c += 30 * fc + 30 * Math.max(0, NEAR - head.length()) ** 2;
         if (report && head.length() < NEAR) tally.near = (tally.near ?? 0) + 1;
         if (fc > 0) breaks++;
@@ -259,6 +259,7 @@ function gauss(): number {
 
 export function main(args: string[]): number {
   const which = args[0] ?? 'twoHanded';
+  if (which === 'axePath') return tunePath(args);
   const iters = Number(args[1] ?? 2500);
   const base: Record<string, HeldConfig[]> = {
     twoHanded: [HELD.axe, HELD.bat, HELD.crowbar],
@@ -497,6 +498,131 @@ export function main(args: string[]): number {
     }
     fs.writeFileSync(file, src);
     console.log(`written to ${file}`);
+  }
+  return 0;
+}
+
+/** Screen targets (16:9 NDC) of the axe's path waypoints: windup half, windup top (partly over the top right
+ * edge), strike half, contact (the crosshair, 1 m out), follow-through end (below the middle), recover half (low right). */
+const PATH_TARGETS: [number, number][] = [
+  [0.6, 0.55],
+  [0.8, 0.98],
+  [0.35, 0.4],
+  [0, 0],
+  [-0.38, -0.38],
+  [0.42, -0.2],
+];
+const _s1 = new Vector3();
+const _s2 = new Vector3();
+const ndc = (p: Vector3, out: Vector3) => out.copy(p).project(cams[0]);
+
+/** Path-swing cost extras over the swing frames: contact on the crosshair, no head in the bottom 20%, no head
+ * jumps, a recover that does not stand the handle up, hands in frame. */
+function pathCost(cfg: HeldConfig): number {
+  let c = 0;
+  const rest: ItemState = { attackT: -1, sprint: 0, pump: 0, lower: 0 };
+  const total = swingTime(cfg);
+  let px = NaN;
+  let py = 0;
+  rig.reset();
+  for (let i = 0; i <= Math.ceil(total * 60); i++) {
+    const t = Math.min(i / 60, total);
+    rig.update(cfg, { ...rest, attackT: t }, HELD.torch, rest);
+    const it = rig.item;
+    const head = _h.set(...cfg.head).applyQuaternion(it.q).add(it.pos);
+    const h = ndc(head, _s1);
+    c += 50 * Math.max(0, -0.55 - h.y) ** 2;
+    if (!Number.isNaN(px)) c += 2000 * Math.max(0, Math.hypot(h.x - px, ((h.y - py) * 9) / 16) / 2 - 0.07) ** 2;
+    px = h.x;
+    py = h.y;
+    if (rig.phase === 'recover') {
+      const hand = ndc(_g.copy(rig.targetL.grip), _s2);
+      const dx = h.x - hand.x;
+      const dy = ((h.y - hand.y) * 9) / 16;
+      c += 50 * Math.max(0, 0.45 - Math.abs(dx) / Math.hypot(dx, dy)) ** 2;
+    }
+  }
+  // Contact: the head exactly on the crosshair about 1 m out.
+  rig.reset();
+  rig.update(cfg, { ...rest, attackT: hitTime(cfg) }, HELD.torch, rest);
+  const head = _h.set(...cfg.head).applyQuaternion(rig.item.q).add(rig.item.pos);
+  c += 3000 * (head.x ** 2 + head.y ** 2) + 50 * (head.length() - 1) ** 2;
+  return c;
+}
+
+function tunePath(args: string[]): number {
+  const iters = Number(args[1] ?? 10000);
+  const base = HELD.axe;
+  const pts0 = base.keys.swing!;
+  const P = 11;
+  const dims = pts0.length * P + 2;
+  const build = (x: number[]) => {
+    const pts: SwingPoint[] = pts0.map((p, i) => {
+      const o = i * P;
+      return {
+        ...p,
+        head: [p.head[0] + x[o] * 0.2, p.head[1] + x[o + 1] * 0.2, p.head[2] + x[o + 2] * 0.2],
+        hand: [p.hand[0] + x[o + 3] * 0.2, p.hand[1] + x[o + 4] * 0.2, p.hand[2] + x[o + 5] * 0.2],
+        roll: (p.roll ?? 0) + x[o + 6],
+        body: [(p.body?.[0] ?? 0) + x[o + 7] * 0.5, (p.body?.[1] ?? 0) + x[o + 8] * 0.5, (p.body?.[2] ?? 0) + x[o + 9] * 0.5],
+        slide: p.slide === undefined && i < 2 ? undefined : Math.min(1, Math.max(0, (p.slide ?? 0) + x[o + 10] * 0.3)),
+      };
+    });
+    const cfg: HeldConfig = {
+      ...base,
+      keys: { ...base.keys, swing: pts },
+      main: { ...base.main, roll: base.main.roll + x[dims - 2] },
+      off: { ...base.off!, roll: base.off!.roll + x[dims - 1] },
+    };
+    return cfg;
+  };
+  const total = (x: number[]) => {
+    const cfg = build(x);
+    let look = 0;
+    cfg.keys.swing!.forEach((p, i) => {
+      const h = ndc(_s1.set(...p.head), _s1);
+      look += (i === 5 ? 30 : 3) * ((h.x - PATH_TARGETS[i][0]) ** 2 + (h.y - PATH_TARGETS[i][1]) ** 2);
+      look += 0.05 * v3(p.body ?? [0, 0, 0]).lengthSq() + 0.02 * (p.roll ?? 0) ** 2;
+      look += 30 * Math.max(0, NEAR - v3(p.head).length()) ** 2;
+    });
+    return cost([cfg], HELD.torch, [0, 1]) + pathCost(cfg) + look;
+  };
+  let x = new Array(dims).fill(0);
+  let fx = total(x);
+  console.log(`start: cost ${fx.toFixed(3)}, breaks ${cost([build(x)], HELD.torch, [0, 1], true)}`, JSON.stringify(tally));
+  for (const k in tally) delete tally[k];
+  let sigma = 0.06;
+  for (let it = 0; it < iters; it++) {
+    const y = x.map((v) => v + sigma * gauss());
+    const fy = total(y);
+    if (fy < fx) {
+      x = y;
+      fx = fy;
+      sigma = Math.min(0.25, sigma * 1.25);
+    } else sigma = Math.max(0.002, sigma * 0.97);
+  }
+  const cfg = build(x);
+  console.log(`end: cost ${fx.toFixed(3)}, breaks ${cost([cfg], HELD.torch, [0, 1], true)}`, JSON.stringify(tally));
+  if (args.includes('--write')) {
+    type Fs = { readFileSync(p: string, e: string): string; writeFileSync(p: string, d: string): void };
+    const fs = (globalThis as unknown as { process: { getBuiltinModule(m: string): Fs } }).process.getBuiltinModule('node:fs');
+    const file = 'src/player/held.ts';
+    let src = fs.readFileSync(file, 'utf8');
+    const a = src.indexOf('  swing: [', src.indexOf('const AXE: KeySet'));
+    const b = src.indexOf('  ],', a) + 4;
+    const line = (p: SwingPoint) => {
+      const parts = [`head: ${arr(v3(p.head))}`, `hand: ${arr(v3(p.hand))}`];
+      if (p.roll) parts.push(`roll: ${fmt(p.roll)}`);
+      if (p.body && v3(p.body).lengthSq() > 1e-6) parts.push(`body: ${arr(v3(p.body))}`);
+      if (p.slide) parts.push(`slide: ${fmt(p.slide)}`);
+      if (p.pitch) parts.push(`pitch: ${p.pitch}`);
+      return `    { ${parts.join(', ')} },`;
+    };
+    src = src.slice(0, a) + `  swing: [\n${cfg.keys.swing!.map(line).join('\n')}\n  ],` + src.slice(b);
+    src = src.replace(/const AXE_R = .*;/, `const AXE_R = ${(cfg.main.roll / DEG).toFixed(1)} * DEG;`);
+    src = src.replace(/const AXE_L = .*;/, `const AXE_L = ${(cfg.off!.roll / DEG).toFixed(1)} * DEG;`);
+    fs.writeFileSync(file, src);
+    console.log('written');
   }
   return 0;
 }

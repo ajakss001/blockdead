@@ -84,6 +84,8 @@ export class Player {
   private headlamp = false;
   /** Camera dip after a landing, m (springs back). */
   private landDip = 0;
+  /** Camera jolt when a blow lands (rad). */
+  private hitKick = 0;
   private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
 
@@ -151,6 +153,7 @@ export class Player {
     if (strikeNoise > 0) {
       this.controller.addNoise(strikeNoise);
       this.strikeSound();
+      this.hitKick = 0.03;
     }
 
   }
@@ -204,8 +207,9 @@ export class Player {
     // legs and feet, not the top of your own stomach.
     const lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
     this.landDip = damp(this.landDip, 0, 7, frameDt);
+    this.hitKick = damp(this.hitKick, 0, 16, frameDt);
     this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35 - this.landDip, z - sin * bobX - cos * lean);
-    this.camera.rotation.set(c.pitch, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
+    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
 
     this.body.update(x, y, z, c.yaw, phase, c.speed, crouchT);
     this.updateFlicker(frameDt);

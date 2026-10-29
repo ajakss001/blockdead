@@ -145,4 +145,54 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
     step(5);
     return shots;
   };
+  // One preview sheet of a swing: the arms alone (no world) at the given times, a crosshair, labels,
+  // laid out in a row; shown over the page and returned as a JPEG data URL.
+  w.__swingSheet = async (id: string, times: number[], labels: string[], cellW = 320) => {
+    const vm = scene.viewmodel;
+    const f = { lookX: 0, lookY: 0, stepPhase: 0, speed: 0, sprinting: false, flashlightOn: false };
+    vm.equip(id as 'axe');
+    for (let k = 0; k < 90; k++) {
+      vm.fixedUpdate(1 / 60, false);
+      vm.update(1 / 60, f);
+    }
+    const cellH = Math.round((cellW * 9) / 16);
+    const sheet = document.createElement('canvas');
+    sheet.width = cellW * times.length;
+    sheet.height = cellH;
+    const g2 = sheet.getContext('2d')!;
+    const size = gl.getSize(new (await import('three')).Vector2());
+    vm.setAspect(16 / 9);
+    gl.setSize(cellW, cellH, false);
+    times.forEach((t, i) => {
+      vm.scrubT = -1;
+      vm.fixedUpdate(1 / 60, false);
+      for (let k = 0; k <= Math.round(t * 60); k++) {
+        vm.scrubT = Math.min(t, k / 60);
+        vm.fixedUpdate(1 / 60, false);
+        vm.update(1 / 60, f);
+      }
+      gl.setRenderTarget(null);
+      gl.setClearColor(0x6b7078, 1);
+      gl.clear();
+      gl.render(vm.scene, vm.camera);
+      g2.drawImage(gl.domElement, 0, 0, cellW, cellH, i * cellW, 0, cellW, cellH);
+      g2.strokeStyle = '#ff0';
+      g2.beginPath();
+      g2.moveTo(i * cellW + cellW / 2 - 6, cellH / 2);
+      g2.lineTo(i * cellW + cellW / 2 + 6, cellH / 2);
+      g2.moveTo(i * cellW + cellW / 2, cellH / 2 - 6);
+      g2.lineTo(i * cellW + cellW / 2, cellH / 2 + 6);
+      g2.stroke();
+      g2.fillStyle = '#ff0';
+      g2.font = '12px sans-serif';
+      g2.fillText(labels[i] ?? `t=${t.toFixed(2)}`, i * cellW + 4, 14);
+      g2.fillRect(i * cellW, 0, 1, cellH);
+    });
+    vm.scrubT = null;
+    gl.setSize(size.x, size.y, false);
+    vm.setAspect(size.x / size.y);
+    const url = sheet.toDataURL('image/jpeg', 0.85);
+    (w.__grid as (a: string[], b: string[], c: number) => void)([url], [''], 1);
+    return url;
+  };
 }

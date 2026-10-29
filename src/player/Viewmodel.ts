@@ -16,7 +16,7 @@ import {
 import { clamp, damp } from '../core/math';
 import { limbForward } from '../render/lowpoly';
 import { characterMaterial } from '../render/look/materials';
-import { type ArmPose, FOREARM, HAND_OFFSET, HandsRig, type ItemState, UPPER } from './armRig';
+import { type ArmPose, FOREARM, HAND_OFFSET, HandsRig, hitTime, type ItemState, swingTime, UPPER } from './armRig';
 import { GRIP_X, GRIP_Z, handGeometry } from './hand';
 import { buildHeldModel, FISTS, HELD, type HeldConfig, type HeldId } from './held';
 import { cuffColor, SKIN } from './outfit';
@@ -80,6 +80,8 @@ export class Viewmodel {
   swingStarted = false;
   /** Debug: hold the swing at this time (s) instead of running it (?animdebug). */
   scrubT: number | null = null;
+  /** Swing speed: below 1 when tired (set by the scene). */
+  swingRate = 1;
 
   private sprintT = 0;
   private rightDown = 0;
@@ -129,6 +131,11 @@ export class Viewmodel {
 
   get currentItem(): RightItem {
     return this.item;
+  }
+
+  /** Camera pitch the swing asks for this frame (rad, + up): leaning back in the windup. */
+  get cameraPitch(): number {
+    return this.rig.pitch;
   }
 
   /** The current weapon needs both hands: the flashlight is worn on the head. */
@@ -182,12 +189,12 @@ export class Viewmodel {
       return;
     }
     const a = this.config(this.item);
-    this.attackT += dt;
-    if (!this.strikeFired && this.attackT >= a.windup) {
+    this.attackT += dt * this.swingRate;
+    if (!this.strikeFired && this.attackT >= hitTime(a)) {
       this.strikeFired = true;
       this.strikePending = true;
     }
-    if (this.attackT >= a.windup + a.strike + a.recover) this.attackT = -1;
+    if (this.attackT >= swingTime(a)) this.attackT = -1;
   }
 
   /**

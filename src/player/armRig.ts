@@ -1,7 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { clamp, easeInOutSine, easeInQuad, easeOutQuad } from '../core/math';
 import { GRIP_X, GRIP_Z } from './hand';
-import type { HeldConfig, Key, KeySet, Socket } from './held';
+import type { HeldConfig, Key, KeySet, Socket, SwingPoint } from './held';
 
 /**
  * First-person arm rig (pure math, no meshes — the viewmodel applies it, test:anim checks it).
@@ -88,6 +88,8 @@ const over = (v: number, lim: number) => Math.max(0, Math.abs(v) - lim);
 const wrapPi = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
 /** How far the elbow may swivel off its pole. */
 const SWIVEL_MAX = 100 * DEG;
+/** Most the elbow swivels in one frame. */
+const SWIVEL_STEP = 14 * DEG;
 /** The elbow keeps the wrist this far inside its range when it can. */
 const MARGIN = 1.5 * DEG;
 
@@ -170,10 +172,13 @@ export class ArmRig {
     let best = 0;
     let bestCost = Infinity;
     const prev = this.fresh ? 0 : this.swivel;
+    // Fresh: the whole range. After that the elbow moves at most SWIVEL_STEP a frame (no visible jumps).
+    const lo = this.fresh ? -SWIVEL_MAX : Math.max(-SWIVEL_MAX, prev - SWIVEL_STEP);
+    const hi = this.fresh ? SWIVEL_MAX : Math.min(SWIVEL_MAX, prev + SWIVEL_STEP);
     const n = this.fresh ? 10 : 4;
-    const step0 = this.fresh ? 10 * DEG : 5 * DEG;
+    const step0 = this.fresh ? 10 * DEG : SWIVEL_STEP / n;
     for (let i = -n; i <= n; i++) {
-      const phi = clamp(prev + i * step0, -SWIVEL_MAX, SWIVEL_MAX);
+      const phi = clamp(prev + i * step0, lo, hi);
       const c = this.evaluate(phi, along, h, prev).cost;
       if (c < bestCost) {
         bestCost = c;
@@ -181,7 +186,7 @@ export class ArmRig {
       }
     }
     for (let step = step0 * 0.5; step > 0.2 * DEG; step *= 0.5) {
-      for (const phi of [clamp(best - step, -SWIVEL_MAX, SWIVEL_MAX), clamp(best + step, -SWIVEL_MAX, SWIVEL_MAX)]) {
+      for (const phi of [clamp(best - step, lo, hi), clamp(best + step, lo, hi)]) {
         const c = this.evaluate(phi, along, h, prev).cost;
         if (c < bestCost) {
           bestCost = c;
@@ -332,6 +337,149 @@ const _rest: CompiledKey = { at: new Vector3(), q: new Quaternion(), body: new Q
 const _pump = new Quaternion();
 const AXIS_X = new Vector3(1, 0, 0);
 
+/** Phase of the swing and camera pitch of the last poseItem call. */
+export const swingOut = { pitch: 0, phase: 'rest' as 'rest' | 'windup' | 'strike' | 'follow' | 'recover' };
+
+/** Whole swing, s. */
+export const swingTime = (cfg: HeldConfig): number => cfg.windup + cfg.strike + (cfg.follow ?? 0) + cfg.recover;
+/** When the blow lands (hit check, sound), s from the start: path swings at contact, keyed ones at the end of the windup. */
+export const hitTime = (cfg: HeldConfig): number => (cfg.keys.swing ? cfg.windup + cfg.strike : cfg.windup);
+
+// Path scratch: 8 points (rest, the 6 waypoints, rest), their tangents, chord directions.
+const _P = Array.from({ length: 8 }, () => new Vector3());
+const _H = Array.from({ length: 8 }, () => new Vector3());
+const _MP = Array.from({ length: 8 }, () => new Vector3());
+const _MH = Array.from({ length: 8 }, () => new Vector3());
+const _D = Array.from({ length: 8 }, () => new Vector3());
+const _hd = new Vector3();
+const _hn = new Vector3();
+const _vel = new Vector3();
+const _ax = new Vector3();
+const _ed = new Vector3();
+const _qb2 = new Quaternion();
+const _bodyA = new Quaternion();
+const _bodyB = new Quaternion();
+/** Where the head turns back (zero tangent): rest, the top of the windup, the end of the follow-through. */
+const TURN = [true, false, true, false, false, true, false, true];
+/** +1 where the head moves the way of the blow (strike, follow-through), −1 where it moves back. */
+const SENSE = [-1, -1, 1, 1, 1, -1, -1];
+
+function hermite(p0: Vector3, m0: Vector3, p1: Vector3, m1: Vector3, s: number, out: Vector3): Vector3 {
+  const s2 = s * s;
+  const s3 = s2 * s;
+  return out
+    .copy(p0)
+    .multiplyScalar(2 * s3 - 3 * s2 + 1)
+    .addScaledVector(m0, s3 - 2 * s2 + s)
+    .addScaledVector(p1, -2 * s3 + 3 * s2)
+    .addScaledVector(m1, s3 - s2);
+}
+
+function hermiteD(p0: Vector3, m0: Vector3, p1: Vector3, m1: Vector3, s: number, out: Vector3): Vector3 {
+  const s2 = s * s;
+  return out
+    .copy(p0)
+    .multiplyScalar(6 * s2 - 6 * s)
+    .addScaledVector(m0, 3 * s2 - 4 * s + 1)
+    .addScaledVector(p1, -6 * s2 + 6 * s)
+    .addScaledVector(m1, 3 * s2 - 2 * s);
+}
+
+const smooth = (x: number) => x * x * (3 - 2 * x);
+
+/**
+ * Path swing (KeySet.swing): the head and the anchor hand run through rest → waypoints → rest on cubic
+ * Bézier (Hermite) segments; the handle runs from the hand to the head, the edge faces along the arc in
+ * the direction of the blow (blended to the chord directions where the head stops and turns back),
+ * turned by the waypoints' roll. Easing: slow out of rest into the windup, accelerating strike, braking
+ * follow-through, smooth recover. Writes the anchor socket point (as keys do); returns the slide.
+ */
+function pathPose(cfg: HeldConfig, t: number, rest: CompiledKey, outPos: Vector3, outQ: Quaternion, outBody: Quaternion): number {
+  const pts = cfg.keys.swing!;
+  const anchor = cfg.keys.anchor === 'off' && cfg.off ? cfg.off : cfg.main;
+  // Rest: the live rest pose's head and anchor hand.
+  _hd.set(0, anchor.along, 0).applyQuaternion(rest.q);
+  _P[0].set(0, cfg.head[1], 0).applyQuaternion(rest.q).add(rest.at).sub(_hd);
+  _H[0].copy(rest.at);
+  for (let i = 0; i < 6; i++) {
+    _P[i + 1].set(...pts[i].head);
+    _H[i + 1].set(...pts[i].hand);
+  }
+  _P[7].copy(_P[0]);
+  _H[7].copy(_H[0]);
+  for (let i = 0; i < 8; i++) {
+    if (TURN[i]) {
+      _MP[i].set(0, 0, 0);
+      _MH[i].set(0, 0, 0);
+    } else {
+      _MP[i].subVectors(_P[i + 1], _P[i - 1]).multiplyScalar(0.5);
+      _MH[i].subVectors(_H[i + 1], _H[i - 1]).multiplyScalar(0.5);
+    }
+  }
+  // Edge directions to fall back on where the head is slow: the blow-wise chords around each waypoint;
+  // at rest, the rest pose's own edge.
+  const restEdge = _ed.set(0, 0, -1).applyQuaternion(rest.q);
+  for (let i = 1; i < 7; i++) {
+    _D[i].subVectors(_P[i], _P[i - 1]).normalize().multiplyScalar(SENSE[i - 1]);
+    _hn.subVectors(_P[i + 1], _P[i]).normalize().multiplyScalar(SENSE[i]);
+    _D[i].add(_hn).normalize();
+  }
+  _D[0].copy(restEdge);
+  // Out of rest the edge stays half with the rest pose (no quick turn of the blade about the handle).
+  _D[1].add(restEdge).normalize();
+  _D[7].copy(restEdge);
+
+  // Time → path parameter u (segment index + fraction), with the easing of each phase.
+  const w = cfg.windup;
+  const s = cfg.strike;
+  const f = cfg.follow ?? 0;
+  const r = cfg.recover;
+  let u: number;
+  if (t < w) {
+    u = 2 * easeInOutSine(t / w);
+    swingOut.phase = 'windup';
+  } else if (t < w + s) {
+    // Linear in the path: the zero tangent at the top already eases it in; the speed peaks at contact.
+    u = 2 + 2 * ((t - w) / s);
+    swingOut.phase = 'strike';
+  } else if (t < w + s + f) {
+    u = 4 + easeOutQuad((t - w - s) / f);
+    swingOut.phase = 'follow';
+  } else {
+    u = 5 + 2 * easeInOutSine(Math.min(1, (t - w - s - f) / r));
+    swingOut.phase = 'recover';
+  }
+  const i = Math.min(6, Math.floor(u));
+  const a = u - i;
+  const head = hermite(_P[i], _MP[i], _P[i + 1], _MP[i + 1], a, _hn);
+  const hand = hermite(_H[i], _MH[i], _H[i + 1], _MH[i + 1], a, outPos);
+  hermiteD(_P[i], _MP[i], _P[i + 1], _MP[i + 1], a, _vel).multiplyScalar(SENSE[i]);
+  // Handle from the hand to the head; edge: along the arc, faded to the chord directions when slow.
+  _ax.subVectors(head, hand).normalize();
+  const k = smooth(Math.min(1, _vel.length() / 0.35));
+  _ed.copy(_D[i]).lerp(_D[i + 1], smooth(a)).multiplyScalar(1 - k);
+  if (k > 0) _ed.addScaledVector(_vel.normalize(), k);
+  basisQuat(_ax, _ed, outQ);
+  const p0 = i === 0 ? null : pts[i - 1];
+  const p1 = i + 1 === 7 ? null : pts[i];
+  const sa = smooth(a);
+  const roll = (p0?.roll ?? 0) + ((p1?.roll ?? 0) - (p0?.roll ?? 0)) * sa;
+  if (roll) outQ.multiply(_qb2.setFromAxisAngle(AXIS_Y, roll));
+  // Item placed by its head; the anchor socket point is what the caller expects.
+  _hd.set(0, cfg.head[1], 0).applyQuaternion(outQ);
+  outPos.copy(head).sub(_hd).addScaledVector(_t.set(0, 1, 0).applyQuaternion(outQ), anchor.along);
+  // Shoulders, slide, camera pitch: per waypoint, smoothly between them.
+  const bodyOf = (p: SwingPoint | null, q: Quaternion) => {
+    if (!p?.body) return q.copy(rest.body);
+    _hd.set(...p.body);
+    const ang = _hd.length();
+    return ang > 1e-9 ? q.setFromAxisAngle(_hd.divideScalar(ang), ang) : q.identity();
+  };
+  outBody.copy(bodyOf(p0, _bodyA)).slerp(bodyOf(p1, _bodyB), sa);
+  swingOut.pitch = (p0?.pitch ?? 0) + ((p1?.pitch ?? 0) - (p0?.pitch ?? 0)) * sa;
+  return (p0 ? (p0.slide ?? 0) : rest.slide) + ((p1 ? (p1.slide ?? 0) : rest.slide) - (p0 ? (p0.slide ?? 0) : rest.slide)) * sa;
+}
+
 /**
  * Pose of an item (butt position + rotation, viewmodel space) for a swing state: rest/sprint blend with
  * the sprint pump, the swing over it, then lowered. Shortest-arc slerp everywhere, never Euler angles.
@@ -349,7 +497,12 @@ export function poseItem(cfg: HeldConfig, st: ItemState, outPos: Vector3, outQ: 
   outQ.copy(rest.q);
   outBody.copy(rest.body);
   let slide = k.idle.slide + (k.sprint.slide - k.idle.slide) * st.sprint;
-  if (st.attackT >= 0) {
+  swingOut.pitch = 0;
+  swingOut.phase = 'rest';
+  if (st.attackT >= 0 && cfg.keys.swing) {
+    slide = pathPose(cfg, st.attackT, rest, outPos, outQ, outBody);
+  } else if (st.attackT >= 0) {
+    swingOut.phase = st.attackT < cfg.windup ? 'windup' : st.attackT < cfg.windup + cfg.strike ? 'strike' : 'recover';
     const t = st.attackT;
     let from: CompiledKey = rest;
     let to: CompiledKey;
@@ -412,6 +565,9 @@ export class HandsRig {
   readonly targetL = { grip: new Vector3(), q: new Quaternion() };
   /** Where the main hand holds the item this frame, along the handle from the butt. */
   mainAlong = 0;
+  /** Camera pitch the swing asks for (rad) and its phase, this frame. */
+  pitch = 0;
+  phase: (typeof swingOut)['phase'] = 'rest';
 
   reset(): void {
     this.right.reset();
@@ -421,6 +577,8 @@ export class HandsRig {
   update(cfg: HeldConfig, st: ItemState, torchCfg: HeldConfig, torchSt: ItemState): void {
     const it = this.item;
     this.mainAlong = poseItem(cfg, st, it.pos, it.q, it.body);
+    this.pitch = swingOut.pitch;
+    this.phase = swingOut.phase;
     socketFrame(it.pos, it.q, cfg.main, this.targetR.q, this.targetR.grip, this.mainAlong);
     turnShoulder(this.right, it.body);
     this.right.solve(this.targetR.q, this.targetR.grip);

@@ -43,6 +43,29 @@ export interface KeySet {
   strike?: Key;
   /** Waypoint of the return after the blow (its own path, not the strike played backwards). */
   recover?: Key;
+  /**
+   * A swing along a path instead of windup/strike/recover keys: the waypoints between rest and rest —
+   * [windup half, windup top, strike half, contact, follow-through end, recover half]. The head runs
+   * through them on cubic Bézier segments (Catmull-Rom tangents, zero where it turns back: at the top and
+   * at the end of the follow-through), the item's edge faces along the arc.
+   */
+  swing?: SwingPoint[];
+}
+
+/** One waypoint of a swing path, viewmodel-camera space. */
+export interface SwingPoint {
+  /** The top of the handle (at the height of HeldConfig.head) here. */
+  head: V3;
+  /** The anchor hand here: the handle runs from it to the head. */
+  hand: V3;
+  /** Extra turn of the edge about the handle (rad). */
+  roll?: number;
+  /** Turn of the shoulders, as in Key. */
+  body?: V3;
+  /** 0..1 slide of the main hand (as in Key). */
+  slide?: number;
+  /** Camera pitch (rad, + looks up): the windup leans back, the blow forward. */
+  pitch?: number;
 }
 
 /**
@@ -60,9 +83,13 @@ export interface HeldConfig {
   keys: KeySet;
   /** The striking end in the item frame: stays in the frame through every animation (test:anim). */
   head: V3;
-  /** Swing timing, seconds; the blow lands at the start of `strike`. */
+  /**
+   * Swing timing, seconds. Keyed swings: the blow lands at the start of `strike`. Path swings: windup →
+   * strike → contact (the blow lands, hit check) → follow-through (`follow`) → recover.
+   */
   windup: number;
   strike: number;
+  follow?: number;
   recover: number;
   /** How loud a swing is, 0..1. */
   noise: number;
@@ -87,6 +114,25 @@ const TWO_HANDED: KeySet = {
   strike: key([0.269, -0.381, -0.698], [-0.851, 0.408, 0.331], [-0.378, -0.037, -0.925], [-0.718, -0.595, 0.21], 1),
   // On the way back: low across the front, the top hand sliding back up.
   recover: key([0.258, -0.403, -0.732], [-0.806, 0.398, 0.439], [-0.338, 0.299, -0.892], [-0.83, -0.552, 0.104], 0.6),
+};
+
+/**
+ * Axe: a diagonal chop from over the right shoulder down to the left through the middle of the screen.
+ * Windup — back and up over the right shoulder (the head partly over the top right edge), the top hand at
+ * the head; strike — down along the arc, the edge leading, the top hand sliding down to the bottom one;
+ * contact — the edge through the crosshair about 1 m out; follow-through — on down-left, braking below the
+ * middle of the screen; recover — a low arc back to rest, the top hand back up.
+ */
+const AXE: KeySet = {
+  ...TWO_HANDED,
+  swing: [
+    { head: [0.263, 0.124, -0.403], hand: [-0.125, -0.479, -0.749], roll: -0.603, body: [-0.152, -0.71, -0.078], pitch: 0.02 },
+    { head: [0.291, 0.18, -0.414], hand: [-0.059, -0.198, -0.548], roll: 0.455, body: [0.07, 0.44, 0.09], pitch: 0.04 },
+    { head: [0.151, 0.302, -0.869], hand: [0.022, -0.339, -0.605], roll: -0.163, body: [-0.124, 0.245, 0.219], slide: 0.526, pitch: 0.01 },
+    { head: [-0.026, 0.054, -0.966], hand: [0.343, -0.307, -0.36], roll: -1.237, body: [0.419, -0.155, 0.364], slide: 1, pitch: -0.02 },
+    { head: [-0.354, -0.139, -1.002], hand: [0.372, -0.447, -0.5], roll: -1.136, body: [-0.478, 0.172, -0.39], slide: 1, pitch: -0.01 },
+    { head: [-0.013, 0.303, -0.76], hand: [0.06, -0.296, -0.647], roll: -0.37, body: [-0.226, 0.18, -0.132], slide: 0.55 },
+  ],
 };
 
 /** Knife: held up by the right of the crosshair, a quick cut across and down to the centre. */
@@ -134,11 +180,14 @@ const DEG = Math.PI / 180;
 /** Two-handed grips: the right hand up the handle (the bat: hands together at the knob), the left at the butt, both thumbs towards the head. */
 const ROLL_R = -3.2 * DEG;
 const ROLL_L = -34.8 * DEG;
+/** The axe's own grips (its path swing is tuned apart from the bat and the crowbar). */
+const AXE_R = 1.0 * DEG;
+const AXE_L = -50.4 * DEG;
 
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
   knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 0.13, strike: 0.09, recover: 0.26, noise: 0.2 },
   hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4 },
-  axe: { twoHanded: true, main: { along: 0.52, roll: ROLL_R, slide: 0.2 }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, -0.075], windup: 0.34, strike: 0.13, recover: 0.42, noise: 0.5 },
+  axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5 },
   bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45 },
   crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.66, -0.06], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5 },
   torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0 },

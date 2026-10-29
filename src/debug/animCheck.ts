@@ -1,5 +1,5 @@
 import { type Group, type Mesh, Quaternion, Vector3 } from 'three';
-import { FOREARM_ROLL, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
+import { FOREARM_ROLL, hitTime, swingTime, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
 import { GRIP_X, GRIP_Z } from '../player/hand';
 import { FISTS, HELD, type HeldConfig } from '../player/held';
 import type { RightItem, Viewmodel, ViewmodelFrame } from '../player/Viewmodel';
@@ -24,6 +24,14 @@ export const LIMITS = {
   gap: 0.01,
   /** Hand turned against its socket, degrees (should be 0: rigid). */
   socketTurn: 1,
+  /** Path swings: the blade at contact within this share of the screen width from the crosshair; the head never in
+   * the bottom 20% of the screen (NDC y −0.6); never more than this share of the width in one frame; strike frames. */
+  contactOff: 0.1,
+  lowest: -0.6,
+  headStep: 0.08,
+  strikeFrames: 8,
+  /** Recover: the handle at least this far (sine) from upright on screen (~25°). */
+  uprightSin: 0.42,
 };
 /** Aspect ratios the frame check runs at: 16:9 phones / PCs, 4:3 tablets. */
 const ASPECTS = [16 / 9, 4 / 3];
@@ -54,6 +62,14 @@ export interface FrameRow {
   checkFrame: boolean;
   /** The item was swapped this frame (out of view at the bottom): no jump check. */
   swap: boolean;
+  /** Weapon head on a 16:9 screen, NDC. */
+  headX: number;
+  headY: number;
+  /** The butt of the handle on screen, NDC. */
+  butX: number;
+  butY: number;
+  /** The frame the blow lands (hit check). */
+  contact: boolean;
 }
 
 export interface Failure {
@@ -184,9 +200,29 @@ class Sampler {
       const head = item === 'fists' ? _a.set(GRIP_X, 0, GRIP_Z) : _a.set(...cfg.head);
       headInFrame = inView(vm, head.applyMatrix4(obj.matrixWorld));
     }
+    // The head on a 16:9 screen (NDC), for the path-swing checks.
+    let hx = 0;
+    let hy = 0;
+    let bx = 0;
+    let by = 0;
+    if (item !== 'fists') {
+      const obj = v.held.get(item)!.children[0] as Group;
+      const cam = vm.camera;
+      const prev = cam.aspect;
+      cam.aspect = 16 / 9;
+      cam.updateProjectionMatrix();
+      const p = _a.set(...cfgOf(item).head).applyMatrix4(obj.matrixWorld).project(cam);
+      hx = p.x;
+      hy = p.y;
+      const b = _a.set(0, 0, 0).applyMatrix4(obj.matrixWorld).project(cam);
+      bx = b.x;
+      by = b.y;
+      cam.aspect = prev;
+      cam.updateProjectionMatrix();
+    }
     const swap = this.lastItem !== null && this.lastItem !== item;
     this.lastItem = item;
-    return { frame, phase, R, L, headInFrame, checkFrame, swap };
+    return { frame, phase, R, L, headInFrame, checkFrame, swap, headX: hx, headY: hy, butX: bx, butY: by, contact: false };
   }
 }
 
@@ -207,7 +243,8 @@ export function swingFrames(vm: Viewmodel, item: RightItem): FrameRow[] {
   const f = frameOf();
   settle(vm, item, f);
   const cfg = cfgOf(item);
-  const total = cfg.windup + cfg.strike + cfg.recover;
+  const total = swingTime(cfg);
+  let contactDone = false;
   const s = new Sampler(vm);
   const rows: FrameRow[] = [];
   const lead = 3;
@@ -217,8 +254,11 @@ export function swingFrames(vm: Viewmodel, item: RightItem): FrameRow[] {
     vm.scrubT = attacking ? t : -1;
     vm.fixedUpdate(1 / 60, false);
     vm.update(1 / 60, f);
-    const phase = !attacking ? 'rest' : t < cfg.windup ? 'windup' : t < cfg.windup + cfg.strike ? 'strike' : 'recover';
-    rows.push(s.row(i, phase, item, true, true));
+    const phase = !attacking ? 'rest' : vm.rig.phase;
+    const row = s.row(i, phase, item, true, true);
+    row.contact = attacking && !contactDone && t >= hitTime(cfg) - 1e-9;
+    if (row.contact) contactDone = true;
+    rows.push(row);
   }
   vm.scrubT = null;
   return rows;
@@ -269,6 +309,8 @@ export function allAnimations(vm: Viewmodel, item: RightItem): Record<string, Fr
 export function failures(item: string, anim: string, rows: FrameRow[]): Failure[] {
   const out: Failure[] = [];
   const add = (frame: number, what: string) => out.push({ item, anim, frame, what });
+  const path = !!cfgOf(item as RightItem).keys.swing;
+  let prev: FrameRow | null = null;
   for (const r of rows) {
     for (const [name, h] of [['R', r.R], ['L', r.L]] as const) {
       if (!h) continue;
@@ -284,7 +326,29 @@ export function failures(item: string, anim: string, rows: FrameRow[]): Failure[
       if (h.socketTurn > LIMITS.socketTurn) add(r.frame, `${name} hand turned ${h.socketTurn.toFixed(1)}° against its socket`);
       if (r.checkFrame && !h.inFrame) add(r.frame, `${name} hand out of the frame`);
     }
-    if (r.checkFrame && !r.headInFrame) add(r.frame, 'weapon head out of the frame');
+    // A path swing may lift the head over the top right edge in the windup.
+    if (r.checkFrame && !r.headInFrame && !(path && r.phase === 'windup')) add(r.frame, 'weapon head out of the frame');
+    if (!path || !r.checkFrame || r.swap) continue;
+    // Path swings (the axe's chop): distances in screen widths, 16:9.
+    const dist = (x: number, y: number) => Math.hypot(x, (y * 9) / 16) / 2;
+    if (r.contact && dist(r.headX, r.headY) > LIMITS.contactOff) add(r.frame, `contact: blade ${(dist(r.headX, r.headY) * 100).toFixed(1)}% of the width off the crosshair`);
+    if (r.headY < LIMITS.lowest && r.phase !== 'rest') add(r.frame, `head in the bottom 20% of the screen (y ${r.headY.toFixed(2)})`);
+    // The return runs low: the handle never stands (near) upright on screen.
+    if (r.phase === 'recover') {
+      const dx = r.headX - r.butX;
+      const dy = ((r.headY - r.butY) * 9) / 16;
+      if (dy > 0 && Math.abs(dx) / Math.hypot(dx, dy) < LIMITS.uprightSin) add(r.frame, `recover: handle upright on screen (${((Math.asin(Math.abs(dx) / Math.hypot(dx, dy)) * 180) / Math.PI).toFixed(0)}° from vertical)`);
+    }
+    if (prev && !prev.swap) {
+      const d = dist(r.headX - prev.headX, r.headY - prev.headY);
+      if (d > LIMITS.headStep) add(r.frame, `head jumped ${(d * 100).toFixed(1)}% of the width in one frame`);
+    }
+    prev = r;
+  }
+  if (path && anim === 'swing') {
+    const strike = rows.filter((r) => r.phase === 'strike').length;
+    if (strike < LIMITS.strikeFrames) add(0, `strike lasts ${strike} frames < ${LIMITS.strikeFrames}`);
+    if (!rows.some((r) => r.contact)) add(0, 'no contact frame');
   }
   return out;
 }

@@ -306,6 +306,8 @@ export class WorldScene implements IScene {
     c.canSprint = this.survival.canSprint;
     c.sprintFactor = this.survival.sprintFactor;
     c.jumpFactor = this.survival.jumpFactor;
+    // Tired: the swing is slower.
+    this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
     this.player.fixedUpdate(dt);
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
