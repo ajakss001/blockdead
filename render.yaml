@@ -13,3 +13,18 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+  # Test build: every melee weapon in the bag from the start (VITE_TEST_LOADOUT).
+  - type: web
+    name: blockdead-test
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: VITE_TEST_LOADOUT
+        value: melee
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable

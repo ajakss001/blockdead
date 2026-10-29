@@ -260,6 +260,11 @@ export class WorldScene implements IScene {
       this.containers.restore(save.containers);
       this.syncBody();
     }
+    // Test build (VITE_TEST_LOADOUT=melee) or ?loadout=melee: every melee weapon in the bag.
+    if (import.meta.env.VITE_TEST_LOADOUT === 'melee' || new URLSearchParams(location.search).get('loadout') === 'melee') {
+      for (const id of ['axe', 'bat', 'crowbar', 'knife', 'hammer'] as const) if (this.inventory.count(id) === 0) this.inventory.add(id, 1);
+      this.syncBody();
+    }
     const { x, z } = c.position;
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
