@@ -18,7 +18,7 @@ import { CHUNK, ROAD_HALF } from '../world/gen/layout';
 import { type ItemId, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
-import { BACKPACK_CAPACITY } from '../data/items';
+import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
 import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../player/appearance';
 import { outfitFrom } from '../player/outfit';
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
@@ -260,11 +260,6 @@ export class WorldScene implements IScene {
       this.containers.restore(save.containers);
       this.syncBody();
     }
-    // Test build (VITE_TEST_LOADOUT=melee) or ?loadout=melee: every melee weapon in the bag.
-    if (import.meta.env.VITE_TEST_LOADOUT === 'melee' || new URLSearchParams(location.search).get('loadout') === 'melee') {
-      for (const id of ['axe', 'bat', 'crowbar', 'knife', 'hammer'] as const) if (this.inventory.count(id) === 0) this.inventory.add(id, 1);
-      this.syncBody();
-    }
     const { x, z } = c.position;
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
@@ -435,6 +430,7 @@ export class WorldScene implements IScene {
   async createCharacter(): Promise<void> {
     if (!this.isNewGame || new URLSearchParams(location.search).get('editor') === '0') {
       this.applyClass();
+      this.giveTestLoadout();
       return;
     }
     // The editor covers everything; afterwards the usual start screen (PC: click to play) shows.
@@ -442,9 +438,22 @@ export class WorldScene implements IScene {
     this.creating = true;
     const choice = await new CharacterEditor(document.getElementById('ui')!).open();
     this.applyChoice(choice);
+    this.giveTestLoadout();
     this.creating = false;
     this.ctx.loop.resume('editor');
     this.save();
+  }
+
+  /** Test build (VITE_TEST_LOADOUT=melee) or ?loadout=melee: every melee weapon in the bag, room made for them. */
+  private giveTestLoadout(): void {
+    if (import.meta.env.VITE_TEST_LOADOUT !== 'melee' && new URLSearchParams(location.search).get('loadout') !== 'melee') return;
+    const inv = this.inventory;
+    for (const id of ['axe', 'bat', 'crowbar', 'knife', 'hammer'] as const) {
+      if (inv.count(id) > 0 || inv.hand === id) continue;
+      inv.capacity = Math.max(inv.capacity, inv.weight + ITEMS[id].weight + 0.01);
+      inv.add(id, 1);
+    }
+    this.syncBody();
   }
 
   /** Looks, class, uniform or starter outfit (with its color), the class kit. */
