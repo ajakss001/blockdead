@@ -15,7 +15,9 @@ import type { GameLoop } from '../core/GameLoop';
  * - master: the volume slider; silent and the context suspended while the tab is hidden or an ad
  *   plays (Yandex Games / VK requirement).
  * World sounds are positional (PannerNode, equal-power, inverse distance) around the camera; at most
- * MAX_VOICES play at once, extra ones are dropped. The reverb send follows where you are (rooms and
+ * MAX_VOICES play at once, extra ones are dropped. Groups keep a crowd from piling up: a few zombie
+ * voices at a time, starts spaced apart, one "I'm hit" per moment; blows (ours and theirs) have slots of
+ * their own past the cap, so a choir of moans never swallows them. The reverb send follows where you are (rooms and
  * alleys ring, open streets don't).
  */
 
@@ -25,6 +27,10 @@ export type HitMaterial = 'wood' | 'metal' | 'concrete' | 'glass' | 'soft';
 export type ContainerSound = 'woodDoor' | 'drawer' | 'locker' | 'fridge' | 'trunk' | 'bag' | 'box' | 'trash' | 'crate' | 'shelf';
 export type ItemSound = 'pick' | 'move' | 'cloth' | 'weapon' | 'eat' | 'drink' | 'bandage' | 'invOpen' | 'invClose' | 'drag' | 'drop';
 export type SwingKind = 'heavy' | 'blade' | 'fist';
+/** What a blow on a body sounds like: a club, a metal tool, an axe, a blade's point, a fist. */
+export type FleshBlow = 'blunt' | 'metal' | 'chop' | 'stab' | 'fist';
+/** A zombie's blow on the survivor: stopped by the clothes, a scratch, a bite. */
+export type Attacked = 'blocked' | 'scratch' | 'bite';
 
 export interface Pos {
   x: number;
@@ -33,6 +39,23 @@ export interface Pos {
 }
 
 const MAX_VOICES = 22;
+/** Blows get this many voices past MAX_VOICES. */
+const PRIORITY_VOICES = 6;
+/**
+ * Sound groups: at most `max` playing at once, starts at least `gap` s apart (in a crowd one more snarl
+ * on top of five is noise, not a sound).
+ */
+const GROUPS = {
+  zVoice: { max: 4, gap: 0.07 },
+  zLunge: { max: 2, gap: 0.15 },
+  zHurt: { max: 2, gap: 0.05 },
+  zStep: { max: 4, gap: 0.04 },
+  zBang: { max: 2, gap: 0.12 },
+  strike: { max: 2, gap: 0.06 },
+  attacked: { max: 1, gap: 0.22 },
+  ouch: { max: 1, gap: 0.35 },
+} as const;
+type Group = keyof typeof GROUPS;
 /** Soft clipping for throats (growls): tanh-like. */
 const DISTORT = (() => {
   const n = 1024;
@@ -84,6 +107,9 @@ class Sound {
   private send: GainNode | null = null;
   noise: AudioBuffer | null = null;
   private voices = 0;
+  /** Per group: when its playing sounds end (context time). */
+  private readonly groupEnds = new Map<Group, number[]>();
+  private readonly groupLast = new Map<Group, number>();
   private volume = Number(localStorage.getItem(VOLUME_KEY) ?? 0.8);
   private hardMute = false;
   private worldMute = false;
@@ -300,7 +326,9 @@ class Sound {
    */
   zombie(kind: 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing', pos: Pos, pitch = 1): void {
     const far = kind === 'bang' || kind === 'crack';
-    const v = this.voice(pos, far ? 1.4 : 1.6, far ? 7 : kind === 'step' ? 1 : 2);
+    const group: Group = far ? 'zBang' : kind === 'step' ? 'zStep' : kind === 'swing' ? 'zLunge' : kind === 'hit' || kind === 'die' ? 'zHurt' : 'zVoice';
+    if (!this.claim(group, kind === 'moan' || kind === 'alarm' ? 1.4 : kind === 'step' ? 0.25 : 0.6)) return;
+    const v = this.voice(pos, far ? 1.4 : 1.6, far ? 7 : kind === 'step' ? 1 : 2, kind === 'swing' || kind === 'hit' || kind === 'die');
     if (!v) return;
     const [out, t] = v;
     const r = Math.random();
@@ -353,9 +381,8 @@ class Sound {
         for (let i = 0; i < 6; i++) this.noiseHit(out, t + 0.08 + i * 0.05 * Math.random(), { type: 'bandpass', f: 2000 + Math.random() * 1500, q: 4, dur: 0.04, peak: 0.12 });
         break;
       case 'hit':
-        this.noiseHit(out, t, { type: 'lowpass', f: 320, dur: 0.12, peak: 0.6 });
-        this.tone(out, t, { f: 85, dur: 0.1, peak: 0.3 });
-        this.tone(out, t + 0.05, { f: f(130), f2: f(90), dur: 0.35, peak: 0.12, type: 'sawtooth', lp: 500 });
+        // Hurt: a choked, angry grunt.
+        this.growl(out, t + 0.04, { f: f(120), f2: f(85), dur: 0.32, peak: 0.3, flutter: 40, form: f(650), form2: f(450), breath: 1, attack: 0.015 });
         break;
       case 'die':
         // Dropping: a last breath, the body hitting the ground.
@@ -369,6 +396,78 @@ class Sound {
         this.noiseHit(out, t + 0.35, { type: 'bandpass', f: f(2500), q: 5, dur: 0.025, peak: 0.2 });
         break;
     }
+  }
+
+  /**
+   * Our blow landing on a zombie: the weapon's own impact — a club's dull thud and slap of flesh, a metal
+   * tool's thud with a short ring, the axe's wet chop, the knife going in, a fist's slap. On the head, bone
+   * cracks; a killing blow lands heavier.
+   */
+  strike(kind: FleshBlow, pos: Pos, head: boolean, kill: boolean): void {
+    if (!this.claim('strike', 0.4)) return;
+    const v = this.voice(pos, 0.6, 2, true);
+    if (!v) return;
+    const [out, t] = v;
+    const k = kill ? 1.25 : 1;
+    const j = () => 0.9 + Math.random() * 0.2;
+    switch (kind) {
+      case 'blunt':
+      case 'metal':
+        this.noiseHit(out, t, { type: 'lowpass', f: 260 * j(), dur: 0.16, peak: 0.85 * k });
+        this.tone(out, t, { f: 78 * j(), f2: 46, dur: 0.14, peak: 0.55 * k });
+        this.noiseHit(out, t + 0.004, { type: 'bandpass', f: 1300 * j(), q: 0.9, dur: 0.06, peak: 0.35 * k });
+        if (kind === 'metal') for (const f of [880, 1460]) this.tone(out, t, { f: f * j(), dur: 0.22, peak: 0.05 });
+        break;
+      case 'chop':
+        this.tone(out, t, { f: 120 * j(), f2: 60, dur: 0.12, peak: 0.5 * k });
+        this.noiseHit(out, t, { type: 'lowpass', f: 420, dur: 0.12, peak: 0.6 * k });
+        this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 1900 * j(), f2: 650, q: 3, dur: 0.18, peak: 0.3 * k });
+        break;
+      case 'stab':
+        this.noiseHit(out, t, { type: 'bandpass', f: 950 * j(), f2: 380, q: 2.2, dur: 0.14, peak: 0.45 * k });
+        this.noiseHit(out, t + 0.03, { type: 'bandpass', f: 2600 * j(), f2: 1300, q: 6, dur: 0.09, peak: 0.12 * k });
+        this.noiseHit(out, t, { type: 'lowpass', f: 220, dur: 0.07, peak: 0.3 * k });
+        break;
+      case 'fist':
+        this.noiseHit(out, t, { type: 'bandpass', f: 1500 * j(), q: 0.8, dur: 0.05, peak: 0.45 });
+        this.noiseHit(out, t, { type: 'lowpass', f: 300, dur: 0.1, peak: 0.5 });
+        break;
+    }
+    if (head && kind !== 'fist') {
+      this.noiseHit(out, t + 0.008, { type: 'highpass', f: 2200, dur: 0.03, peak: 0.35 });
+      this.noiseHit(out, t + 0.02, { type: 'bandpass', f: 3400 * j(), q: 3, dur: 0.04, peak: 0.18 });
+    }
+  }
+
+  /**
+   * A zombie's blow on us, right at the ear (not in 3D): the clothes taking it (a thump and fabric), a
+   * scratch tearing skin, a bite crunching in. Several at once in a crowd play as one, a little louder.
+   */
+  attacked(kind: Attacked, many = 1): void {
+    if (!this.claim('attacked', 0.4)) return;
+    const v = this.voice(null, 0.5, 1, true);
+    if (!v) return;
+    const [out, t] = v;
+    const k = Math.min(1.4, 1 + (many - 1) * 0.15);
+    this.noiseHit(out, t, { type: 'lowpass', f: 280, dur: 0.12, peak: 0.55 * k });
+    if (kind === 'blocked') this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 3200, q: 1.2, dur: 0.1, peak: 0.12 * k });
+    else if (kind === 'scratch') this.noiseHit(out, t + 0.02, { type: 'bandpass', f: 3400, f2: 1500, q: 2.5, dur: 0.2, peak: 0.22 * k, attack: 0.02 });
+    else {
+      for (let i = 0; i < 4; i++) this.noiseHit(out, t + i * 0.025 + Math.random() * 0.01, { type: 'bandpass', f: 1800 + Math.random() * 1400, q: 4, dur: 0.025, peak: 0.22 * k });
+      this.noiseHit(out, t + 0.06, { type: 'bandpass', f: 800, f2: 420, q: 3, dur: 0.22, peak: 0.25 * k });
+    }
+  }
+
+  /** The survivor hurt: a short pained grunt, one at a time (a bite, a fall). */
+  ouch(hard: number): void {
+    if (!this.claim('ouch', 0.5)) return;
+    const v = this.voice(null, 0.5, 1, true);
+    if (!v) return;
+    const [out, t] = v;
+    const f = 150 * (0.92 + Math.random() * 0.16);
+    const k = 0.6 + Math.min(1, hard) * 0.4;
+    this.tone(out, t + 0.03, { f, f2: f * 0.72, dur: 0.24, peak: 0.16 * k, type: 'sawtooth', lp: 900 });
+    this.noiseHit(out, t + 0.02, { type: 'bandpass', f: 1100, q: 1.2, dur: 0.2, peak: 0.07 * k, attack: 0.02 });
   }
 
   /** A door that won't give: thumps against the boards, a rattle. */
@@ -602,11 +701,28 @@ class Sound {
    * A voice: its own gain into the world bus (through a panner if positioned) or the UI bus. Returns
    * the node to play into and the start time, or null when muted / over the voice limit.
    */
-  private voice(pos: Pos | null, life: number, ref = 1.5): [Out, number] | null {
+  /** Room in a group for one more sound lasting `life` s (see GROUPS); false = skip it. */
+  private claim(group: Group, life: number): boolean {
+    const ac = this.ac;
+    if (!ac) return false;
+    const now = ac.currentTime;
+    const { max, gap } = GROUPS[group];
+    const ends = (this.groupEnds.get(group) ?? []).filter((e) => e > now);
+    if (ends.length >= max || now - (this.groupLast.get(group) ?? -1) < gap) {
+      this.groupEnds.set(group, ends);
+      return false;
+    }
+    ends.push(now + life);
+    this.groupEnds.set(group, ends);
+    this.groupLast.set(group, now);
+    return true;
+  }
+
+  private voice(pos: Pos | null, life: number, ref = 1.5, priority = false): [Out, number] | null {
     const ac = this.ac;
     if (!ac || ac.state !== 'running' || this.hardMute || !this.world || !this.ui) return null;
     if (pos && this.worldMute) return null;
-    if (this.voices >= MAX_VOICES) return null;
+    if (this.voices >= MAX_VOICES + (priority ? PRIORITY_VOICES : 0)) return null;
     this.voices++;
     window.setTimeout(() => this.voices--, (life + 0.6) * 1000);
     const g = ac.createGain();

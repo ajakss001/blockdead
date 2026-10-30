@@ -12,7 +12,7 @@ import {
   Vector3,
 } from 'three';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
-import { sfx, type StepSurface } from '../audio/Sound';
+import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
 import { CHUNK, ROAD_HALF } from '../world/gen/layout';
 import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
@@ -75,6 +75,8 @@ const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
+/** How each weapon's blow on a body sounds. */
+const STRIKE_SOUND: Record<string, FleshBlow> = { axe: 'chop', knife: 'stab', fists: 'fist', bat: 'blunt', hammer: 'metal', crowbar: 'metal' };
 const _so = new Vector3();
 const _sd = new Vector3();
 const BASE_VFOV = 75;
@@ -375,8 +377,11 @@ export class WorldScene implements IScene {
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
+    // Nearest first: in a crowd the sound groups fill up with the zombies that matter.
+    const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
+    this.zombies.sounds.sort((a, b) => near(a.z) - near(b.z));
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
-    for (const a of this.zombies.attacks) this.bitten(a.damage, a.from.pos);
+    for (const a of this.zombies.attacks) this.bitten(a.damage, a.from.pos, this.zombies.attacks.length);
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
     // Zombies are solid to the player (and the walls still win).
     for (const z of this.zombies.list) {
@@ -575,7 +580,8 @@ export class WorldScene implements IScene {
     if (wall >= 0 && wall < res.dist - 0.1) return false;
     const strength = classMods(this.classId).strength;
     const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
-    this.zombies.hit(res.zombie, dmg, o.x, o.z);
+    const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z);
+    sfx.strike(STRIKE_SOUND[item] ?? 'blunt', res.point, res.head, killed);
     this.dust.burst(res.point, res.head ? 14 : 10);
     return true;
   }
@@ -584,11 +590,12 @@ export class WorldScene implements IScene {
    * A zombie's blow: it lands on a body part; the clothes on that part may stop the teeth (a bruise), or
    * it is a scratch or a bite — a bleeding wound, and maybe the infection.
    */
-  private bitten(damage: number, from: Vector3): void {
+  private bitten(damage: number, from: Vector3, many = 1): void {
     const r = Math.random();
     const part: BodyPart = r < 0.15 ? 'head' : r < 0.5 ? 'torso' : r < 0.8 ? 'arms' : 'legs';
     const outcome = this.survival.bitten(part, partArmor(this.inventory.worn, part));
     const hp = outcome === 'blocked' ? damage * 0.25 : outcome === 'scratch' ? damage * 0.7 : damage;
+    sfx.attacked(outcome, many);
     this.ctx.hud.toast(outcome === 'blocked' ? `Одежда выдержала: ${PART_NAMES[part]}` : outcome === 'bite' ? `Укус: ${PART_NAMES[part]}` : `Царапина: ${PART_NAMES[part]}`, 1400);
     this.hurt(hp, 'Вас загрызли', true, from);
   }
@@ -600,8 +607,7 @@ export class WorldScene implements IScene {
     this.survival.health = Math.max(0, this.survival.health - (hp * (1 - armor)) / 100);
     this.survival.anxiety = Math.min(1, this.survival.anxiety + 0.08);
     this.player.hurt(Math.min(1, hp / 15));
-    const c = this.player.controller.position;
-    sfx.zombie('hit', { x: c.x, y: c.y + 1.2, z: c.z }, 1.3);
+    sfx.ouch(hp / 15);
     this.deathCause = cause;
     if (this.survival.health <= 0) this.die(cause, from);
   }
