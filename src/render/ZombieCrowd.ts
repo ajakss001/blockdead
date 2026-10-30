@@ -100,8 +100,10 @@ export class ZombieCrowd {
             float sw = sin(ph) * g;
             r = mat3(1.0);
             if (aJoint > 0.5 && aJoint < 2.5) {
-              float a = (aJoint < 1.5 ? sw : -sw) * 0.45 + dead * (aJoint < 1.5 ? 0.55 : 0.35);
-              r = rotX(a);
+              // Dead: the legs go slack and lie flat, a little apart (no knees in the air).
+              float side = aJoint < 1.5 ? -1.0 : 1.0;
+              float a = (aJoint < 1.5 ? sw : -sw) * 0.45 * (1.0 - dead) + dead * 0.06;
+              r = rotZ(side * (0.1 + 0.12 * v) * dead) * rotX(a);
               p = r * (p - vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0)) + vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
               return p;
             }
@@ -109,14 +111,18 @@ export class ZombieCrowd {
               // Arms half raised forward, swinging a little against the legs, the left one hanging lower.
               float side = aJoint < 3.5 ? -1.0 : 1.0;
               float lift = -0.55 - 0.25 * v - (side < 0.0 ? 0.0 : 0.25) + 0.12 * sin(uTime * 1.3 + v * 6.0);
-              float a = mix(lift + (aJoint < 3.5 ? -sw : sw) * 0.18, aJoint < 3.5 ? -2.6 : -2.2, dead);
-              r = rotX(a);
+              float a = (lift + (aJoint < 3.5 ? -sw : sw) * 0.18) * (1.0 - dead);
+              // Dead: the arms flop out to the sides on the ground (one flung up past the head now and then),
+              // in the plane of the body — never sticking up into the air.
+              float splay = side < 0.0 ? 0.8 + 0.7 * v : (v > 0.6 ? 2.7 : 1.0 + 0.5 * (1.0 - v));
+              r = rotZ(side * splay * dead) * rotX(a);
               vec3 sh = vec3(0.25 * side, ${SHOULDER_Y.toFixed(2)}, 0.0);
               p = r * (p - sh) + sh;
             }
             if (aJoint > 4.5) {
               // Head lolling to one side.
-              mat3 h = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0) * (1.0 - dead) + dead * 0.5 * (v - 0.5)) * rotX(0.2 - dead * 0.9);
+              // Dead: rolled to one side, not bent back into the floor.
+              mat3 h = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0) * (1.0 - dead) + dead * (v < 0.5 ? -0.55 : 0.55)) * rotX(0.2 * (1.0 - dead));
               vec3 nk = vec3(0.0, 1.46, 0.0);
               p = h * (p - nk) + nk;
               r = h;
@@ -161,7 +167,12 @@ export class ZombieCrowd {
       _pos.copy(z.pos);
       if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
       _q.setFromAxisAngle(_up, z.yaw);
-      if (z.state === 'dead') _q.multiply(_qf.setFromAxisAngle(_zAxis, z.roll * z.fall)).multiply(_qf2.setFromAxisAngle(_xAxis, -(Math.PI / 2) * z.fall));
+      if (z.state === 'dead') {
+        _q.multiply(_qf.setFromAxisAngle(_zAxis, z.roll * z.fall)).multiply(_qf2.setFromAxisAngle(_xAxis, -(Math.PI / 2) * z.fall));
+        // Lying on its back the pivot (the feet) is the body's middle: lift it by half its depth so the
+        // back rests on the floor instead of sinking in.
+        _pos.y += (0.13 + 0.1 * Math.abs(z.roll)) * Math.sin((z.fall * Math.PI) / 2) * s;
+      }
       else if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
       m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' ? 0.9 : 1), s, s));
       this.mesh.setMatrixAt(i, m);

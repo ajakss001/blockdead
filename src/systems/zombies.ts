@@ -62,6 +62,8 @@ export interface Zombie {
   hp: number;
   /** 0..1 how far it has fallen (dead); hit shake (s left). */
   fall: number;
+  /** How far it can fall before something stops it (a wall behind: it slumps against it), 0..1. */
+  fallMax: number;
   /** Falling (dead): angular speed of the topple (per quarter turn), and a sideways twist to land on. */
   fallV: number;
   roll: number;
@@ -240,6 +242,7 @@ export class ZombieSim {
       groanCd: 2 + r() * 8,
       hp: T.hp,
       fall: 0,
+      fallMax: 1,
       fallV: 0,
       roll: 0,
       shake: 0,
@@ -268,11 +271,11 @@ export class ZombieSim {
       if (z.state === 'dead') {
         // Topples like a body, not a plank turning: slow at first, faster under its own weight, a
         // bounce off the ground, then still.
-        if (z.fall < 1 || Math.abs(z.fallV) > 0.01) {
+        if (z.fall < z.fallMax || Math.abs(z.fallV) > 0.01) {
           z.fallV += 5.5 * Math.sin((z.fall * Math.PI) / 2) * dt + (z.fall < 0.05 ? 1.5 * dt : 0);
           z.fall += z.fallV * dt;
-          if (z.fall >= 1) {
-            z.fall = 1;
+          if (z.fall >= z.fallMax) {
+            z.fall = z.fallMax;
             z.fallV = Math.abs(z.fallV) > 0.6 ? -z.fallV * 0.22 : 0;
           }
         }
@@ -475,6 +478,16 @@ export class ZombieSim {
     }
   }
 
+  /** Free room along a direction from the feet, for a falling body (at knee, hip and chest height), m. */
+  private clearance(p: Vector3, dx: number, dz: number): number {
+    let room = BODY_LEN + 0.2;
+    for (const h of [0.35, 0.8, 1.3]) {
+      const d = this.world.rayHit(p.x, p.y + h, p.z, dx, 0, dz, BODY_LEN + 0.2);
+      if (d >= 0) room = Math.min(room, d);
+    }
+    return room;
+  }
+
   /** A blow from the player. Returns true if it killed. */
   hit(z: Zombie, damage: number, fromX: number, fromZ: number): boolean {
     if (z.state === 'dead') return false;
@@ -497,8 +510,22 @@ export class ZombieSim {
       z.roll = (this.rnd() - 0.5) * 0.9;
       z.timer = T.corpse;
       z.speed = 0;
-      // Falls away from the blow.
-      z.yaw = Math.atan2(-dx, -dz);
+      // Falls away from the blow — or, with a wall there, the clearest way near it; with no room at all it
+      // slumps against the wall (the body never goes through it).
+      const away = Math.atan2(dx, dz);
+      let best = away;
+      let room = -1;
+      for (const turn of [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9, Math.PI]) {
+        const a = away + turn;
+        const c = this.clearance(z.pos, Math.sin(a), Math.cos(a));
+        if (c > room + 0.05) {
+          room = c;
+          best = a;
+        }
+        if (c >= BODY_LEN) break;
+      }
+      z.fallMax = room >= BODY_LEN ? 1 : Math.max(0.25, Math.asin(Math.min(1, Math.max(0.2, room - 0.15) / BODY_LEN)) / (Math.PI / 2));
+      z.yaw = Math.atan2(-Math.sin(best), -Math.cos(best));
       this.sounds.push({ z, kind: 'die' });
       if (z.twin) this.killedTwins.push(z);
       return true;
@@ -641,6 +668,9 @@ export class ZombieSim {
     }
   }
 }
+
+/** A body's length when it falls flat, m (feet to the top of the head). */
+const BODY_LEN = 1.75;
 
 /** Damage of one blow: the weapon's range (min–max, `roll` 0..1), the class's strength, double on the head. */
 export function blowDamage(range: readonly [number, number], strength: number, head: boolean, roll: number): number {
