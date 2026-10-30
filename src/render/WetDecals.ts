@@ -1,13 +1,14 @@
 import { AddEquation, CustomBlending, DoubleSide, SrcColorFactor, ZeroFactor, DynamicDrawUsage, type Fog, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, type Scene, ShaderMaterial, Vector3 } from 'three';
 
-const CAP = 160;
+const CAP = 220;
 /** The last few instances are ripples, reused in turn. */
-const RIPPLES = 10;
+const RIPPLES = 24;
 const _m = new Matrix4();
 const _q = new Quaternion();
 const _p = new Vector3();
 const _s = new Vector3();
 const _x = new Vector3(1, 0, 0);
+const _y = new Vector3(0, 1, 0);
 
 /**
  * Water in the buildings, one InstancedMesh (one draw call): wet stains with a tide line on the ceiling
@@ -51,8 +52,11 @@ export class WetDecals {
     scene.add(this.mesh);
   }
 
-  /** Leaks: [x, ceilingY, z, floorY, seed]… — a stain above, a puddle below each. */
-  setLeaks(leaks: number[]): void {
+  /**
+   * Leaks: [x, ceilingY, z, floorY, seed]… — a stain above, a puddle below each; pools: [x, y, z, size,
+   * strength]… — puddles on their own (a broken hydrant, the rain), strength fading them in and out.
+   */
+  setLeaks(leaks: number[], pools: number[] = []): void {
     let n = 0;
     for (let i = 0; i + 4 < leaks.length && n + 2 <= CAP - RIPPLES; i += 5) {
       const seed = leaks[i + 4];
@@ -64,6 +68,12 @@ export class WetDecals {
       _m.compose(_p.set(leaks[i], leaks[i + 3] + 0.006, leaks[i + 2]), _q.identity(), _s.set(pool, 1, pool * (0.7 + seed * 0.5)));
       this.mesh.setMatrixAt(n, _m);
       this.data.setXYZW(n++, 1, seed, 0, 1);
+    }
+    for (let i = 0; i + 4 < pools.length && n + 1 <= CAP - RIPPLES; i += 5) {
+      const size = pools[i + 3];
+      _m.compose(_p.set(pools[i], pools[i + 1] + 0.008, pools[i + 2]), _q.setFromAxisAngle(_y, size * 7.1), _s.set(size, 1, size * 0.75));
+      this.mesh.setMatrixAt(n, _m);
+      this.data.setXYZW(n++, 1, (size * 3.7) % 1, 0, pools[i + 4]);
     }
     this.fixed = n;
     // Ripples follow, idle until used.
@@ -155,7 +165,7 @@ void main() {
     a = ring * 0.6 * step(0.0, age);
   }
   float fog = smoothstep(uFog.x, uFog.y, vDepth);
-  a *= 1.0 - fog;
+  a *= (1.0 - fog) * vWet.w;
   if (a < 0.01) discard;
   // Multiply: white leaves the surface as it is, the colour darkens it.
   gl_FragColor = vec4(mix(vec3(1.0), col, clamp(a, 0.0, 1.0)), 1.0);

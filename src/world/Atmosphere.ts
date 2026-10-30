@@ -1,20 +1,29 @@
 import type { Scene, Vector3 } from 'three';
 import { type LoopKind, sfx } from '../audio/Sound';
-import { Foliage, type Ground } from '../render/Foliage';
+import { Foliage, Ground } from '../render/Foliage';
 import type { Particles } from '../render/Particles';
 import { WetDecals } from '../render/WetDecals';
+import { ATMO } from './atmoConfig';
+import type { CollisionWorld } from './CollisionWorld';
 import type { Doors } from './Doors';
-import { LIFE } from './gen/lifeKinds';
+import { LIFE, spotHash } from './gen/lifeKinds';
+import { Street } from './Street';
 import { LIFE_STRIDE } from './WorldLife';
 
 /** Leaks drip (seen and heard) within this distance, m; taps, loops, phones — their own. */
 const DRIP_RANGE = 14;
 const TAP_RANGE = 9;
 const PHONE_RANGE = 26;
-const LOOP_RANGE: Record<LoopKind, number> = { fridge: 7, tv: 12, flies: 9 };
+const LOOP_RANGE: Record<LoopKind, number> = { fridge: 7, tv: 12, flies: 9, fire: 16, hiss: 14, rainTin: 6 };
 /** Falling leaves: trees within this distance shed them, at most this many a second in all. */
 const LEAF_RANGE = 18;
 const LEAF_RATE = 4;
+/** Rain puddles: on paving within this distance, one chance per cell (m). */
+const PUDDLE_RANGE = 22;
+const PUDDLE_CELL = 3;
+/** Moth groups: the nearest lamps, and one for the flashlight's beam. */
+const LAMP_MOTHS = 3;
+const BEAM_GROUP = 3;
 
 interface Leak {
   x: number;
@@ -42,27 +51,59 @@ interface Landing {
   z: number;
 }
 
+/** What the atmosphere needs to know about the player and the hour this frame. */
+export interface AtmoFrame {
+  /** Camera position and look direction. */
+  eye: Vector3;
+  look: Vector3;
+  flashlight: boolean;
+  /** 0 night … 1 day. */
+  daylight: number;
+  /** Felt temperature, °C. */
+  felt: number;
+  speed: number;
+  sprinting: boolean;
+  crouched: boolean;
+  /** In town (rats, rattles, a cart). */
+  urban: boolean;
+  rain: number;
+}
+
 /**
  * The world's small life, outside and in: grass, weeds, ivy and fallen leaves (Foliage), leaves torn off by
  * the gusts, leaks dripping from ceilings into puddles you can step in (WetDecals, the particle pool), and
  * what you hear in the buildings — pipes, creaking floors, steps upstairs when nobody is there, a door a
- * draught swings shut, a dripping tap, a fridge or a TV still on, a phone ringing, flies. Spots come from
- * the generators (Builder.life) with the chunks and the streamed interiors; sounds go through the shared
- * 3D voices (Sound), loops through its few slots.
+ * draught swings shut, a dripping tap, a fridge or a TV still on, a phone ringing, flies. The street (crows,
+ * alarms, rats, a cart, fires, hydrants) is Street's. At night: moths round the lamps and the beam, dust
+ * in the beam indoors, your breath in the cold. In the rain: puddles on the paving, rain drumming on cars.
+ * Spots come from the generators (Builder.life) with the chunks and the streamed interiors; sounds go
+ * through the shared 3D voices (Sound), loops through its few slots. Rates: atmoConfig.
  */
 export class Atmosphere {
   private readonly sets = new Map<number, Float32Array>();
   private dirty = false;
   readonly foliage: Foliage;
+  readonly street: Street;
   private readonly wet: WetDecals;
   private trees: number[] = [];
+  private cars: number[] = [];
+  private lamps: number[] = [];
   private leaks: Leak[] = [];
+  private leakList: number[] = [];
+  /** Puddles that are not under a leak: [x, y, z, size, strength]… (hydrants; rain ones are added). */
+  private pools: number[] = [];
+  private rainPools: number[] = [];
+  private wetness = 0;
+  private poolsAt = { x: 1e9, z: 1e9, wet: -1 };
   private taps: { x: number; y: number; z: number; next: number }[] = [];
   private phones: Phone[] = [];
   private loopSpots: { key: number; kind: LoopKind; x: number; y: number; z: number }[] = [];
   private readonly landings: Landing[] = [];
   private time = 0;
   private leafDebt = 0;
+  private mothT = 0;
+  private moteDebt = 0;
+  private breathT = 1;
   private pipeT = 15 + Math.random() * 20;
   private creakT = 8 + Math.random() * 12;
   private aboveT = 60 + Math.random() * 60;
@@ -73,13 +114,17 @@ export class Atmosphere {
     scene: Scene,
     private readonly particles: Particles,
     private readonly doors: () => Doors | null,
-    ground: (x: number, z: number) => Ground,
+    private readonly ground: (x: number, z: number) => Ground,
     private readonly groundY: (x: number, z: number) => number,
     /** Is there a storey over the player's head (a high-rise)? */
     private readonly upstairs: () => boolean,
+    world: CollisionWorld,
+    /** A noise in the world zombies may hear. */
+    noise: (x: number, y: number, z: number, radius: number) => void,
   ) {
     this.foliage = new Foliage(scene, ground, groundY);
     this.wet = new WetDecals(scene);
+    this.street = new Street(scene, particles, world, noise, groundY);
   }
 
   /** Quality preset: grass reach, density, cap. */
@@ -97,23 +142,33 @@ export class Atmosphere {
     if (this.sets.delete(key)) this.dirty = true;
   }
 
-  /** Standing in a puddle (feet at y). */
+  /** Standing in a puddle (feet at y): under a leak, by a hydrant, in the rain. */
   puddleAt(x: number, z: number, y: number): boolean {
-    for (const l of this.leaks) if (Math.abs(l.floor - y) < 0.4 && Math.hypot(l.x - x, l.z - z) < l.r) return true;
-    return false;
+    return this.puddle(x, z, y) !== null;
+  }
+
+  private puddle(x: number, z: number, y: number): number | null {
+    for (const l of this.leaks) if (Math.abs(l.floor - y) < 0.4 && Math.hypot(l.x - x, l.z - z) < l.r) return l.floor;
+    for (const list of [this.pools, this.rainPools]) {
+      for (let i = 0; i + 4 < list.length; i += 5) {
+        if (list[i + 4] > 0.3 && Math.abs(list[i + 1] - y) < 0.4 && Math.hypot(list[i] - x, list[i + 2] - z) < list[i + 3] * 0.4) return list[i + 1];
+      }
+    }
+    return null;
   }
 
   /** A ring on the water where a foot came down. */
   ripple(x: number, y: number, z: number): void {
-    for (const l of this.leaks) {
-      if (Math.abs(l.floor - y) < 0.4 && Math.hypot(l.x - x, l.z - z) < l.r) {
-        this.wet.addRipple(x, l.floor, z, 0.9);
-        return;
-      }
-    }
+    const at = this.puddle(x, z, y);
+    if (at !== null) this.wet.addRipple(x, at, z, 0.9);
   }
 
-  update(dt: number, player: Vector3, indoors: boolean, windDir: number, gust: number): void {
+  /** A blow landed on the world at (x, y, z) (a car's alarm may go off). */
+  strikeAt(x: number, y: number, z: number): void {
+    this.street.strikeAt(x, y, z);
+  }
+
+  update(dt: number, player: Vector3, indoors: boolean, windDir: number, gust: number, f: AtmoFrame): void {
     if (this.dirty) this.rebuild();
     this.time += dt;
     const px = player.x;
@@ -124,6 +179,7 @@ export class Atmosphere {
     const wind = 0.3 + gust * 2.4;
     this.particles.windX = Math.cos(windDir) * wind;
     this.particles.windZ = Math.sin(windDir) * wind;
+    this.street.update(dt, player, f.speed, f.crouched, !indoors, f.urban, gust, windDir);
 
     // Leaves let go in the gusts.
     if (!indoors) {
@@ -177,11 +233,21 @@ export class Atmosphere {
       ph.rings--;
       ph.next = ph.rings > 0 ? 4 : 60 + Math.random() * 120;
     }
-    // Continuous sounds: the nearest few on this storey.
+
+    this.updateRain(dt, px, py, pz, indoors, f.rain);
+    this.updateNight(dt, indoors, f);
+
+    // Continuous sounds: the nearest few on this storey (and rain on the nearest car's roof).
     this.near.length = 0;
     for (const s of this.loopSpots) {
       const d = Math.hypot(s.x - px, s.z - pz);
       if (d < LOOP_RANGE[s.kind] && Math.abs(s.y - py - 1) < 2.2) this.near.push({ ...s, d });
+    }
+    if (f.rain > 0.2 && !indoors) {
+      for (let i = 0; i + 3 < this.cars.length; i += 4) {
+        const d = Math.hypot(this.cars[i] - px, this.cars[i + 1] - pz);
+        if (d < LOOP_RANGE.rainTin) this.near.push({ key: -1 - i, kind: 'rainTin', x: this.cars[i], y: 1.4, z: this.cars[i + 1], d });
+      }
     }
     this.near.sort((a, b) => a.d - b.d);
     sfx.loops(this.near);
@@ -216,18 +282,99 @@ export class Atmosphere {
     }
   }
 
+  /** The rain wets the paving (puddles fade in, dry out slowly) and rings their water. */
+  private updateRain(dt: number, px: number, py: number, pz: number, indoors: boolean, rain: number): void {
+    this.wetness = Math.max(0, Math.min(1, this.wetness + (rain > 0.15 ? rain * dt / 60 : -dt / 240)));
+    const moved = Math.hypot(px - this.poolsAt.x, pz - this.poolsAt.z) > 4;
+    if (moved || Math.abs(this.wetness - this.poolsAt.wet) > 0.08) {
+      this.poolsAt = { x: px, z: pz, wet: this.wetness };
+      this.rainPools = [];
+      if (this.wetness > 0.02) {
+        const c0x = Math.floor((px - PUDDLE_RANGE) / PUDDLE_CELL);
+        const c0z = Math.floor((pz - PUDDLE_RANGE) / PUDDLE_CELL);
+        const n = Math.ceil((PUDDLE_RANGE * 2) / PUDDLE_CELL);
+        for (let i = 0; i <= n; i++) {
+          for (let j = 0; j <= n; j++) {
+            const cx = (c0x + i) * PUDDLE_CELL;
+            const cz = (c0z + j) * PUDDLE_CELL;
+            if (spotHash(cx, cz, 61) > 0.14) continue;
+            const x = cx + spotHash(cx, cz, 62) * PUDDLE_CELL;
+            const z = cz + spotHash(cx, cz, 63) * PUDDLE_CELL;
+            if (Math.hypot(x - px, z - pz) > PUDDLE_RANGE || this.ground(x, z) !== Ground.Paved) continue;
+            this.rainPools.push(x, this.groundY(x, z), z, 0.8 + spotHash(cx, cz, 64) * 1.4, this.wetness);
+          }
+        }
+      }
+      this.wet.setLeaks(this.leakList, this.rainPools.length ? this.pools.concat(this.rainPools) : this.pools);
+    }
+    // Drops ringing the puddles near you.
+    if (rain > 0.1 && !indoors && this.rainPools.length && Math.random() < dt * 14 * rain) {
+      const i = Math.floor(Math.random() * (this.rainPools.length / 5)) * 5;
+      const r = this.rainPools[i + 3] * 0.35;
+      if (Math.abs(this.rainPools[i + 1] - py) < 3) this.wet.addRipple(this.rainPools[i] + (Math.random() - 0.5) * r, this.rainPools[i + 1], this.rainPools[i + 2] + (Math.random() - 0.5) * r, 0.25 + Math.random() * 0.2);
+    }
+  }
+
+  /** Moths round the lamps and the beam at night, dust in the beam indoors, breath in the cold. */
+  private updateNight(dt: number, indoors: boolean, f: AtmoFrame): void {
+    const N = ATMO.night;
+    const night = f.daylight < 0.3;
+    // Moths: the nearest lit lamps, and the beam out of doors.
+    this.mothT -= dt;
+    if (night && this.mothT <= 0) {
+      this.mothT = 5.5 / N.moths / (LAMP_MOTHS + 1);
+      const near: [number, number][] = [];
+      for (let i = 0; i < this.lamps.length; i += 3) {
+        const d = Math.hypot(this.lamps[i] - f.eye.x, (this.lamps[i + 1] - f.eye.y) * 2, this.lamps[i + 2] - f.eye.z);
+        if (d < 14) near.push([d, i]);
+      }
+      near.sort((a, b) => a[0] - b[0]);
+      near.slice(0, LAMP_MOTHS).forEach(([, i], g) => {
+        this.particles.mothCenter(g, this.lamps[i], this.lamps[i + 1] - 0.15, this.lamps[i + 2]);
+        this.particles.moth(g);
+      });
+      if (f.flashlight && !indoors) this.particles.moth(BEAM_GROUP);
+    }
+    if (f.flashlight) this.particles.mothCenter(BEAM_GROUP, f.eye.x + f.look.x * 1.7, f.eye.y + f.look.y * 1.7, f.eye.z + f.look.z * 1.7);
+    // Dust hanging in the beam, indoors.
+    if (f.flashlight && indoors) {
+      this.moteDebt += dt * N.motes;
+      while (this.moteDebt >= 1) {
+        this.moteDebt -= 1;
+        const d = 0.6 + Math.random() * 2.6;
+        const spread = d * 0.22;
+        this.particles.mote(f.eye.x + f.look.x * d + (Math.random() - 0.5) * spread, f.eye.y + f.look.y * d + (Math.random() - 0.5) * spread, f.eye.z + f.look.z * d + (Math.random() - 0.5) * spread);
+      }
+    }
+    // Breath in the cold: out-breaths quicken as you run.
+    this.breathT -= dt;
+    if (this.breathT <= 0) {
+      this.breathT = N.breathEvery * (f.sprinting ? 0.5 : 1) * (0.85 + Math.random() * 0.3);
+      if (f.felt < N.breathBelow) {
+        const len = Math.hypot(f.look.x, f.look.z) || 1;
+        this.particles.breath(f.eye.x + (f.look.x / len) * 0.22, f.eye.y - 0.1, f.eye.z + (f.look.z / len) * 0.22, f.look.x / len, f.look.z / len);
+      }
+    }
+  }
+
   private rebuild(): void {
     this.dirty = false;
     const trees: number[] = [];
     const cars: number[] = [];
     const ivy: number[] = [];
     const leaks: number[] = [];
+    const perches: number[] = [];
+    const fires: number[] = [];
+    const hydrants: number[] = [];
+    const pools: number[] = [];
+    const lamps: number[] = [];
     const oldLeaks = this.leaks;
     this.leaks = [];
     this.taps = [];
     const oldPhones = this.phones;
     this.phones = [];
     this.loopSpots = [];
+    const loop = (kind: LoopKind, x: number, y: number, z: number) => this.loopSpots.push({ key: Math.round(x * 8) * 92821 + Math.round(y * 8) * 68917 + Math.round(z * 8) * 31, kind, x, y, z });
     for (const spots of this.sets.values()) {
       for (let i = 0; i + LIFE_STRIDE <= spots.length; i += LIFE_STRIDE) {
         const kind = spots[i];
@@ -236,6 +383,10 @@ export class Atmosphere {
         const z = spots[i + 3];
         const seed = spots[i + 8];
         switch (kind) {
+          case LIFE.lamp:
+          case LIFE.room:
+            lamps.push(x, y, z);
+            break;
           case LIFE.tree:
             trees.push(x, y, z, spots[i + 6], spots[i + 9]);
             break;
@@ -245,6 +396,20 @@ export class Atmosphere {
           case LIFE.ivy:
             ivy.push(x, y, z, spots[i + 4], spots[i + 5], spots[i + 6], spots[i + 7], seed);
             break;
+          case LIFE.perch:
+            perches.push(x, y, z, spots[i + 4], spots[i + 5], spots[i + 6]);
+            break;
+          case LIFE.fire:
+            fires.push(x, y, z, spots[i + 6]);
+            loop('fire', x, y, z);
+            break;
+          case LIFE.hydrant: {
+            hydrants.push(x, y, z);
+            const gy = this.groundY(x, z);
+            pools.push(x + 0.4, gy, z + 0.2, 2.2 + seed, 1);
+            loop('hiss', x, gy + 0.5, z);
+            break;
+          }
           case LIFE.drip: {
             const floor = y - spots[i + 7];
             leaks.push(x, y, z, floor, seed);
@@ -259,22 +424,32 @@ export class Atmosphere {
             this.phones.push(oldPhones.find((p) => p.x === x && p.y === y && p.z === z) ?? { x, y, z, next: 20 + seed * 90, rings: 0 });
             break;
           case LIFE.tv:
+            loop('tv', x, y, z);
+            break;
           case LIFE.fridge:
+            loop('fridge', x, y, z);
+            break;
           case LIFE.flies:
-            this.loopSpots.push({ key: Math.round(x * 8) * 92821 + Math.round(y * 8) * 68917 + Math.round(z * 8) * 31, kind: kind === LIFE.tv ? 'tv' : kind === LIFE.fridge ? 'fridge' : 'flies', x, y, z });
+            loop('flies', x, y, z);
             break;
         }
       }
     }
     this.trees = trees;
+    this.cars = cars;
+    this.lamps = lamps;
+    this.leakList = leaks;
+    this.pools = pools;
     this.foliage.setSources({ trees, cars, ivy });
-    this.wet.setLeaks(leaks);
+    this.street.setSpots({ perches, cars, fires, hydrants });
+    this.wet.setLeaks(leaks, this.rainPools.length ? pools.concat(this.rainPools) : pools);
   }
 
   /** Programs compile during the loading-screen prewarm. */
   prewarm(): () => void {
     this.foliage.mesh.count = Math.max(1, this.foliage.mesh.count);
     this.wet.mesh.count = Math.max(1, this.wet.mesh.count);
+    this.street.critters.mesh.count = Math.max(1, this.street.critters.mesh.count);
     return () => {
       this.dirty = true;
     };
@@ -284,5 +459,6 @@ export class Atmosphere {
     sfx.loops([]);
     this.foliage.dispose();
     this.wet.dispose();
+    this.street.dispose();
   }
 }

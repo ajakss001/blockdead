@@ -9,6 +9,7 @@ import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
 import { hash3 } from './noise';
+import { buildPoi } from './poiBuild';
 import { type BodyMode, chaosScene, sceneAt } from './chaos';
 import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
 import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, lampPost, mailbox, PAL, pick, pine, type Rand, trashBins, tree } from './pieces';
@@ -65,6 +66,7 @@ const _m = new Matrix4();
 const _q = new Quaternion();
 const _p = new Vector3();
 const _s = new Vector3();
+const _x = new Vector3(1, 0, 0);
 
 /**
  * Builds one 64 × 64 m block: ground, its share of the road grid (west and south edges plus the
@@ -86,7 +88,9 @@ export function buildChunk(layout: WorldLayout, i: number, j: number, bodies: Bo
   const X1 = (i + 1) * CHUNK - BAND;
   const Z1 = (j + 1) * CHUNK - BAND;
   let buildings: BuildingDesc[] = [];
-  if (zone === 'downtown') buildings = downtownBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  const poi = layout.poi(i, j);
+  if (poi) buildPoi(b, poi, rand);
+  else if (zone === 'downtown') buildings = downtownBlock(b, i, j, X0, Z0, X1, Z1, rand);
   else if (zone === 'suburb') suburb(b, X0, Z0, X1, Z1, rand);
   else if (zone === 'town') town(b, X0, Z0, X1, Z1, rand);
   else if (zone === 'forest') forest(b, layout, X0, Z0, X1, Z1, rand);
@@ -154,6 +158,7 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         b.block(PAL.curb, side < 0 ? x - ROAD_HALF - 0.12 : x + ROAD_HALF, 0, za, 0.12, SIDEWALK_H + 0.03, len, 'asphalt');
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
+      hydrant(b, x - ROAD_HALF - 0.55, SIDEWALK_H, z + CHUNK * 0.42);
     }
     // Downtown: the queue that never got out; elsewhere cars sit where people left them.
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
@@ -181,6 +186,7 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         b.block(PAL.curb, xa, 0, side < 0 ? z - ROAD_HALF - 0.12 : z + ROAD_HALF, len, SIDEWALK_H + 0.03, 0.12, 'asphalt');
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
+      hydrant(b, x + CHUNK * 0.58, SIDEWALK_H, z - ROAD_HALF - 0.55);
     }
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
     if (layout.urbanZ(i, j)) {
@@ -215,6 +221,16 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       else if (roll < (core ? 0.55 : 0.25)) checkpoint(b, x, z, rand);
     }
   }
+}
+
+/** A fire hydrant on the sidewalk (half the time); some were knocked open and still spout water. */
+function hydrant(b: Builder, x: number, y: number, z: number): void {
+  if (spotHash(x, z, 99) < 0.5) return;
+  b.batch.add(b.cyl8, 0xa8402e, _m.compose(_p.set(x, y + 0.3, z), _q.identity(), _s.set(0.12, 0.6, 0.12)), 'metal');
+  b.batch.add(b.cyl8, 0x8a3426, _m.compose(_p.set(x, y + 0.62, z), _q.identity(), _s.set(0.09, 0.08, 0.09)), 'metal');
+  b.batch.add(b.cyl8, 0x8a3426, _m.compose(_p.set(x, y + 0.42, z), _q.setFromAxisAngle(_x, Math.PI / 2), _s.set(0.05, 0.3, 0.05)), 'metal');
+  b.colliders.addBox(x - 0.16, z - 0.16, x + 0.16, z + 0.16);
+  if (spotHash(x, z, 100) < 0.4) b.life(LIFE.hydrant, x, y + 0.66, z, 0, 0, 0, 0, spotHash(x, z, 101));
 }
 
 /** Parked cars hug the curb: lane center this far from the road's center line. */
@@ -313,6 +329,13 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
     }
   }
   const zMid = (Z0 + Z1) / 2;
+  if (spotHash(X0, Z0, 96) < 0.35) {
+    // Someone kept warm here: a rusty barrel, still burning.
+    const bx = X0 + 2 + spotHash(X0, Z0, 97) * (X1 - X0 - 4);
+    b.batch.add(b.cyl8, 0x4e3a2c, _m.compose(_p.set(bx, 0.45, zMid + 0.9), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
+    b.colliders.addBox(bx - 0.32, zMid + 0.58, bx + 0.32, zMid + 1.22);
+    b.life(LIFE.fire, bx, 0.92, zMid + 0.9, 0, 0, 0.55, 0, spotHash(X0, Z0, 98));
+  }
   for (let n = 0; n < 3; n++) {
     const dx = X0 + 3 + rand() * (X1 - X0 - 6);
     b.block(0x3a4a3a, dx, 0, zMid - 0.8, 1.8, 1.3, 1.1, 'metal', true);

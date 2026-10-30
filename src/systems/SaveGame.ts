@@ -29,6 +29,8 @@ export interface SaveV1 {
   /** In-game minute this survivor started (for "survived …"). */
   bornAt?: number;
   /** Boards the player nailed across doors: hinge key, count, side. */
+  /** Locked doors opened (hinge keys). */
+  unlocked?: string[];
   boards?: [string, number, number][];
 }
 

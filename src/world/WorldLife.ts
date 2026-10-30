@@ -68,6 +68,8 @@ interface Paper {
   rx: number;
   ry: number;
   spin: number;
+  /** A plastic bag: lighter, it rises on a gust and hangs in the air. */
+  bag: boolean;
 }
 
 /**
@@ -99,6 +101,9 @@ export class WorldLife {
   private clothOn = true;
   /** 0 night … 1 day: lit windows and lamps fade in daylight. */
   daylight = 0;
+  /** Hour of the day and rain 0..1, for the ambient sound (crickets, birds, the rain's hiss). */
+  hour = 12;
+  rain = 0;
   private readonly audio: AmbientAudio;
   private time = 0;
   /** Wind: direction (radians) wandering slowly, gusts 0..1. */
@@ -164,7 +169,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.cloth.instanceMatrix.setUsage(DynamicDrawUsage);
     this.cloth.setColorAt(0, _c.set(0xffffff));
     scene.add(this.cloth);
-    for (let i = 0; i < PAPERS; i++) this.papers.push({ x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0.5 + Math.random() });
+    for (let i = 0; i < PAPERS; i++) this.papers.push({ x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0.5 + Math.random(), bag: i % 3 === 0 });
   }
 
   /** Number of real point lights for lit rooms (0 on weak phones: the fake glow does it alone). */
@@ -244,7 +249,12 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
         pan = (dx * -_p.z + dz * _p.x) / len;
       }
     }
-    this.audio.update(dt, { gust: this.gust, outdoors, height: Math.max(0, player.y), radio: best < Infinity ? { dist: best, pan } : null });
+    this.audio.update(dt, { gust: this.gust, outdoors, height: Math.max(0, player.y), radio: best < Infinity ? { dist: best, pan } : null, hour: this.hour, rain: this.rain, urban: street });
+  }
+
+  /** Thunder after a flash: `delay` s later, `power` 0..1. */
+  thunder(delay: number, power: number): void {
+    this.audio.thunder(delay, power);
   }
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. */
@@ -343,6 +353,16 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
           glow(6, seed, 3, 0.22);
           _m.compose(_p.set(x + nx * 1.3, y - 0.72, z + nz * 1.3), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(2.8, 2.8, 1));
           glow(6, seed, 3, 0.3);
+        } else if (kind === LIFE.fire && g + 2 < GLOW_CAP) {
+          // A fire: two crossed sheets of flame, its flickering light on the ground round it.
+          const phase = seed;
+          for (const a of [0, Math.PI / 2]) {
+            _m.compose(_p.set(x, y + w * 0.6, z), _q.setFromAxisAngle(_y, a + seed), _s.set(w * 1.3, w * 1.8, 1));
+            glow(7, phase, 4, 1);
+          }
+          _m.compose(_p.set(x, this.groundAt(x, z) + 0.04, z), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(7, 7, 1));
+          glow(8, phase, 4, 0.5);
+          this.rooms.push(x, y + 0.8, z, 0, phase);
         } else if (kind === LIFE.radio) {
           this.radios.push(x, y, z);
         } else if (kind === LIFE.shards) {
@@ -356,7 +376,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.curtains = c;
     // Papers follow the curtains in the cloth mesh.
     for (let i = 0; i < PAPERS; i++) {
-      this.cloth.setColorAt(c + i, _c.set(0xbdb6a2));
+      this.cloth.setColorAt(c + i, _c.set(this.papers[i].bag ? 0xd4d8d2 : 0xbdb6a2));
       this.clothData.setXY(c + i, 0, 0);
     }
     this.cloth.instanceMatrix.needsUpdate = true;
@@ -383,8 +403,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
       const pull = Math.min(1, dt * (air ? 2.2 : 0.6 + this.gust * 1.5));
       p.vx += (wx * speed * p.spin - p.vx) * pull;
       p.vz += (wz * speed * p.spin - p.vz) * pull;
-      if (!air && this.gust > 0.6 && Math.random() < dt * 1.5) p.vy = 0.8 + Math.random() * 1.6;
-      p.vy -= 2.6 * dt;
+      if (!air && this.gust > (p.bag ? 0.45 : 0.6) && Math.random() < dt * (p.bag ? 3 : 1.5)) p.vy = (p.bag ? 1.6 : 0.8) + Math.random() * 1.6;
+      p.vy -= (p.bag ? 1.0 : 2.6) * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
@@ -400,7 +420,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
       p.ry += dt * Math.hypot(p.vx, p.vz) * 1.5 * p.spin;
       if (Math.hypot(p.x - player.x, p.z - player.z) > PAPER_RANGE) this.respawn(p, player, false);
       _q.setFromEuler(_e.set(p.rx, p.ry, 0, 'YXZ'));
-      _m.compose(_p.set(p.x, p.y + 0.004, p.z), _q, _s.set(0.3, 0.4, 1));
+      _m.compose(_p.set(p.x, p.y + 0.004, p.z), _q, p.bag ? _s.set(0.36, 0.42, 1) : _s.set(0.3, 0.4, 1));
       this.cloth.setMatrixAt(this.curtains + i, _m);
     }
     this.cloth.instanceMatrix.needsUpdate = true;
@@ -457,7 +477,8 @@ void main() {
   if (mode < 0.5) f = 0.8 + 0.12 * sin(t * 6.3) * sin(t * 2.9) + 0.08 * sin(t * 13.0);  // generator / candles
   else if (mode < 1.5) f = slow < 0.18 ? step(0.45, fast) : 1.0;                         // tube with dropouts
   else if (mode < 2.5) f = slow < 0.4 ? step(0.35, fast) : 0.04;                         // dying, bursts of light
-  else f = 0.5 + 0.5 * hash(floor(t * 11.0) + aGlow.y * 53.0);                           // a TV: the picture jumping
+  else if (mode < 3.5) f = 0.5 + 0.5 * hash(floor(t * 11.0) + aGlow.y * 53.0);            // a TV: the picture jumping
+  else f = 0.8 + 0.2 * sin(t * 13.0) * sin(t * 7.3) + 0.12 * (hash(floor(t * 18.0) + aGlow.y * 7.0) - 0.5); // fire
   vI = f * aGlow.w;
   mat4 mi = modelMatrix * instanceMatrix;
   vec4 wp = mi * vec4(position, 1.0);
@@ -522,6 +543,19 @@ void main() {
     // Warm pool of lamplight (floor, ceiling).
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);
     col = uWarm;
+  } else if (vKind > 7.5) {
+    // Firelight on the ground: orange, flickering.
+    a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.8);
+    col = vec3(1.0, 0.48, 0.16);
+  } else if (vKind > 6.5) {
+    // A flame: licking tongues, yellow at the root, red at the tips.
+    float h = c.y + 0.5;
+    float x = c.x + 0.05 * sin(c.y * 9.0 - uTime * 8.0);
+    // A broad base breaking up into three or four tongues that flicker upwards.
+    float tongues = 0.16 * h * sin(x * 19.0 + uTime * 5.0 + h * 7.0) + 0.08 * h * sin(x * 31.0 - uTime * 9.0);
+    float body = (1.0 - h) * 0.5 - abs(x) * (0.55 + 0.6 * h) + tongues;
+    a = smoothstep(0.0, 0.07, body) * smoothstep(0.0, 0.06, h);
+    col = mix(vec3(1.0, 0.85, 0.4), vec3(1.0, 0.3, 0.08), h) * 2.2;
   } else if (vKind > 5.5) {
     // A TV's light thrown on a wall, the floor: cold blue-white.
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);

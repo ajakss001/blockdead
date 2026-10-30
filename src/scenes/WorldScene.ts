@@ -48,6 +48,10 @@ import { blowDamage, type PlayerSense, type Zombie, ZombieSim } from '../systems
 import { Ground } from '../render/Foliage';
 import { Particles } from '../render/Particles';
 import { Atmosphere } from '../world/Atmosphere';
+import { ATMO } from '../world/atmoConfig';
+import { Weather } from '../world/Weather';
+import { Pois } from '../world/Pois';
+import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
@@ -133,6 +137,12 @@ export class WorldScene implements IScene {
   private ambient!: AmbientLight;
   private moon!: DirectionalLight;
   private lightKey = -1;
+  /** Ambient light from the hour (a lightning flash adds to it); fog's reach as a share of the preset's. */
+  private ambientBase = 0;
+  private fogK = 1;
+  private weather!: Weather;
+  /** Unique places: their zombies when you come near (none with ?zombies=0). */
+  private pois: Pois | null = null;
   private readonly shelters = new Shelters();
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
@@ -208,6 +218,7 @@ export class WorldScene implements IScene {
       zcount,
       seed,
     );
+    if (zcount > 0) this.pois = new Pois(layout, this.zombies);
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
     this.scene.add(this.crowd.mesh, this.particles.points);
     // A blow at its contact frame: a zombie in reach takes it (the head counts double).
@@ -261,7 +272,11 @@ export class WorldScene implements IScene {
         const b = this.interiors.buildingAt(c.x, c.z);
         return !!b && Math.round(c.y / FLOOR_H) < b.floors - 1;
       },
+      this.world,
+      (x, y, z, r) => this.zombies.noiseAt(x, y, z, r),
     );
+    this.player.onStrikeWorld = (x, y, z) => this.atmo.strikeAt(x, y, z);
+    this.weather = new Weather(this.scene, document.getElementById('ui')!, (delay, power) => this.life.thunder(delay, power));
     this.interiors.onAmbient = (owner, spots) => {
       if (spots) {
         this.life.add(owner, spots);
@@ -323,6 +338,7 @@ export class WorldScene implements IScene {
       // The world remembers the dead and their bodies; containers stay as they were.
       this.twins = save.twins ?? [];
       this.doors.restoreBoards(save.boards);
+      this.doors.restoreUnlocked(save.unlocked);
       this.bodies = save.bodies ?? [];
       this.containers.restore(save.containers);
       for (const b of this.bodies) this.containers.addLoose(b, []);
@@ -343,6 +359,18 @@ export class WorldScene implements IScene {
       // Saves from before clothing existed: keep the starting clothes on.
       this.inventory.restore({ ...save.inventory, worn: save.inventory.worn ?? START_KIT.worn });
       this.syncBody();
+    }
+    // ?poi=gas|police: start in front of the nearest such place (for checking them).
+    const want = new URLSearchParams(location.search).get('poi') as PoiKind | null;
+    if (want && want in POI) {
+      const site = nearestPoi(this.layout, want, Math.floor(c.position.x / CHUNK), Math.floor(c.position.z / CHUNK));
+      if (site) {
+        const [px, pz] = siteToWorld(site, 0, CHUNK / 2 - 3);
+        const [cx, cz] = siteToWorld(site, 0, 0);
+        c.position.set(px, 0.05, pz);
+        c.prevPosition.copy(c.position);
+        c.yaw = Math.atan2(-(cx - px), -(cz - pz));
+      }
     }
     const { x, z } = c.position;
     const done = this.chunks.whenLoaded(x, z, 1);
@@ -398,12 +426,14 @@ export class WorldScene implements IScene {
     // Zombies hear and see the player as it is after this step.
     _zs.pos.copy(c.position);
     _zs.eye = c.crouched ? 1.0 : 1.6;
-    _zs.noise = c.noise;
+    // Rain drowns footsteps.
+    _zs.noise = c.noise * (1 - ATMO.weather.rainMasks * this.weather.rain);
     _zs.crouched = c.crouched;
     _zs.lit = this.player.flashlightOn && this.player.battery > 0 ? 0.7 : 0;
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
+    this.pois?.update(dt, c.position.x, c.position.z);
     // Nearest first: in a crowd the sound groups fill up with the zombies that matter.
     const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
     this.zombies.sounds.sort((a, b) => near(a.z) - near(b.z));
@@ -481,9 +511,30 @@ export class WorldScene implements IScene {
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
-    this.atmo.update(this.ctx.loop.paused ? 0 : frameDt, p, this.indoors, this.life.windDirection, this.life.windGust);
-    this.applyDaylight(this.clock.daylight);
+    const paused = this.ctx.loop.paused;
     const wa = this.life.windDirection;
+    const wind = 0.3 + this.life.windGust * 2.4;
+    this.weather.update(frameDt, this.camera.position, Math.cos(wa) * wind, Math.sin(wa) * wind, !this.indoors, this.lookDir.y, paused);
+    this.life.rain = this.weather.rain;
+    this.life.hour = this.clock.hour;
+    this.atmo.update(paused ? 0 : frameDt, p, this.indoors, wa, this.life.windGust, {
+      eye: this.camera.position,
+      look: this.lookDir,
+      flashlight: this.player.flashlightOn && this.player.battery > 0,
+      daylight: this.clock.daylight,
+      felt: this.felt,
+      speed: this.player.controller.speed,
+      sprinting: this.player.controller.sprinting,
+      crouched: this.player.controller.crouched,
+      urban: zone === 'downtown' || zone === 'town',
+      rain: this.weather.rain,
+    });
+    this.applyDaylight(this.clock.daylight);
+    // Lightning lights the world for a moment; fog thickens at night and in the rain, clears slowly by day.
+    this.ambient.intensity = this.ambientBase + this.weather.flash * 2.2;
+    const fogWant = (ATMO.night.fogNight + (1 - ATMO.night.fogNight) * this.clock.daylight) * (1 - (1 - ATMO.night.fogRain) * this.weather.rain);
+    if (!paused) this.fogK += (fogWant - this.fogK) * Math.min(1, frameDt / ATMO.night.fogLag);
+    (this.scene.fog as Fog).far = this.ctx.quality.preset.fogFar * this.fogK;
     const ws = 0.0005 + this.life.windGust * 0.001;
     this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
@@ -506,7 +557,7 @@ export class WorldScene implements IScene {
     fog.color.copy(sky);
     fog.near = NIGHT.fogNear + (DAY.fogNear - NIGHT.fogNear) * k;
     this.ambient.color.set(NIGHT.ambient.color).lerp(_dayColor.set(DAY.ambient.color), k);
-    this.ambient.intensity = NIGHT.ambient.intensity + (DAY.ambient.intensity - NIGHT.ambient.intensity) * k;
+    this.ambientBase = NIGHT.ambient.intensity + (DAY.ambient.intensity - NIGHT.ambient.intensity) * k;
     this.moon.color.set(NIGHT.moon.color).lerp(_dayColor.set(DAY.sun.color), k);
     this.moon.intensity = NIGHT.moon.intensity + (DAY.sun.intensity - NIGHT.moon.intensity) * k;
     this.moon.position.set(-30 + 10 * k, 40 + 30 * k, -10 + 20 * k);
@@ -523,6 +574,8 @@ export class WorldScene implements IScene {
   private groundKind(x: number, z: number): Ground {
     const y = this.layout.walkHeightAt(x, z);
     if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z)) return Ground.None;
+    // A POI's lot is paved: only weeds in the cracks.
+    if (this.layout.poi(Math.floor(x / CHUNK), Math.floor(z / CHUNK))) return Ground.Paved;
     const zone = this.chunks.zoneAt(x, z);
     const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
     const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
@@ -569,6 +622,7 @@ export class WorldScene implements IScene {
       bodies: this.bodies,
       bornAt: this.bornAt,
       boards: this.doors.serializeBoards(),
+      unlocked: this.doors.serializeUnlocked(),
     });
   }
 
@@ -740,6 +794,7 @@ export class WorldScene implements IScene {
     this.crowd.dispose();
     this.particles.dispose();
     this.atmo.dispose();
+    this.weather.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');

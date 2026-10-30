@@ -30,7 +30,14 @@ export type ContainerType =
   | 'bodyMilitary'
   | 'bodyPolice'
   | 'bodyMedic'
-  | 'bodyFire';
+  | 'bodyFire'
+  // POI.
+  | 'gasShelf'
+  | 'gasCounter'
+  | 'garage'
+  | 'policeLocker'
+  | 'policeDesk'
+  | 'armory';
 
 interface LootTable {
   name: string;
@@ -103,6 +110,12 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   bodyMedic: { name: 'Погибший медик', empty: 0.2, rolls: [1, 3], items: [['bandage', 3], ['painkillers', 2.5], ['antibiotics', 1.5], ['scrubsTop', 0.6], ['soap', 1], ['water', 1], ['medGloves', 1], ['medBag', 0.5]] },
   bodyTwin: { name: 'Ваш прошлый выживший', empty: 1, rolls: [0, 0], items: [] },
   bodyFire: { name: 'Погибший пожарный', empty: 0.25, rolls: [1, 3], items: [['fireHelmet', 1], ['fireCoat', 0.5], ['axe', 0.4], ['rope', 1.5], ['water', 1.5], ['bandage', 1], ['fireGloves', 0.6]] },
+  gasShelf: { name: 'Стеллаж', empty: 0.3, rolls: [1, 3], items: [['chips', 4], ['chocolate', 3], ['crackers', 3], ['beans', 2], ['water', 3], ['soda', 3], ['map', 1], ['tape', 1], ['batteries', 1.5], ['lighter', 1.5]] },
+  gasCounter: { name: 'Касса', empty: 0.25, rolls: [1, 2], items: [['map', 3], ['lighter', 3], ['batteries', 2], ['chocolate', 2], ['painkillers', 1], ['junk', 2]] },
+  garage: { name: 'Верстак', empty: 0.25, rolls: [1, 3], items: [['hammer', 1.5], ['crowbar', 1], ['tape', 3], ['nails', 3], ['rope', 2], ['workGloves', 1], ['planks', 1.5], ['rag', 2], ['workJacket', 0.5]] },
+  policeLocker: { name: 'Шкафчик', empty: 0.3, rolls: [1, 3], items: [['policeShirt', 2], ['policePants', 2], ['policeCap', 1.5], ['policeVest', 1], ['batteries', 2], ['walkie', 1.5], ['tacticalGloves', 1], ['boots', 1], ['soap', 1]] },
+  policeDesk: { name: 'Стол', empty: 0.3, rolls: [1, 2], items: [['batteries', 3], ['walkie', 1.5], ['painkillers', 1.5], ['junk', 3], ['tape', 1], ['chocolate', 1.5], ['map', 0.6]] },
+  armory: { name: 'Стойка оружейной', empty: 0.1, rolls: [2, 3], items: [['swatHelmet', 1.5], ['swatVest', 1.5], ['swatShirt', 1], ['swatPants', 1], ['tacticalGloves', 1.5], ['tacticalRig', 1], ['bat', 1], ['crowbar', 0.8], ['batteries', 2], ['walkie', 1.5]] },
   reception: { name: 'Стойка охраны', empty: 0.2, rolls: [1, 3], items: [['batteries', 4], ['bat', 1], ['bandage', 2], ['painkillers', 2], ['soda', 2], ['crowbar', 0.6], ['axe', 0.5], ['hardhat', 0.5], ['cap', 1]] },
 };
 

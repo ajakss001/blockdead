@@ -10,6 +10,8 @@ export interface ContainerRef {
   /** Floor height (high-rise storeys). */
   y: number;
   zone: Zone;
+  /** Always in it on the first search (a key, a note). */
+  fixed?: ItemId[];
 }
 
 /**
@@ -25,7 +27,7 @@ export class Containers {
 
   constructor(readonly seed: number) {}
 
-  addChunk(key: number, zone: Zone, list: { id: number; type: ContainerType; x: number; z: number; y?: number }[]): void {
+  addChunk(key: number, zone: Zone, list: { id: number; type: ContainerType; x: number; z: number; y?: number; fixed?: ItemId[] }[]): void {
     this.byChunk.set(key, list.map((c) => ({ ...c, y: c.y ?? 0, zone })));
   }
 
@@ -90,6 +92,7 @@ export class Containers {
     let items = this.opened.get(ref.id);
     if (!items) {
       items = rollLoot(this.seed, ref.id, ref.type, ref.zone);
+      for (const id of ref.fixed ?? []) items.push({ id, count: 1 });
       this.opened.set(ref.id, items);
     }
     return items;

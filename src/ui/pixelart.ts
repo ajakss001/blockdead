@@ -327,6 +327,32 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
       s.dot(x, 2, 0xb02020);
     }
   },
+  map: (s) => {
+    s.rect(2, 3, 12, 10, C.paper);
+    s.line(5, 3, 5, 12, 0xb8b0a0);
+    s.line(10, 3, 10, 12, 0xb8b0a0);
+    s.line(2, 9, 13, 6, 0x6a8a5a, 1);
+    s.line(4, 5, 12, 11, 0xa04030, 1);
+    s.dot(8, 8, 0x3a5a9a);
+  },
+  walkie: (s) => {
+    s.rect(5, 4, 6, 10, C.black);
+    s.rect(9, 1, 1, 4, C.steelDark);
+    s.rect(6, 6, 4, 3, 0x5a6a5a);
+    s.dot(7, 11, 0xb03030);
+  },
+  armoryKey: (s) => {
+    s.ellipse(5, 6, 3, 3, 0xb89a50);
+    clearEllipse(s, 5, 6, 1.2, 1.2);
+    s.line(7, 8, 13, 13, 0xb89a50, 2);
+    s.rect(11, 12, 2, 2, 0xb89a50);
+    s.rect(1, 10, 4, 3, 0xd04030);
+  },
+  armoryNote: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [5, 8, 11]) s.line(5, y, 11, y, 0x6a6458);
+    s.rect(4, 3, 3, 2, 0xd0b040);
+  },
   junk: (s) => {
     s.line(2, 12, 9, 5, C.rust, 2);
     s.line(9, 5, 13, 7, C.rust, 2);

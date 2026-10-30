@@ -5,6 +5,11 @@ import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
 import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
 
+/** Locks on POI doors: the key that opens it, the note with its code (both found nearby). */
+const LOCKS: Record<string, { key: ItemId; code: ItemId; name: string; digits: string }> = {
+  armory: { key: 'armoryKey', code: 'armoryNote', name: 'от оружейной', digits: '4-7-1-9' },
+};
+
 /** Boarding a door up: a board and four nails, seconds of hammering; prying one off. */
 const NAILS_PER_PLANK = 4;
 const NAIL_TIME = 4;
@@ -144,6 +149,7 @@ export class Interaction {
       const hold = this.ctx.input.mode === 'kbm' ? 'держать E' : 'удерживать';
       if (state === 'boarded') this.ctx.hud.setPrompt(`Заколочено досками: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — оторвать доску` : ''}`);
       else if (state === 'barricaded') this.ctx.hud.setPrompt('Дверь заколочена');
+      else if (state === 'locked') this.ctx.hud.setPrompt(`${key}Заперто — открыть ключом или кодом`);
       else this.ctx.hud.setPrompt(`${key}${state === 'open' ? 'Закрыть' : 'Открыть'} дверь${this.canNail(door) ? ` · ${hold} — заколотить` : ''}`);
       return;
     }
@@ -157,6 +163,19 @@ export class Interaction {
 
   private toggleDoor(door: DoorRef): void {
     const at = this.doors.info(door);
+    const lock = this.doors.lockOf(door);
+    if (lock) {
+      const l = LOCKS[lock];
+      const by = l && (this.inventory.count(l.key) > 0 ? 'key' : this.inventory.count(l.code) > 0 ? 'code' : null);
+      if (!l || !by) {
+        this.ctx.hud.toast(l ? `Заперто. Нужен ключ ${l.name} или код` : 'Заперто', 1600);
+        if (at) sfx.doorStuck(at);
+        this.player.busy = false;
+        return;
+      }
+      this.doors.unlock(door);
+      this.ctx.hud.toast(by === 'key' ? 'Ключ подошёл' : `Код набран: ${l.digits}`, 1600);
+    }
     const state = this.doors.describe(door);
     if (!this.doors.toggle(door)) {
       this.ctx.hud.toast(state === 'boarded' ? 'Заколочено досками' : 'Заколочено с той стороны', 1200);

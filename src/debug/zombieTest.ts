@@ -285,6 +285,19 @@ export function main(): number {
     }
     check(d.health <= 0 && t > 2700 && t < 3700, `untreated infection (~2 in-game days): dead after ${(t / 60).toFixed(0)} min`);
   }
+  // 18. A noise in the world (crows taking off, a car alarm): zombies in range go and look, others don't.
+  {
+    const sim = new ZombieSim(world, 0);
+    const near = sim.spawnAt(-8, 0);
+    const far = sim.spawnAt(-60, 0);
+    const p = player(-8, -30);
+    sim.noiseAt(-2, 0, 6, 24);
+    check(near.state === 'investigate' && far.state !== 'investigate', 'a crow racket: the zombie 10 m off goes to look, the one 58 m off does not');
+    const d0 = Math.hypot(near.pos.x + 2, near.pos.z - 6);
+    run(sim, p, 12);
+    const d1 = Math.hypot(near.pos.x + 2, near.pos.z - 6);
+    check(d1 < Math.min(4, d0 - 4), `it walks to where the noise was (${d0.toFixed(1)} → ${d1.toFixed(1)} m)`);
+  }
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');
   return fails.length ? 1 : 0;
 }

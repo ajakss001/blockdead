@@ -1,4 +1,5 @@
 import { createSimplex2D } from './noise';
+import { type PoiSite, poiAt } from './poi';
 
 /** Chunk = one city block, meters. Roads run along chunk edges. */
 export const CHUNK = 64;
@@ -33,6 +34,7 @@ export class WorldLayout {
   private readonly wildNoise: (x: number, y: number) => number;
   private readonly hillNoise: (x: number, y: number) => number;
   private readonly zones = new Map<number, Zone>();
+  private readonly pois = new Map<number, PoiSite | null>();
 
   constructor(readonly seed: number) {
     this.urbanNoise = createSimplex2D(seed);
@@ -54,6 +56,17 @@ export class WorldLayout {
     else z = this.wildNoise(i * 0.4 + 31, j * 0.4) > -0.15 ? 'forest' : 'field';
     this.zones.set(key, z);
     return z;
+  }
+
+  /** The unique place on block (i, j), if any (see poi.ts). */
+  poi(i: number, j: number): PoiSite | null {
+    const key = (i + 32768) * 65536 + (j + 32768);
+    let s = this.pois.get(key);
+    if (s === undefined) {
+      s = poiAt(this, i, j);
+      this.pois.set(key, s);
+    }
+    return s;
   }
 
   isUrban(i: number, j: number): boolean {
@@ -110,13 +123,13 @@ export class WorldLayout {
   }
 
   /**
-   * Ground height. Towns and road corridors are flat (y = 0); forests and fields roll gently,
+   * Ground height. Towns, POI lots and road corridors are flat (y = 0); forests and fields roll gently,
    * fading back to flat towards their block edges so every road stays level.
    */
   heightAt(x: number, z: number): number {
     const i = Math.floor(x / CHUNK);
     const j = Math.floor(z / CHUNK);
-    if (this.isUrban(i, j)) return 0;
+    if (this.isUrban(i, j) || this.poi(i, j)) return 0;
     const lx = x - i * CHUNK;
     const lz = z - j * CHUNK;
     const edge = Math.min(lx, CHUNK - lx, lz, CHUNK - lz);

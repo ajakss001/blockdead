@@ -27,6 +27,12 @@ export const LIFE = {
   tap: 13,
   /** Flies buzzing over the trash or something rotting. */
   flies: 14,
+  /** Where crows may sit: a line (a ridge, a lamp arm) through x, y, z along (nx, nz), w long. */
+  perch: 15,
+  /** A fire: a burning car or a barrel (w = flame size). */
+  fire: 16,
+  /** A broken fire hydrant spouting water (y = its top). */
+  hydrant: 17,
 } as const;
 
 /**

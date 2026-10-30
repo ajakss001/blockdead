@@ -101,6 +101,8 @@ export class Doors {
   private readonly sets = new Map<number, DoorState[]>();
   /** Boards nailed by the player, by the door's hinge (kept while its building is unloaded; saved). */
   private readonly boards = new Map<string, [number, number]>();
+  /** Locked doors the player has opened (by hinge; saved). */
+  private readonly unlocked = new Set<string>();
   /** The boards themselves: one InstancedMesh for every door. */
   private readonly plankMesh: InstancedMesh;
   private readonly pools: Record<DoorStyle, Pool>;
@@ -145,7 +147,7 @@ export class Doors {
     const same = keep !== null && keep.length === spots.length;
     const doors: DoorState[] = spots.map((spot, i) => {
       const style = spot.style ?? 'wood';
-      const open = (same ? keep[i] : !!spot.open) && !spot.barricaded;
+      const open = (same ? keep[i] : !!spot.open) && !spot.barricaded && !(spot.lock && !this.unlocked.has(doorKey(spot)));
       const d: DoorState = {
         spot,
         width: spot.width ?? 0.95,
@@ -156,7 +158,7 @@ export class Doors {
         slot: -1,
         set: key,
         pair: spot.pair !== undefined ? i + spot.pair : -1,
-        hp: spot.barricaded ? 220 : style === 'glass' ? 60 : 110,
+        hp: spot.barricaded ? 220 : spot.lock ? 600 : style === 'glass' ? 60 : 110,
         broken: false,
         planks: 0,
         plankSide: 1,
@@ -236,10 +238,11 @@ export class Doors {
     return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open, creaky: d.style === 'wood' && h < 0.3, pitch: 0.9 + 0.2 * ((h * 7.31) % 1) };
   }
 
-  describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' | 'boarded' {
+  describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' | 'boarded' | 'locked' {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return 'closed';
     if (d.spot.barricaded) return 'barricaded';
+    if (this.lockOf(ref)) return 'locked';
     if (d.planks > 0) return 'boarded';
     return d.open ? 'open' : 'closed';
   }
@@ -248,7 +251,7 @@ export class Doors {
   toggle(ref: DoorRef): boolean {
     const doors = this.sets.get(ref.building);
     const d = doors?.[ref.index];
-    if (!doors || !d || d.spot.barricaded || d.broken || d.planks > 0) return false;
+    if (!doors || !d || d.spot.barricaded || d.broken || d.planks > 0 || this.lockOf(ref)) return false;
     const open = !d.open;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.open = open;
@@ -316,6 +319,27 @@ export class Doors {
     }
     this.writePlanks();
     return true;
+  }
+
+  /** The lock still holding this door shut, or null. */
+  lockOf(ref: DoorRef): string | null {
+    const d = this.sets.get(ref.building)?.[ref.index];
+    return d?.spot.lock && !d.broken && !this.unlocked.has(doorKey(d.spot)) ? d.spot.lock : null;
+  }
+
+  /** Unlock it for good (a key, a code). */
+  unlock(ref: DoorRef): void {
+    const d = this.sets.get(ref.building)?.[ref.index];
+    if (d) this.unlocked.add(doorKey(d.spot));
+  }
+
+  serializeUnlocked(): string[] {
+    return [...this.unlocked];
+  }
+
+  restoreUnlocked(list: string[] | undefined): void {
+    this.unlocked.clear();
+    for (const k of list ?? []) this.unlocked.add(k);
   }
 
   /** How many boards are on a door (0 if none or no such door). */

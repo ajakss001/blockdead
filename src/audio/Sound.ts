@@ -23,7 +23,7 @@ import type { GameLoop } from '../core/GameLoop';
 
 export type StepSurface = 'asphalt' | 'concrete' | 'tile' | 'wood' | 'metal' | 'glass' | 'grass' | 'water';
 /** Continuous sounds of the buildings, played by the nearest few spots (see `loops`). */
-export type LoopKind = 'fridge' | 'tv' | 'flies';
+export type LoopKind = 'fridge' | 'tv' | 'flies' | 'fire' | 'hiss' | 'rainTin';
 export type Gait = 'walk' | 'run' | 'crouch';
 export type HitMaterial = 'wood' | 'metal' | 'concrete' | 'glass' | 'soft';
 export type ContainerSound = 'woodDoor' | 'drawer' | 'locker' | 'fridge' | 'trunk' | 'bag' | 'box' | 'trash' | 'crate' | 'shelf';
@@ -69,6 +69,7 @@ const GROUPS = {
   attacked: { max: 1, gap: 0.22 },
   drip: { max: 3, gap: 0.05 },
   house: { max: 2, gap: 0.3 },
+  street: { max: 3, gap: 0.12 },
   ouch: { max: 1, gap: 0.35 },
 } as const;
 type Group = keyof typeof GROUPS;
@@ -101,6 +102,12 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
   mailboxes: 'locker',
   laundry: 'locker',
   trunk: 'trunk',
+  gasShelf: 'shelf',
+  gasCounter: 'drawer',
+  garage: 'drawer',
+  policeLocker: 'locker',
+  policeDesk: 'drawer',
+  armory: 'locker',
   suitcase: 'bag',
   bodyMilitary: 'bag',
   bodyPolice: 'bag',
@@ -296,6 +303,78 @@ class Sound {
     this.tone(out, t + dur, { f: 120 * pitch, f2: 90, dur: 0.08, peak: 0.12 });
   }
 
+  /** Crows: `n` caws from a flock (one when idle, a racket when they take off). */
+  crow(pos: Pos, n: number): void {
+    if (!this.claim('street', n > 1 ? 1.5 : 0.5)) return;
+    const v = this.voice(pos, 0.4 + n * 0.28, 3);
+    if (!v) return;
+    const [out, t] = v;
+    for (let i = 0; i < n; i++) {
+      const at = t + i * (0.18 + Math.random() * 0.15);
+      const f = 520 + Math.random() * 180;
+      // A harsh, nasal "kraa": a buzzy voice through a high resonance, dropping.
+      this.growl(out, at, { f, f2: f * 0.8, dur: 0.22 + Math.random() * 0.08, peak: 0.16, flutter: 70 + Math.random() * 30, form: 1300 + Math.random() * 300, form2: 1000, breath: 0.4, attack: 0.01 });
+    }
+    // Wings beating as they lift.
+    if (n > 1) for (let i = 0; i < 6; i++) this.noiseHit(out, t + i * 0.07, { type: 'bandpass', f: 700, q: 0.8, dur: 0.05, peak: 0.08 });
+  }
+
+  /** A car alarm right here: whoops or two-tone for `dur` s, honking, loud — it carries. */
+  carAlarm(pos: Pos, dur: number): void {
+    const v = this.voice(pos, dur + 0.5, 7);
+    if (!v) return;
+    const [out, t] = v;
+    const ac = this.ac!;
+    const osc = ac.createOscillator();
+    osc.type = 'square';
+    const gate = ac.createGain();
+    const pattern = Math.floor(Math.random() * 3);
+    for (let k = 0; k * 0.3 < dur; k++) {
+      const at = t + k * 0.3;
+      if (pattern === 0) osc.frequency.setValueAtTime(k % 2 ? 640 : 880, at);
+      else if (pattern === 1) {
+        osc.frequency.setValueAtTime(480, at);
+        osc.frequency.linearRampToValueAtTime(1050, at + 0.28);
+      } else {
+        osc.frequency.setValueAtTime(420, at);
+        gate.gain.setValueAtTime(k % 2 ? 0 : 1, at);
+      }
+    }
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2200;
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.12, t + 0.05);
+    env.gain.setValueAtTime(0.12, t + dur - 0.2);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gate).connect(lp).connect(env).connect(out);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  /** Small street noises: a rat's squeak, a cart's wheel, loose sheet metal rattling, a sign creaking. */
+  street(kind: 'squeak' | 'cart' | 'rattle' | 'sign', pos: Pos): void {
+    if (!this.claim('street', 0.6)) return;
+    const v = this.voice(pos, kind === 'sign' ? 1.4 : 0.7, kind === 'rattle' ? 3 : 1.5);
+    if (!v) return;
+    const [out, t] = v;
+    const r = Math.random();
+    if (kind === 'squeak') {
+      for (let i = 0; i < 2 + Math.floor(r * 3); i++) this.tone(out, t + i * 0.09, { f: 3200 + Math.random() * 1200, f2: 4200, dur: 0.05, peak: 0.05 });
+    } else if (kind === 'cart') {
+      this.tone(out, t, { f: 1700 + r * 500, f2: 2100, dur: 0.12, peak: 0.03, type: 'sawtooth', lp: 3000 });
+      this.noiseHit(out, t, { type: 'bandpass', f: 2500, q: 2, dur: 0.06, peak: 0.05 });
+    } else if (kind === 'rattle') {
+      // Sheet metal flapping in the wind: a run of tinny bangs.
+      for (let i = 0; i < 3 + Math.floor(r * 5); i++) {
+        const at = t + i * (0.05 + Math.random() * 0.09);
+        this.noiseHit(out, at, { type: 'bandpass', f: 1800 + Math.random() * 800, q: 3, dur: 0.06, peak: 0.12 });
+        this.tone(out, at, { f: 600 + Math.random() * 400, dur: 0.12, peak: 0.03, type: 'triangle' });
+      }
+    } else this.creak(out, t, 0.9 + r * 0.4, 0.45 + r * 0.2);
+  }
+
   /** One ring of an old phone: a bell trilling twice. */
   phoneRing(pos: Pos): void {
     const v = this.voice(pos, 2.2, 2);
@@ -392,6 +471,31 @@ class Sound {
       hum.connect(lp).connect(hg).connect(gain);
       sources.push(hum);
       gain.gain.setTargetAtTime(0.045, now, 0.3);
+    } else if (kind === 'fire' || kind === 'hiss' || kind === 'rainTin') {
+      // Fire: a low roar with crackles; a hydrant: water rushing; rain drumming on a car's roof.
+      const src = ac.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const f = ac.createBiquadFilter();
+      f.type = kind === 'fire' ? 'lowpass' : 'bandpass';
+      f.frequency.value = kind === 'fire' ? 500 : kind === 'hiss' ? 1800 : 3200;
+      f.Q.value = kind === 'fire' ? 0.7 : 0.9;
+      const mod = ac.createGain();
+      mod.gain.value = kind === 'hiss' ? 1 : 0.6;
+      src.connect(f).connect(mod).connect(gain);
+      sources.push(src);
+      if (kind !== 'hiss') {
+        // Crackle / patter: the level jumping about.
+        const crackle = ac.createBufferSource();
+        crackle.buffer = this.noise;
+        crackle.loop = true;
+        crackle.playbackRate.value = kind === 'fire' ? 0.02 : 0.05;
+        const depth = ac.createGain();
+        depth.gain.value = 0.5;
+        crackle.connect(depth).connect(mod.gain);
+        sources.push(crackle);
+      }
+      gain.gain.setTargetAtTime(kind === 'fire' ? 0.08 : kind === 'hiss' ? 0.07 : 0.05, now, 0.4);
     } else {
       // Flies: a few wings at slightly different pitches, swelling as they circle.
       const bp = ac.createBiquadFilter();

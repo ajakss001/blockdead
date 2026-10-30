@@ -2,6 +2,7 @@ import { BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Euler
 import { gableRoof } from '../../render/lowpoly';
 import type { Surface } from '../../render/look/surfaces';
 import type { StaticBatch } from '../../render/StaticBatch';
+import type { ItemId } from '../../data/items';
 import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
 
@@ -13,6 +14,8 @@ export interface ContainerSpot {
   y?: number;
   /** Explicit id (interior floors: stable whichever floors are furnished). */
   id?: number;
+  /** Always in it, on top of the rolled loot (a key, a note). */
+  fixed?: ItemId[];
 }
 
 /** An interior door: hinge position and closed-leaf yaw in world space (leaf extends along +X when yaw = 0). */
@@ -34,6 +37,8 @@ export interface DoorSpot {
   height?: number;
   /** Starts open (left ajar by whoever ran). */
   open?: boolean;
+  /** Locked (see DoorOptions.lock). */
+  lock?: string;
   /** Double doors: offset to the other leaf in the same list; both swing together. */
   pair?: number;
 }
@@ -45,6 +50,8 @@ export interface DoorOptions {
   pair?: number;
   /** Height of the opening the leaf fills, m (default 2.1). */
   height?: number;
+  /** Locked: which lock (see systems/Interaction LOCKS) — a key or a code opens it. */
+  lock?: string;
 }
 
 export { PAL, pick, type Rand } from './palette';
@@ -431,6 +438,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
 
   // Gable roof with overhang, ridge along X.
   const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.4 + d * 0.06);
+  b.life(LIFE.perch, x0 + w / 2, h + 1.4 + d * 0.06, z0 + d / 2, 1, 0, w * 0.7, 0, spotHash(x0, z0, 92));
   b.geo(roofGeo, roof, _m.compose(_p.set(x0 + w / 2, h, z0 + d / 2), _q.identity(), _s.set(1, 1, 1)), 'roof');
   roofGeo.dispose();
 
@@ -503,6 +511,7 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
   // Flat roof with a parapet lip.
   b.block(0x3a3a38, x0 - 0.1, h, z0 - 0.1, w + 0.2, 0.25, d + 0.2, 'roof');
+  b.life(LIFE.perch, x0 + w / 2, h + 0.25, z1, 1, 0, w * 0.8, 0, spotHash(x0, z0, 93));
 
   const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };
   b.endFrame();
@@ -670,6 +679,7 @@ export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: n
   b.block(PAL.metal, Math.min(x, x + ax) - 0.04, 4.1, Math.min(z, z + az) - 0.04, Math.abs(ax) + 0.08, 0.06, Math.abs(az) + 0.08, 'metal');
   b.block(0x55585a, x + ax - 0.15, 3.98, z + az - 0.15, 0.3, 0.12, 0.3, 'metal');
   b.colliders.addBox(x - 0.13, z - 0.13, x + 0.13, z + 0.13);
+  b.life(LIFE.perch, x + ax / 2, 4.14, z + az / 2, armX, armZ, 1.0, 0, spotHash(x, z, 91));
 }
 
 export function mailbox(b: Builder, x: number, z: number): void {

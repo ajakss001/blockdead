@@ -28,6 +28,7 @@ export function stripDecal(b: Builder, x: number, z: number, yaw: number, length
 
 function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25): void {
   b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
+  if (smashed >= 0.7 && spotHash(x, z, 94) < 0.3) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
   buildCar(
     b.batch,
     b.colliders,

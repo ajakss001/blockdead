@@ -268,8 +268,9 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
         [-1.35, -0.85],
       ] as const) {
         if (spotHash(cx + a, cz + s, 13) < 0.35) continue;
-        const wx = cx + fx * a + fz * s * 1.1;
-        const wz = cz + fz * a - fx * s * 1.1;
+        // Length along the car's local X = (fz, −fx), width along (fx, fz).
+        const wx = cx + fz * a + fx * s;
+        const wz = cz - fx * a + fz * s;
         tuft(wx, wz, 0.55, TILE.weed);
         tuft(wx + 0.2, wz - 0.15, 0.4, TILE.grass);
       }

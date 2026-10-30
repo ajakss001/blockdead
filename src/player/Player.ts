@@ -88,6 +88,8 @@ export class Player {
   private hitKick = 0;
   /** The blow lands (contact frame): true if it hit something that is not the world (a zombie). */
   onStrike: ((item: string) => boolean) | null = null;
+  /** The blow lands on the world (not a zombie) at a point: a car there may start wailing. */
+  onStrikeWorld: ((x: number, y: number, z: number) => void) | null = null;
 
   /** Seconds since the survivor went down (−1 = alive); what killed them, to look at as they fall. */
   private deathT = -1;
@@ -237,6 +239,7 @@ export class Player {
       break;
     }
     sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
+    this.onStrikeWorld?.(o.x + d.x * dist, o.y + d.y * dist, o.z + d.z * dist);
   }
 
   render(alpha: number, frameDt: number): void {

@@ -185,6 +185,24 @@ export class ZombieSim {
     return this.list.reduce((n, z) => n + (z.sees ? 1 : 0), 0);
   }
 
+  /**
+   * A noise out in the world (crows taking off, a car alarm): zombies within `radius` that are not already
+   * after the player go and look where it came from, as when they hear the player.
+   */
+  noiseAt(x: number, y: number, z: number, radius: number): void {
+    const r = this.rnd;
+    for (const zb of this.list) {
+      if (zb.state === 'dead' || zb.state === 'chase' || zb.state === 'bang' || zb.state === 'attack' || zb.state === 'stagger') continue;
+      const d = Math.hypot(zb.pos.x - x, zb.pos.z - z);
+      if (d > radius) continue;
+      const err = (d / radius) * 4;
+      zb.target.set(x + (r() - 0.5) * err, y, z + (r() - 0.5) * err);
+      if (zb.state !== 'investigate' && zb.state !== 'search') this.groan(zb, false);
+      this.enter(zb, 'investigate', 20);
+      zb.awareness = Math.max(zb.awareness, 0.35);
+    }
+  }
+
   threat(player: Vector3): number {
     let t = 0;
     for (const z of this.list) {

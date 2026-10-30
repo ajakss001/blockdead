@@ -73,7 +73,12 @@ export type ItemId =
   | 'sportsBag'
   | 'hikingBackpack'
   | 'armyBackpack'
-  | 'medBag';
+  | 'medBag'
+  // POI finds.
+  | 'map'
+  | 'walkie'
+  | 'armoryKey'
+  | 'armoryNote';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -206,6 +211,10 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   hikingBackpack: { name: 'Туристический рюкзак', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'back', color: 0x7a3a2a, stats: { bite: 0.05, warmth: 2 }, pack: { capacity: 14, reduce: 0.2 } }, note: 'Вмещает +14 кг, вещи в нём легче на 20%.' },
   armyBackpack: { name: 'Армейский рюкзак', kind: 'clothing', weight: 1.8, stack: 1, wear: { slot: 'back', color: 0x4a4f36, stats: { bite: 0.1, warmth: 2 }, pack: { capacity: 16, reduce: 0.25 } }, note: 'Вмещает +16 кг, вещи в нём легче на 25%.' },
   medBag: { name: 'Медицинская сумка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'back', color: 0x8a2a2a, stats: { bite: 0, warmth: 0 }, pack: { capacity: 6, reduce: 0.1 } }, note: 'Вмещает +6 кг, вещи в нём легче на 10%.' },
+  map: { name: 'Карта района', kind: 'tool', weight: 0.05, stack: 1, note: 'Отмечены заправки, участок, большие магазины. Кто-то обвёл выезды из города.' },
+  walkie: { name: 'Рация', kind: 'tool', weight: 0.4, stack: 1, note: 'Только шипение на всех каналах.' },
+  armoryKey: { name: 'Ключ от оружейной', kind: 'tool', weight: 0.02, stack: 1, note: 'Тяжёлый ключ с биркой «Оружейная». Открывает дверь в участке.' },
+  armoryNote: { name: 'Записка с кодом', kind: 'tool', weight: 0.01, stack: 1, note: '«Код оружейной сменили: 4-7-1-9. Не записывать!» — записали.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
