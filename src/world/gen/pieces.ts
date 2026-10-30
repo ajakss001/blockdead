@@ -50,6 +50,7 @@ export interface DoorOptions {
 export { PAL, pick, type Rand } from './palette';
 import { PAL, pick, type Rand } from './palette';
 import * as F from './furniture';
+import { LIFE, spotHash } from './lifeKinds';
 import { Place, type Quarter, SHOP_KINDS, SHOP_SIGN } from './furniture';
 
 const WALL_T = 0.2;
@@ -294,6 +295,25 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   wallAlongX(b, siding, paperB, x0, x1, z0, false);
   wallAlongZ(b, siding, paperA, x0, z0 + WALL_T, z1 - WALL_T, false);
   wallAlongZ(b, siding, paperB, x1 - WALL_T, z0 + WALL_T, z1 - WALL_T, true);
+  // Ivy climbing the old walls from a corner (the front one away from the door).
+  for (const [k, nx, nz] of [
+    [0, 0, 1],
+    [1, 0, -1],
+    [2, -1, 0],
+    [3, 1, 0],
+  ] as const) {
+    if (spotHash(x0 + k, z0, 11) > 0.32) continue;
+    const iw = 1.2 + spotHash(x0, z0 + k, 12) * 2.2;
+    const ih = 1.0 + spotHash(x0 + k, z0 + k, 13) * 1.5;
+    const far = k === 0 || spotHash(x0, z0, 14 + k) < 0.5;
+    if (nz) {
+      const x = far ? x1 - iw / 2 - 0.05 : x0 + iw / 2 + 0.05;
+      b.life(LIFE.ivy, x, 0, nz > 0 ? z1 + 0.02 : z0 - 0.02, 0, nz, iw, ih, spotHash(x, z0, 15));
+    } else {
+      const z = far ? z1 - iw / 2 - 0.05 : z0 + iw / 2 + 0.05;
+      b.life(LIFE.ivy, nx > 0 ? x1 + 0.02 : x0 - 0.02, 0, z, nx, 0, iw, ih, spotHash(x0, z, 15));
+    }
+  }
   // Door step and frame.
   b.block(PAL.path, doorX - 0.7, 0, z1, 1.4, 0.06, 0.6, 'asphalt');
   b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
@@ -336,6 +356,12 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const fled = roll >= 0.4 && roll < 0.75;
   const messy = roll >= 0.75;
   const open = () => messy || (fled && rand() < 0.6);
+  // A leak dripping in the living room, the kitchen tap, a phone now and then, flies in an abandoned house.
+  if (spotHash(x0, z0, 81) < 0.35) b.life(LIFE.drip, x0 + 1.6 + spotHash(x0, z0, 82) * Math.max(0.1, xp - x0 - 2), h - 0.05, z0 + d * (0.35 + spotHash(x0, z0, 83) * 0.3), 0, 0, 0, h - 0.09, spotHash(x0, z0, 84));
+  const sinkX = (xp + 0.4 + x1 - WALL_T - 1.05) / 2;
+  if (spotHash(x0, z0, 85) < 0.4) b.life(LIFE.tap, sinkX, 1.0, z0 + WALL_T + 0.3, 0, 1, 0, 0, spotHash(x0, z0, 86));
+  if (spotHash(x0, z0, 87) < 0.06) b.life(LIFE.phone, x0 + WALL_T + 1.05, 0.5, z0 + d * 0.3 + 1.0, 0, 0, 0, 0, spotHash(x0, z0, 88));
+  if ((messy || fled) && spotHash(x0, z0, 89) < 0.3) b.life(LIFE.flies, sinkX, 1.1, z0 + WALL_T + 0.6, 0, 0, 0, 0, spotHash(x0, z0, 90));
 
   // Living room: sofa against the side wall, coffee table on a rug, lamp, a painting, TV on the back wall.
   const sz = z0 + d * 0.3;
@@ -593,6 +619,13 @@ export function fence(
         }
       }
       solid(x0, x1);
+      // Ivy over a stretch of the fence, on one side.
+      if (spotHash(x0, fixed, 21) < 0.18) {
+        const side = spotHash(fixed, x0, 22) < 0.5 ? -1 : 1;
+        const fh = (style === 'board' ? 1.6 : 1.0) * (0.6 + spotHash(x0, fixed, 23) * 0.4);
+        if (alongX) b.life(LIFE.ivy, x0 + len / 2, 0, fixed + side * 0.06, 0, side, len, fh, spotHash(x0, fixed, 24));
+        else b.life(LIFE.ivy, fixed + side * 0.06, 0, x0 + len / 2, side, 0, len, fh, spotHash(x0, fixed, 24));
+      }
     }
     put(s1 - 0.05, 0, 0.1, style === 'board' ? 1.65 : 1.0, 0.1);
   }
@@ -600,6 +633,7 @@ export function fence(
 
 export function tree(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
   const h = 2.2 * scale;
+  b.life(LIFE.tree, x, y, z, 0, 0, 1.6 * scale, h + scale, spotHash(x, z, 31));
   b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.16 * scale, h + 0.3, 0.16 * scale)), 'wood');
   const leaves = pick(rand, PAL.leaves);
   _e.set(rand() * 3, rand() * 3, rand() * 3);
@@ -612,6 +646,7 @@ export function tree(b: Builder, x: number, y: number, z: number, scale: number,
 /** Dead pine: tall narrow cones — forests need silhouettes other than round crowns. */
 export function pine(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
   const h = 5.5 * scale;
+  b.life(LIFE.tree, x, y, z, 0, 0, 1.4 * scale, h, spotHash(x, z, 31), 1);
   b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.13 * scale, h, 0.13 * scale)), 'wood');
   const leaves = pick(rand, PAL.leaves);
   for (let k = 0; k < 3; k++) {
@@ -647,4 +682,5 @@ export function trashBins(b: Builder, x: number, z: number): void {
   b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x + 0.7, 0.45, z + 0.1), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
   b.colliders.addBox(x - 0.35, z - 0.35, x + 1.05, z + 0.45);
   b.containers.push({ type: 'trash', x: x + 0.35, z });
+  if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, x + 0.35, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
 }

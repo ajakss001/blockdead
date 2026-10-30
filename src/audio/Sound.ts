@@ -21,7 +21,9 @@ import type { GameLoop } from '../core/GameLoop';
  * alleys ring, open streets don't).
  */
 
-export type StepSurface = 'asphalt' | 'concrete' | 'tile' | 'wood' | 'metal' | 'glass' | 'grass';
+export type StepSurface = 'asphalt' | 'concrete' | 'tile' | 'wood' | 'metal' | 'glass' | 'grass' | 'water';
+/** Continuous sounds of the buildings, played by the nearest few spots (see `loops`). */
+export type LoopKind = 'fridge' | 'tv' | 'flies';
 export type Gait = 'walk' | 'run' | 'crouch';
 export type HitMaterial = 'wood' | 'metal' | 'concrete' | 'glass' | 'soft';
 export type ContainerSound = 'woodDoor' | 'drawer' | 'locker' | 'fridge' | 'trunk' | 'bag' | 'box' | 'trash' | 'crate' | 'shelf';
@@ -41,6 +43,18 @@ export interface Pos {
 const MAX_VOICES = 22;
 /** Blows get this many voices past MAX_VOICES. */
 const PRIORITY_VOICES = 6;
+/** Continuous building sounds playing at once (the nearest). */
+const LOOP_SLOTS = 3;
+
+interface LoopSlot {
+  key: number;
+  kind: LoopKind;
+  gain: GainNode;
+  panner: PannerNode;
+  sources: AudioScheduledSourceNode[];
+  /** Flies: the buzz's pitch, wandering. */
+  buzz?: OscillatorNode;
+}
 /**
  * Sound groups: at most `max` playing at once, starts at least `gap` s apart (in a crowd one more snarl
  * on top of five is noise, not a sound).
@@ -53,6 +67,8 @@ const GROUPS = {
   zBang: { max: 2, gap: 0.12 },
   strike: { max: 2, gap: 0.06 },
   attacked: { max: 1, gap: 0.22 },
+  drip: { max: 3, gap: 0.05 },
+  house: { max: 2, gap: 0.3 },
   ouch: { max: 1, gap: 0.35 },
 } as const;
 type Group = keyof typeof GROUPS;
@@ -114,6 +130,7 @@ class Sound {
   private hardMute = false;
   private worldMute = false;
   private search: { kind: ContainerSound; pos: Pos; t: number } | null = null;
+  private readonly loopSlots: LoopSlot[] = [];
 
   /** Wire to the game: unlock on the first gesture, mute with the pause reasons. */
   attach(events: EventBus<GameEvents>, loop: GameLoop): void {
@@ -207,7 +224,205 @@ class Sound {
         this.noiseHit(out, t, { type: 'lowpass', f: 650 * j, dur: 0.14, peak: 0.45 * g, attack: 0.02 });
         this.noiseHit(out, t + 0.02, { type: 'highpass', f: 3500, dur: 0.1, peak: 0.06 * g, attack: 0.02 });
         break;
+      case 'water':
+        // A foot in a puddle: a slap, a splash, a few drops falling back.
+        this.noiseHit(out, t, { type: 'lowpass', f: 500 * j, dur: 0.08, peak: 0.35 * g });
+        this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 1400 * j, f2: 700, q: 1.2, dur: 0.16, peak: 0.35 * g, attack: 0.01 });
+        for (let i = 0; i < 3; i++) this.tone(out, t + 0.08 + Math.random() * 0.12, { f: 1200 + Math.random() * 900, f2: 2200, dur: 0.035, peak: 0.04 * g });
+        break;
     }
+  }
+
+  // ── The buildings ──────────────────────────────────────────────────────────
+
+  /** A drop hitting a puddle (or, `tap`, a steel sink): a short rising plink, the room rings with it. */
+  drip(pos: Pos, tap = false): void {
+    if (!this.claim('drip', 0.3)) return;
+    const v = this.voice(pos, 0.3, 1.2);
+    if (!v) return;
+    const [out, t] = v;
+    const f = (tap ? 1500 : 850) * (0.85 + Math.random() * 0.3);
+    this.tone(out, t, { f, f2: f * (tap ? 1.4 : 2.1), dur: tap ? 0.05 : 0.07, peak: tap ? 0.07 : 0.1 });
+    this.noiseHit(out, t, { type: 'bandpass', f: tap ? 4000 : 2500, q: 3, dur: 0.02, peak: 0.05 });
+  }
+
+  /**
+   * The building's own noises (one at a time): a pipe knocking or groaning in the wall, a floor
+   * creaking, someone's steps on the floor above — muffled, a few slow paces, then nothing.
+   */
+  house(kind: 'pipe' | 'creak' | 'above', pos: Pos): void {
+    if (!this.claim('house', kind === 'above' ? 4 : 1.6)) return;
+    const v = this.voice(pos, kind === 'above' ? 4 : 1.8, 2.5);
+    if (!v) return;
+    const [out, t] = v;
+    const r = Math.random();
+    if (kind === 'pipe') {
+      if (r < 0.5) {
+        // Knocks: water hammer, ringing dull metal, dying away.
+        const n = 3 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < n; i++) {
+          const at = t + i * (0.11 + Math.random() * 0.07);
+          const k = 1 - i / (n + 1);
+          this.noiseHit(out, at, { type: 'lowpass', f: 380, dur: 0.06, peak: 0.25 * k });
+          this.tone(out, at, { f: 210 + r * 80, dur: 0.18, peak: 0.07 * k, type: 'triangle' });
+        }
+      } else {
+        // A groan: the pipe moaning as the pressure shifts.
+        this.tone(out, t, { f: 70 + r * 30, f2: 55 + r * 25, dur: 1.4, peak: 0.08, type: 'sawtooth', lp: 260, vibrato: 7 });
+        this.noiseHit(out, t + 0.2, { type: 'lowpass', f: 300, f2: 120, dur: 1.0, peak: 0.05, attack: 0.3 });
+      }
+    } else if (kind === 'creak') {
+      this.creak(out, t, 0.5 + r * 0.6, 0.6 + r * 0.3);
+    } else {
+      // Paces upstairs: heavy, slow, muffled by the floor between.
+      const n = 4 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < n; i++) {
+        const at = t + i * (0.55 + Math.random() * 0.1);
+        this.noiseHit(out, at, { type: 'lowpass', f: 170, dur: 0.12, peak: 0.45 });
+        this.tone(out, at, { f: 62, dur: 0.1, peak: 0.25 });
+      }
+      if (r < 0.4) this.creak(out, t + n * 0.6, 0.6, 0.5);
+    }
+  }
+
+  /** A door swung shut by a draught: slow, creaking all the way if it creaks, a soft latch at the end. */
+  draftDoor(pos: Pos, dur: number, creaky: boolean, pitch: number): void {
+    const v = this.voice(pos, dur + 0.5);
+    if (!v) return;
+    const [out, t] = v;
+    if (creaky) this.creak(out, t + 0.1, dur * 0.9, pitch * 0.85);
+    else this.noiseHit(out, t + 0.1, { type: 'bandpass', f: 500, q: 0.8, dur: dur * 0.8, peak: 0.02, attack: dur * 0.4 });
+    this.noiseHit(out, t + dur, { type: 'lowpass', f: 400 * pitch, dur: 0.08, peak: 0.35 });
+    this.tone(out, t + dur, { f: 120 * pitch, f2: 90, dur: 0.08, peak: 0.12 });
+  }
+
+  /** One ring of an old phone: a bell trilling twice. */
+  phoneRing(pos: Pos): void {
+    const v = this.voice(pos, 2.2, 2);
+    if (!v) return;
+    const [out, t] = v;
+    for (const at of [0, 0.5]) {
+      for (let k = 0; k < 16; k++) {
+        const bt = t + at + k * 0.025;
+        this.tone(out, bt, { f: 1180, dur: 0.05, peak: 0.05 });
+        this.tone(out, bt, { f: 1650, dur: 0.05, peak: 0.035 });
+      }
+    }
+  }
+
+  /**
+   * Continuous sounds — a fridge humming, a TV hissing static, flies over the trash: the nearest
+   * LOOP_SLOTS of `list` (sorted, nearest first) play from where they are, the rest are quiet; voices fade
+   * in and out as you move. Call every frame (an empty list fades everything).
+   */
+  loops(list: readonly { key: number; kind: LoopKind; x: number; y: number; z: number }[]): void {
+    const ac = this.ac;
+    if (!ac || ac.state !== 'running' || !this.world || !this.noise) return;
+    const now = ac.currentTime;
+    const want = list.slice(0, LOOP_SLOTS);
+    for (let i = this.loopSlots.length - 1; i >= 0; i--) {
+      const slot = this.loopSlots[i];
+      if (want.some((w) => w.key === slot.key)) continue;
+      slot.gain.gain.setTargetAtTime(0, now, 0.25);
+      for (const n of slot.sources) n.stop(now + 1.2);
+      window.setTimeout(() => slot.panner.disconnect(), 1400);
+      this.loopSlots.splice(i, 1);
+    }
+    for (const w of want) {
+      let slot = this.loopSlots.find((l) => l.key === w.key);
+      if (!slot) {
+        slot = this.loopSlot(ac, w.key, w.kind);
+        this.loopSlots.push(slot);
+        if (slot.panner.positionX) {
+          slot.panner.positionX.value = w.x;
+          slot.panner.positionY.value = w.y;
+          slot.panner.positionZ.value = w.z;
+        } else slot.panner.setPosition(w.x, w.y, w.z);
+      }
+      if (slot.buzz && Math.random() < 0.06) slot.buzz.frequency.setTargetAtTime(170 + Math.random() * 90, now, 0.08);
+    }
+  }
+
+  private loopSlot(ac: AudioContext, key: number, kind: LoopKind): LoopSlot {
+    const panner = ac.createPanner();
+    panner.panningModel = 'equalpower';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.maxDistance = 20;
+    panner.rolloffFactor = 1.6;
+    const gain = ac.createGain();
+    gain.gain.value = 0;
+    gain.connect(panner).connect(this.world!);
+    const sources: AudioScheduledSourceNode[] = [];
+    let buzz: OscillatorNode | undefined;
+    const now = ac.currentTime;
+    if (kind === 'fridge') {
+      // Mains hum and the compressor's low drone.
+      for (const [f, a] of [
+        [50, 0.5],
+        [100, 0.35],
+        [150, 0.12],
+      ] as const) {
+        const o = ac.createOscillator();
+        o.frequency.value = f * (0.99 + Math.random() * 0.02);
+        const g = ac.createGain();
+        g.gain.value = a;
+        o.connect(g).connect(gain);
+        sources.push(o);
+      }
+      gain.gain.setTargetAtTime(0.05, now, 0.5);
+    } else if (kind === 'tv') {
+      // Static: hiss, a buzz of the frame rate under it.
+      const src = ac.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 700;
+      src.connect(hp).connect(gain);
+      sources.push(src);
+      const hum = ac.createOscillator();
+      hum.type = 'square';
+      hum.frequency.value = 50;
+      const hg = ac.createGain();
+      hg.gain.value = 0.08;
+      const lp = ac.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 400;
+      hum.connect(lp).connect(hg).connect(gain);
+      sources.push(hum);
+      gain.gain.setTargetAtTime(0.045, now, 0.3);
+    } else {
+      // Flies: a few wings at slightly different pitches, swelling as they circle.
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 600;
+      bp.Q.value = 1.2;
+      bp.connect(gain);
+      for (let i = 0; i < 3; i++) {
+        const o = ac.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = 180 + i * 37 + Math.random() * 20;
+        const vib = ac.createOscillator();
+        vib.frequency.value = 3 + Math.random() * 4;
+        const vg = ac.createGain();
+        vg.gain.value = 12;
+        vib.connect(vg).connect(o.frequency);
+        const amp = ac.createGain();
+        amp.gain.value = 0.3;
+        const swell = ac.createOscillator();
+        swell.frequency.value = 0.3 + Math.random() * 0.5;
+        const sg = ac.createGain();
+        sg.gain.value = 0.25;
+        swell.connect(sg).connect(amp.gain);
+        o.connect(amp).connect(bp);
+        sources.push(o, vib, swell);
+        if (i === 0) buzz = o;
+      }
+      gain.gain.setTargetAtTime(0.06, now, 0.4);
+    }
+    for (const n of sources) n.start(now);
+    return { key, kind, gain, panner, sources, buzz };
   }
 
   jump(pos: Pos): void {
@@ -697,10 +912,6 @@ class Sound {
     else void ac.resume();
   }
 
-  /**
-   * A voice: its own gain into the world bus (through a panner if positioned) or the UI bus. Returns
-   * the node to play into and the start time, or null when muted / over the voice limit.
-   */
   /** Room in a group for one more sound lasting `life` s (see GROUPS); false = skip it. */
   private claim(group: Group, life: number): boolean {
     const ac = this.ac;
@@ -718,6 +929,10 @@ class Sound {
     return true;
   }
 
+  /**
+   * A voice: its own gain into the world bus (through a panner if positioned) or the UI bus. Returns
+   * the node to play into and the start time, or null when muted / over the voice limit.
+   */
   private voice(pos: Pos | null, life: number, ref = 1.5, priority = false): [Out, number] | null {
     const ac = this.ac;
     if (!ac || ac.state !== 'running' || this.hardMute || !this.world || !this.ui) return null;

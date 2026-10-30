@@ -45,7 +45,9 @@ import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
 import { ZombieCrowd } from '../render/ZombieCrowd';
 import { blowDamage, type PlayerSense, type Zombie, ZombieSim } from '../systems/zombies';
-import { Dust } from '../render/Dust';
+import { Ground } from '../render/Foliage';
+import { Particles } from '../render/Particles';
+import { Atmosphere } from '../world/Atmosphere';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
@@ -153,7 +155,8 @@ export class WorldScene implements IScene {
   private classId: ClassId = DEFAULT_CLASS;
   /** No save was found: a new game asks for a character first. */
   private isNewGame = true;
-  private readonly dust = new Dust();
+  private readonly particles = new Particles();
+  private atmo!: Atmosphere;
   /** Dead survivors walking (saved until killed), and the bodies they left with their things. */
   private twins: TwinRecord[] = [];
   private bodies: ContainerRef[] = [];
@@ -206,7 +209,7 @@ export class WorldScene implements IScene {
       seed,
     );
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
-    this.scene.add(this.crowd.mesh, this.dust.points);
+    this.scene.add(this.crowd.mesh, this.particles.points);
     // A blow at its contact frame: a zombie in reach takes it (the head counts double).
     this.player.onStrike = (item) => this.strikeZombie(item);
 
@@ -220,6 +223,7 @@ export class WorldScene implements IScene {
       this.shelters.add(key, data.shelters);
       this.doors.add(entranceKey(key), data.doors);
       this.life?.add(key, data.ambient);
+      this.atmo?.add(key, data.ambient);
     };
     this.chunks.onChunkUnloaded = (key) => {
       this.containers.removeChunk(key);
@@ -227,6 +231,7 @@ export class WorldScene implements IScene {
       this.shelters.remove(key);
       this.doors.remove(entranceKey(key));
       this.life?.remove(key);
+      this.atmo?.remove(key);
     };
     const syncBody = () => this.syncBody();
     this.panel = new InventoryPanel(
@@ -245,7 +250,27 @@ export class WorldScene implements IScene {
     this.saves = new SaveGame(ctx.platform, seed);
     this.dread = new AnxietyAudio(ctx.events, ctx.loop);
     this.life = new WorldLife(this.scene, this.dread, (x, z) => layout.walkHeightAt(x, z));
-    this.interiors.onAmbient = (owner, spots) => (spots ? this.life.add(owner, spots) : this.life.remove(owner));
+    this.atmo = new Atmosphere(
+      this.scene,
+      this.particles,
+      () => this.doors,
+      (x, z) => this.groundKind(x, z),
+      (x, z) => layout.walkHeightAt(x, z),
+      () => {
+        const c = this.player.controller.position;
+        const b = this.interiors.buildingAt(c.x, c.z);
+        return !!b && Math.round(c.y / FLOOR_H) < b.floors - 1;
+      },
+    );
+    this.interiors.onAmbient = (owner, spots) => {
+      if (spots) {
+        this.life.add(owner, spots);
+        this.atmo.add(owner, spots);
+      } else {
+        this.life.remove(owner);
+        this.atmo.remove(owner);
+      }
+    };
     this.inventory.restore(START_KIT);
     this.player.battery = START_KIT.battery;
     this.syncBody();
@@ -353,8 +378,10 @@ export class WorldScene implements IScene {
     this.scene.add(group);
     this.player.prewarmShadows();
     const lifeDone = this.life.prewarm();
+    const atmoDone = this.atmo.prewarm();
     return () => {
       lifeDone();
+      atmoDone();
       group.removeFromParent();
       g.dispose();
     };
@@ -403,7 +430,11 @@ export class WorldScene implements IScene {
     // Footsteps on whatever is underfoot; jump and landing.
     const feet = { x: c.position.x, y: c.position.y + 0.05, z: c.position.z };
     const n = Math.floor(c.stepPhase / Math.PI);
-    if (n !== this.stepN && !c.airborne && c.speed > 0.3) sfx.step(this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet);
+    if (n !== this.stepN && !c.airborne && c.speed > 0.3) {
+      const wet = this.atmo.puddleAt(feet.x, feet.z, c.position.y);
+      if (wet) this.atmo.ripple(feet.x, c.position.y, feet.z);
+      sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet);
+    }
     this.stepN = n;
     if (c.jumped) sfx.jump(feet);
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
@@ -440,7 +471,7 @@ export class WorldScene implements IScene {
 
   render(alpha: number, frameDt: number): void {
     this.crowd.update(this.zombies.list, frameDt);
-    this.dust.update(frameDt);
+    this.particles.update(frameDt);
     this.player.render(alpha, frameDt);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
@@ -450,6 +481,7 @@ export class WorldScene implements IScene {
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
+    this.atmo.update(this.ctx.loop.paused ? 0 : frameDt, p, this.indoors, this.life.windDirection, this.life.windGust);
     this.applyDaylight(this.clock.daylight);
     const wa = this.life.windDirection;
     const ws = 0.0005 + this.life.windGust * 0.001;
@@ -482,6 +514,22 @@ export class WorldScene implements IScene {
     this.sky.skyColor = sky;
     this.life.daylight = k;
     this.player.viewmodel.setDaylight(k);
+  }
+
+  /**
+   * What a patch of ground grows (Foliage): nothing under a roof or in a building, grass on open ground,
+   * weeds in the cracks of paving, more along the curbs.
+   */
+  private groundKind(x: number, z: number): Ground {
+    const y = this.layout.walkHeightAt(x, z);
+    if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z)) return Ground.None;
+    const zone = this.chunks.zoneAt(x, z);
+    const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
+    const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
+    const curb = Math.abs(rx - ROAD_HALF) < 0.35 || Math.abs(rz - ROAD_HALF) < 0.35;
+    if (zone === 'downtown' || zone === 'town') return curb ? Ground.Curb : Ground.Paved;
+    if (rx < ROAD_HALF || rz < ROAD_HALF) return curb ? Ground.Curb : Ground.Paved;
+    return (zone === 'suburb' && y > 0.05) ? Ground.Paved : Ground.Grass;
   }
 
   /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass. */
@@ -582,7 +630,7 @@ export class WorldScene implements IScene {
     const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
     const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z);
     sfx.strike(STRIKE_SOUND[item] ?? 'blunt', res.point, res.head, killed);
-    this.dust.burst(res.point, res.head ? 14 : 10);
+    this.particles.burst(res.point, res.head ? 14 : 10);
     return true;
   }
 
@@ -690,7 +738,8 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.crowd.dispose();
-    this.dust.dispose();
+    this.particles.dispose();
+    this.atmo.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');
@@ -705,6 +754,7 @@ export class WorldScene implements IScene {
     this.interiors.maxLoaded = preset.interiors;
     this.life.clothEnabled = preset.lifeCloth;
     this.life.roomLights = preset.roomLights;
+    this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();

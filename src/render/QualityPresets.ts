@@ -28,6 +28,11 @@ export interface QualityPreset {
   lifeCloth: boolean;
   /** Real point lights for lit rooms nearby (0: the warm glow alone fakes them). */
   roomLights: number;
+  /**
+   * Grass, weeds, ivy and fallen leaves (one draw call): drawn within `radius` m of the player, one roll per
+   * `cell` m, at most `cap` quads. Beyond — the ground's own tone.
+   */
+  foliage: { radius: number; cell: number; cap: number };
 }
 
 export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high'];
@@ -35,6 +40,7 @@ export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high']
 export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   low: {
     level: 'low',
+    foliage: { radius: 13, cell: 0.95, cap: 1400 },
     chunkRadius: 1,
     resolutionScaleMin: 0.6,
     resolutionScaleMax: 0.85,
@@ -53,6 +59,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   },
   medium: {
     level: 'medium',
+    foliage: { radius: 20, cell: 0.75, cap: 3600 },
     chunkRadius: 1,
     resolutionScaleMin: 0.7,
     resolutionScaleMax: 1,
@@ -71,6 +78,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   },
   high: {
     level: 'high',
+    foliage: { radius: 30, cell: 0.6, cap: 7000 },
     chunkRadius: 2,
     resolutionScaleMin: 0.85,
     resolutionScaleMax: 1,

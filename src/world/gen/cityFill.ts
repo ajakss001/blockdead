@@ -2,6 +2,7 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
+import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
 /*
@@ -163,6 +164,7 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
 
 /** Parked, not crashed: straight, rarely smashed. */
 function parkedCar(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
+  b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
   buildCar(
     b.batch,
     b.colliders,

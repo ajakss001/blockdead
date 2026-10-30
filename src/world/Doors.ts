@@ -22,6 +22,8 @@ import type { DoorSpot, DoorStyle } from './gen/pieces';
 const LEAF_W = 1;
 const LEAF_H = 2.05;
 const SWING_SPEED = 6;
+/** A draught closes a door at this share of a push. */
+const DRAFT_SPEED = 0.13;
 const START_CAPACITY = 128;
 /** Door collider owners: a private id range, one per door. */
 const DOOR_OWNER_BASE = 3e15;
@@ -44,6 +46,8 @@ interface DoorState {
   /** Boards the player nailed across it (0–3), and on which side of the leaf (±1 along its normal). */
   planks: number;
   plankSide: number;
+  /** Swinging shut slowly (a draught), not pushed. */
+  slow?: boolean;
 }
 
 interface Pool {
@@ -248,9 +252,33 @@ export class Doors {
     const open = !d.open;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.open = open;
+      leaf.slow = false;
       this.collide(leaf, !open);
     }
     return true;
+  }
+
+  /**
+   * A draught swings an open door shut, slowly: a single wooden one on this storey between `minR` and
+   * `maxR` m away (never one right by you). Returns where it is and its voice, or null if none.
+   */
+  draftClose(x: number, y: number, z: number, minR: number, maxR: number): { x: number; y: number; z: number; creaky: boolean; pitch: number; dur: number } | null {
+    const pool: DoorRef[] = [];
+    for (const [building, doors] of this.sets) {
+      doors.forEach((d, index) => {
+        if (!d.open || d.broken || d.pair >= 0 || d.style !== 'wood' || d.spot.barricaded || Math.abs(d.spot.y - y) > 1.2) return;
+        const dist = Math.hypot(d.spot.hx - x, d.spot.hz - z);
+        if (dist >= minR && dist <= maxR) pool.push({ building, index });
+      });
+    }
+    if (pool.length === 0) return null;
+    const ref = pool[Math.floor(Math.random() * pool.length)];
+    const d = this.sets.get(ref.building)![ref.index];
+    d.open = false;
+    d.slow = true;
+    this.collide(d, true);
+    const at = this.info(ref)!;
+    return { x: at.x, y: at.y, z: at.z, creaky: at.creaky, pitch: at.pitch, dur: (Math.PI * 0.48) / (SWING_SPEED * DRAFT_SPEED) };
   }
 
   /** The nearest closed (unbroken) door within `r` on that storey: a handle and the doorway's middle. */
@@ -377,7 +405,8 @@ export class Doors {
         const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.spot.yaw;
         const diff = target - d.angle;
         if (Math.abs(diff) < 1e-3) continue;
-        d.angle += Math.sign(diff) * Math.min(Math.abs(diff), SWING_SPEED * dt);
+        d.angle += Math.sign(diff) * Math.min(Math.abs(diff), SWING_SPEED * (d.slow ? DRAFT_SPEED : 1) * dt);
+        if (Math.abs(target - d.angle) < 1e-3) d.slow = false;
         this.write(pool, d);
         pool.dirty = true;
       }

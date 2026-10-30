@@ -19,11 +19,12 @@ import {
 } from 'three';
 import { AmbientAudio } from '../audio/AmbientAudio';
 import type { AnxietyAudio } from '../audio/AnxietyAudio';
+import { LIFE } from './gen/lifeKinds';
 
 /** Spot layout from the generators (Builder.life): kind, x, y, z, normal x, normal z, w, h, seed, tag. */
 export const LIFE_STRIDE = 10;
-/** Spot kinds. */
-export const LIFE = { window: 0, lamp: 1, curtain: 2, radio: 3, shards: 4, room: 5 } as const;
+/** Spot kinds (shared with the generators and Atmosphere). */
+export { LIFE };
 /** Real lights go to lit rooms within this distance, m. */
 const ROOM_LIGHT_RANGE = 30;
 
@@ -331,6 +332,17 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
           this.cloth.setColorAt(c, _c.set(CURTAIN_COLORS[Math.floor(seed * CURTAIN_COLORS.length)]));
           this.clothData.setXY(c, 0.35 + seed * 0.3, seed);
           c++;
+        } else if (kind === LIFE.tv && g + 2 < GLOW_CAP) {
+          // A TV left on: static on the screen, its cold flicker on the wall behind and the floor in front.
+          const nx = spots[i + 4];
+          const nz = spots[i + 5];
+          _q.setFromAxisAngle(_y, yaw);
+          _m.compose(_p.set(x + nx * 0.004, y, z + nz * 0.004), _q, _s.set(w, h, 1));
+          glow(5, seed, 3, 1);
+          _m.compose(_p.set(x - nx * 0.46, y + 0.2, z - nz * 0.46), _q, _s.set(2.6, 1.9, 1));
+          glow(6, seed, 3, 0.22);
+          _m.compose(_p.set(x + nx * 1.3, y - 0.72, z + nz * 1.3), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(2.8, 2.8, 1));
+          glow(6, seed, 3, 0.3);
         } else if (kind === LIFE.radio) {
           this.radios.push(x, y, z);
         } else if (kind === LIFE.shards) {
@@ -444,7 +456,8 @@ void main() {
   float f;
   if (mode < 0.5) f = 0.8 + 0.12 * sin(t * 6.3) * sin(t * 2.9) + 0.08 * sin(t * 13.0);  // generator / candles
   else if (mode < 1.5) f = slow < 0.18 ? step(0.45, fast) : 1.0;                         // tube with dropouts
-  else f = slow < 0.4 ? step(0.35, fast) : 0.04;                                          // dying, bursts of light
+  else if (mode < 2.5) f = slow < 0.4 ? step(0.35, fast) : 0.04;                         // dying, bursts of light
+  else f = 0.5 + 0.5 * hash(floor(t * 11.0) + aGlow.y * 53.0);                           // a TV: the picture jumping
   vI = f * aGlow.w;
   mat4 mi = modelMatrix * instanceMatrix;
   vec4 wp = mi * vec4(position, 1.0);
@@ -462,6 +475,7 @@ void main() {
 const GLOW_FRAG = /* glsl */ `
 uniform vec3 uWarm;
 uniform vec3 uCold;
+uniform float uTime;
 uniform vec3 uFog; // near, far
 varying vec2 vUv;
 varying float vI;
@@ -508,6 +522,16 @@ void main() {
     // Warm pool of lamplight (floor, ceiling).
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);
     col = uWarm;
+  } else if (vKind > 5.5) {
+    // A TV's light thrown on a wall, the floor: cold blue-white.
+    a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);
+    col = vec3(0.55, 0.65, 0.9);
+  } else if (vKind > 4.5) {
+    // The screen: snow, changing every frame of the broadcast.
+    vec2 cell = floor(vUv * vec2(64.0, 48.0));
+    float n = fract(sin(dot(cell + floor(uTime * 30.0) * vec2(7.0, 13.0), vec2(12.9898, 78.233))) * 43758.5453);
+    a = 1.0;
+    col = vec3(0.6, 0.68, 0.8) * (0.3 + 0.7 * n);
   } else {
     // The lamp: a bright core.
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 3.0);

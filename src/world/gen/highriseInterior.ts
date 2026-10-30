@@ -22,6 +22,7 @@ import {
   wallDecalZ,
   windowXs,
 } from './highrise';
+import { LIFE } from './lifeKinds';
 import { hash3 } from './noise';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
@@ -230,6 +231,9 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);
   else apartment(U, w, d, h, st, rf, lwin, paper);
+  // A leak: water dripping from the ceiling somewhere in the unit.
+  // (The ground floor's slab is 5 cm thick on top of y; upper ones end at y.)
+  if (U.chance(0, 0, 68) < 0.28) U.life(LIFE.drip, (U.chance(0, 0, 69) - 0.5) * w * 0.6, h, d * (0.25 + U.chance(0, 0, 70) * 0.5), 0, y === 0 ? h - 0.05 : h, U.chance(0, 0, 71));
   if (st === 'barricaded') F.barricade(U.at(0, d, 2), rf);
 }
 
@@ -241,6 +245,13 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   const face = (side: number): Quarter => (side > 0 ? 1 : 3);
   const radio = (st === 'lived' || fled) && rf() < 0.15;
   const spec = FACADE_WINDOW.apartments;
+  // The kitchen: a dripping tap; flies over what was left behind.
+  const kitchenLife = (K: Place, len: number) => {
+    if (K.chance(0, 0, 64) < 0.35) K.life(LIFE.tap, -len / 2 + 0.5, 1.0, 0.12, 0, 0, K.chance(0, 0, 65));
+    if ((messy || fled) && K.chance(0, 0, 66) < 0.3) K.life(LIFE.flies, 0, 1.1, 0.4, 0, 0, K.chance(0, 0, 67));
+  };
+  // Now and then a phone rings in the empty flat.
+  if (U.chance(0, 0, 72) < 0.05) U.life(LIFE.phone, 0, 0.8, d * 0.5, 0, 0, U.chance(0, 0, 73));
   for (const lx of lwin) if (rf() < 0.75) F.curtains(U.at(lx, 0), rf, spec.width, spec.sill, spec.head);
 
   if (d >= 7) {
@@ -266,7 +277,11 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     F.rug(sofaP, rf, 1.35, 1.9, 1.3);
     F.coffeeTable(sofaP.at(0, 1.05), rf, messy && rf() < 0.6);
     F.painting(sofaP, rf, 1.55, messy && rf() < 0.4);
-    F.tvStand(U.at(-s * 0.06, dz * 0.5, face(-s)), rf, messy && rf() < 0.6);
+    const tvDown = messy && rf() < 0.6;
+    const tvP = U.at(-s * 0.06, dz * 0.5, face(-s));
+    F.tvStand(tvP, rf, tvDown);
+    // The power is still on here: the set was left on, showing static.
+    if (st === 'lived' && !tvDown && U.chance(0, 0, 61) < 0.6) tvP.life(LIFE.tv, 0, 0.75, 0.49, 0.5, 0.38, U.chance(0, 0, 62));
     F.bookcase(U.at(-s * (w / 2 - 0.55), 0), rf, messy);
     F.floorLamp(sofaP.at(1.25, 0.3), rf, messy && rf() < 0.6);
     F.plant(U.at(-s * (w / 2 - 0.35), dz - 0.45), rf, messy && rf() < 0.5);
@@ -276,8 +291,14 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     const kd = d - kz;
     const len = Math.min(2.6, kd - 1.4);
     if (len >= 1.4) {
-      F.kitchenRun(U.at(-s * w / 2, kz + 0.1 + len / 2, face(s)), rf, len, messy, radio);
-      if (kz + len + 1.0 < d - 0.6) F.fridge(U.at(-s * w / 2, kz + 0.1 + len + 0.4, face(s)), rf, open());
+      const K = U.at(-s * w / 2, kz + 0.1 + len / 2, face(s));
+      F.kitchenRun(K, rf, len, messy, radio);
+      kitchenLife(K, len);
+      if (kz + len + 1.0 < d - 0.6) {
+        const fP = U.at(-s * w / 2, kz + 0.1 + len + 0.4, face(s));
+        F.fridge(fP, rf, open());
+        if (st === 'lived') fP.life(LIFE.fridge, 0, 1.0, 0.66, 0, 0, U.chance(0, 0, 63));
+      }
     }
     if (kd >= 3) F.diningTable(U.at(s * (w / 4), kz + kd / 2), rf, 4, messy);
     else F.chair(U.at(s * (w / 4), kz + kd / 2, Math.floor(rf() * 4) as Quarter), rf);
@@ -287,7 +308,11 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     F.nightstand(U.at(s * (w / 2 - 1.85), 0), rf, open());
     F.wardrobe(U.at(-s * (w / 2 - 0.7), 0), rf, open());
     const len = Math.min(2.2, d - 2.4);
-    if (len >= 1.2) F.kitchenRun(U.at(-s * w / 2, d - 0.3 - len / 2, face(s)), rf, len, messy, radio);
+    if (len >= 1.2) {
+      const K = U.at(-s * w / 2, d - 0.3 - len / 2, face(s));
+      F.kitchenRun(K, rf, len, messy, radio);
+      kitchenLife(K, len);
+    }
     F.diningTable(U.at(s * 0.9, d * 0.62), rf, 2, messy);
     F.painting(U.at(s * w / 2, 2.6, face(-s)), rf, 1.5, messy && rf() < 0.5);
   }

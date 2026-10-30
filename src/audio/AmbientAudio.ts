@@ -15,13 +15,16 @@ export interface AmbientState {
  * The empty city, synthesized with WebAudio on the anxiety audio's context (no files): wind in gusts
  * (filtered noise, muffled indoors, stronger up high), a car alarm somewhere far away every minute
  * or so, and radios left on in a few apartments — static and a garbled broadcast, panned by where
- * the set is. Silent while the game is paused (the shared output is muted).
+ * the set is; now and then the emergency alert's two-tone signal and a few flat words of a bulletin. Silent while the game is paused (the shared output is muted).
  */
 export class AmbientAudio {
   private wind: { filter: BiquadFilterNode; gain: GainNode } | null = null;
   private radio: { crackle: GainNode; voice: GainNode; voiceOsc: OscillatorNode; gain: GainNode; pan: StereoPannerNode } | null = null;
   private alarmT = 20 + Math.random() * 30;
   private syllableT = 0;
+  /** Next emergency alert on the radio, s; seconds left of the bulletin after it. */
+  private alertT = 10 + Math.random() * 20;
+  private bulletin = 0;
 
   constructor(private readonly host: AnxietyAudio) {}
 
@@ -70,13 +73,22 @@ export class AmbientAudio {
         this.radio.crackle.gain.setValueAtTime(0.9 + Math.random() * 0.8, now);
         this.radio.crackle.gain.setTargetAtTime(0.25, now + 0.015, 0.03);
       }
+      // The emergency alert: the two-tone attention signal, then a bulletin read in a flat voice.
+      this.alertT -= dt;
+      if (this.alertT <= 0 && r) {
+        this.alertT = 35 + Math.random() * 45;
+        this.alert(ac, this.radio.gain, now);
+        this.bulletin = 2.2 + 4 + Math.random() * 3;
+      }
+      this.bulletin = Math.max(0, this.bulletin - dt);
       // Syllables of a broadcast you can't make out.
       this.syllableT -= dt;
       if (this.syllableT <= 0) {
-        this.syllableT = 0.09 + Math.random() * 0.22;
-        const talk = Math.random() < 0.8 ? 0.15 + Math.random() * 0.35 : 0;
+        const reading = this.bulletin > 0 && this.bulletin < 7;
+        this.syllableT = reading ? 0.13 + Math.random() * 0.08 : 0.09 + Math.random() * 0.22;
+        const talk = this.bulletin >= 7 ? 0 : Math.random() < (reading ? 0.92 : 0.8) ? 0.15 + Math.random() * 0.35 : 0;
         this.radio.voice.gain.setTargetAtTime(talk, now, 0.02);
-        this.radio.voiceOsc.frequency.setTargetAtTime(120 + Math.random() * 110, now, 0.03);
+        this.radio.voiceOsc.frequency.setTargetAtTime(reading ? 105 + Math.random() * 25 : 120 + Math.random() * 110, now, 0.03);
       }
     }
   }
@@ -109,6 +121,27 @@ export class AmbientAudio {
     voiceOsc.connect(formant).connect(voice).connect(gain);
     voiceOsc.start();
     return { crackle, voice, voiceOsc, gain, pan };
+  }
+
+  /** The alert's attention signal: 853 + 960 Hz together for two seconds, through the set's speaker. */
+  private alert(ac: AudioContext, out: AudioNode, now: number): void {
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(0.35, now + 0.04);
+    env.gain.setValueAtTime(0.35, now + 1.9);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
+    const band = ac.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 1000;
+    band.Q.value = 0.7;
+    env.connect(band).connect(out);
+    for (const f of [853, 960]) {
+      const o = ac.createOscillator();
+      o.frequency.value = f;
+      o.connect(env);
+      o.start(now);
+      o.stop(now + 2.05);
+    }
   }
 
   /** Two-tone, whoop or chirp pattern, low-passed and echoing between the buildings. */

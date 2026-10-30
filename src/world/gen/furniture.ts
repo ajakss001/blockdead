@@ -1,6 +1,7 @@
 import { type BufferGeometry, Euler, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import type { ContainerType } from '../../data/loot';
 import type { Surface } from '../../render/look/surfaces';
+import { spotHash } from './lifeKinds';
 import { PAL, pick, type Rand } from './palette';
 import type { Builder } from './pieces';
 
@@ -69,6 +70,12 @@ export class Place {
       default:
         return [this.x - lz, this.z + lx];
     }
+  }
+
+  /** A stable 0..1 for a local point (its world position and storey; leaves the random streams alone). */
+  chance(lx: number, lz: number, salt: number): number {
+    const [x, z] = this.pt(lx, lz);
+    return spotHash(x, z + this.y * 7.3, salt);
   }
 
   /** A sub-place at a local offset, turned by `dr` more quarters. */
@@ -304,8 +311,41 @@ export function painting(p: Place, rand: Rand, cy = 1.55, fallen = false): void 
   }
   const roll = rand() < 0.4 ? (rand() - 0.5) * 0.3 : 0;
   p.rbox(frame, 0, cy, 0.015, w, h, 0.03, 0, 0, roll);
-  p.rbox(pick(rand, ART), 0, cy - h * 0.12, 0.032, w - 0.08, (h - 0.08) * 0.55, 0.005, 0, 0, roll, 'plaster');
-  p.rbox(pick(rand, ART), 0, cy + h * 0.2, 0.032, w - 0.08, (h - 0.08) * 0.45, 0.005, 0, 0, roll, 'plaster');
+  // The picture on a pale mat: a landscape, a portrait or a still life (never two flat stripes — they read
+  // as a flag). Offsets turn with the frame's roll.
+  const iw = w - 0.12;
+  const ih = h - 0.12;
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  const at = (x: number, y: number, z: number, bw: number, bh: number, color: number) =>
+    p.rbox(color, x * c - y * s, cy + x * s + y * c, z, bw, bh, 0.004, 0, 0, roll, 'plaster');
+  at(0, 0, 0.031, w - 0.06, h - 0.06, PAPER);
+  const kind = rand();
+  if (kind < 0.45) {
+    // Landscape: an overcast sky, a field, a dark treeline or a house, a pale moon.
+    const sky = pick(rand, [0x6e7470, 0x7a6e66, 0x5e6466, 0x86786a]);
+    const field = pick(rand, [0x4e5236, 0x5c4a34, 0x3e4632, 0x6a5a3c]);
+    at(0, ih * 0.15, 0.034, iw, ih * 0.7, sky);
+    at(0, -ih * 0.35, 0.035, iw, ih * 0.3, field);
+    const tx = (rand() - 0.5) * iw * 0.5;
+    if (rand() < 0.5) for (let i = 0; i < 3; i++) at(tx + (i - 1) * iw * 0.12, -ih * 0.1 + i * 0.01, 0.036, iw * 0.1, ih * (0.28 + rand() * 0.12), 0x2a2e24);
+    else {
+      at(tx, -ih * 0.12, 0.036, iw * 0.24, ih * 0.22, 0x5a3e30);
+      at(tx, ih * 0.03, 0.037, iw * 0.28, ih * 0.08, 0x3a2a24);
+    }
+    at(-tx * 0.8 + iw * 0.2, ih * 0.3, 0.036, iw * 0.08, iw * 0.08, 0xc8c0a8);
+  } else if (kind < 0.75) {
+    // Portrait: a dark ground, the shoulders, a face.
+    at(0, 0, 0.034, iw, ih, pick(rand, [0x2e2620, 0x3a2e2a, 0x2a2e2a]));
+    at(0, -ih * 0.32, 0.035, iw * 0.6, ih * 0.36, pick(rand, [0x1e1c1c, 0x3a3030, 0x2c3430]));
+    at(0, ih * 0.08, 0.036, iw * 0.26, ih * 0.38, pick(rand, [0xa08670, 0x8e7460, 0xb09478]));
+  } else {
+    // Still life: a dark table and wall, a jug, fruit.
+    at(0, ih * 0.12, 0.034, iw, ih * 0.76, pick(rand, [0x3e3a30, 0x463c34, 0x343832]));
+    at(0, -ih * 0.38, 0.035, iw, ih * 0.24, pick(rand, [0x5a3e2a, 0x4a3426]));
+    at(-iw * 0.15, -ih * 0.08, 0.036, iw * 0.2, ih * 0.42, pick(rand, [0x8a6a4a, 0x6a6a5a, 0x7a4a3a]));
+    for (let i = 0; i < 3; i++) at(iw * (0.08 + i * 0.1), -ih * 0.22, 0.036, iw * 0.08, iw * 0.08, pick(rand, [0x8a3a2a, 0x9a7a3a, 0x5a6a3a, 0x7a2a2a]));
+  }
 }
 
 export function floorLamp(p: Place, rand: Rand, fallen = false): void {

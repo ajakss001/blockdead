@@ -1,6 +1,7 @@
 import { Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { groundDecal } from './highrise';
+import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
 /**
@@ -26,6 +27,7 @@ export function stripDecal(b: Builder, x: number, z: number, yaw: number, length
 }
 
 function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25): void {
+  b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
   buildCar(
     b.batch,
     b.colliders,

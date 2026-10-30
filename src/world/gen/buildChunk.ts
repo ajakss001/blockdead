@@ -7,6 +7,7 @@ import { curbParking, downtownBlock } from './cityFill';
 import { type BuildingDesc, groundDecal, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
+import { LIFE, spotHash } from './lifeKinds';
 import { hash3 } from './noise';
 import { type BodyMode, chaosScene, sceneAt } from './chaos';
 import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
@@ -224,6 +225,9 @@ function shoulderCar(b: Builder, alongX: boolean, x: number, z: number, rand: Ra
   const side = rand() < 0.5 ? -1 : 1;
   const off = side * (ROAD_HALF + 0.3);
   const yaw = (alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() - 0.5) * 0.15;
+  const cx = alongX ? x : x + off;
+  const cz = alongX ? z + off : z;
+  b.life(LIFE.car, cx, 0, cz, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(cx, cz, 41));
   buildCar(
     b.batch,
     b.colliders,
@@ -312,6 +316,7 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
   for (let n = 0; n < 3; n++) {
     const dx = X0 + 3 + rand() * (X1 - X0 - 6);
     b.block(0x3a4a3a, dx, 0, zMid - 0.8, 1.8, 1.3, 1.1, 'metal', true);
+    if (spotHash(dx, zMid, 53) < 0.5) b.life(LIFE.flies, dx + 0.9, 1.5, zMid - 0.25, 0, 0, 0, 0, spotHash(dx, zMid, 54));
   }
 }
 
