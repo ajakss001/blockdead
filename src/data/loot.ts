@@ -37,7 +37,12 @@ export type ContainerType =
   | 'garage'
   | 'policeLocker'
   | 'policeDesk'
-  | 'armory';
+  | 'armory'
+  | 'superShelf'
+  | 'clothesRack'
+  | 'warehouse'
+  | 'plantStore'
+  | 'militaryCrate';
 
 interface LootTable {
   name: string;
@@ -116,6 +121,11 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   policeLocker: { name: 'Шкафчик', empty: 0.3, rolls: [1, 3], items: [['policeShirt', 2], ['policePants', 2], ['policeCap', 1.5], ['policeVest', 1], ['batteries', 2], ['walkie', 1.5], ['tacticalGloves', 1], ['boots', 1], ['soap', 1]] },
   policeDesk: { name: 'Стол', empty: 0.3, rolls: [1, 2], items: [['batteries', 3], ['walkie', 1.5], ['painkillers', 1.5], ['junk', 3], ['tape', 1], ['chocolate', 1.5], ['map', 0.6]] },
   armory: { name: 'Стойка оружейной', empty: 0.1, rolls: [2, 3], items: [['swatHelmet', 1.5], ['swatVest', 1.5], ['swatShirt', 1], ['swatPants', 1], ['tacticalGloves', 1.5], ['tacticalRig', 1], ['bat', 1], ['crowbar', 0.8], ['batteries', 2], ['walkie', 1.5]] },
+  superShelf: { name: 'Стеллаж', empty: 0.35, rolls: [1, 3], items: [['beans', 3], ['soup', 3], ['crackers', 3], ['chips', 3], ['chocolate', 2], ['water', 3], ['juice', 2], ['soda', 2], ['batteries', 1], ['tape', 1], ['soap', 1], ['rope', 0.6], ['lighter', 1]] },
+  clothesRack: { name: 'Вешалка с одеждой', empty: 0.3, rolls: [1, 3], items: [['tshirt', 3], ['hoodie', 3], ['jeans', 3], ['cargoPants', 2], ['leatherJacket', 1], ['sneakers', 2], ['boots', 1], ['beanie', 1.5], ['cap', 1.5], ['schoolBackpack', 1.5], ['sportsBag', 1], ['hikingBackpack', 0.6]] },
+  warehouse: { name: 'Паллета', empty: 0.25, rolls: [2, 4], items: [['beans', 3], ['soup', 3], ['water', 4], ['crackers', 2], ['juice', 2], ['tape', 1], ['rope', 1], ['planks', 1], ['batteries', 1]] },
+  plantStore: { name: 'Шкаф с инструментом', empty: 0.25, rolls: [1, 3], items: [['water', 4], ['hammer', 1], ['crowbar', 1], ['tape', 2], ['rope', 2], ['workGloves', 1.5], ['hardhat', 1], ['workJacket', 0.8], ['boots', 0.6], ['nails', 1]] },
+  militaryCrate: { name: 'Армейский ящик', empty: 0.3, rolls: [1, 3], items: [['crackers', 3], ['water', 3], ['bandage', 2], ['batteries', 2], ['militaryHelmet', 0.6], ['militaryJacket', 0.4], ['tacticalRig', 0.3], ['rope', 1], ['map', 1]] },
   reception: { name: 'Стойка охраны', empty: 0.2, rolls: [1, 3], items: [['batteries', 4], ['bat', 1], ['bandage', 2], ['painkillers', 2], ['soda', 2], ['crowbar', 0.6], ['axe', 0.5], ['hardhat', 0.5], ['cap', 1]] },
 };
 

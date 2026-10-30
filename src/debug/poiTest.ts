@@ -12,11 +12,11 @@ export function main(): number {
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
     if (!ok) fails.push(what);
   };
-  const R = 30;
+  const R = 48;
   for (const seed of [1993, 7, 424242]) {
     const a = new WorldLayout(seed);
     const b = new WorldLayout(seed);
-    const sites: Record<PoiKind, [number, number][]> = { gas: [], police: [] };
+    const sites = Object.fromEntries(Object.keys(POI).map((k) => [k, [] as [number, number][]])) as Record<PoiKind, [number, number][]>;
     let same = true;
     let zonesOk = true;
     let roadsOk = true;

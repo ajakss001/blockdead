@@ -9,16 +9,22 @@ import { hash3 } from './noise';
  * - `zones`: where it may stand; `road`: 'any' — a road on some side of the block, 'major' — a through road
  *   (the country grid, every 4th line: the way out of town);
  * - `risk`: zombies waiting round it and inside (the better the loot, the more of them);
- * - `downtown`: at least one in the high-rise district, always.
+ * - `downtown`: at least one in the high-rise district, always;
+ * - `near`: 'urban' — only right at the edge of town (a block next to a built-up one);
+ * - `id`: its own salt for the placement hash — fixed forever, so adding types never moves the old ones.
  */
 export const POI = {
-  gas: { name: 'Заправка', chance: 0.8, size: 1, minDist: 5, zones: ['suburb', 'forest', 'field'] as Zone[], road: 'major', risk: 4, downtown: false },
-  police: { name: 'Полицейский участок', chance: 0.5, size: 1, minDist: 6, zones: ['town'] as Zone[], road: 'any', risk: 9, downtown: true },
+  gas: { id: 2, name: 'Заправка', chance: 0.8, size: 1, minDist: 5, zones: ['suburb', 'forest', 'field'] as Zone[], road: 'major', risk: 4, downtown: false, near: null },
+  police: { id: 1, name: 'Полицейский участок', chance: 0.5, size: 1, minDist: 6, zones: ['town'] as Zone[], road: 'any', risk: 9, downtown: true, near: null },
+  hyper: { id: 4, name: 'Гипермаркет ValuMart', chance: 0.6, size: 1, minDist: 12, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 14, downtown: false, near: null },
+  mall: { id: 3, name: 'Торговый центр MegaPlaza', chance: 0.55, size: 1, minDist: 16, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 16, downtown: false, near: null },
+  plant: { id: 5, name: 'Водоочистная станция', chance: 0.5, size: 1, minDist: 18, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
+  checkpoint: { id: 6, name: 'Военный КПП', chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
 } as const;
 
 export type PoiKind = keyof typeof POI;
 /** Placement order: earlier types win a contested block. */
-const ORDER: PoiKind[] = ['police', 'gas'];
+const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas'];
 /** The country road grid runs along every 4th chunk line (see layout). */
 const MAJOR_EVERY = 4;
 
@@ -45,7 +51,8 @@ export function poiAt(layout: WorldLayout, i: number, j: number): PoiSite | null
 
 function siteOf(layout: WorldLayout, kind: PoiKind, i: number, j: number): PoiSite | null {
   const def = POI[kind];
-  const k = ORDER.indexOf(kind) + 1;
+  const k = def.id;
+  const rank = ORDER.indexOf(kind);
   const zone = layout.zone(i, j);
   // Downtown: exactly the guaranteed one (on the district's rim, never the start block).
   if (zone === 'downtown') {
@@ -63,16 +70,17 @@ function siteOf(layout: WorldLayout, kind: PoiKind, i: number, j: number): PoiSi
   // A few tries for a block that fits (zone, road); the first one that does is the site.
   const m = Math.ceil(def.minDist / 2);
   const span = C - 2 * m;
-  for (let t = 0; t < 4; t++) {
+  for (let t = 0; t < (def.near ? 10 : 4); t++) {
     const ht = hash3(h, t, 77);
     const si = ci * C - off + m + (ht % span);
     const sj = cj * C - off + m + (Math.floor(ht / span) % span);
     const z = layout.zone(si, sj);
     if (!(def.zones as readonly Zone[]).includes(z)) continue;
+    if (def.near === 'urban' && !nearUrban(layout, si, sj)) continue;
     const site = face(layout, kind, si, sj, def.road);
     if (!site) continue;
     // A higher-priority type already took it.
-    if (ORDER.slice(0, k - 1).some((o) => siteOf(layout, o, si, sj))) continue;
+    if (ORDER.slice(0, rank).some((o) => siteOf(layout, o, si, sj))) continue;
     return si === i && sj === j ? site : null;
   }
   return null;
@@ -89,6 +97,12 @@ function face(layout: WorldLayout, kind: PoiKind, i: number, j: number, road: 'a
   const ok = edges.filter(([has, line]) => has && (road === 'any' || line % MAJOR_EVERY === 0));
   if (ok.length === 0) return null;
   return { kind, i, j, r: ok[hash3(i, j, 31) % ok.length][2] };
+}
+
+/** A block next to a built-up one (the edge of town). */
+function nearUrban(layout: WorldLayout, i: number, j: number): boolean {
+  for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) if ((di || dj) && layout.isUrban(i + di, j + dj)) return true;
+  return false;
 }
 
 let rim: [number, number][] | null = null;
@@ -136,6 +150,12 @@ export function siteToWorld(s: PoiSite, lx: number, lz: number): [number, number
  * places (POI.risk); the scene spawns them when the player comes near.
  */
 export function poiSpawnPoints(kind: PoiKind): { outside: [number, number][]; inside: [number, number][] } {
+  const grid = (x0: number, x1: number, z0: number, z1: number, n: number): [number, number][] =>
+    Array.from({ length: n }, (_, k) => [x0 + ((k * 0.618) % 1) * (x1 - x0), z0 + ((k * 0.382 + 0.5) % 1) * (z1 - z0)]);
+  if (kind === 'hyper') return { outside: grid(-20, 20, 14, 24, 5), inside: [...grid(-21, 21, -11, 5.5, 12), ...grid(-20, 10, -20, -14, 4)] };
+  if (kind === 'mall') return { outside: grid(-20, 20, 13, 24, 5), inside: [...grid(-7, 7, -9, 1, 5), ...grid(-22, -13, -20, 8, 4), ...grid(10, 20, -16, 4, 5)] };
+  if (kind === 'plant') return { outside: grid(-20, 20, -2, 20, 4), inside: [[8, 9], [15, 4], [-14, 8]] };
+  if (kind === 'checkpoint') return { outside: [[-10, 24], [4, 26], [-2, 10], [10, 14], [-16, 12]], inside: [[-14, 6], [-6, 6], [4, -4]] };
   if (kind === 'gas')
     return {
       outside: [
@@ -170,3 +190,29 @@ export function poiSpawnPoints(kind: PoiKind): { outside: [number, number][]; in
     ],
   };
 }
+
+/**
+ * Landmarks: the shapes of a place you see from far away, over the roofs and through the haze (local frame,
+ * boxes: x, y bottom, z, w, h, d). Drawn as distant silhouettes when the place itself is out of sight.
+ */
+export const POI_LANDMARKS: Partial<Record<PoiKind, [number, number, number, number, number, number][]>> = {
+  hyper: [
+    [20, 0, 23, 0.6, 16, 0.6],
+    [20, 14.5, 23, 9, 3.2, 0.5],
+    [0, 0, -6, 48, 7, 36],
+  ],
+  mall: [
+    [-21, 0, 22, 2.4, 18, 2.4],
+    [-21, 18, 22, 5.4, 2.6, 2.6],
+    [0, 0, -6, 48, 10, 32],
+  ],
+  plant: [
+    [-19, 0, -19, 4.8, 18, 0.4],
+    [-19, 18, -19, 7.2, 5, 7.2],
+    [-19, 23, -19, 4, 1.4, 4],
+  ],
+  checkpoint: [
+    [12, 0, 20, 3, 5.5, 3],
+    [12, 5.5, 20, 3.4, 2.2, 3.4],
+  ],
+};

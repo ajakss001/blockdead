@@ -22,6 +22,8 @@ export const WOODS = [0x6d6250, 0x5e4c39, 0x7a6448, 0x4f4235, 0x84745c] as const
 export const FABRICS = [...PAL.fabric, 0x5a3e3a, 0x4a5058, 0x6a5a48, 0x3e4a52, 0x6a6a5a] as const;
 export const CLOTHES = [0x3c4450, 0x6a3a32, 0x4a5a3a, 0x7a7060, 0x2e2e34, 0x8a6a4a, 0x5a4a6a, 0x9a9488] as const;
 const ART = [0x5a6a5a, 0x7a6a4a, 0x4a5a6a, 0x8a7a5a, 0x6a4a3a, 0x5a5a7a] as const;
+/** Muted fabric / print colours (clothes on a rail, pictures). */
+export const ART_COLORS: readonly number[] = ART;
 const APPLIANCE = 0xb5b2a8;
 const DARK = 0x1c1c1e;
 const PAPER = 0xd6d0bc;

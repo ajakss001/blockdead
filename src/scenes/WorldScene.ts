@@ -51,6 +51,7 @@ import { Atmosphere } from '../world/Atmosphere';
 import { ATMO } from '../world/atmoConfig';
 import { Weather } from '../world/Weather';
 import { Pois } from '../world/Pois';
+import { Landmarks } from '../render/Landmarks';
 import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
@@ -79,6 +80,7 @@ const DAY = {
 
 const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
+const _indoorHaze = new Color(0x0b0b0c);
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
 /** How each weapon's blow on a body sounds. */
@@ -140,9 +142,12 @@ export class WorldScene implements IScene {
   /** Ambient light from the hour (a lightning flash adds to it); fog's reach as a share of the preset's. */
   private ambientBase = 0;
   private fogK = 1;
+  /** 0 outdoors … 1 inside: the haze inside a building is dark, not the bright sky's. */
+  private indoorK = 0;
   private weather!: Weather;
   /** Unique places: their zombies when you come near (none with ?zombies=0). */
   private pois: Pois | null = null;
+  private landmarks!: Landmarks;
   private readonly shelters = new Shelters();
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
@@ -276,6 +281,7 @@ export class WorldScene implements IScene {
       (x, y, z, r) => this.zombies.noiseAt(x, y, z, r),
     );
     this.player.onStrikeWorld = (x, y, z) => this.atmo.strikeAt(x, y, z);
+    this.landmarks = new Landmarks(this.scene, layout);
     this.weather = new Weather(this.scene, document.getElementById('ui')!, (delay, power) => this.life.thunder(delay, power));
     this.interiors.onAmbient = (owner, spots) => {
       if (spots) {
@@ -535,6 +541,9 @@ export class WorldScene implements IScene {
     const fogWant = (ATMO.night.fogNight + (1 - ATMO.night.fogNight) * this.clock.daylight) * (1 - (1 - ATMO.night.fogRain) * this.weather.rain);
     if (!paused) this.fogK += (fogWant - this.fogK) * Math.min(1, frameDt / ATMO.night.fogLag);
     (this.scene.fog as Fog).far = this.ctx.quality.preset.fogFar * this.fogK;
+    if (!paused) this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, frameDt * 1.5);
+    (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
+    this.landmarks.update(frameDt, this.camera.position, this.scene.fog as Fog);
     const ws = 0.0005 + this.life.windGust * 0.001;
     this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
@@ -795,6 +804,7 @@ export class WorldScene implements IScene {
     this.particles.dispose();
     this.atmo.dispose();
     this.weather.dispose();
+    this.landmarks.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');
