@@ -38,8 +38,9 @@ export const ATMO = {
     /** Birds at dawn (hours), a phrase every … s. */
     birds: [5, 8.5],
     birdEvery: [2, 7],
-    /** Moths round a lit lamp and round the flashlight's beam at night. */
+    /** Moths round a lit lamp at night (about this many each); the flashlight's beam draws one with this chance a second. */
     moths: 5,
+    beamMoths: 0.25,
     /** Dust in the flashlight beam indoors, specks a second. */
     motes: 10,
     /** Breath shows below this felt temperature, °C, one out-breath every … s (half that sprinting). */

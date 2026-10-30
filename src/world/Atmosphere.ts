@@ -102,6 +102,8 @@ export class Atmosphere {
   private time = 0;
   private leafDebt = 0;
   private mothT = 0;
+  /** The beam moths' centre, lagging behind the beam. */
+  private readonly beamAt = [0, -1000, 0];
   private moteDebt = 0;
   private breathT = 1;
   private pipeT = 15 + Math.random() * 20;
@@ -322,7 +324,8 @@ export class Atmosphere {
     // Moths: the nearest lit lamps, and the beam out of doors.
     this.mothT -= dt;
     if (night && this.mothT <= 0) {
-      this.mothT = 5.5 / N.moths / (LAMP_MOTHS + 1);
+      // One moth a lamp each tick: about N.moths round each at a time (they live ~5.5 s).
+      this.mothT = 5.5 / N.moths;
       const near: [number, number][] = [];
       for (let i = 0; i < this.lamps.length; i += 3) {
         const d = Math.hypot(this.lamps[i] - f.eye.x, (this.lamps[i + 1] - f.eye.y) * 2, this.lamps[i + 2] - f.eye.z);
@@ -333,9 +336,25 @@ export class Atmosphere {
         this.particles.mothCenter(g, this.lamps[i], this.lamps[i + 1] - 0.15, this.lamps[i + 2]);
         this.particles.moth(g);
       });
-      if (f.flashlight && !indoors) this.particles.moth(BEAM_GROUP);
+      // The beam draws one now and then, never a swarm.
+      if (f.flashlight && !indoors && Math.random() < N.beamMoths) this.particles.moth(BEAM_GROUP);
     }
-    if (f.flashlight) this.particles.mothCenter(BEAM_GROUP, f.eye.x + f.look.x * 1.7, f.eye.y + f.look.y * 1.7, f.eye.z + f.look.z * 1.7);
+    // Where the beam's moths circle: a point out in the beam that trails behind it (they fly, the beam
+    // sweeps — they must not stick to the screen).
+    if (f.flashlight) {
+      const tx = f.eye.x + f.look.x * 2.2;
+      const ty = f.eye.y + f.look.y * 2.2;
+      const tz = f.eye.z + f.look.z * 2.2;
+      const b = this.beamAt;
+      if (Math.hypot(tx - b[0], ty - b[1], tz - b[2]) > 6) b.splice(0, 3, tx, ty, tz);
+      else {
+        const k = Math.min(1, dt * 0.7);
+        b[0] += (tx - b[0]) * k;
+        b[1] += (ty - b[1]) * k;
+        b[2] += (tz - b[2]) * k;
+      }
+      this.particles.mothCenter(BEAM_GROUP, b[0], b[1], b[2]);
+    }
     // Dust hanging in the beam, indoors.
     if (f.flashlight && indoors) {
       this.moteDebt += dt * N.motes;

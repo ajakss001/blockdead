@@ -114,7 +114,7 @@ export class Particles {
   }
 
   moth(g: number): void {
-    const i = this.take(KIND.moth, this.mothAt[g * 3], this.mothAt[g * 3 + 1], this.mothAt[g * 3 + 2], 4 + Math.random() * 3, 0.022, 0, 0.9, 0.85, 0.8, 0.68);
+    const i = this.take(KIND.moth, this.mothAt[g * 3], this.mothAt[g * 3 + 1], this.mothAt[g * 3 + 2], 4 + Math.random() * 3, 0.014, 0, 0.55, 0.62, 0.58, 0.5);
     this.floor[i] = g;
     // Orbit: radius, speeds.
     this.vel.set([0.25 + Math.random() * 0.4, 2 + Math.random() * 3, 1 + Math.random() * 2], i * 3);
@@ -194,7 +194,7 @@ export class Particles {
           this.pos[o] = this.mothAt[g] + Math.cos(ph) * r;
           this.pos[o + 1] = this.mothAt[g + 1] + Math.sin(this.age[i] * this.vel[o + 2] + this.phase[i]) * 0.18;
           this.pos[o + 2] = this.mothAt[g + 2] + Math.sin(ph) * r;
-          this.look[lo + 2] = 0.9 * Math.min(1, (1 - t) * 4, t * 8);
+          this.look[lo + 2] = 0.55 * Math.min(1, (1 - t) * 4, t * 8);
           break;
         }
         case KIND.smoke:
