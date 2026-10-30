@@ -15,7 +15,8 @@ import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { sfx, type StepSurface } from '../audio/Sound';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
 import { CHUNK, ROAD_HALF } from '../world/gen/layout';
-import { type ItemId, type ItemStack, WEAR_SLOTS, wornStat } from '../data/items';
+import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
+import type { Worn } from '../systems/Inventory';
 import type { GameContext } from '../GameContext';
 import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
@@ -32,7 +33,7 @@ import { Containers } from '../systems/Containers';
 import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
-import { Survival } from '../systems/Survival';
+import { type BodyPart, PART_NAMES, Survival } from '../systems/Survival';
 import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
 import { Doors } from '../world/Doors';
@@ -294,6 +295,7 @@ export class WorldScene implements IScene {
     if (save) {
       // The world remembers the dead and their bodies; containers stay as they were.
       this.twins = save.twins ?? [];
+      this.doors.restoreBoards(save.boards);
       this.bodies = save.bodies ?? [];
       this.containers.restore(save.containers);
       for (const b of this.bodies) this.containers.addLoose(b, []);
@@ -374,7 +376,7 @@ export class WorldScene implements IScene {
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
-    for (const a of this.zombies.attacks) this.hurt(a.damage, 'Вас загрызли', false, a.from.pos);
+    for (const a of this.zombies.attacks) this.bitten(a.damage, a.from.pos);
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
     // Zombies are solid to the player (and the walls still win).
     for (const z of this.zombies.list) {
@@ -423,7 +425,7 @@ export class WorldScene implements IScene {
     const a = this.survival.anxiety;
     this.dread.update(dt, a);
     this.ctx.fx.setDread(a * 0.8 + this.dread.pulse * a * 0.25);
-    if (this.survival.health <= 0 && !this.dead) this.die(this.survival.hunger <= 0 || this.survival.thirst <= 0 ? 'Истощение' : 'Раны');
+    if (this.survival.health <= 0 && !this.dead) this.die(this.survival.infection >= 1 ? 'Заражение: вы обратились' : this.survival.hunger > 0.85 || this.survival.thirst > 0.85 ? 'Истощение' : this.deathCause || 'Раны');
     this.moodleT -= dt;
     if (this.moodleT <= 0) {
       this.moodleT = 0.25;
@@ -513,6 +515,7 @@ export class WorldScene implements IScene {
       twins: this.twins,
       bodies: this.bodies,
       bornAt: this.bornAt,
+      boards: this.doors.serializeBoards(),
     });
   }
 
@@ -575,6 +578,19 @@ export class WorldScene implements IScene {
     this.zombies.hit(res.zombie, dmg, o.x, o.z);
     this.dust.burst(res.point, res.head ? 14 : 10);
     return true;
+  }
+
+  /**
+   * A zombie's blow: it lands on a body part; the clothes on that part may stop the teeth (a bruise), or
+   * it is a scratch or a bite — a bleeding wound, and maybe the infection.
+   */
+  private bitten(damage: number, from: Vector3): void {
+    const r = Math.random();
+    const part: BodyPart = r < 0.15 ? 'head' : r < 0.5 ? 'torso' : r < 0.8 ? 'arms' : 'legs';
+    const outcome = this.survival.bitten(part, partArmor(this.inventory.worn, part));
+    const hp = outcome === 'blocked' ? damage * 0.25 : outcome === 'scratch' ? damage * 0.7 : damage;
+    this.ctx.hud.toast(outcome === 'blocked' ? `Одежда выдержала: ${PART_NAMES[part]}` : outcome === 'bite' ? `Укус: ${PART_NAMES[part]}` : `Царапина: ${PART_NAMES[part]}`, 1400);
+    this.hurt(hp, 'Вас загрызли', true, from);
   }
 
   /** The player takes `hp` of 100 (a bite, a fall); clothes soften bites. */
@@ -700,4 +716,15 @@ export class WorldScene implements IScene {
     this.camera.updateProjectionMatrix();
     this.player.viewmodel.setAspect(width / height);
   }
+}
+
+/** How likely the clothes on a part stop a zombie's teeth (0..0.9). */
+function partArmor(worn: Worn, part: BodyPart): number {
+  const bite = (slot: WearSlot) => {
+    const id = worn[slot];
+    return id ? (ITEMS[id].wear?.stats.bite ?? 0) : 0;
+  };
+  const sleeves = worn.torso && ITEMS[worn.torso].wear?.sleeves !== false ? bite('torso') : 0;
+  const a = part === 'head' ? bite('head') : part === 'torso' ? bite('torso') + bite('vest') : part === 'arms' ? sleeves * 0.8 + bite('hands') * 0.6 : bite('legs') + bite('feet') * 0.3;
+  return Math.min(0.9, a);
 }

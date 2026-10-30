@@ -28,6 +28,8 @@ export interface SaveV1 {
   bodies?: ContainerRef[];
   /** In-game minute this survivor started (for "survived …"). */
   bornAt?: number;
+  /** Boards the player nailed across doors: hinge key, count, side. */
+  boards?: [string, number, number][];
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

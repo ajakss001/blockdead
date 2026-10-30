@@ -61,6 +61,28 @@ export interface Exposure {
 }
 
 
+/** Where a blow lands; clothing on that part decides if teeth get through. */
+export type BodyPart = 'head' | 'torso' | 'arms' | 'legs';
+export const BODY_PARTS: readonly BodyPart[] = ['head', 'torso', 'arms', 'legs'];
+export const PART_NAMES: Record<BodyPart, string> = { head: 'голова', torso: 'торс', arms: 'рука', legs: 'нога' };
+
+/** An injury on one part: a scratch or a bite (bleeds until dressed, heals over time). */
+export interface Wound {
+  part: BodyPart;
+  kind: 'scratch' | 'bite';
+  bleeding: boolean;
+  /** 1 fresh … 0 healed. */
+  left: number;
+}
+
+/**
+ * Infection from a bite (Zomboid-lite): 0 = none; it grows on its own over about two in-game days (an
+ * hour of real time). Early on (< INFECTION_CURABLE) antibiotics stop it; past that they only slow it;
+ * fever and weakness from the middle, at 1 the survivor dies — and rises.
+ */
+export const INFECTION_CURABLE = 0.35;
+const INFECTION_RATE = 1 / 3600;
+
 export interface SurvivalState {
   hunger: number;
   thirst: number;
@@ -69,6 +91,8 @@ export interface SurvivalState {
   pain: number;
   /** An open wound drains health until it is dressed. */
   wounded: boolean;
+  wounds?: Wound[];
+  infection?: number;
   /** Body temperature, °C. */
   bodyTemp: number;
   /** 0..1 */
@@ -83,6 +107,8 @@ export class Survival implements SurvivalState {
   health = 1;
   pain = 0;
   wounded = false;
+  wounds: Wound[] = [];
+  infection = 0;
   bodyTemp: number = COLD.normal;
   anxiety = 0;
   /** Who the survivor was (class): endurance, appetite, cold, nerves, healing. */
@@ -119,7 +145,19 @@ export class Survival implements SurvivalState {
     let dh = 0;
     if (this.hunger > 0.85) dh -= RATE.starvation;
     if (this.thirst > 0.85) dh -= RATE.starvation * 1.5;
-    if (this.wounded) dh -= RATE.wound;
+    // Bleeding wounds drain health; every wound heals on its own once dressed (a few in-game hours).
+    for (const w of this.wounds) {
+      if (w.bleeding) dh -= RATE.wound * (w.kind === 'bite' ? 1.3 : 0.7);
+      else w.left -= dt / 900;
+    }
+    this.wounds = this.wounds.filter((w) => w.left > 0);
+    this.wounded = this.wounds.some((w) => w.bleeding);
+    // Infection: grows, then fever and weakness.
+    if (this.infection > 0) {
+      this.infection = Math.min(1, this.infection + INFECTION_RATE * dt);
+      if (this.infection > 0.5) dh -= RATE.wound * 0.6 * (this.infection - 0.5) * 2;
+      if (this.infection >= 1) this.health = 0;
+    }
     if (this.bodyTemp < COLD.hypothermia) dh -= RATE.freezing;
     if (dh === 0 && this.hunger < 0.5 && this.thirst < 0.5) dh = RATE.regen;
     this.health = clamp(this.health + dh * dt, 0, 1);
@@ -170,6 +208,20 @@ export class Survival implements SurvivalState {
     return this.fatigue < 0.6 ? 1 : 0.85;
   }
 
+  /**
+   * A zombie's blow on a body part. `armor` (0..1, the clothes on it) may stop the teeth; otherwise a
+   * scratch (sometimes infected) or a bite (always infected). Returns what happened, for the HUD.
+   */
+  bitten(part: BodyPart, armor: number, roll = Math.random(), roll2 = Math.random()): 'blocked' | 'scratch' | 'bite' {
+    this.pain = clamp(this.pain + 0.25, 0, 1);
+    if (roll < armor) return 'blocked';
+    const bite = roll2 < 0.5;
+    this.wounds.push({ part, kind: bite ? 'bite' : 'scratch', bleeding: true, left: 1 });
+    this.wounded = true;
+    if ((bite || roll2 > 0.85) && this.infection <= 0) this.infection = 0.001;
+    return bite ? 'bite' : 'scratch';
+  }
+
   /** Apply an item's effects. Returns a short result line for the HUD. */
   consume(def: ItemDef): string {
     if (def.hunger) this.hunger = clamp(this.hunger + def.hunger, 0, 1);
@@ -180,9 +232,20 @@ export class Survival implements SurvivalState {
     if (def.health) this.health = clamp(this.health + def.health * medical, 0, 1);
     if (def.pain) this.pain = clamp(this.pain + def.pain * this.mods.medicine, 0, 1);
     if (def.dressesWound) {
-      const was = this.wounded;
-      this.wounded = false;
-      return was ? 'Рана перевязана' : 'Перевязано';
+      // One dressing per wound: the worst bleeding one first (bites before scratches).
+      const w = this.wounds.filter((x) => x.bleeding).sort((a, b) => (a.kind === 'bite' ? -1 : 1) - (b.kind === 'bite' ? -1 : 1))[0];
+      if (w) w.bleeding = false;
+      this.wounded = this.wounds.some((x) => x.bleeding);
+      return w ? `Перевязано: ${PART_NAMES[w.part]}` : 'Перевязано';
+    }
+    if (def.cures) {
+      if (this.infection <= 0) return def.name;
+      if (this.infection < INFECTION_CURABLE) {
+        this.infection = 0;
+        return 'Заражение остановлено';
+      }
+      this.infection = Math.max(INFECTION_CURABLE, this.infection - 0.12);
+      return 'Заражение замедлено';
     }
     return def.name;
   }
@@ -200,11 +263,13 @@ export class Survival implements SurvivalState {
     const a = this.anxiety;
     hud.setStat('calm', 1 - a, a > 0.85 ? 3 : a > 0.6 ? 2 : a > 0.3 ? 1 : 0);
     hud.setWound(this.wounded);
+    const inf = this.infection;
+    hud.setStat('sick', 1 - inf, inf <= 0 ? 0 : inf < INFECTION_CURABLE ? 1 : inf < 0.7 ? 2 : 3);
   }
 
   serialize(): SurvivalState {
-    const { hunger, thirst, fatigue, health, pain, wounded, bodyTemp, anxiety } = this;
-    return { hunger, thirst, fatigue, health, pain, wounded, bodyTemp, anxiety };
+    const { hunger, thirst, fatigue, health, pain, wounded, bodyTemp, anxiety, infection } = this;
+    return { hunger, thirst, fatigue, health, pain, wounded, bodyTemp, anxiety, infection, wounds: this.wounds.map((w) => ({ ...w })) };
   }
 
   restore(s: Partial<SurvivalState> & { bleeding?: boolean }): void {

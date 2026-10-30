@@ -41,6 +41,9 @@ interface DoorState {
   /** How much beating it takes (zombies); broken doors hang open for good. */
   hp: number;
   broken: boolean;
+  /** Boards the player nailed across it (0–3), and on which side of the leaf (±1 along its normal). */
+  planks: number;
+  plankSide: number;
 }
 
 interface Pool {
@@ -59,6 +62,16 @@ const _q = new Quaternion();
 const _p = new Vector3();
 const _s = new Vector3(1, 1, 1);
 const _up = new Vector3(0, 1, 0);
+const _qz = new Quaternion();
+const _zAxis = new Vector3(0, 0, 1);
+/** Boards: at most per door, how much beating each adds, how many fit in the instanced mesh. */
+export const MAX_PLANKS = 3;
+const PLANK_HP = 90;
+const PLANK_CAPACITY = 256;
+
+function doorKey(s: DoorSpot): string {
+  return `${s.hx.toFixed(1)},${s.y.toFixed(1)},${s.hz.toFixed(1)}`;
+}
 
 /** Vertex color with alpha over the whole geometry (index dropped so the parts merge). */
 function tint(g: BufferGeometry, color: number, alpha: number): BufferGeometry {
@@ -82,6 +95,10 @@ function tint(g: BufferGeometry, color: number, alpha: number): BufferGeometry {
  */
 export class Doors {
   private readonly sets = new Map<number, DoorState[]>();
+  /** Boards nailed by the player, by the door's hinge (kept while its building is unloaded; saved). */
+  private readonly boards = new Map<string, [number, number]>();
+  /** The boards themselves: one InstancedMesh for every door. */
+  private readonly plankMesh: InstancedMesh;
   private readonly pools: Record<DoorStyle, Pool>;
   private nextOwner = 0;
 
@@ -107,6 +124,10 @@ export class Doors {
       wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
       glass: this.pool([[glassDoor, glass]]),
     };
+    this.plankMesh = new InstancedMesh(new BoxGeometry(1, 0.15, 0.035), characterMaterial('handle', 0x7a6446), PLANK_CAPACITY);
+    this.plankMesh.count = 0;
+    this.plankMesh.frustumCulled = false;
+    this.scene.add(this.plankMesh);
   }
 
   /** Open/closed of a set, in order (to carry over a rebuild of the same layout). */
@@ -133,6 +154,8 @@ export class Doors {
         pair: spot.pair !== undefined ? i + spot.pair : -1,
         hp: spot.barricaded ? 220 : style === 'glass' ? 60 : 110,
         broken: false,
+        planks: 0,
+        plankSide: 1,
       };
       const pool = this.pools[style];
       d.slot = pool.doors.length;
@@ -142,7 +165,19 @@ export class Doors {
       return d;
     });
     this.sets.set(key, doors);
+    for (const d of doors) {
+      const b = this.boards.get(doorKey(d.spot));
+      if (b) {
+        d.planks = b[0];
+        d.plankSide = b[1];
+        d.open = false;
+        d.angle = d.spot.yaw;
+        d.hp += PLANK_HP * d.planks;
+        this.collide(d, true);
+      }
+    }
     for (const pool of Object.values(this.pools)) this.writeAll(pool);
+    this.writePlanks();
   }
 
   remove(key: number): void {
@@ -197,10 +232,11 @@ export class Doors {
     return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open, creaky: d.style === 'wood' && h < 0.3, pitch: 0.9 + 0.2 * ((h * 7.31) % 1) };
   }
 
-  describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' {
+  describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' | 'boarded' {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return 'closed';
     if (d.spot.barricaded) return 'barricaded';
+    if (d.planks > 0) return 'boarded';
     return d.open ? 'open' : 'closed';
   }
 
@@ -208,7 +244,7 @@ export class Doors {
   toggle(ref: DoorRef): boolean {
     const doors = this.sets.get(ref.building);
     const d = doors?.[ref.index];
-    if (!doors || !d || d.spot.barricaded || d.broken) return false;
+    if (!doors || !d || d.spot.barricaded || d.broken || d.planks > 0) return false;
     const open = !d.open;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.open = open;
@@ -245,10 +281,93 @@ export class Doors {
     if (d.hp > 0) return false;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.broken = true;
+      leaf.planks = 0;
+      this.boards.delete(doorKey(leaf.spot));
       leaf.open = true;
       this.collide(leaf, false);
     }
+    this.writePlanks();
     return true;
+  }
+
+  /** How many boards are on a door (0 if none or no such door). */
+  planksOn(ref: DoorRef): number {
+    return this.sets.get(ref.building)?.[ref.index]?.planks ?? 0;
+  }
+
+  /**
+   * Nail one more board across a closed door, on the side the player stands (fromX, fromZ): the door
+   * won't open, and each board takes a zombie a lot more beating. At most 3. False if it can't take one.
+   */
+  addPlank(ref: DoorRef, fromX: number, fromZ: number): boolean {
+    const d = this.sets.get(ref.building)?.[ref.index];
+    if (!d || d.open || d.broken || d.spot.barricaded || d.planks >= MAX_PLANKS) return false;
+    const nx = Math.sin(d.spot.yaw);
+    const nz = Math.cos(d.spot.yaw);
+    if (d.planks === 0) d.plankSide = (fromX - d.spot.hx) * nx + (fromZ - d.spot.hz) * nz >= 0 ? 1 : -1;
+    d.planks++;
+    d.hp += PLANK_HP;
+    this.boards.set(doorKey(d.spot), [d.planks, d.plankSide]);
+    this.writePlanks();
+    return true;
+  }
+
+  /** Pry one board off (hammer / crowbar); true if one came off. */
+  removePlank(ref: DoorRef): boolean {
+    const d = this.sets.get(ref.building)?.[ref.index];
+    if (!d || d.planks <= 0) return false;
+    d.planks--;
+    d.hp = Math.max(1, d.hp - PLANK_HP);
+    if (d.planks > 0) this.boards.set(doorKey(d.spot), [d.planks, d.plankSide]);
+    else this.boards.delete(doorKey(d.spot));
+    this.writePlanks();
+    return true;
+  }
+
+  /** Boards the player nailed, for the save: hinge key → [count, side]. */
+  serializeBoards(): [string, number, number][] {
+    return [...this.boards].map(([k, [n, side]]) => [k, n, side]);
+  }
+
+  restoreBoards(list: [string, number, number][] | undefined): void {
+    this.boards.clear();
+    for (const [k, n, side] of list ?? []) this.boards.set(k, [n, side]);
+    // Doors already loaded get theirs now.
+    for (const doors of this.sets.values()) {
+      for (const d of doors) {
+        const b = this.boards.get(doorKey(d.spot));
+        if (!b || d.planks > 0) continue;
+        d.planks = b[0];
+        d.plankSide = b[1];
+        d.open = false;
+        d.hp += PLANK_HP * d.planks;
+        this.collide(d, true);
+      }
+    }
+    this.writePlanks();
+  }
+
+  /** Board instances: three slanting planks across the doorway per boarded door. */
+  private writePlanks(): void {
+    let n = 0;
+    for (const doors of this.sets.values()) {
+      for (const d of doors) {
+        for (let i = 0; i < d.planks; i++) {
+          if (n >= PLANK_CAPACITY) break;
+          const nx = Math.sin(d.spot.yaw) * d.plankSide;
+          const nz = Math.cos(d.spot.yaw) * d.plankSide;
+          const mx = d.spot.hx + Math.cos(d.spot.yaw) * d.width * 0.5 + nx * 0.07;
+          const mz = d.spot.hz - Math.sin(d.spot.yaw) * d.width * 0.5 + nz * 0.07;
+          _q.setFromAxisAngle(_up, d.spot.yaw).multiply(_qz.setFromAxisAngle(_zAxis, (i - 1) * 0.18 + 0.05));
+          _s.set((d.width + 0.3) / 1, 1, 1);
+          _m.compose(_p.set(mx, d.spot.y + 0.55 + i * 0.6, mz), _q, _s);
+          this.plankMesh.setMatrixAt(n++, _m);
+        }
+      }
+    }
+    this.plankMesh.count = n;
+    this.plankMesh.instanceMatrix.needsUpdate = true;
+    _s.set(1, 1, 1);
   }
 
   /** Animate swinging leaves; only pools with moving doors re-upload their matrices. */

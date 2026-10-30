@@ -1,4 +1,7 @@
+import './domStub';
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { Viewmodel } from '../player/Viewmodel';
+import { allAnimations, failures, ITEMS as CHECK_ITEMS } from './animCheck';
 import { damp } from '../core/math';
 import { type ArmPose, basisQuat, FOREARM_ROLL, HandsRig, hitTime, type ItemState, swingTime, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
 import { FISTS, HELD, type HeldConfig, type Key, type KeySet, type SwingPoint } from '../player/held';
@@ -86,11 +89,13 @@ const _prevW = [new Quaternion(), new Quaternion()];
 const _prevS = [0, 0];
 const _prevR = [0, 0];
 const JUMP_W = 20;
+/** Weight of wrist-limit overshoot (path tuning raises it: the test allows none). */
+let LIMIT_W = 10;
 
 /** Arm cost of one solved pose: wrist range (with a little margin), reach, a straight (locked) arm. */
 function armCost(p: ArmPose, margin: number): number {
   const ex = over(p.flex, WRIST_FLEX - 2 * margin) ** 2 + over(p.dev, WRIST_DEV - 2 * margin) ** 2 + over(p.twist, WRIST_TWIST - 2 * margin) ** 2 + over(p.roll, FOREARM_ROLL - 3 * margin) ** 2;
-  return 10 * ex + 2000 * p.reachErr ** 2 + 50 * over(p.extension, 0.9) ** 2;
+  return LIMIT_W * ex + 2000 * p.reachErr ** 2 + 50 * over(p.extension, 0.9) ** 2;
 }
 
 /** Cost of a config over all its frames; `report` counts limit breaks instead. */
@@ -543,7 +548,7 @@ function pathCost(cfg: HeldConfig): number {
       const hand = ndc(_g.copy(rig.targetL.grip), _s2);
       const dx = h.x - hand.x;
       const dy = ((h.y - hand.y) * 9) / 16;
-      c += 50 * Math.max(0, 0.45 - Math.abs(dx) / Math.hypot(dx, dy)) ** 2;
+      c += 400 * Math.max(0, 0.5 - Math.abs(dx) / Math.hypot(dx, dy)) ** 2;
     }
   }
   // Contact: the head exactly on the crosshair about 1 m out.
@@ -555,8 +560,9 @@ function pathCost(cfg: HeldConfig): number {
 }
 
 function tunePath(args: string[], item: 'axe' | 'knife' | 'fists'): number {
+  LIMIT_W = 120;
   const iters = Number(args[1] ?? 10000);
-  const base = item === 'fists' ? FISTS : HELD[item];
+  const base = item === 'fists' ? { ...FISTS } : HELD[item];
   const arms = base.twoHanded ? [0, 1] : [0];
   const targets = PATH_TARGETS_BY[item];
   const pts0 = base.keys.swing!;
@@ -577,8 +583,9 @@ function tunePath(args: string[], item: 'axe' | 'knife' | 'fists'): number {
     const cfg: HeldConfig = {
       ...base,
       keys: { ...base.keys, swing: pts },
-      main: { ...base.main, roll: base.main.roll + x[dims - 2] },
-      off: base.off ? { ...base.off, roll: base.off.roll + x[dims - 1] } : undefined,
+      // Grip rolls stay: AXE_R / AXE_L are shared with the stance keys (and the bat, the crowbar).
+      main: base.main,
+      off: base.off,
     };
     return cfg;
   };
@@ -593,20 +600,45 @@ function tunePath(args: string[], item: 'axe' | 'knife' | 'fists'): number {
     });
     return cost([cfg], HELD.torch, arms) + pathCost(cfg) + look;
   };
+  // The real test on the real viewmodel: frames that fail it come first, the smooth cost breaks ties.
+  const install = (cfg: HeldConfig) => {
+    if (item === 'fists') Object.assign(FISTS, cfg);
+    else (HELD as Record<string, HeldConfig>)[item] = cfg;
+  };
+  const fails = (x: number[]) => {
+    install(build(x));
+    const vm = new Viewmodel();
+    vm.setAspect(16 / 9);
+    // The items before it in the test's order first: the rig comes into this one from them, as there.
+    for (const prev of CHECK_ITEMS.slice(0, CHECK_ITEMS.indexOf(item))) allAnimations(vm, prev);
+    const list = Object.entries(allAnimations(vm, item)).flatMap(([a, rows]) => failures(item, a, rows));
+    // Each failure counts, plus how far past its limit (read off the message) so the search has a slope.
+    let n = list.length;
+    for (const f of list) {
+      const num = [...f.what.matchAll(/-?\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
+      if (f.what.includes('upright')) n += 0.05 * Math.max(0, 25 - num[0]);
+      else if (f.what.includes(' > ')) n += 0.05 * Math.max(0, Math.abs(num[0]) - num[1]);
+      else if (f.what.includes('in one frame')) n += 0.05 * Math.abs(num[num.length - 1] - 15);
+    }
+    install(base);
+    return n;
+  };
+  const score = (x: number[]) => 1000 * fails(x) + total(x);
   let x = new Array(dims).fill(0);
-  let fx = total(x);
+  let fx = score(x);
   console.log(`start: cost ${fx.toFixed(3)}, breaks ${cost([build(x)], HELD.torch, arms, true)}`, JSON.stringify(tally));
   for (const k in tally) delete tally[k];
   let sigma = 0.06;
   for (let it = 0; it < iters; it++) {
     const y = x.map((v) => v + sigma * gauss());
-    const fy = total(y);
+    const fy = score(y);
     if (fy < fx) {
       x = y;
       fx = fy;
       sigma = Math.min(0.25, sigma * 1.25);
     } else sigma = Math.max(0.002, sigma * 0.97);
   }
+  console.log(`test failures ${fails(x)}`);
   const cfg = build(x);
   console.log(`end: cost ${fx.toFixed(3)}, breaks ${cost([cfg], HELD.torch, arms, true)}`, JSON.stringify(tally));
   if (args.includes('--write')) {

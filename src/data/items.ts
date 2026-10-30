@@ -123,6 +123,8 @@ export interface ItemDef {
   pain?: number;
   /** Dresses an open wound. */
   dressesWound?: boolean;
+  /** Stops an early infection (antibiotics). */
+  cures?: boolean;
   /** Restores the flashlight battery (0..1). */
   battery?: number;
   /** Can be held in the hand (melee arrives with zombies in stage 4). */
@@ -149,7 +151,7 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   bandage: { name: 'Бинт', kind: 'medical', weight: 0.05, stack: 10, dressesWound: true, health: 0.05 },
   rag: { name: 'Чистая тряпка', kind: 'medical', weight: 0.1, stack: 10, dressesWound: true },
   painkillers: { name: 'Обезболивающее', kind: 'medical', weight: 0.05, stack: 10, pain: -0.5, health: 0.05 },
-  antibiotics: { name: 'Антибиотики', kind: 'medical', weight: 0.05, stack: 5, health: 0.15 },
+  antibiotics: { name: 'Антибиотики', kind: 'medical', weight: 0.05, stack: 5, health: 0.15, cures: true, note: 'Останавливают заражение, если принять рано.' },
   batteries: { name: 'Батарейки', kind: 'tool', weight: 0.1, stack: 8, battery: 1 },
   knife: { name: 'Кухонный нож', kind: 'weapon', weight: 0.3, stack: 1, equip: true, note: 'Быстрый, тихий, недалеко бьёт' },
   bat: { name: 'Бейсбольная бита', kind: 'weapon', weight: 1.0, stack: 1, equip: true, note: 'Длинная, сбивает с ног' },

@@ -5,6 +5,8 @@ import { InputManager } from '../input/InputManager';
 import { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 import { PlayerController } from '../player/PlayerController';
+import { Survival } from '../systems/Survival';
+import { ITEMS } from '../data/items';
 
 /**
  * npm run test:zombies — perception and behaviour on a flat test ground with one wall (x 4..5, z −20..20).
@@ -253,6 +255,35 @@ export function main(): number {
       headTop = Math.max(headTop, d.position.y + 1.78);
     }
     check(headTop <= 2.1 + 1e-3 || d.position.z < 3 - 0.29 || d.position.z > 3.3 + 0.29, `jumping under a lintel: the head stops under it (top ${headTop.toFixed(2)})`);
+  }
+  // 17. Bites: clothes can stop them; a bite always infects; early antibiotics cure, late ones only slow;
+  //     left alone the infection kills in about an hour of real time.
+  {
+    const env = { felt: 20, dark: false, batteryDead: false };
+    const a = new Survival();
+    check(a.bitten('arms', 0.9, 0.5, 0.2) === 'blocked' && a.wounds.length === 0 && a.infection === 0, 'thick sleeves: the teeth do not get through');
+    const b = new Survival();
+    check(b.bitten('legs', 0, 0.5, 0.2) === 'bite' && b.wounded && b.infection > 0, 'a bite: a bleeding wound and the infection');
+    b.consume(ITEMS.bandage);
+    check(!b.wounded, 'a bandage stops the bleeding');
+    b.consume(ITEMS.antibiotics);
+    check(b.infection === 0, 'antibiotics early: cured');
+    const c = new Survival();
+    c.bitten('torso', 0, 0.5, 0.2);
+    c.infection = 0.5;
+    c.consume(ITEMS.antibiotics);
+    check(c.infection > 0 && c.infection < 0.5, `antibiotics late: only slowed (${c.infection.toFixed(2)})`);
+    const d = new Survival();
+    d.bitten('head', 0, 0.5, 0.2);
+    d.wounds.length = 0;
+    let t = 0;
+    while (d.health > 0 && t < 7200) {
+      d.hunger = 0.1;
+      d.thirst = 0.1;
+      d.update(1, 0, false, env);
+      t += 1;
+    }
+    check(d.health <= 0 && t > 2700 && t < 3700, `untreated infection (~2 in-game days): dead after ${(t / 60).toFixed(0)} min`);
   }
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');
   return fails.length ? 1 : 0;

@@ -3,7 +3,12 @@ import type { ItemId } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
-import type { DoorRef, Doors } from '../world/Doors';
+import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
+
+/** Boarding a door up: a board and four nails, seconds of hammering; prying one off. */
+const NAILS_PER_PLANK = 4;
+const NAIL_TIME = 4;
+const PRY_TIME = 3;
 import type { ContainerRef, Containers } from './Containers';
 import type { Inventory } from './Inventory';
 
@@ -22,6 +27,14 @@ const WEAPON_PRIORITY: ItemId[] = ['axe', 'crowbar', 'bat', 'knife', 'hammer'];
  */
 export class Interaction {
   private searchT = -1;
+  /** E held on a door (−1 = not): a tap opens/closes, holding starts boarding it up / prying a board off. */
+  private holdT = -1;
+  private holdDoor: DoorRef | null = null;
+  /** Boarding (or prying) in progress: seconds, the door, which. */
+  private boardT = -1;
+  private boardDoor: DoorRef | null = null;
+  private boardPry = false;
+  private boardKnock = 0;
   private searchRef: ContainerRef | null = null;
   private promptT = 0;
   private lastWeapon: ItemId | null = null;
@@ -66,6 +79,7 @@ export class Interaction {
     }
 
     const use = input.consumePressed('use');
+    if (this.updateBoarding(dt, use)) return;
     if (this.searchT >= 0) {
       if (this.player.controller.speed > 0.4 || input.isHeld('attack')) {
         this.cancelSearch(true);
@@ -86,12 +100,13 @@ export class Interaction {
       const door = this.doorTarget();
       const ref = this.target();
       if (door && (!ref || this.doorCloser(door, ref))) {
-        const at = this.doors.info(door);
-        if (!this.doors.toggle(door)) {
-          hud.toast('Заколочено с той стороны', 1200);
-          if (at) sfx.doorStuck(at);
-        } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
-        this.player.busy = false;
+        // Hammer, boards and nails at hand (or boards to pry off): wait — a tap opens, a hold boards up.
+        if (this.canNail(door) || this.canPry(door)) {
+          this.holdT = 0;
+          this.holdDoor = door;
+          return;
+        }
+        this.toggleDoor(door);
         return;
       }
       if (!ref) hud.toast('Здесь нечего обыскивать', 900);
@@ -126,7 +141,10 @@ export class Interaction {
     const door = this.doorTarget();
     if (door && (!ref || this.doorCloser(door, ref))) {
       const state = this.doors.describe(door);
-      this.ctx.hud.setPrompt(state === 'barricaded' ? 'Дверь заколочена' : `${key}${state === 'open' ? 'Закрыть' : 'Открыть'} дверь`);
+      const hold = this.ctx.input.mode === 'kbm' ? 'держать E' : 'удерживать';
+      if (state === 'boarded') this.ctx.hud.setPrompt(`Заколочено досками: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — оторвать доску` : ''}`);
+      else if (state === 'barricaded') this.ctx.hud.setPrompt('Дверь заколочена');
+      else this.ctx.hud.setPrompt(`${key}${state === 'open' ? 'Закрыть' : 'Открыть'} дверь${this.canNail(door) ? ` · ${hold} — заколотить` : ''}`);
       return;
     }
     if (!ref) {
@@ -135,6 +153,97 @@ export class Interaction {
     }
     const verb = this.containers.isOpened(ref) ? 'Открыть' : 'Обыскать';
     this.ctx.hud.setPrompt(`${key}${verb}: ${this.containers.name(ref)}`);
+  }
+
+  private toggleDoor(door: DoorRef): void {
+    const at = this.doors.info(door);
+    const state = this.doors.describe(door);
+    if (!this.doors.toggle(door)) {
+      this.ctx.hud.toast(state === 'boarded' ? 'Заколочено досками' : 'Заколочено с той стороны', 1200);
+      if (at) sfx.doorStuck(at);
+    } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
+    this.player.busy = false;
+  }
+
+  /** A hammer (in hand or in the bag), a board and four nails — and a closed door that takes one more. */
+  private canNail(door: DoorRef): boolean {
+    const inv = this.inventory;
+    const state = this.doors.describe(door);
+    return (state === 'closed' || (state === 'boarded' && this.doors.planksOn(door) < MAX_PLANKS)) && (inv.hand === 'hammer' || inv.count('hammer') > 0) && inv.count('planks') > 0 && inv.count('nails') >= NAILS_PER_PLANK;
+  }
+
+  /** Boards on it and something to pry them with (a hammer's claw, a crowbar). */
+  private canPry(door: DoorRef): boolean {
+    const inv = this.inventory;
+    const tool = inv.hand === 'hammer' || inv.hand === 'crowbar' || inv.count('hammer') > 0 || inv.count('crowbar') > 0;
+    return tool && this.doors.planksOn(door) > 0 && !this.canNail(door);
+  }
+
+  /**
+   * Holding E on a door, then boarding it up / prying a board off: a progress bar, loud hammering (it
+   * carries — zombies hear it), interrupted by moving or attacking. Returns true while it owns the step.
+   */
+  private updateBoarding(dt: number, pressed: boolean): boolean {
+    const { input, hud } = this.ctx;
+    if (this.holdT >= 0 && this.holdDoor) {
+      if (input.isHeld('use') && !pressed) {
+        this.holdT += dt;
+        if (this.holdT < 0.45) return true;
+        this.boardPry = !this.canNail(this.holdDoor);
+        this.boardDoor = this.holdDoor;
+        this.boardT = 0;
+        this.boardKnock = 0;
+        this.holdT = -1;
+        this.ctx.events.emit('ui:busy', { busy: true });
+        this.player.busy = true;
+        return true;
+      }
+      // Let go early: a plain open / close.
+      const door = this.holdDoor;
+      this.holdT = -1;
+      this.holdDoor = null;
+      this.toggleDoor(door);
+      return true;
+    }
+    if (this.boardT < 0 || !this.boardDoor) return false;
+    const door = this.boardDoor;
+    const stop = (msg: string | null) => {
+      this.boardT = -1;
+      this.boardDoor = null;
+      this.player.busy = false;
+      this.ctx.events.emit('ui:busy', { busy: false });
+      if (msg) hud.toast(msg, 1100);
+      else hud.hideAction();
+    };
+    if (this.player.controller.speed > 0.4 || input.isHeld('attack')) {
+      stop('Прервано');
+      return true;
+    }
+    const time = this.boardPry ? PRY_TIME : NAIL_TIME;
+    this.boardT += dt;
+    hud.showAction(this.boardPry ? 'Отдираю доску' : 'Заколачиваю дверь', this.boardT / time);
+    // Hammer blows: loud.
+    this.boardKnock -= dt;
+    const at = this.doors.info(door);
+    if (this.boardKnock <= 0 && at) {
+      this.boardKnock = this.boardPry ? 0.7 : 0.45;
+      sfx.hit('wood', at, 1);
+      this.player.controller.addNoise(0.75);
+    }
+    if (this.boardT >= time) {
+      if (this.boardPry) {
+        if (this.doors.removePlank(door)) this.inventory.add('planks', 1);
+        stop(null);
+      } else if (this.canNail(door)) {
+        const c = this.player.controller.position;
+        this.inventory.remove('planks', 1);
+        this.inventory.remove('nails', NAILS_PER_PLANK);
+        this.doors.addPlank(door, c.x, c.z);
+        stop(null);
+        hud.toast(`Доска прибита: ${this.doors.planksOn(door)}/${MAX_PLANKS}`, 1100);
+      } else stop('Нечем заколотить');
+    }
+    return true;
   }
 
   private target(): ContainerRef | null {

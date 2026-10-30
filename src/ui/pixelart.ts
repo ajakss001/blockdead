@@ -449,10 +449,17 @@ function clearRect(s: Sprite, x0: number, y0: number, x1: number, y1: number): v
 }
 
 /** HUD indicators: health, hunger, thirst, energy, body warmth, calm, flashlight battery; wound is a status. */
-export type StatIcon = 'health' | 'hunger' | 'thirst' | 'energy' | 'warmth' | 'calm' | 'battery' | 'wound';
+export type StatIcon = 'health' | 'hunger' | 'thirst' | 'energy' | 'warmth' | 'calm' | 'battery' | 'wound' | 'sick';
 
 /** One-color silhouettes (+ a darker detail tone), tinted per severity by the HUD. */
 const STAT_DRAW: Record<StatIcon, (s: Sprite, c: number, d: number) => void> = {
+  sick: (s, c, d) => {
+    // A thermometer: stem and bulb, the column up high.
+    s.rect(7, 2, 3, 9, d);
+    s.rect(8, 4, 1, 7, c);
+    s.ellipse(8, 12, 3, 3, c);
+    for (const y of [4, 6, 8]) s.rect(10, y, 2, 1, d);
+  },
   health: (s, c) => {
     s.ellipse(5, 6, 3, 3, c);
     s.ellipse(10, 6, 3, 3, c);

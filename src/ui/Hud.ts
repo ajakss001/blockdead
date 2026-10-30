@@ -15,6 +15,7 @@ const STATS: { id: StatId; label: string }[] = [
   { id: 'warmth', label: 'Тепло тела' },
   { id: 'calm', label: 'Спокойствие' },
   { id: 'battery', label: 'Заряд фонаря' },
+  { id: 'sick', label: 'Заражение' },
 ];
 
 /** Muted lo-fi palette: severity reads by hue, nothing screams like a mobile-game button. */
