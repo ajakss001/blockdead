@@ -118,6 +118,11 @@ export class Place {
     return p;
   }
 
+  /** This place's frame (position and turn) as a matrix, copied into `out`. */
+  frame(out: Matrix4): Matrix4 {
+    return out.copy(this.base());
+  }
+
   private base(): Matrix4 {
     return this.free ?? _base.compose(_p.set(this.x, this.y, this.z), _q.setFromAxisAngle(_up, (this.r * Math.PI) / 2), _s.set(1, 1, 1));
   }

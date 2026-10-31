@@ -131,6 +131,8 @@ export class Builder {
     // No box given: what was drawn since the last container, near the spot (the piece just built).
     if (!box) box = this.drawnNear(x, z, y);
     this.logMark = this.log.length;
+    this.lastContainer = null;
+    if (!this.inClip(this.wx(x), this.wz(z))) return;
     let zone: SearchBox | undefined;
     if (box && box[0] <= box[3]) {
       const [x0, x1] = this.flip ? [2 * this.flip.cx - box[3], 2 * this.flip.cx - box[0]] : [box[0], box[3]];
@@ -140,7 +142,22 @@ export class Builder {
     const spot: ContainerSpot = { type, x: this.wx(x), z: this.wz(z), y, ...(zone ? { box: zone } : {}) };
     if (this.idBase !== null) spot.id = this.idBase + this.idN++;
     this.containers.push(spot);
+    this.lastContainer = spot;
   }
+
+  /**
+   * A big place spans several chunks and each chunk builds only its part: while set (world x0, z0, x1, z1),
+   * anything whose middle falls outside is dropped — geometry, colliders, containers, doors, life spots.
+   */
+  clip: [number, number, number, number] | null = null;
+
+  inClip(x: number, z: number): boolean {
+    const c = this.clip;
+    return !c || (x >= c[0] && x < c[2] && z >= c[1] && z < c[3]);
+  }
+
+  /** The container registered by the last container() call (null: it fell outside the clip). */
+  lastContainer: ContainerSpot | null = null;
 
   /** Bounds of every block / template added (frame AABBs, 6 numbers each), and where the last container was. */
   private readonly log: number[] = [];
@@ -182,12 +199,14 @@ export class Builder {
   /** World-life spot in the current frame (normal turns with the frame). */
   life(kind: number, x: number, y: number, z: number, nx: number, nz: number, w: number, h: number, seed: number, tag = 0): void {
     const s = this.flip ? -1 : 1;
+    if (!this.inClip(this.wx(x), this.wz(z))) return;
     this.ambient.push(kind, this.wx(x), y, this.wz(z), nx * s, nz * s, w, h, seed, tag);
   }
 
   /** Register a door by its hinge and closed yaw in the current frame. */
   door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false, opts: DoorOptions = {}): void {
     // The leaf fills the opening: 1 × 2.1 m unless told otherwise (no slits round a closed door).
+    if (!this.inClip(this.wx(hx), this.wz(hz))) return;
     this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded, width: 1.0, height: 2.1, ...opts });
   }
 
@@ -214,6 +233,7 @@ export class Builder {
       x0 = 2 * this.flip.cx - (x + sx);
       z0 = 2 * this.flip.cz - (z + sz);
     }
+    if (!this.inClip(x0 + sx / 2, z0 + sz / 2)) return;
     this.logged(x, y, z, x + sx, y + sy, z + sz);
     this.p.set(x0 + sx / 2, y + sy / 2, z0 + sz / 2);
     this.s.set(sx, sy, sz);
@@ -226,6 +246,7 @@ export class Builder {
   geo(template: BufferGeometry, color: number, matrix: Matrix4, surface: Surface): void {
     if (!template.boundingBox) template.computeBoundingBox();
     _bb.copy(template.boundingBox!).applyMatrix4(matrix);
+    if (!this.inClip(this.wx((_bb.min.x + _bb.max.x) / 2), this.wz((_bb.min.z + _bb.max.z) / 2))) return;
     this.logged(_bb.min.x, _bb.min.y, _bb.min.z, _bb.max.x, _bb.max.y, _bb.max.z);
     if (this.flip) matrix = this.m.copy(this.flipM).multiply(matrix);
     this.batch.add(template, color, matrix, surface);
@@ -233,6 +254,7 @@ export class Builder {
 
   /** Collider in the current frame (optionally limited to a vertical range). */
   solid(x0: number, z0: number, x1: number, z1: number, y0?: number, y1?: number): void {
+    if (!this.inClip(this.wx((x0 + x1) / 2), this.wz((z0 + z1) / 2))) return;
     if (this.flip) {
       const a = 2 * this.flip.cx - x1;
       const b = 2 * this.flip.cz - z1;

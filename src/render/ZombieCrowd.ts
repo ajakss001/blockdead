@@ -181,6 +181,10 @@ export function zombieTints(z: Zombie, out = new Float32Array(9)): Float32Array 
     setColor(out, 0, z.twin.colors[2], 0.8);
     setColor(out, 3, z.twin.colors[0], 0.85);
     setColor(out, 6, z.twin.colors[1], 0.85);
+  } else if (z.uniform) {
+    setColor(out, 0, SKINS[(l >> 4) % SKINS.length], 1);
+    setColor(out, 3, z.uniform.shirt, 0.8 + ((l >> 3) % 4) * 0.05);
+    setColor(out, 6, z.uniform.pants, 0.8 + ((l >> 5) % 4) * 0.05);
   } else {
     setColor(out, 0, SKINS[(l >> 4) % SKINS.length], 1);
     setColor(out, 3, SHIRTS[l % SHIRTS.length], 0.75 + ((l >> 3) % 5) * 0.06);

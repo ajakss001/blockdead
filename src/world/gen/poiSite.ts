@@ -6,7 +6,7 @@ import { Place, type Quarter } from './furniture';
 import { CHUNK } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, type DoorOptions, pick, type Rand } from './pieces';
-import type { PoiSite } from './poi';
+import { type PoiSite, siteToWorld } from './poi';
 
 /**
  * POI templates. Each builds its block in a frame turned to face its road: local +Z points at the road,
@@ -27,21 +27,50 @@ interface Hole {
 
 export class Site {
   readonly p: Place;
+  /** Half the lot across the front (local X) and deep (local Z), m, inside its edge strip. */
+  readonly lotX: number;
+  readonly lotZ: number;
+  /** Spans several chunks: long pieces are cut so each chunk gets its own. */
+  readonly big: boolean;
   constructor(
     readonly b: Builder,
     readonly s: PoiSite,
   ) {
-    this.p = new Place(b, s.i * CHUNK + CHUNK / 2, 0, s.j * CHUNK + CHUNK / 2, s.r as Quarter);
+    const [cx, cz] = siteToWorld(s, 0, 0);
+    this.p = new Place(b, cx, 0, cz, s.r as Quarter);
+    const bw = s.bw ?? 1;
+    const bd = s.bd ?? 1;
+    this.big = bw > 1 || bd > 1;
+    this.lotX = ((s.r & 1 ? bd : bw) * CHUNK) / 2 - 5.8;
+    this.lotZ = ((s.r & 1 ? bw : bd) * CHUNK) / 2 - 5.8;
+  }
+
+  /** In this chunk's part (big places): a local point. */
+  here(lx: number, lz: number): boolean {
+    const [x, z] = this.p.pt(lx, lz);
+    return this.b.inClip(x, z);
+  }
+
+  /**
+   * A flat slab over a local rectangle (runways, aprons, yards), cut in squares of at most `cell` m so every
+   * chunk of a big place gets its own pieces.
+   */
+  slab(color: number, x0: number, z0: number, x1: number, z1: number, y: number, h: number, surface: Surface = 'asphalt', cell = 16): void {
+    const nx = Math.max(1, Math.ceil((x1 - x0) / cell));
+    const nz = Math.max(1, Math.ceil((z1 - z0) / cell));
+    const sx = (x1 - x0) / nx;
+    const sz = (z1 - z0) / nz;
+    for (let a = 0; a < nx; a++) for (let c = 0; c < nz; c++) this.p.box(color, x0 + (a + 0.5) * sx, y, z0 + (c + 0.5) * sz, sx, h, sz, surface);
   }
 
   /** A wall along local X at z, from x0 to x1, h high, with holes. */
   wallX(color: number, x0: number, x1: number, z: number, h: number, holes: Hole[] = [], surface: Surface = 'plaster'): void {
-    this.wall(x0, x1, h, holes, (a, b, y0, y1) => this.p.box(color, (a + b) / 2, y0, z, b - a, y1 - y0, WALL, surface, true));
+    this.wall(x0, x1, h, holes, this.cut((a, b, y0, y1) => this.p.box(color, (a + b) / 2, y0, z, b - a, y1 - y0, WALL, surface, true)));
   }
 
   /** A wall along local Z at x, from z0 to z1. */
   wallZ(color: number, z0: number, z1: number, x: number, h: number, holes: Hole[] = [], surface: Surface = 'plaster'): void {
-    this.wall(z0, z1, h, holes, (a, b, y0, y1) => this.p.box(color, x, y0, (a + b) / 2, WALL, y1 - y0, b - a, surface, true));
+    this.wall(z0, z1, h, holes, this.cut((a, b, y0, y1) => this.p.box(color, x, y0, (a + b) / 2, WALL, y1 - y0, b - a, surface, true)));
   }
 
   private wall(a0: number, a1: number, h: number, holes: Hole[], seg: (a: number, b: number, y0: number, y1: number) => void): void {
@@ -56,6 +85,15 @@ export class Site {
       a = r;
     }
     if (a1 > a) seg(a, a1, 0, h);
+  }
+
+  /** Wall pieces of a big place no longer than 16 m (each lands in the chunk of its middle). */
+  private cut(seg: (a: number, b: number, y0: number, y1: number) => void): (a: number, b: number, y0: number, y1: number) => void {
+    if (!this.big) return seg;
+    return (a, b, y0, y1) => {
+      const n = Math.max(1, Math.ceil((b - a) / 16));
+      for (let k = 0; k < n; k++) seg(a + ((b - a) * k) / n, a + ((b - a) * (k + 1)) / n, y0, y1);
+    };
   }
 
   /** A glass pane in a window hole of a wall along local X (z) or Z (x). */
@@ -85,9 +123,15 @@ export class Site {
   roof(x0: number, z0: number, x1: number, z1: number, h: number, floor: number, ceiling = 0xb8b4a8, roofColor = 0x3a3a38): void {
     const w = x1 - x0;
     const d = z1 - z0;
-    this.p.box(floor, (x0 + x1) / 2, 0, (z0 + z1) / 2, w, 0.04, d, 'tile');
-    this.p.box(ceiling, (x0 + x1) / 2, h - 0.05, (z0 + z1) / 2, w, 0.05, d, 'plaster');
-    this.p.box(roofColor, (x0 + x1) / 2, h, (z0 + z1) / 2, w + 0.4, 0.25, d + 0.4, 'roof');
+    if (this.big) {
+      this.slab(floor, x0, z0, x1, z1, 0, 0.04, 'tile');
+      this.slab(ceiling, x0, z0, x1, z1, h - 0.05, 0.05, 'plaster');
+      this.slab(roofColor, x0 - 0.2, z0 - 0.2, x1 + 0.2, z1 + 0.2, h, 0.25, 'roof');
+    } else {
+      this.p.box(floor, (x0 + x1) / 2, 0, (z0 + z1) / 2, w, 0.04, d, 'tile');
+      this.p.box(ceiling, (x0 + x1) / 2, h - 0.05, (z0 + z1) / 2, w, 0.05, d, 'plaster');
+      this.p.box(roofColor, (x0 + x1) / 2, h, (z0 + z1) / 2, w + 0.4, 0.25, d + 0.4, 'roof');
+    }
     const [ax, az] = this.p.pt(x0, z0);
     const [bx, bz] = this.p.pt(x1, z1);
     this.b.shelter(Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz), h);
@@ -97,7 +141,8 @@ export class Site {
   container(type: ContainerType, lx: number, lz: number, fixed?: ItemId[], y = 0): void {
     const [x, z] = this.p.pt(lx, lz);
     this.b.container(type, x, z, y);
-    const spot = this.b.containers[this.b.containers.length - 1];
+    const spot = this.b.lastContainer;
+    if (!spot) return;
     if (!y) delete spot.y;
     if (fixed) spot.fixed = fixed;
   }
@@ -111,7 +156,8 @@ export class Site {
 
   /** The last container a furniture piece registered becomes this type (and gets fixed items). */
   retype(type: ContainerType, fixed?: ItemId[]): void {
-    const c = this.b.containers[this.b.containers.length - 1];
+    const c = this.b.lastContainer;
+    if (!c) return;
     c.type = type;
     if (fixed) c.fixed = fixed;
   }
@@ -119,6 +165,11 @@ export class Site {
   /** A car parked at a local point, nose along local yaw (0 = local +X). */
   car(lx: number, lz: number, yaw: number, rand: Rand, kind?: string, paint?: number): void {
     const [x, z] = this.p.pt(lx, lz);
+    // (Rolled even when not ours: every chunk of a big place draws the same random numbers.)
+    if (!this.b.inClip(x, z)) {
+      for (let k = paint === undefined ? 4 : 3; k > 0; k--) rand();
+      return;
+    }
     const wyaw = yaw + (this.p.r * Math.PI) / 2;
     buildCar(this.b.batch, this.b.colliders, { x, z, yaw: wyaw, paint: paint ?? pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.3 ? 0.3 : 0, kind }, this.b.containers);
     this.b.life(LIFE.car, x, 0, z, Math.sin(wyaw), Math.cos(wyaw), 4.3, 1.8, spotHash(x, z, 41));

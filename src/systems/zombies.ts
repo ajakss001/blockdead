@@ -60,6 +60,8 @@ export interface Zombie {
   lastDist: number;
   groanCd: number;
   hp: number;
+  /** In uniform (soldiers at the base, airport staff): shirt and pants colours, and what its body holds. */
+  uniform?: { shirt: number; pants: number; loot: 'bodyMilitary' | 'bodyZombie' };
   /**
    * Dead: how it died — the blow (where from, how hard, on the head, where it landed) and how it was moving
    * (walk phase, gait) — for its ragdoll. Null while alive.

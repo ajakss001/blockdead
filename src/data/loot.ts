@@ -52,7 +52,14 @@ export type ContainerType =
   | 'serverRack'
   | 'labTools'
   | 'isolation'
-  | 'generator';
+  | 'generator'
+  // The airport and the military base.
+  | 'checkin'
+  | 'planeCabin'
+  | 'cargoHold'
+  | 'militaryLocker'
+  | 'canteen'
+  | 'vehicleCabin';
 
 interface LootTable {
   name: string;
@@ -142,6 +149,12 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   serverRack: { name: 'Серверная стойка', empty: 0.5, rolls: [1, 1], items: [['batteries', 2], ['tape', 1.5], ['junk', 2]] },
   labTools: { name: 'Шкаф инженера', empty: 0.2, rolls: [1, 3], items: [['tape', 2], ['batteries', 2], ['workGloves', 1.5], ['hammer', 0.8], ['crowbar', 0.6], ['rope', 1]] },
   isolation: { name: 'Медицинский шкаф изолятора', empty: 0.1, rolls: [2, 3], items: [['antibiotics', 2], ['painkillers', 2], ['bandage', 2], ['medGloves', 1], ['medBag', 0.6], ['serumG7', 0.5]] },
+  checkin: { name: 'Стойка регистрации', empty: 0.35, rolls: [1, 2], items: [['map', 1], ['batteries', 1.5], ['junk', 2], ['chocolate', 1], ['soda', 1], ['walkie', 0.5]] },
+  planeCabin: { name: 'Салон самолёта', empty: 0.25, rolls: [1, 3], items: [['water', 2], ['juice', 2], ['crackers', 2], ['chocolate', 2], ['painkillers', 1], ['bandage', 1], ['sportsBag', 0.6], ['schoolBackpack', 0.6], ['hoodie', 1], ['jeans', 0.8]] },
+  cargoHold: { name: 'Грузовой отсек', empty: 0.2, rolls: [2, 3], items: [['water', 3], ['beans', 2], ['soup', 2], ['rope', 1.5], ['tape', 1.5], ['batteries', 1.5], ['hikingBackpack', 0.6], ['ration', 1]] },
+  militaryLocker: { name: 'Армейский шкафчик', empty: 0.2, rolls: [1, 3], items: [['militaryJacket', 1.5], ['gorkaJacket', 1], ['gorkaPants', 1], ['combatBoots', 1.2], ['militaryHelmet', 1], ['tacticalRig', 1], ['armyBackpack', 0.8], ['ration', 1.5], ['bandage', 1.5]] },
+  canteen: { name: 'Кухня столовой', empty: 0.25, rolls: [1, 3], items: [['ration', 3], ['beans', 2], ['soup', 2], ['crackers', 2], ['water', 2], ['knife', 0.5]] },
+  vehicleCabin: { name: 'Кабина', empty: 0.3, rolls: [1, 2], items: [['ration', 2], ['water', 1.5], ['bandage', 1.5], ['map', 0.8], ['walkie', 0.8], ['batteries', 1], ['tacticalRig', 0.4], ['rope', 0.8]] },
   // Never rolled: the generator is started, not searched.
   generator: { name: 'Генератор', empty: 1, rolls: [0, 0], items: [] },
   militaryCrate: { name: 'Армейский ящик', empty: 0.3, rolls: [1, 3], items: [['crackers', 3], ['water', 3], ['bandage', 2], ['batteries', 2], ['militaryHelmet', 0.6], ['militaryJacket', 0.4], ['tacticalRig', 0.3], ['rope', 1], ['map', 1]] },

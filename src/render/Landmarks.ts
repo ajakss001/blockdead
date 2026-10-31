@@ -96,6 +96,8 @@ export class Landmarks {
         const site = this.layout.poi(i, j);
         const list = site && POI_LANDMARKS[site.kind];
         if (!site || !list) continue;
+        // A big place covers several blocks: once.
+        if ((site.i !== i || site.j !== j) && ((site.bw ?? 1) > 1 || (site.bd ?? 1) > 1)) continue;
         const [sx, sz] = siteToWorld(site, 0, 0);
         const odd = site.r & 1;
         for (const [lx, ly, lz, w, h, d] of list) {

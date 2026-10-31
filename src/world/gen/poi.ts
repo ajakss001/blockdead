@@ -11,7 +11,10 @@ import { hash3 } from './noise';
  * - `risk`: zombies waiting round it and inside (the better the loot, the more of them);
  * - `downtown`: at least one in the high-rise district, always;
  * - `near`: 'urban' — only right at the edge of town (a block next to a built-up one);
- * - `id`: its own salt for the placement hash — fixed forever, so adding types never moves the old ones.
+ * - `id`: its own salt for the placement hash — fixed forever, so adding types never moves the old ones;
+ * - `blocks` (big places): its lot in blocks, [across the front, deep] — it spans several chunks, each
+ *   building only its own part; it stands in one 4×4 country cell (no road through it) facing the major road
+ *   on that cell's edge, and never on a block an older type already took.
  */
 export const POI = {
   gas: { id: 2, name: 'Заправка', chance: 0.8, size: 1, minDist: 5, zones: ['suburb', 'forest', 'field'] as Zone[], road: 'major', risk: 4, downtown: false, near: null },
@@ -22,11 +25,13 @@ export const POI = {
   park: { id: 7, name: 'Сквер', chance: 0.5, size: 1, minDist: 5, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 2, downtown: true, near: null },
   checkpoint: { id: 6, name: 'Военный КПП', chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
   lab: { id: 8, name: 'НИИ «Гелиос»', chance: 0.45, size: 1, minDist: 20, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 10, downtown: false, near: null },
+  airport: { id: 9, name: 'Аэропорт', chance: 0.55, size: 1, blocks: [3, 2], minDist: 30, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 18, downtown: false, near: null },
+  base: { id: 10, name: 'Военная база', chance: 0.55, size: 1, blocks: [2, 2], minDist: 26, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 24, downtown: false, near: null },
 } as const;
 
 export type PoiKind = keyof typeof POI;
 /** Placement order: earlier types win a contested block. */
-const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab'];
+const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab', 'airport', 'base'];
 /** The country road grid runs along every 4th chunk line (see layout). */
 const MAJOR_EVERY = 4;
 
@@ -36,6 +41,9 @@ export interface PoiSite {
   j: number;
   /** Quarter turn of the site's frame: local +Z points at the road it faces (0 +Z, 1 +X, 2 −Z, 3 −X). */
   r: 0 | 1 | 2 | 3;
+  /** Big places: the lot in world blocks along X and Z from (i, j), its min corner (absent: 1 × 1). */
+  bw?: number;
+  bd?: number;
 }
 
 /**
@@ -53,6 +61,7 @@ export function poiAt(layout: WorldLayout, i: number, j: number): PoiSite | null
 
 function siteOf(layout: WorldLayout, kind: PoiKind, i: number, j: number): PoiSite | null {
   const def = POI[kind];
+  if ('blocks' in def) return bigSiteOf(layout, kind, def.blocks as [number, number], i, j);
   const k = def.id;
   const rank = ORDER.indexOf(kind);
   const zone = layout.zone(i, j);
@@ -84,6 +93,51 @@ function siteOf(layout: WorldLayout, kind: PoiKind, i: number, j: number): PoiSi
     // A higher-priority type already took it.
     if (ORDER.slice(0, rank).some((o) => siteOf(layout, o, si, sj))) continue;
     return si === i && sj === j ? site : null;
+  }
+  return null;
+}
+
+/**
+ * A big place covering block (i, j), if any. The cell rolls as for the small ones; a try picks a 4×4
+ * country cell inside it and one of its edges (a major road) to face; the lot hugs that edge in the cell's
+ * middle. Every block of it must be wild (so no road crosses it) and free of the older types.
+ */
+function bigSiteOf(layout: WorldLayout, kind: PoiKind, size: [number, number], i: number, j: number): PoiSite | null {
+  const def = POI[kind];
+  const k = def.id;
+  const rank = ORDER.indexOf(kind);
+  const C = def.minDist * 2;
+  const off = hash3(layout.seed, 7001, k) % C;
+  const ci = Math.floor((i + off) / C);
+  const cj = Math.floor((j + off) / C);
+  // Only the cell this block's cell could hold a site in (the lot never leaves its 4×4 country cell, which
+  // lies inside the cell's inner part).
+  const h = hash3(layout.seed ^ (k * 0x9e3779b1), ci, cj);
+  if ((h % 1000) / 1000 >= def.chance) return null;
+  const m = Math.ceil(def.minDist / 2);
+  const span = C - 2 * m - 4;
+  if (span <= 0) return null;
+  for (let t = 0; t < 12; t++) {
+    const ht = hash3(h, t, 91);
+    const X4 = Math.floor((ci * C - off + m + (ht % span)) / 4) * 4;
+    const Z4 = Math.floor((cj * C - off + m + (Math.floor(ht / span) % span)) / 4) * 4;
+    const r = (Math.floor(ht / 7) % 4) as 0 | 1 | 2 | 3;
+    const [w, d] = size;
+    const bw = r & 1 ? d : w;
+    const bd = r & 1 ? w : d;
+    const si = r === 1 ? X4 + 4 - bw : r === 3 ? X4 : X4 + Math.floor((4 - bw) / 2);
+    const sj = r === 0 ? Z4 + 4 - bd : r === 2 ? Z4 : Z4 + Math.floor((4 - bd) / 2);
+    let ok = true;
+    // Every block wild (then no road crosses it: inner lines are no country lines and have no town beside them).
+    for (let a = si; a < si + bw && ok; a++) {
+      for (let b = sj; b < sj + bd && ok; b++) {
+        if (!(def.zones as readonly Zone[]).includes(layout.zone(a, b))) ok = false;
+        else if (ORDER.slice(0, rank).some((o) => siteOf(layout, o, a, b))) ok = false;
+      }
+    }
+    if (!ok) continue;
+    const site: PoiSite = { kind, i: si, j: sj, r, bw, bd };
+    return i >= si && i < si + bw && j >= sj && j < sj + bd ? site : null;
   }
   return null;
 }
@@ -131,10 +185,10 @@ export function nearestPoi(layout: WorldLayout, kind: PoiKind, i0: number, j0: n
   return null;
 }
 
-/** Local (site frame) → world: the block's centre, turned by r quarters. */
+/** Local (site frame) → world: the lot's centre, turned by r quarters. */
 export function siteToWorld(s: PoiSite, lx: number, lz: number): [number, number] {
-  const x = s.i * CHUNK + CHUNK / 2;
-  const z = s.j * CHUNK + CHUNK / 2;
+  const x = (s.i + (s.bw ?? 1) / 2) * CHUNK;
+  const z = (s.j + (s.bd ?? 1) / 2) * CHUNK;
   switch (s.r) {
     case 0:
       return [x + lx, z + lz];
@@ -158,6 +212,9 @@ export function poiSpawnPoints(kind: PoiKind): { outside: [number, number][]; in
   if (kind === 'mall') return { outside: grid(-20, 20, 13, 24, 5), inside: [...grid(-7, 7, -9, 1, 5), ...grid(-22, -13, -20, 8, 4), ...grid(10, 20, -16, 4, 5)] };
   if (kind === 'plant') return { outside: grid(-20, 20, -2, 20, 4), inside: [[8, 9], [15, 4], [-14, 8]] };
   if (kind === 'park') return { outside: [[-12, 12], [10, -14]], inside: [] };
+  if (kind === 'lab') return { outside: grid(-20, 20, 12, 22, 3), inside: [[0, 4], [-14, 4], [13, 3], [-10, -1.5], [-12, -7], [1, -8], [13, -6], [-10, -18], [10, -18]] };
+  if (kind === 'airport') return { outside: [...grid(-80, 80, -50, -26, 6), ...grid(-70, -14, 34, 52, 3), ...grid(-70, 40, -14, 6, 4)], inside: [...grid(-46, -10, 10, 28, 5), ...grid(50, 84, -6, 24, 2)] };
+  if (kind === 'base') return { outside: [...grid(-50, 50, -6, 2, 5), ...grid(10, 52, -12, 22, 4), ...grid(-48, -16, -8, 8, 3), ...grid(24, 50, 28, 54, 2)], inside: [...grid(-50, -14, 31, 41, 3), ...grid(-50, -14, 13, 23, 3), ...grid(-50, -24, -38, -14, 3), ...grid(10, 52, -34, -14, 3)] };
   if (kind === 'checkpoint') return { outside: [[-10, 24], [4, 26], [-2, 10], [10, 14], [-16, 12]], inside: [[-14, 6], [-6, 6], [4, -4]] };
   if (kind === 'gas')
     return {
@@ -217,6 +274,19 @@ export const POI_LANDMARKS: Partial<Record<PoiKind, [number, number, number, num
   checkpoint: [
     [12, 0, 20, 3, 5.5, 3],
     [12, 5.5, 20, 3.4, 2.2, 3.4],
+  ],
+  airport: [
+    [12, 0, 14, 4, 20, 4],
+    [12, 20, 14, 7, 3, 7],
+    [67, 0, 9, 38, 11, 34],
+    [-28, 0, 19, 40, 6.5, 22],
+  ],
+  base: [
+    [-55, 0, -55, 3, 8.2, 3],
+    [55, 0, -55, 3, 8.2, 3],
+    [-55, 0, 55, 3, 8.2, 3],
+    [55, 0, 55, 3, 8.2, 3],
+    [32, 0, -24, 44, 9, 24],
   ],
   lab: [
     [15, 0, -24, 0.5, 22, 0.5],

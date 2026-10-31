@@ -402,6 +402,11 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     for (const y of [5, 8]) s.line(5, y, 11, y, 0x6a6458);
     s.line(5, 11, 8, 11, 0x6a6458);
   },
+  ration: (s) => {
+    s.rect(2, 4, 12, 9, 0x5a5e3e);
+    s.rect(2, 4, 12, 2, 0x4a4e32);
+    s.rect(5, 8, 6, 3, 0xc8c0a0);
+  },
   serumG7: (s) => {
     s.rect(6, 2, 4, 2, C.steelDark);
     s.rect(5, 4, 6, 10, 0xc8d8dc);

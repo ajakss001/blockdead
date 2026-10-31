@@ -30,11 +30,14 @@ export class Pois {
       for (let j = cj - 3; j <= cj + 3; j++) {
         const s = this.layout.poi(i, j);
         if (!s) continue;
+        // A big place: once, by its own corner block and its middle.
+        if (s.i !== i || s.j !== j) continue;
         const key = (i + 32768) * 65536 + (j + 32768);
-        const d = Math.hypot((i + 0.5) * CHUNK - x, (j + 0.5) * CHUNK - z);
+        const [mx, mz] = siteToWorld(s, 0, 0);
+        const d = Math.hypot(mx - x, mz - z);
         if (this.woken.has(key)) {
           if (d > RESET) this.woken.delete(key);
-        } else if (d < WAKE) {
+        } else if (d < WAKE + ((Math.max(s.bw ?? 1, s.bd ?? 1) - 1) * CHUNK) / 2) {
           this.woken.add(key);
           this.wake(s);
         }
@@ -43,7 +46,9 @@ export class Pois {
     for (const key of this.woken) {
       const i = Math.floor(key / 65536) - 32768;
       const j = (key % 65536) - 32768;
-      if (Math.hypot((i + 0.5) * CHUNK - x, (j + 0.5) * CHUNK - z) > RESET) this.woken.delete(key);
+      const s = this.layout.poi(i, j);
+      const [mx, mz] = s ? siteToWorld(s, 0, 0) : [(i + 0.5) * CHUNK, (j + 0.5) * CHUNK];
+      if (Math.hypot(mx - x, mz - z) > RESET) this.woken.delete(key);
     }
   }
 
@@ -56,7 +61,10 @@ export class Pois {
       const list = k < inside ? pts.inside : pts.outside;
       const [lx, lz] = list[k % list.length];
       const [wx, wz] = siteToWorld(s, lx + (Math.random() - 0.5) * 1.2, lz + (Math.random() - 0.5) * 1.2);
-      this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
+      const z = this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
+      // Soldiers at the base (most of them), staff at the airport (some).
+      if (s.kind === 'base' && Math.random() < 0.85) z.uniform = { shirt: Math.random() < 0.5 ? 0x4a5236 : 0x5a5a3e, pants: 0x4a4e36, loot: 'bodyMilitary' };
+      else if (s.kind === 'airport' && Math.random() < 0.4) z.uniform = { shirt: Math.random() < 0.5 ? 0x2a3248 : 0xc8c8c0, pants: 0x23252a, loot: 'bodyZombie' };
     }
   }
 }

@@ -90,7 +90,9 @@ export type ItemId =
   | 'labJournal1'
   | 'labJournal2'
   | 'labJournal3'
-  | 'serumG7';
+  | 'serumG7'
+  // The military base.
+  | 'ration';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -237,6 +239,7 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   labJournal1: { name: 'Буклет НИИ «Гелиос»', kind: 'tool', weight: 0.05, stack: 1, note: '«НИИ „Гелиос“: изучаем северные грибковые штаммы ради медицины будущего.» На обороте кто-то написал: «будущего не будет».' },
   labJournal2: { name: 'Лабораторный журнал', kind: 'tool', weight: 0.2, stack: 1, note: 'День 12: штамм Г-7 растёт в темноте и тянется к теплу. День 19: у двоих сотрудников жар и бессонница, их перевели в изолятор. День 23: они больше не узнают нас.' },
   labJournal3: { name: 'Последняя запись', kind: 'tool', weight: 0.05, stack: 1, note: '«Изолятор полон. Генератор отключили, чтобы двери держали. Препарат Г-7 не лечит, но останавливает. Если вы это читаете — уходите на север.»' },
+  ration: { name: 'Сухпаёк', kind: 'food', weight: 0.6, stack: 4, hunger: -0.5, thirst: 0.05, fatigue: -0.05, note: 'Армейский рацион на сутки: галеты, тушёнка, шоколад.' },
   serumG7: { name: 'Препарат Г-7', kind: 'medical', weight: 0.05, stack: 3, health: 0.3, cures: true, note: 'Экспериментальный. Останавливает заражение даже поздно.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },

@@ -501,7 +501,9 @@ export class WorldScene implements IScene {
     if (want && want in POI) {
       const site = nearestPoi(this.layout, want, Math.floor(c.position.x / CHUNK), Math.floor(c.position.z / CHUNK));
       if (site) {
-        const [px, pz] = siteToWorld(site, 0, CHUNK / 2 - 3);
+        // In front of its gate side (big places: in front of the whole lot).
+        const depth = ((site.r & 1 ? (site.bw ?? 1) : (site.bd ?? 1)) * CHUNK) / 2;
+        const [px, pz] = siteToWorld(site, 0, depth - 3);
         const [cx, cz] = siteToWorld(site, 0, 0);
         c.position.set(px, 0.05, pz);
         c.prevPosition.copy(c.position);
@@ -627,8 +629,9 @@ export class WorldScene implements IScene {
         if (twinRef) Object.assign(twinRef, { x: box[0], z: box[2], box });
         continue;
       }
-      const ref = { id: ZOMBIE_BODY_ID + z.id, type: 'bodyZombie' as const, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
-      this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, 'bodyZombie', ref.zone));
+      const type = z.uniform?.loot ?? 'bodyZombie';
+      const ref = { id: ZOMBIE_BODY_ID + z.id, type, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
+      this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, type, ref.zone));
     }
     // Zombies are solid to the player (and the walls still win).
     for (const z of this.zombies.list) {

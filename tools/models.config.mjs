@@ -42,6 +42,11 @@ export const MODELS = [
   { src: 'V3_military_truck', name: 'army_truck', flip: true, group: 'truck', length: 7.0, budget: 2000, tint: false },
   { src: 'V4_army_truck', name: 'army_truck_2', group: 'truck', length: 7.0, budget: 2000, tint: false },
   { src: 'V11_helicopter', name: 'helicopter', group: 'heli', length: 12.0, budget: 2500, tint: false },
+  // Aircraft (POI stage 4: the airport, the military base).
+  { src: 'A1_passenger_aircraft', name: 'airliner', flip: true, group: 'airliner', length: 34, budget: 3000, tint: false },
+  { src: 'A2_light_plane', name: 'light_plane', group: 'lightplane', length: 8.3, budget: 2000, tint: false },
+  { src: 'A3_fighter_jet', name: 'fighter_jet', group: 'fighter', length: 15.5, budget: 1200, tint: false },
+  { src: 'A4_huey', name: 'huey', group: 'heliMil', length: 17.4, budget: 2500, tint: false },
   // Props.
   { src: 'P1_sandbag_realist', name: 'sandbag', group: 'sandbag', length: 0.75, budget: 120, tint: false },
   { src: 'P2_sandbag', name: 'sandbag_2', group: 'sandbag', length: 0.75, budget: 120, tint: false },
