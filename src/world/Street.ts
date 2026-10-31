@@ -56,6 +56,12 @@ export interface StreetSpots {
   fires: number[];
   /** x, y (top), z per broken hydrant. */
   hydrants: number[];
+  /** x, y, z per sparking cable / steam leak; x, y, z, dir x, dir z per burst pipe. */
+  sparks?: number[];
+  steams?: number[];
+  jets?: number[];
+  /** x, y, z, radius per loud thing (sirens, alarms, loudspeakers): every few seconds the zombies hear it. */
+  loud?: number[];
 }
 
 const _v = new Vector3();
@@ -112,6 +118,35 @@ export class Street {
     this.cars = s.cars;
     this.fires = s.fires;
     this.hydrants = s.hydrants;
+    this.sparks = s.sparks ?? [];
+    this.steams = s.steams ?? [];
+    this.jets = s.jets ?? [];
+    this.loud = s.loud ?? [];
+  }
+
+  private sparks: number[] = [];
+  private steams: number[] = [];
+  private jets: number[] = [];
+  private loud: number[] = [];
+  private fxT = 0;
+  private loudT = 0;
+
+  /** Burning things and live cables near a point: the nearest within reach, and how far (fire hurts close up). */
+  hazard(x: number, y: number, z: number): { kind: 'fire' | 'shock'; d: number; r: number } | null {
+    let best: { kind: 'fire' | 'shock'; d: number; r: number } | null = null;
+    for (let i = 0; i + 3 < this.fires.length; i += 4) {
+      const w = this.fires[i + 3];
+      if (w <= 0 || Math.abs(this.fires[i + 1] - y) > 3) continue;
+      const d = Math.hypot(this.fires[i] - x, this.fires[i + 2] - z);
+      const r = w * 0.9 + 0.7;
+      if (d < r && (!best || d - r < best.d - best.r)) best = { kind: 'fire', d, r };
+    }
+    for (let i = 0; i + 2 < this.sparks.length; i += 3) {
+      if (Math.abs(this.sparks[i + 1] - y - 0.8) > 1.6) continue;
+      const d = Math.hypot(this.sparks[i] - x, this.sparks[i + 2] - z);
+      if (d < 1.1 && (!best || d - 1.1 < best.d - best.r)) best = { kind: 'shock', d, r: 1.1 };
+    }
+    return best;
   }
 
   /** Crows settle on a perch: two to five, spread along it. */
@@ -255,16 +290,36 @@ export class Street {
       }
     }
 
-    // Fires smoke, hydrants spout (the nearest few).
+    // Fires smoke, hydrants spout (the nearest few); burnt-out things only smoulder.
     this.smokeT -= dt;
     if (this.smokeT <= 0) {
       this.smokeT = 0.28;
       let n = 0;
-      for (let i = 0; i + 3 < this.fires.length && n < 3; i += 4) {
+      for (let i = 0; i + 3 < this.fires.length && n < 4; i += 4) {
         if (Math.hypot(this.fires[i] - px, this.fires[i + 2] - pz) > FIRE_RANGE) continue;
-        this.particles.smoke(this.fires[i], this.fires[i + 1] + this.fires[i + 3], this.fires[i + 2]);
+        if (this.fires[i + 3] > 0) this.particles.smoke(this.fires[i], this.fires[i + 1] + this.fires[i + 3], this.fires[i + 2]);
+        else if (Math.random() < 0.5) this.particles.steam(this.fires[i], this.fires[i + 1] + 0.3, this.fires[i + 2], 0.22);
         n++;
       }
+    }
+    // Cables spark, pipes steam and spout (the nearest few).
+    this.fxT -= dt;
+    if (this.fxT <= 0) {
+      this.fxT = 0.12;
+      for (let i = 0; i + 2 < this.sparks.length; i += 3) if (Math.hypot(this.sparks[i] - px, this.sparks[i + 2] - pz) < 25 && Math.random() < 0.35) this.particles.sparks(this.sparks[i], this.sparks[i + 1], this.sparks[i + 2], 3 + Math.floor(Math.random() * 6));
+      for (let i = 0; i + 2 < this.steams.length; i += 3) if (Math.hypot(this.steams[i] - px, this.steams[i + 2] - pz) < 30) this.particles.steam(this.steams[i], this.steams[i + 1], this.steams[i + 2], 0.78);
+      for (let i = 0; i + 4 < this.jets.length; i += 5) {
+        const jx = this.jets[i];
+        const jz = this.jets[i + 2];
+        if (Math.hypot(jx - px, jz - pz) > 30) continue;
+        for (let k = 0; k < 4; k++) this.particles.drop(jx, this.jets[i + 1], jz, this.groundY(jx, jz), this.jets[i + 3] * (3 + Math.random()), 0.6 + Math.random() * 0.8, this.jets[i + 4] * (3 + Math.random()), 0.045);
+      }
+    }
+    // Sirens, alarms, loudspeakers: every few seconds the zombies round about hear them again.
+    this.loudT -= dt;
+    if (this.loudT <= 0) {
+      this.loudT = 5;
+      for (let i = 0; i + 3 < this.loud.length; i += 4) if (Math.hypot(this.loud[i] - px, this.loud[i + 2] - pz) < 120) this.noise(this.loud[i], this.loud[i + 1], this.loud[i + 2], this.loud[i + 3]);
     }
     this.sprayT -= dt;
     while (this.sprayT <= 0) {

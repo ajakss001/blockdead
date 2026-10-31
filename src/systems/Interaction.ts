@@ -1,5 +1,5 @@
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
-import type { ItemId } from '../data/items';
+import { type ItemId, NOTE_VARS } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
@@ -24,7 +24,7 @@ const LOCKS: Record<string, Lock> = {
   labGreen: { key: 'keycardGreen', prompt: 'Считыватель: нужен пропуск уровня 1', keyName: 'пропуск уровня 1' },
   labBlue: { key: 'keycardBlue', prompt: 'Считыватель: нужен пропуск уровня 2', keyName: 'пропуск уровня 2' },
   labPower: { power: true, prompt: 'Электронный замок — нет питания' },
-  labIsolation: { power: true, code: ['labNote1', 'labNote2', 'labNote3', 'labNote4'], prompt: 'Изолятор: кодовый замок', digits: '3-8-1-5' },
+  labIsolation: { power: true, code: ['labNote1', 'labNote2', 'labNote3', 'labNote4'], prompt: 'Изолятор: кодовый замок' },
 };
 /** Fuses the lab's generator takes. */
 const FUSES = 3;
@@ -233,7 +233,7 @@ export class Interaction {
         return;
       }
       this.doors.unlock(door);
-      this.ctx.hud.toast(by === 'key' ? (l.key?.startsWith('keycard') ? 'Пропуск принят' : 'Ключ подошёл') : by === 'code' ? `Код набран: ${l.digits}` : 'Замок открыт', 1600);
+      this.ctx.hud.toast(by === 'key' ? (l.key?.startsWith('keycard') ? 'Пропуск принят' : 'Ключ подошёл') : by === 'code' ? `Код набран: ${lock === 'labIsolation' ? ['lab1', 'lab2', 'lab3', 'lab4'].map((k) => NOTE_VARS[k]).join('-') : l.digits}` : 'Замок открыт', 1600);
     }
     const state = this.doors.describe(door);
     if (!this.doors.toggle(door)) {

@@ -59,7 +59,9 @@ export type ContainerType =
   | 'cargoHold'
   | 'militaryLocker'
   | 'canteen'
-  | 'vehicleCabin';
+  | 'vehicleCabin'
+  // Survivors' camps: the better stash.
+  | 'campStash';
 
 interface LootTable {
   name: string;
@@ -155,6 +157,7 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   militaryLocker: { name: 'Армейский шкафчик', empty: 0.2, rolls: [1, 3], items: [['militaryJacket', 1.5], ['gorkaJacket', 1], ['gorkaPants', 1], ['combatBoots', 1.2], ['militaryHelmet', 1], ['tacticalRig', 1], ['armyBackpack', 0.8], ['ration', 1.5], ['bandage', 1.5]] },
   canteen: { name: 'Кухня столовой', empty: 0.25, rolls: [1, 3], items: [['ration', 3], ['beans', 2], ['soup', 2], ['crackers', 2], ['water', 2], ['knife', 0.5]] },
   vehicleCabin: { name: 'Кабина', empty: 0.3, rolls: [1, 2], items: [['ration', 2], ['water', 1.5], ['bandage', 1.5], ['map', 0.8], ['walkie', 0.8], ['batteries', 1], ['tacticalRig', 0.4], ['rope', 0.8]] },
+  campStash: { name: 'Запасы лагеря', empty: 0.05, rolls: [2, 4], items: [['water', 3], ['beans', 2], ['soup', 2], ['ration', 1.5], ['bandage', 2], ['antibiotics', 0.8], ['painkillers', 1.5], ['batteries', 2], ['lighter', 1], ['rope', 1], ['tape', 1], ['hikingBackpack', 0.4], ['map', 0.8]] },
   // Never rolled: the generator is started, not searched.
   generator: { name: 'Генератор', empty: 1, rolls: [0, 0], items: [] },
   militaryCrate: { name: 'Армейский ящик', empty: 0.3, rolls: [1, 3], items: [['crackers', 3], ['water', 3], ['bandage', 2], ['batteries', 2], ['militaryHelmet', 0.6], ['militaryJacket', 0.4], ['tacticalRig', 0.3], ['rope', 1], ['map', 1]] },

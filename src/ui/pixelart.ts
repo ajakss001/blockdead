@@ -402,6 +402,25 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     for (const y of [5, 8]) s.line(5, y, 11, y, 0x6a6458);
     s.line(5, 11, 8, 11, 0x6a6458);
   },
+  campNote1: (s) => {
+    s.rect(3, 2, 10, 12, 0x5a4a3a);
+    s.rect(4, 3, 8, 10, C.paper);
+    for (const y of [5, 7, 9, 11]) s.line(5, y, 11, y, 0x6a6458);
+  },
+  campNote2: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [4, 6, 8, 10, 12]) s.line(5, y, 11, y, 0x3a5a9a);
+  },
+  campNote3: (s) => {
+    s.rect(4, 3, 8, 10, 0xc8b890);
+    for (const y of [6, 9]) s.line(5, y, 10, y, 0x5a4a3a);
+  },
+  campNote4: (s) => {
+    s.rect(2, 3, 12, 10, 0xd8d0b0);
+    s.line(4, 5, 11, 10, 0x6a8a5a);
+    s.dot(6, 7, 0xb03030);
+    s.dot(10, 6, 0xb03030);
+  },
   ration: (s) => {
     s.rect(2, 4, 12, 9, 0x5a5e3e);
     s.rect(2, 4, 12, 2, 0x4a4e32);

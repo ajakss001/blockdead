@@ -5,11 +5,16 @@ import type { PoiSite } from './poi';
 import { checkpoint, hypermarket, mall, park, waterPlant } from './poiBuild2';
 import { airport, militaryBase } from './poiBig';
 import { lab } from './poiLab';
+import { char } from './charred';
+import { applyScenarios } from './poiScenes';
 import { LOT, Site } from './poiSite';
+import { pickScenarios } from './scenarios';
 
 /** Build the POI on its block. */
-export function buildPoi(b: Builder, s: PoiSite, rand: Rand): void {
+export function buildPoi(b: Builder, s: PoiSite, rand: Rand, seed = 0): void {
   const site = new Site(b, s);
+  site.picked = pickScenarios(seed, s);
+  for (const { def, state } of site.picked) site.scenes.set(def.id, state);
   if (s.kind === 'gas') gasStation(site, rand);
   else if (s.kind === 'police') policeStation(site, rand);
   else if (s.kind === 'hyper') hypermarket(site, rand);
@@ -20,6 +25,7 @@ export function buildPoi(b: Builder, s: PoiSite, rand: Rand): void {
   else if (s.kind === 'airport') airport(site, rand);
   else if (s.kind === 'base') militaryBase(site, rand);
   else checkpoint(site, rand);
+  applyScenarios(site, seed);
 }
 
 /**
@@ -33,21 +39,42 @@ function gasStation(S: Site, rand: Rand): void {
   for (let x = -16; x <= 16; x += 4) p.box(0xb0aa98, x, 0.03, 23.5, 0.12, 0.005, 2.5, 'asphalt');
   // Canopy on four columns over the pumps.
   const cz = 12;
+  const blown = S.has('pumpsBlown');
+  const down = S.has('canopyDown');
+  const k = blown || down ? 0.8 : 0;
   for (const [x, z] of [
     [-7, cz - 3.5],
     [7, cz - 3.5],
     [-7, cz + 3.5],
     [7, cz + 3.5],
-  ] as const) p.box(0xd8d4c8, x, 0, z, 0.4, 4.6, 0.4, 'metal', true);
-  p.box(0xe0dcd0, 0, 4.6, cz, 17, 0.25, 10, 'metal');
-  p.box(0xa03a2a, 0, 4.85, cz, 17.2, 0.45, 10.2, 'metal');
+  ] as const) if (!down || x < 0) p.box(char(0xd8d4c8, k), x, 0, z, 0.4, 4.6, 0.4, 'metal', true);
+  if (down) {
+    // The east half came down: one edge still on the columns, the other on the ground.
+    p.box(char(0xe0dcd0, 0.85), -4.25, 4.6, cz, 8.5, 0.25, 10, 'metal');
+    p.box(char(0xa03a2a, 0.85), -4.25, 4.85, cz, 8.6, 0.45, 10.2, 'metal');
+    p.rbox(char(0xe0dcd0, 0.9), 4.1, 2.75, cz, 9.3, 0.25, 10, 0, 0, -0.42, 'metal');
+    p.rbox(char(0xa03a2a, 0.9), 4.1, 3.05, cz, 9.3, 0.4, 10.2, 0, 0, -0.42, 'metal');
+    p.rbox(char(0xd8d4c8, 0.85), 7.6, 0.25, cz + 3.5, 4.4, 0.4, 0.4, 0.3, 0, 0.1, 'metal');
+    p.solid(7.6, cz, 1.8, 10, 1.4);
+  } else {
+    p.box(char(0xe0dcd0, k), 0, 4.6, cz, 17, 0.25, 10, 'metal');
+    p.box(char(0xa03a2a, k), 0, 4.85, cz, 17.2, 0.45, 10.2, 'metal');
+  }
   const [ax, az] = p.pt(-8.5, cz - 5);
-  const [bx, bz] = p.pt(8.5, cz + 5);
+  const [bx, bz] = p.pt(down ? 0 : 8.5, cz + 5);
   S.b.shelter(Math.min(ax, bx), Math.min(az, bz), Math.max(ax, bx), Math.max(az, bz), 4.6);
   // Pump islands, two pumps each, hoses hanging.
   for (const x of [-3.5, 3.5]) {
     p.box(0x8a8678, x, 0, cz, 1.1, 0.16, 6.5, 'concrete', true);
     for (const z of [cz - 1.8, cz + 1.8]) {
+      if (blown) {
+        // Blown off its base: on its side or its back, charred.
+        const q = p.at(x + (rand() - 0.5) * 2, z + (rand() - 0.5) * 1.5).tipped(rand() * 6, Math.PI / 2 - 0.1, 0, 0.23);
+        q.box(char(0xd8d4c8, 0.85), 0, 0, 0, 0.7, 1.7, 0.45, 'metal');
+        q.box(char(0xa03a2a, 0.85), 0, 1.34, 0, 0.72, 0.3, 0.47, 'metal');
+        p.box(0x2a2826, x, 0.16, z, 0.5, 0.12, 0.3, 'metal');
+        continue;
+      }
       p.box(0xd8d4c8, x, 0.16, z, 0.7, 1.7, 0.45, 'metal', true);
       p.box(0xa03a2a, x, 1.5, z, 0.72, 0.3, 0.47, 'metal');
       p.box(0x1a1a1a, x, 1.0, z, 0.5, 0.3, 0.47, 'glass');
@@ -74,7 +101,7 @@ function gasStation(S: Site, rand: Rand): void {
     { at: -9.5, w: 5, h: 2.6, sill: 0.6 },
     { at: -0.8, w: 3, h: 2.6, sill: 0.6 },
   ]);
-  S.paneX(-9.5, z1, 5, 0.6, 2.6);
+  if (!S.has('looted')) S.paneX(-9.5, z1, 5, 0.6, 2.6);
   S.paneX(-0.8, z1, 3, 0.6, 2.6);
   S.doorX(-4, z1, { width: 1.6, style: 'glass' });
   S.wallX(brick, x0, x1, z0, H);
@@ -84,7 +111,7 @@ function gasStation(S: Site, rand: Rand): void {
   p.box(0xa03a2a, (x0 + x1) / 2, H - 0.9, z1 + 0.12, x1 - x0, 0.7, 0.05, 'plaster');
   // Shelves, the till by the door, the cooler on the back wall.
   for (const z of [-10.5, -7.5]) {
-    F.shopShelf(p.at(-7, z), rand, 6, 'grocery', rand() < 0.5);
+    F.shopShelf(p.at(-7, z), rand, 6, 'grocery', rand() < 0.5 || S.has('looted'));
     S.retype('gasShelf');
   }
   F.shopCounter(p.at(-1, -4.6, 2), rand, 'grocery');

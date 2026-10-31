@@ -1,4 +1,8 @@
 import {
+  BoxGeometry,
+  ConeGeometry,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
   AdditiveBlending,
   type Camera,
   Color,
@@ -28,7 +32,9 @@ export { LIFE };
 /** Real lights go to lit rooms within this distance, m. */
 const ROOM_LIGHT_RANGE = 30;
 
-const GLOW_CAP = 192;
+const GLOW_CAP = 320;
+/** Fires light the ground round them from this far (the nearest few get a real light). */
+const FIRE_LIGHT_RANGE = 45;
 const CLOTH_CAP = 96;
 const PAPERS = 18;
 /** Papers live within this distance of the player, m. */
@@ -233,6 +239,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.clothUniforms.uWind.value = this.gust;
     this.updatePapers(dt, player, this.clothOn && outdoors && street);
     this.updateRoomLights(player);
+    this.updateFireLights(player);
+    this.updateSpinners();
 
     // Nearest radio: a storey apart counts as far; pan from the camera's facing.
     let best = Infinity;
@@ -259,6 +267,81 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
 
   /** Lamps on mains power (a lab whose generator runs): world x, y, z each; steady cold light, nearest first. */
   powered: number[] = [];
+
+  /** Fires burning (x, y, z, size, phase): the nearest get the real lights. */
+  private readonly fires: number[] = [];
+  private fireLightCap = 0;
+  private fireLightList: PointLight[] = [];
+
+  /** At most this many real lights for fires (made the first time a fire is near: no shader rebuild before). */
+  set fireLights(n: number) {
+    this.fireLightCap = n;
+    while (this.fireLightList.length > n) this.scene.remove(this.fireLightList.pop()!);
+  }
+
+  private updateFireLights(player: Vector3): void {
+    const near: [number, number][] = [];
+    const F = this.fires;
+    for (let i = 0; i < F.length; i += 5) {
+      const d = Math.hypot(F[i] - player.x, F[i + 1] - player.y, F[i + 2] - player.z);
+      if (d < FIRE_LIGHT_RANGE) near.push([d, i]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    while (this.fireLightList.length < Math.min(this.fireLightCap, near.length)) {
+      const l = new PointLight(0xff8a3a, 0, 16, 1.6);
+      l.castShadow = false;
+      this.scene.add(l);
+      this.fireLightList.push(l);
+    }
+    this.fireLightList.forEach((l, n) => {
+      const hit = near[n];
+      if (!hit) {
+        l.intensity = 0;
+        return;
+      }
+      const i = hit[1];
+      const w = F[i + 3];
+      l.position.set(F[i], F[i + 1], F[i + 2]);
+      l.distance = 10 + w * 5;
+      l.intensity = (10 + w * 8) * (0.75 + 0.25 * Math.sin(this.time * 13 + F[i + 4] * 9) * Math.sin(this.time * 7.3 + F[i + 4]));
+    });
+  }
+
+  /** Things still turning (a radar dish, a searchlight's beam). */
+  private readonly spinners: { x: number; y: number; z: number; w: number; tag: number; phase: number }[] = [];
+  private spinMesh: InstancedMesh | null = null;
+  private beamMesh: InstancedMesh | null = null;
+
+  private updateSpinners(): void {
+    if (!this.spinMesh) {
+      // A dish on its head (turns about Y), a searchlight beam: a long soft cone, additive.
+      this.spinMesh = new InstancedMesh(new BoxGeometry(1, 0.5, 0.12).translate(0, 0, 0.1), new MeshStandardMaterial({ color: 0x8a8e90, roughness: 0.6, metalness: 0.4 }), 16);
+      this.spinMesh.frustumCulled = false;
+      this.spinMesh.castShadow = true;
+      const cone = new ConeGeometry(1, 1, 12, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2);
+      this.beamMesh = new InstancedMesh(cone, new MeshBasicMaterial({ color: 0xfff2c8, transparent: true, opacity: 0.08, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }), 16);
+      this.beamMesh.frustumCulled = false;
+      this.scene.add(this.spinMesh, this.beamMesh);
+    }
+    let d = 0;
+    let b = 0;
+    for (const sp of this.spinners) {
+      const yaw = sp.phase + this.time * (sp.tag ? 0.6 : 0.9);
+      if (sp.tag === 0 && d < 16) {
+        _m.compose(_p.set(sp.x, sp.y, sp.z), _q.setFromAxisAngle(_y, yaw), _s.set(sp.w, sp.w, sp.w));
+        this.spinMesh.setMatrixAt(d++, _m);
+      } else if (sp.tag === 1 && b < 16) {
+        // Tilted a little down, 30 m long, widening to 3 m.
+        _q.setFromEuler(new Euler(-0.12, yaw, 0, 'YXZ'));
+        _m.compose(_p.set(sp.x, sp.y, sp.z), _q, _s.set(1.6 * sp.w, 1.6 * sp.w, 30));
+        this.beamMesh!.setMatrixAt(b++, _m);
+      }
+    }
+    this.spinMesh.count = d;
+    this.beamMesh!.count = b;
+    this.spinMesh.instanceMatrix.needsUpdate = true;
+    this.beamMesh!.instanceMatrix.needsUpdate = true;
+  }
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
   private updateRoomLights(player: Vector3): void {
@@ -313,6 +396,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.radios.length = 0;
     this.shards.length = 0;
     this.rooms.length = 0;
+    this.fires.length = 0;
+    this.spinners.length = 0;
     // Rooms whose interior is here: their facade windows step aside for the real room.
     const inside = new Set<number>();
     for (const spots of this.sets.values()) for (let i = 0; i + LIFE_STRIDE <= spots.length; i += LIFE_STRIDE) if (spots[i] === LIFE.room) inside.add(spots[i + 9]);
@@ -380,7 +465,15 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
           }
           _m.compose(_p.set(x, this.groundAt(x, z) + 0.04, z), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(7, 7, 1));
           glow(8, phase, 4, 0.5);
-          this.rooms.push(x, y + 0.8, z, 0, phase);
+          this.fires.push(x, y + 0.6 + w * 0.4, z, w, phase);
+        } else if (kind === LIFE.beacon && g + 2 < GLOW_CAP) {
+          // A warning light: two crossed sheets so it reads from every side; its colour from the tag.
+          for (const a of [0, Math.PI / 2]) {
+            _m.compose(_p.set(x, y, z), _q.setFromAxisAngle(_y, a), _s.set(w, w, 1));
+            glow(tag === 2 ? 11 : tag ? 10 : 9, seed, h || 5, 1);
+          }
+        } else if (kind === LIFE.spin) {
+          this.spinners.push({ x, y, z, w, tag, phase: seed * 6.28 });
         } else if (kind === LIFE.radio) {
           this.radios.push(x, y, z);
         } else if (kind === LIFE.shards) {
@@ -496,7 +589,9 @@ void main() {
   else if (mode < 1.5) f = slow < 0.18 ? step(0.45, fast) : 1.0;                         // tube with dropouts
   else if (mode < 2.5) f = slow < 0.4 ? step(0.35, fast) : 0.04;                         // dying, bursts of light
   else if (mode < 3.5) f = 0.5 + 0.5 * hash(floor(t * 11.0) + aGlow.y * 53.0);            // a TV: the picture jumping
-  else f = 0.8 + 0.2 * sin(t * 13.0) * sin(t * 7.3) + 0.12 * (hash(floor(t * 18.0) + aGlow.y * 7.0) - 0.5); // fire
+  else if (mode < 4.5) f = 0.8 + 0.2 * sin(t * 13.0) * sin(t * 7.3) + 0.12 * (hash(floor(t * 18.0) + aGlow.y * 7.0) - 0.5); // fire
+  else if (mode < 5.5) f = step(0.5, fract(t * 0.9));                                     // a board / alarm light blinking
+  else f = 0.12 + 1.4 * pow(max(0.0, sin(t * 3.4)), 6.0);                                 // a turning beacon sweeping past
   vI = f * aGlow.w;
   mat4 mi = modelMatrix * instanceMatrix;
   vec4 wp = mi * vec4(position, 1.0);
@@ -561,6 +656,15 @@ void main() {
     // Warm pool of lamplight (floor, ceiling).
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);
     col = uWarm;
+  } else if (vKind > 10.5) {
+    // A fluorescent tube's glow under a ceiling: cold white, long.
+    a = pow(max(0.0, 1.0 - length(c * vec2(2.0, 0.9)) * 1.6), 1.6);
+    col = vec3(0.85, 0.92, 1.0) * 1.4;
+  } else if (vKind > 8.5) {
+    // A warning light: red (9) or amber (10), a hot core in a soft halo.
+    float r = length(c) * 2.0;
+    a = pow(max(0.0, 1.0 - r), 1.5) + 0.8 * smoothstep(0.25, 0.0, r);
+    col = vKind > 9.5 ? vec3(1.0, 0.62, 0.12) * 1.6 : vec3(1.0, 0.12, 0.08) * 1.6;
   } else if (vKind > 7.5) {
     // Firelight on the ground: orange, flickering.
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.8);

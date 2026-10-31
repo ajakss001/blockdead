@@ -92,7 +92,12 @@ export type ItemId =
   | 'labJournal3'
   | 'serumG7'
   // The military base.
-  | 'ration';
+  | 'ration'
+  // Survivors' camps (POI scenarios): what they wrote down.
+  | 'campNote1'
+  | 'campNote2'
+  | 'campNote3'
+  | 'campNote4';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -232,13 +237,17 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   keycardGreen: { name: 'Пропуск «Гелиос», уровень 1', kind: 'tool', weight: 0.01, stack: 1, note: 'Зелёная карта с полоской. Открывает лабораторный зал.' },
   keycardBlue: { name: 'Пропуск «Гелиос», уровень 2', kind: 'tool', weight: 0.01, stack: 1, note: 'Синяя карта инженера. Открывает генераторную.' },
   fuse: { name: 'Предохранитель', kind: 'tool', weight: 0.1, stack: 5, note: 'Керамический, на 60 ампер. Генератору нужно три.' },
-  labNote1: { name: 'Журнал охраны', kind: 'tool', weight: 0.05, stack: 1, note: '«Код изолятора меняют по понедельникам. Первая цифра — 3, остальное знает старшая смена. Пропуск лаборантов — в шкафчике.»' },
-  labNote2: { name: 'Записка лаборанта', kind: 'tool', weight: 0.01, stack: 1, note: '«Вторая цифра — 8. Синюю карту инженера оставила в холодильнике с пробами, не ругайтесь.»' },
-  labNote3: { name: 'Служебная записка', kind: 'tool', weight: 0.01, stack: 1, note: '«Генератор отключён по приказу. Предохранители раздали по отделам. Третья цифра кода — 1.»' },
-  labNote4: { name: 'Распечатка с сервера', kind: 'tool', weight: 0.02, stack: 1, note: '«…журнал доступа: изолятор, код 3-8-1-?, последняя смена: 5. Связь потеряна в 04:12.»' },
+  labNote1: { name: 'Журнал охраны', kind: 'tool', weight: 0.05, stack: 1, note: '«Код изолятора меняют по понедельникам. Первая цифра — {lab1}, остальное знает старшая смена. Пропуск лаборантов — в шкафчике.»' },
+  labNote2: { name: 'Записка лаборанта', kind: 'tool', weight: 0.01, stack: 1, note: '«Вторая цифра — {lab2}. Синюю карту инженера оставила в холодильнике с пробами, не ругайтесь.»' },
+  labNote3: { name: 'Служебная записка', kind: 'tool', weight: 0.01, stack: 1, note: '«Генератор отключён по приказу. Предохранители раздали по отделам. Третья цифра кода — {lab3}.»' },
+  labNote4: { name: 'Распечатка с сервера', kind: 'tool', weight: 0.02, stack: 1, note: '«…журнал доступа: изолятор, код {lab1}-{lab2}-{lab3}-?, последняя смена: {lab4}. Связь потеряна в 04:12.»' },
   labJournal1: { name: 'Буклет НИИ «Гелиос»', kind: 'tool', weight: 0.05, stack: 1, note: '«НИИ „Гелиос“: изучаем северные грибковые штаммы ради медицины будущего.» На обороте кто-то написал: «будущего не будет».' },
   labJournal2: { name: 'Лабораторный журнал', kind: 'tool', weight: 0.2, stack: 1, note: 'День 12: штамм Г-7 растёт в темноте и тянется к теплу. День 19: у двоих сотрудников жар и бессонница, их перевели в изолятор. День 23: они больше не узнают нас.' },
   labJournal3: { name: 'Последняя запись', kind: 'tool', weight: 0.05, stack: 1, note: '«Изолятор полон. Генератор отключили, чтобы двери держали. Препарат Г-7 не лечит, но останавливает. Если вы это читаете — уходите на север.»' },
+  campNote1: { name: 'Дневник выживших', kind: 'tool', weight: 0.1, stack: 1, note: 'День 6. Нас девять. Воду берём из бойлера, по ночам не шумим. Вчера Миша не вернулся с вылазки. Если найдёте это — мы ушли на север, к реке.' },
+  campNote2: { name: 'Список дежурств', kind: 'tool', weight: 0.02, stack: 1, note: 'Ночь: Оля, Тимур. Утро: я и дед. Фонари только красным. Двери держать на засове. Батарейки — в синем ящике.' },
+  campNote3: { name: 'Записка у костра', kind: 'tool', weight: 0.01, stack: 1, note: '«Не стреляйте в тех, кто стучит дважды, это наши. Еду делим поровну. Сирену не трогать — на неё сходятся они».' },
+  campNote4: { name: 'Карта с пометками', kind: 'tool', weight: 0.05, stack: 1, note: 'Кружки вокруг аптеки и склада. Крест на заправке: «пусто». Стрелка на север: «эвакуация? проверить».' },
   ration: { name: 'Сухпаёк', kind: 'food', weight: 0.6, stack: 4, hunger: -0.5, thirst: 0.05, fatigue: -0.05, note: 'Армейский рацион на сутки: галеты, тушёнка, шоколад.' },
   serumG7: { name: 'Препарат Г-7', kind: 'medical', weight: 0.05, stack: 3, health: 0.3, cures: true, note: 'Экспериментальный. Останавливает заражение даже поздно.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
@@ -255,6 +264,17 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
 export const WASHING = { needs: [['water', 1], ['soap', 1]] as [ItemId, number][], removes: 1 } as const;
 
 /** Display: how dirty a piece of clothing looks, in words. */
+/**
+ * Values some notes quote ({lab1}…{lab4}: the digits of the nearest lab's isolation code, by its seed);
+ * the world fills them in as the player moves.
+ */
+export const NOTE_VARS: Record<string, string> = { lab1: '?', lab2: '?', lab3: '?', lab4: '?' };
+
+/** A note's text with its values filled in. */
+export function noteText(note: string): string {
+  return note.replace(/\{(\w+)\}/g, (m, k: string) => NOTE_VARS[k] ?? m);
+}
+
 export function dirtLabel(dirt: number): string {
   return dirt < 0.08 ? 'чистая' : dirt < 0.3 ? 'слегка грязная' : dirt < 0.6 ? 'грязная' : 'очень грязная';
 }

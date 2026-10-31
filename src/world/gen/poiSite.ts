@@ -7,6 +7,7 @@ import { CHUNK } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, type DoorOptions, pick, type Rand } from './pieces';
 import { type PoiSite, siteToWorld } from './poi';
+import type { Picked, SceneState } from './scenarios';
 
 /**
  * POI templates. Each builds its block in a frame turned to face its road: local +Z points at the road,
@@ -32,6 +33,9 @@ export class Site {
   readonly lotZ: number;
   /** Spans several chunks: long pieces are cut so each chunk gets its own. */
   readonly big: boolean;
+  /** What happened here (scenarios.ts): the templates look at it too (blown pumps, a breached fence). */
+  picked: Picked[] = [];
+  readonly scenes = new Map<string, SceneState>();
   constructor(
     readonly b: Builder,
     readonly s: PoiSite,
@@ -43,6 +47,11 @@ export class Site {
     this.big = bw > 1 || bd > 1;
     this.lotX = ((s.r & 1 ? bd : bw) * CHUNK) / 2 - 5.8;
     this.lotZ = ((s.r & 1 ? bw : bd) * CHUNK) / 2 - 5.8;
+  }
+
+  /** This place got a scenario. */
+  has(id: string): boolean {
+    return this.scenes.has(id);
   }
 
   /** In this chunk's part (big places): a local point. */

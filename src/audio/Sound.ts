@@ -23,7 +23,9 @@ import type { GameLoop } from '../core/GameLoop';
 
 export type StepSurface = 'asphalt' | 'concrete' | 'tile' | 'wood' | 'metal' | 'glass' | 'grass' | 'water';
 /** Continuous sounds of the buildings, played by the nearest few spots (see `loops`). */
-export type LoopKind = 'fridge' | 'tv' | 'flies' | 'fire' | 'hiss' | 'rainTin';
+export type LoopKind = 'fridge' | 'tv' | 'flies' | 'fire' | 'hiss' | 'rainTin' | 'siren' | 'speaker' | 'bell' | 'music' | 'sparks';
+/** Loud loops carry far (and draw the zombies, see Street). */
+export const LOUD_LOOPS: readonly LoopKind[] = ['siren', 'speaker', 'bell', 'music'];
 export type Gait = 'walk' | 'run' | 'crouch';
 export type HitMaterial = 'wood' | 'metal' | 'concrete' | 'glass' | 'soft';
 export type ContainerSound = 'woodDoor' | 'drawer' | 'locker' | 'fridge' | 'trunk' | 'bag' | 'box' | 'trash' | 'crate' | 'shelf';
@@ -44,7 +46,7 @@ const MAX_VOICES = 22;
 /** Blows get this many voices past MAX_VOICES. */
 const PRIORITY_VOICES = 6;
 /** Continuous building sounds playing at once (the nearest). */
-const LOOP_SLOTS = 3;
+const LOOP_SLOTS = 4;
 
 interface LoopSlot {
   key: number;
@@ -128,6 +130,7 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
   militaryLocker: 'locker',
   canteen: 'drawer',
   vehicleCabin: 'trunk',
+  campStash: 'crate',
   suitcase: 'bag',
   bodyMilitary: 'bag',
   bodyPolice: 'bag',
@@ -455,8 +458,10 @@ class Sound {
     panner.panningModel = 'equalpower';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
-    panner.maxDistance = 20;
-    panner.rolloffFactor = 1.6;
+    const loud = LOUD_LOOPS.includes(kind);
+    panner.maxDistance = loud ? 90 : 20;
+    panner.rolloffFactor = loud ? 0.9 : 1.6;
+    panner.refDistance = loud ? 4 : 1;
     const gain = ac.createGain();
     gain.gain.value = 0;
     gain.connect(panner).connect(this.world!);
@@ -499,6 +504,103 @@ class Sound {
       hum.connect(lp).connect(hg).connect(gain);
       sources.push(hum);
       gain.gain.setTargetAtTime(0.045, now, 0.3);
+    } else if (kind === 'siren') {
+      // An air-raid siren: one tone sweeping up and down, slow.
+      const o = ac.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = 520;
+      const sweep = ac.createOscillator();
+      sweep.frequency.value = 0.12;
+      const depth = ac.createGain();
+      depth.gain.value = 260;
+      sweep.connect(depth).connect(o.frequency);
+      const lp = ac.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1400;
+      o.connect(lp).connect(gain);
+      sources.push(o, sweep);
+      gain.gain.setTargetAtTime(0.06, now, 0.6);
+    } else if (kind === 'bell') {
+      // An alarm bell: a bright tone hammered twenty times a second.
+      const o = ac.createOscillator();
+      o.type = 'square';
+      o.frequency.value = 1180;
+      const trem = ac.createOscillator();
+      trem.type = 'square';
+      trem.frequency.value = 19;
+      const tg = ac.createGain();
+      tg.gain.value = 0.5;
+      const amp = ac.createGain();
+      amp.gain.value = 0.5;
+      trem.connect(tg).connect(amp.gain);
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 2300;
+      bp.Q.value = 2;
+      o.connect(amp).connect(bp).connect(gain);
+      sources.push(o, trem);
+      gain.gain.setTargetAtTime(0.05, now, 0.3);
+    } else if (kind === 'speaker' || kind === 'music') {
+      // Through a tinny horn: speaker — a voice-like murmur in bursts (the message, no words make out)
+      // over static; music — a short tune stuck on a loop, a skip in it.
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1300;
+      bp.Q.value = 0.9;
+      bp.connect(gain);
+      const hiss = ac.createBufferSource();
+      hiss.buffer = this.noise;
+      hiss.loop = true;
+      const hg = ac.createGain();
+      hg.gain.value = kind === 'speaker' ? 0.25 : 0.08;
+      hiss.connect(hg).connect(bp);
+      sources.push(hiss);
+      const o = ac.createOscillator();
+      o.type = kind === 'speaker' ? 'sawtooth' : 'triangle';
+      const og = ac.createGain();
+      og.gain.value = 0;
+      o.connect(og).connect(bp);
+      sources.push(o);
+      const notes = kind === 'speaker' ? [190, 210, 175, 230, 200, 0, 185, 220, 195, 0, 0, 0] : [523, 659, 784, 659, 587, 523, 587, 0, 523, 659, 784, 784];
+      const step = kind === 'speaker' ? 0.22 : 0.3;
+      const cycle = notes.length * step + (kind === 'speaker' ? 2.5 : 0.15);
+      for (let r = 0; r < 60; r++) {
+        notes.forEach((f, k) => {
+          const t = now + r * cycle + k * step;
+          if (f) {
+            o.frequency.setValueAtTime(f, t);
+            og.gain.setValueAtTime(kind === 'speaker' ? 0.45 : 0.6, t);
+            og.gain.setTargetAtTime(0.0, t + step * 0.7, 0.04);
+          }
+        });
+      }
+      gain.gain.setTargetAtTime(kind === 'speaker' ? 0.07 : 0.05, now, 0.4);
+    } else if (kind === 'sparks') {
+      // A torn cable: crackle in bursts, a buzz.
+      const src = ac.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 2500;
+      const amp = ac.createGain();
+      amp.gain.value = 0;
+      const burst = ac.createBufferSource();
+      burst.buffer = this.noise;
+      burst.loop = true;
+      burst.playbackRate.value = 0.03;
+      const bd = ac.createGain();
+      bd.gain.value = 1.4;
+      burst.connect(bd).connect(amp.gain);
+      src.connect(hp).connect(amp).connect(gain);
+      const buzz = ac.createOscillator();
+      buzz.type = 'square';
+      buzz.frequency.value = 100;
+      const bg = ac.createGain();
+      bg.gain.value = 0.05;
+      buzz.connect(bg).connect(gain);
+      sources.push(src, burst, buzz);
+      gain.gain.setTargetAtTime(0.07, now, 0.2);
     } else if (kind === 'fire' || kind === 'hiss' || kind === 'rainTin') {
       // Fire: a low roar with crackles; a hydrant: water rushing; rain drumming on a car's roof.
       const src = ac.createBufferSource();

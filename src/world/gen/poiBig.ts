@@ -5,6 +5,7 @@ import { modelLibrary, placeModel } from '../props/car';
 import * as F from './furniture';
 import type { Place, Quarter } from './furniture';
 import type { Rand } from './pieces';
+import { charTint } from './charred';
 import type { Site } from './poiSite';
 
 /*
@@ -126,14 +127,14 @@ const CRAFT: Record<'airliner' | 'lightplane' | 'fighter' | 'heliMil', Craft> = 
  * An installed aircraft model on a place (its nose along the place's local +Z, tipped if the place is),
  * collider over the fuselage, its cabin / hold zones; false if no such model (the placeholder is built).
  */
-function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, rand: Rand): boolean {
+export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, rand: Rand, charred = false): boolean {
   const c = CRAFT[kind];
   const m = pickModel(modelLibrary(), c.group, rand());
   if (!m) return false;
   const M = q.frame(new Matrix4()).multiply(new Matrix4().makeRotationY(-Math.PI / 2)).multiply(new Matrix4().makeTranslation(0, 0.01, 0));
   const at = new Vector3().setFromMatrixPosition(M);
   if (!S.b.inClip(at.x, at.z)) return true;
-  placeModel(S.b.batch, m, M, null);
+  placeModel(S.b.batch, m, M, null, charred ? charTint : undefined);
   const nose = new Vector3(1, 0, 0).transformDirection(M);
   const yaw = Math.atan2(-nose.z, nose.x);
   const [L, H] = m.size;
@@ -150,7 +151,7 @@ function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, rand: Rand): bool
  * Airliner placeholder (nose +Z of its place, 32 m, white with a stripe): fuselage, wings with engines,
  * fin and tailplane, gear. The cabin (front half) and the hold (rear, low) can be searched.
  */
-function airliner(S: Site, q: Place, stripe: number): void {
+export function airliner(S: Site, q: Place, stripe: number): void {
   q.cyl(WHITE, 0, 3.4, 0, 2.0, 26, 'busPaint', Math.PI / 2);
   q.blob(WHITE, 0, 3.2, 13.4, 1.9, 1.85, 2.8, 'busPaint');
   q.blob(WHITE, 0, 3.7, -14, 1.4, 1.3, 3.2, 'busPaint');
@@ -173,7 +174,7 @@ function airliner(S: Site, q: Place, stripe: number): void {
 }
 
 /** A light plane (high wing, 8 m) placeholder, nose +Z. */
-function lightPlane(S: Site, q: Place, color: number): void {
+export function lightPlane(S: Site, q: Place, color: number): void {
   q.box(color, 0, 0.7, 0, 1.2, 1.4, 7, 'busPaint');
   q.box(DARK, 0, 1.45, 1.6, 1.22, 0.55, 1.2, 'rubber');
   q.box(color, 0, 2.15, 1.0, 11, 0.14, 1.6, 'busPaint');
@@ -285,7 +286,7 @@ export function airport(S: Site, rand: Rand): void {
   const side = 0x8a8e8a;
   const glassHoles = [-44, -38, -32, -26, -20, -14].map((at) => ({ at, w: 4.6, h: 5.4, sill: 0.6 }));
   S.wallX(side, tx0, tx1, tz0, H, glassHoles);
-  for (const h of glassHoles) S.paneX(h.at, tz0, h.w, h.sill!, h.h);
+  for (const h of glassHoles) if (h.at !== -38 || !S.has('terminalCrash')) S.paneX(h.at, tz0, h.w, h.sill!, h.h);
   S.wallX(side, tx0, tx1, tz1, H, [{ at: -28, w: 2.4, h: 2.6 }, ...[-42, -36, -20, -14].map((at) => ({ at, w: 3.6, h: 4.5, sill: 1.0 }))]);
   for (const at of [-42, -36, -20, -14]) S.paneX(at, tz1, 3.6, 1.0, 4.5);
   S.doorX(-28, tz1, { width: 2.4, style: 'glass' });
@@ -359,7 +360,11 @@ export function militaryBase(S: Site, rand: Rand): void {
   const L = Math.min(S.lotX, S.lotZ);
   // Fence with barbed wire, a tower in every corner, the checkpoint at the gate.
   fence(S, -L, -L, L, -L, true);
-  fence(S, -L, -L, -L, L, true);
+  if (S.has('breach')) {
+    // A truck came through here (poiScenes): a gap in the west fence.
+    fence(S, -L, -L, -L, -8, true);
+    fence(S, -L, 0, -L, L, true);
+  } else fence(S, -L, -L, -L, L, true);
   fence(S, L, -L, L, L, true);
   fence(S, -L, L, -6, L, true);
   fence(S, 6, L, L, L, true);

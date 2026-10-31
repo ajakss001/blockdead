@@ -31,10 +31,16 @@ export type Surface =
   | 'decalSkid'
   | 'decalBullets'
   | 'decalShards'
-  | 'decalLitter';
+  | 'decalLitter'
+  | 'decalNoFuel'
+  | 'decalCancelled'
+  | 'decalBiohazard'
+  | 'decalSheen'
+  | 'decalFoam'
+  | 'decalEvacuate';
 
 /** Alpha-cut overlays drawn on top of other surfaces. */
-export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter';
+export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate';
 
 export interface SurfaceSpec {
   kind: GrungeKind;
@@ -89,6 +95,13 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   decalBullets: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.9, metalness: 0, tile: 1, decal: 'bullets', castShadow: false },
   decalShards: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.25, metalness: 0.2, tile: 1, decal: 'shards', castShadow: false },
   decalLitter: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'litter', castShadow: false },
+  // Scenario decals: hand-written signs, a departures board, hazard tape, fuel on the ground, foam.
+  decalNoFuel: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'noFuel', castShadow: false },
+  decalCancelled: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.4, metalness: 0, tile: 1, decal: 'cancelled', castShadow: false },
+  decalBiohazard: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.6, metalness: 0, tile: 1, decal: 'biohazard', castShadow: false },
+  decalSheen: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.15, metalness: 0.3, tile: 1, decal: 'sheen', castShadow: false },
+  decalFoam: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'foam', castShadow: false },
+  decalEvacuate: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'evacuate', castShadow: false },
 };
 
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];

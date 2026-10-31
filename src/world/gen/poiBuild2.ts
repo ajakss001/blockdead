@@ -63,7 +63,7 @@ function signText(p: Place, text: string, x: number, y: number, z: number, cell:
 }
 
 /** A shopping cart (static): wire basket on legs, red handle. Local yaw turns it. */
-function cart(p: Place, x: number, z: number, yaw: number, tipped = false): void {
+export function cart(p: Place, x: number, z: number, yaw: number, tipped = false): void {
   const q = tipped ? p.at(x, z).tipped(yaw, 0, Math.PI / 2 - 0.15, 0.3) : p.at(x, z).tipped(yaw);
   const W = 0x8a8c8e;
   q.box(W, 0, 0.42, 0, 0.55, 0.03, 0.85, 'metal');
@@ -83,7 +83,7 @@ function cart(p: Place, x: number, z: number, yaw: number, tipped = false): void
 /** A gondola: two shelves back to back along local Z, `len` long, at (x, z0…z0+len). */
 function gondola(S: Site, rand: Rand, x: number, zc: number, len: number): void {
   for (const side of [1, -1]) {
-    const messy = rand() < 0.7;
+    const messy = rand() < 0.7 || S.has('emptyShelves');
     // Facing ±X: the shelf's local +Z (front) turns to the aisle.
     F.shopShelf(S.p.at(x + side * 0.02, zc, side > 0 ? 1 : 3), rand, len, 'grocery', messy);
     S.retype('superShelf');
@@ -455,8 +455,10 @@ export function checkpoint(S: Site, rand: Rand): void {
   }
   // Barrier arm, down, striped.
   p.box(0x6a6a66, -2, 0, rz - 3.4, 0.3, 1.1, 0.3, 'metal', true);
-  for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xd8d4c8 : 0xb02a20, -2 + 0.15 + k * 0.6 + 0.3, 1.0, rz - 3.4 + 0.0, 0.6, 0.1, 0.1, 'metal');
-  p.solid(0, rz - 3.4, 3.6, 0.2, 1.1);
+  if (!S.has('breached')) {
+    for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xd8d4c8 : 0xb02a20, -2 + 0.15 + k * 0.6 + 0.3, 1.0, rz - 3.4 + 0.0, 0.6, 0.1, 0.1, 'metal');
+    p.solid(0, rz - 3.4, 3.6, 0.2, 1.1);
+  }
   // Sandbag nests by the road.
   const bags = (x: number, z: number, len: number, alongX: boolean) => {
     for (let layer = 0; layer < 3; layer++) {

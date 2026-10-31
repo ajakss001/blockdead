@@ -96,6 +96,21 @@ export class Particles {
     this.floor[i] = groundY;
   }
 
+  /** A shower of sparks off a torn cable. */
+  sparks(x: number, y: number, z: number, n = 6): void {
+    for (let k = 0; k < n; k++) {
+      const s = this.take(KIND.spark, x, y, z, 0.4 + Math.random() * 0.4, 0.02, 0, 1, 1, 0.85, 0.45);
+      this.vel.set([(Math.random() - 0.5) * 2.4, Math.random() * 1.6, (Math.random() - 0.5) * 2.4], s * 3);
+    }
+  }
+
+  /** A puff of white steam (or a thin wisp of smoke off something burnt out: `shade` grey). */
+  steam(x: number, y: number, z: number, shade = 0.75, vx = 0, vz = 0): void {
+    const i = this.take(KIND.smoke, x, y, z, 1.6 + Math.random() * 0.8, 0.2, 0, shade > 0.5 ? 0.35 : 0.22, shade, shade, shade * 1.03);
+    this.size1[i] = 0.9 + Math.random() * 0.6;
+    this.vel.set([vx + (Math.random() - 0.5) * 0.3, 0.5 + Math.random() * 0.3, vz + (Math.random() - 0.5) * 0.3], i * 3);
+  }
+
   /** A puff of smoke rising off a fire, spreading and thinning; now and then a spark. */
   smoke(x: number, y: number, z: number): void {
     const d = 0.1 + Math.random() * 0.1;

@@ -1,6 +1,7 @@
 import * as F from './furniture';
 import { spotHash } from './lifeKinds';
 import type { Rand } from './pieces';
+import type { PoiSite } from './poi';
 import { LOT, type Site } from './poiSite';
 
 /**
@@ -35,6 +36,29 @@ export const LAB_LIGHTS: [number, number][] = [
   [13, -7.5],
   [-10, -18],
   [10, -18],
+];
+
+/** The isolation cells whose glass is broken (their centres x), by the site (scenario glassBroken). */
+export function labBrokenCells(s: PoiSite): number[] {
+  const cells = [-15, -5, 5, 15];
+  const n = 1 + Math.floor(spotHash(s.i, s.j, 41) * 2);
+  const first = Math.floor(spotHash(s.j, s.i, 42) * 4);
+  return Array.from({ length: n }, (_, k) => cells[(first + k * 2) % 4]);
+}
+
+/** Once the generator runs: red emergency lights turning (local x, y, z) and the torn cables sparking. */
+export const LAB_EMERGENCY: [number, number, number][] = [
+  [0, LAB_H - 0.2, -1.5],
+  [-12, LAB_H - 0.2, -1.5],
+  [12, LAB_H - 0.2, -1.5],
+  [-15, LAB_H - 0.2, -14],
+  [0, LAB_H - 0.2, -14],
+  [15, LAB_H - 0.2, -14],
+];
+export const LAB_SPARKS: [number, number, number][] = [
+  [-4.5, 1.6, -0.5],
+  [9.5, 1.6, -5],
+  [12, 1.6, -12.5],
 ];
 
 export function lab(S: Site, rand: Rand): void {
@@ -178,10 +202,12 @@ export function lab(S: Site, rand: Rand): void {
   // Isolation ward (z −22…−12): a corridor along the door, four cells behind glass, beds; the
   // medicine cabinets at the ends — the serum and the last record in one.
   for (const x of [-10, 0, 10]) S.wallZ(inner, Z0, -16, x, H);
+  const broken = S.has('glassBroken') ? labBrokenCells(S.s) : [];
   for (const cx of [-15, -5, 5, 15]) {
     // Glass front with a doorway.
     p.box(0x8a9298, cx - 2.6, 0, -16, 4.8, 0.9, 0.12, 'metal', true);
-    p.box(0x6a7a84, cx - 2.6, 0.9, -16, 4.8, 1.4, 0.03, 'windowGlass', true);
+    if (!broken.includes(cx)) p.box(0x6a7a84, cx - 2.6, 0.9, -16, 4.8, 1.4, 0.03, 'windowGlass', true);
+    else for (const s of [-1, 1]) p.rbox(0x6a7a84, cx - 2.6 + s * 2.1, 1.15, -16, 0.5, 0.5, 0.03, 0, 0, s * 0.6, 'windowGlass');
     p.box(0x8a9298, cx - 2.6, 2.3, -16, 4.8, H - 2.3, 0.12, 'metal');
     p.box(0x8a9298, cx + 3.3, 2.1, -16, 3.4, H - 2.1, 0.12, 'metal');
     F.bed(p.at(cx - 2, -21.8, 0), rand, 1.0, rand() < 0.6);
@@ -191,4 +217,10 @@ export function lab(S: Site, rand: Rand): void {
   p.box(0xb8bcbc, X1 - 0.6, 0, -13.5, 1.0, 1.9, 2.4, 'metal', true);
   S.container('isolation', X1 - 1.4, -13.5, ['serumG7', 'labJournal3']);
   F.papers(p, rand, -18, -15, 18, -12.5, 6);
+  // Torn cables hanging from the ceiling (they spark once the power is back), the emergency lamps' housings.
+  for (const [x, y, z] of LAB_SPARKS) {
+    p.rbox(0x1a1a1a, x, (H + y) / 2, z, 0.035, H - y, 0.035, 0, 0.12, 0.08, 'rubber');
+    p.box(0x8a5a2a, x, y - 0.04, z, 0.05, 0.06, 0.05, 'metal');
+  }
+  for (const [x, y, z] of LAB_EMERGENCY) p.box(0x5a1e1a, x, y + 0.05, z, 0.22, 0.15, 0.22, 'lamp');
 }

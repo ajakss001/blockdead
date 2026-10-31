@@ -1,5 +1,5 @@
 import type { Camera, Color, Scene, Vector3 } from 'three';
-import { type LoopKind, sfx } from '../audio/Sound';
+import { LOUD_LOOPS, type LoopKind, sfx } from '../audio/Sound';
 import { Foliage, Ground } from '../render/Foliage';
 import type { Particles } from '../render/Particles';
 import { WetDecals } from '../render/WetDecals';
@@ -19,7 +19,7 @@ const TREE_SPECIES: Species[] = ['maple', 'oak', 'elm', 'spruce', 'pine', 'dead'
 const DRIP_RANGE = 14;
 const TAP_RANGE = 9;
 const PHONE_RANGE = 26;
-const LOOP_RANGE: Record<LoopKind, number> = { fridge: 7, tv: 12, flies: 9, fire: 16, hiss: 14, rainTin: 6 };
+const LOOP_RANGE: Record<LoopKind, number> = { fridge: 7, tv: 12, flies: 9, fire: 16, hiss: 14, rainTin: 6, siren: 90, speaker: 60, bell: 55, music: 35, sparks: 10 };
 /** Falling leaves: trees within this distance shed them, at most this many a second in all. */
 const LEAF_RANGE = 18;
 const LEAF_RATE = 4;
@@ -177,6 +177,11 @@ export class Atmosphere {
     if (at !== null) this.wet.addRipple(x, at, z, 0.9);
   }
 
+  /** Fire or a live cable close to (x, y, z), if any. */
+  hazard(x: number, y: number, z: number): ReturnType<Street['hazard']> {
+    return this.street.hazard(x, y, z);
+  }
+
   /** A blow landed on the world at (x, y, z) (a car's alarm may go off). */
   strikeAt(x: number, y: number, z: number): void {
     this.street.strikeAt(x, y, z);
@@ -256,7 +261,9 @@ export class Atmosphere {
     this.near.length = 0;
     for (const s of this.loopSpots) {
       const d = Math.hypot(s.x - px, s.z - pz);
-      if (d < LOOP_RANGE[s.kind] && Math.abs(s.y - py - 1) < 2.2) this.near.push({ ...s, d });
+      // Loud ones carry over storeys and roofs; a quiet one only on this storey. Loud ones count nearer.
+      const loud = LOUD_LOOPS.includes(s.kind);
+      if (d < LOOP_RANGE[s.kind] && (loud || Math.abs(s.y - py - 1) < 2.2)) this.near.push({ ...s, d: loud ? d * 0.4 : d });
     }
     if (f.rain > 0.2 && !indoors) {
       for (let i = 0; i + 3 < this.cars.length; i += 4) {
@@ -398,6 +405,10 @@ export class Atmosphere {
     const perches: number[] = [];
     const fires: number[] = [];
     const hydrants: number[] = [];
+    const sparks: number[] = [];
+    const steams: number[] = [];
+    const jets: number[] = [];
+    const loud: number[] = [];
     const pools: number[] = [];
     const lamps: number[] = [];
     const plants: Plant[] = [];
@@ -443,6 +454,37 @@ export class Atmosphere {
             fires.push(x, y, z, spots[i + 6]);
             loop('fire', x, y, z);
             break;
+          case LIFE.smoke:
+            fires.push(x, y, z, 0);
+            break;
+          case LIFE.siren:
+            loop('siren', x, y, z);
+            loud.push(x, y, z, 70);
+            break;
+          case LIFE.speaker:
+            loop('speaker', x, y, z);
+            loud.push(x, y, z, 50);
+            break;
+          case LIFE.bell:
+            loop('bell', x, y, z);
+            loud.push(x, y, z, 45);
+            break;
+          case LIFE.music:
+            loop('music', x, y, z);
+            loud.push(x, y, z, 30);
+            break;
+          case LIFE.sparks:
+            sparks.push(x, y, z);
+            loop('sparks', x, y, z);
+            break;
+          case LIFE.steam:
+            steams.push(x, y, z);
+            loop('hiss', x, y, z);
+            break;
+          case LIFE.jet:
+            jets.push(x, y, z, spots[i + 4], spots[i + 5]);
+            loop('hiss', x, y, z);
+            break;
           case LIFE.hydrant: {
             hydrants.push(x, y, z);
             const gy = this.groundY(x, z);
@@ -482,7 +524,7 @@ export class Atmosphere {
     this.pools = pools;
     this.foliage.setSources({ trees, cars, ivy });
     this.vegetation.setPlants(plants);
-    this.street.setSpots({ perches, cars, fires, hydrants });
+    this.street.setSpots({ perches, cars, fires, hydrants, sparks, steams, jets, loud });
     this.wet.setLeaks(leaks, this.rainPools.length ? pools.concat(this.rainPools) : pools);
   }
 

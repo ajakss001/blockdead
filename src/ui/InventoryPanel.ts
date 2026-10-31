@@ -1,4 +1,4 @@
-import { dirtLabel, type ItemDef, type ItemId, ITEMS, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
+import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
@@ -582,7 +582,7 @@ function placeKey(p: Place): string {
 
 function describe(def: ItemDef): string {
   const parts: string[] = [`${def.weight.toFixed(2).replace(/0$/, '')} кг`];
-  if (def.note) parts.push(def.note);
+  if (def.note) parts.push(noteText(def.note));
   if (def.hunger) parts.push(`голод ${def.hunger < 0 ? '−' : '+'}${Math.round(Math.abs(def.hunger) * 100)}`);
   if (def.thirst) parts.push(`жажда ${def.thirst < 0 ? '−' : '+'}${Math.round(Math.abs(def.thirst) * 100)}`);
   if (def.fatigue) parts.push(`усталость −${Math.round(Math.abs(def.fatigue) * 100)}`);

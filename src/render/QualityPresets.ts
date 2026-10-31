@@ -28,6 +28,8 @@ export interface QualityPreset {
   lifeCloth: boolean;
   /** Real point lights for lit rooms nearby (0: the warm glow alone fakes them). */
   roomLights: number;
+  /** Real lights for the nearest fires (the rest only glow). */
+  fireLights: number;
   /**
    * Grass, weeds, ivy and fallen leaves (one draw call): drawn within `radius` m of the player, one roll per
    * `cell` m, at most `cap` quads. Beyond — the ground's own tone.
@@ -62,6 +64,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     interiors: 1,
     lifeCloth: false,
     roomLights: 0,
+    fireLights: 2,
   },
   medium: {
     level: 'medium',
@@ -82,6 +85,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     interiors: 1,
     lifeCloth: true,
     roomLights: 1,
+    fireLights: 3,
   },
   high: {
     level: 'high',
@@ -102,5 +106,6 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
     interiors: 2,
     lifeCloth: true,
     roomLights: 2,
+    fireLights: 4,
   },
 };

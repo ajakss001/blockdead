@@ -64,9 +64,13 @@ import { rollLoot } from '../data/loot';
 import { ATMO } from '../world/atmoConfig';
 import { Weather } from '../world/Weather';
 import { Pois } from '../world/Pois';
+import { FarSmoke } from '../render/FarSmoke';
 import { Landmarks } from '../render/Landmarks';
 import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
-import { LAB_H, LAB_LIGHTS } from '../world/gen/poiLab';
+import { LAB_EMERGENCY, LAB_H, LAB_LIGHTS, LAB_SPARKS } from '../world/gen/poiLab';
+import { LIFE } from '../world/gen/lifeKinds';
+import { labCode } from '../world/gen/scenarios';
+import { NOTE_VARS } from '../data/items';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
@@ -158,6 +162,8 @@ function bodyBox(rd: Ragdoll): SearchBox {
 }
 const _sunDir = new Vector3();
 const _sunColor = new Color();
+/** The world-life key of the powered labs' emergency lights and sparks (no chunk has it). */
+const LAB_FX_KEY = 2 ** 40;
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
 /** How each weapon's blow on a body sounds. */
@@ -226,6 +232,8 @@ export class WorldScene implements IScene {
   /** Unique places: their zombies when you come near (none with ?zombies=0). */
   private pois: Pois | null = null;
   private landmarks!: Landmarks;
+  private farSmoke!: FarSmoke;
+  private noteT = 0;
   private readonly shelters = new Shelters();
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
@@ -410,6 +418,7 @@ export class WorldScene implements IScene {
     // The trees' far-away impostors are baked once, now.
     this.atmo.vegetation.bake(ctx.renderer.gl);
     this.landmarks = new Landmarks(this.scene, layout);
+    this.farSmoke = new FarSmoke(this.scene, layout);
     this.weather = new Weather(this.scene, document.getElementById('ui')!, (delay, power) => this.life.thunder(delay, power));
     this.interiors.onAmbient = (owner, spots) => {
       if (spots) {
@@ -648,6 +657,7 @@ export class WorldScene implements IScene {
     }
     this.twinsNear(c.position);
     if (c.fallDamage > 0) this.hurt(c.fallDamage * 100, 'Разбились при падении', true);
+    this.hazards(dt, c.position);
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
     // Footsteps on whatever is underfoot; jump and landing.
@@ -738,6 +748,14 @@ export class WorldScene implements IScene {
     if (!paused) this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, frameDt * 1.5);
     (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
     this.landmarks.update(frameDt, this.camera.position, this.scene.fog as Fog);
+    this.noteT -= frameDt;
+    if (this.noteT <= 0) {
+      // The lab notes quote the code of the lab nearby.
+      this.noteT = 2;
+      const site = nearestPoi(this.layout, 'lab', Math.floor(this.camera.position.x / CHUNK), Math.floor(this.camera.position.z / CHUNK), 12);
+      if (site) labCode(this.layout.seed, site).split('-').forEach((d, k) => (NOTE_VARS[`lab${k + 1}`] = d));
+    }
+    this.farSmoke.update(frameDt, this.camera.position, this.scene.fog as Fog, this.clock.daylight, this.life.windDirection, this.life.windGust);
     const ws = 0.0005 + this.life.windGust * 0.001;
     this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
@@ -921,6 +939,23 @@ export class WorldScene implements IScene {
     this.hurt(hp, 'Вас загрызли', true, from);
   }
 
+  /** Fire burns whoever comes too close; a torn cable shocks (sparks fly). Damage comes in pulses. */
+  private hazards(dt: number, at: Vector3): void {
+    const h = this.dead ? null : this.atmo.hazard(at.x, at.y, at.z);
+    if (!h) {
+      this.hazardHp = 0;
+      return;
+    }
+    this.hazardHp += dt * (h.kind === 'fire' ? 6 + 22 * (1 - h.d / h.r) : 30);
+    if (h.kind === 'shock' && Math.random() < dt * 8) this.particles.sparks(at.x, at.y + 0.9, at.z, 5);
+    if (this.hazardHp >= 4) {
+      this.hurt(this.hazardHp, h.kind === 'fire' ? 'Сгорели' : 'Убило током', true);
+      this.hazardHp = 0;
+    }
+  }
+
+  private hazardHp = 0;
+
   /** The player takes `hp` of 100 (a bite, a fall); clothes soften bites. */
   private hurt(hp: number, cause: string, ignoreArmor = false, from?: Vector3): void {
     if (this.dead) return;
@@ -1044,6 +1079,24 @@ export class WorldScene implements IScene {
       }
     }
     this.life.powered = lamps;
+    // The emergency lights and the sparking cables of the powered labs (world-life spots of their own).
+    const spots: number[] = [];
+    for (const key of this.powered) {
+      const [i, j] = key.split(',').map(Number);
+      const site = this.layout.poi(i, j);
+      if (!site || site.kind !== 'lab') continue;
+      for (const [lx, y, lz] of LAB_EMERGENCY) {
+        const [x, z] = siteToWorld(site, lx, lz);
+        spots.push(LIFE.beacon, x, y, z, 0, 1, 0.7, 6, (x * 0.13 + z * 0.07) % 1, 0);
+      }
+      for (const [lx, y, lz] of LAB_SPARKS) {
+        const [x, z] = siteToWorld(site, lx, lz);
+        spots.push(LIFE.sparks, x, y, z, 0, 1, 1, 0, 0, 0);
+      }
+    }
+    const fx = new Float32Array(spots);
+    this.life.add(LAB_FX_KEY, fx);
+    this.atmo.add(LAB_FX_KEY, fx);
     if (this.labPanels) {
       this.labPanels.geometry.dispose();
       this.labPanels.removeFromParent();
@@ -1160,6 +1213,7 @@ export class WorldScene implements IScene {
     this.atmo.dispose();
     this.weather.dispose();
     this.landmarks.dispose();
+    this.farSmoke.dispose();
     for (const off of this.unsubs) off();
     this.ctx.debug.delete('player');
     this.ctx.debug.delete('world');
@@ -1174,6 +1228,7 @@ export class WorldScene implements IScene {
     this.interiors.maxLoaded = preset.interiors;
     this.life.clothEnabled = preset.lifeCloth;
     this.life.roomLights = preset.roomLights;
+    this.life.fireLights = preset.fireLights;
     this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
     this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
     (this.scene.fog as Fog).far = preset.fogFar;

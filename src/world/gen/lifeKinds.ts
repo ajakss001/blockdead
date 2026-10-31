@@ -37,6 +37,27 @@ export const LIFE = {
   bush: 18,
   /** A 3 m stretch of hedge along (nx, nz): w its length scale, h its height scale. */
   hedge: 19,
+  // POI scenarios (what happened here): see world/gen/poiScenes.
+  /** Something burnt out, still smouldering: thin smoke, no flame. */
+  smoke: 20,
+  /** A warning light: w its size, h its mode (5 blinking, 6 turning), tag its colour (0 red, 1 amber). */
+  beacon: 21,
+  /** A siren wailing (loud: zombies come). */
+  siren: 22,
+  /** A loudspeaker repeating the evacuation message through the static (loud). */
+  speaker: 23,
+  /** An alarm bell ringing (loud). */
+  bell: 24,
+  /** Music stuck on a loop from the speakers (a mall). */
+  music: 25,
+  /** A torn cable sparking: it burns if you touch it. */
+  sparks: 26,
+  /** Steam hissing out of a pipe. */
+  steam: 27,
+  /** Water jetting from a burst pipe along (nx, nz). */
+  jet: 28,
+  /** Something still turning: tag 0 a radar dish, 1 a searchlight beam; w its size. */
+  spin: 29,
 } as const;
 
 /**

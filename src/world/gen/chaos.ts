@@ -102,7 +102,7 @@ function armyTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): P
 }
 
 /** Sandbag wall along local X. */
-function sandbags(p: Place, lx: number, lz: number, len: number, rand: Rand): void {
+export function sandbags(p: Place, lx: number, lz: number, len: number, rand: Rand): void {
   const lib = modelLibrary();
   if (pickModel(lib, 'sandbag', 0)) {
     // Real bags, two staggered layers.
@@ -123,7 +123,7 @@ function sandbags(p: Place, lx: number, lz: number, len: number, rand: Rand): vo
 }
 
 /** Concrete road barrier along local X. */
-function jersey(p: Place, lx: number, lz: number, len: number): void {
+export function jersey(p: Place, lx: number, lz: number, len: number): void {
   if (pickModel(modelLibrary(), 'jersey', 0)) {
     const n = Math.max(1, Math.round(len / 2));
     for (let i = 0; i < n; i++) {
@@ -138,7 +138,7 @@ function jersey(p: Place, lx: number, lz: number, len: number): void {
 }
 
 /** Striped police / road barrier on two feet. */
-function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = false): void {
+export function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = false): void {
   if (!down && pickModel(modelLibrary(), 'barrier', 0)) {
     const [x, z] = p.pt(lx, lz);
     model(p.b, 'barrier', x, z, yawOf(p), () => (len > 2.6 ? 0.6 : 0.1), { collide: false });
@@ -156,7 +156,7 @@ function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = fa
 }
 
 /** Field tent: walls, a ridge roof from two slanted sheets, the flap open. */
-function tent(b: Builder, x: number, z: number, yaw: number, rand: Rand, color = pick(rand, [0x4e5240, 0x5a5a48, 0x6a6a5a])): Place {
+export function tent(b: Builder, x: number, z: number, yaw: number, rand: Rand, color = pick(rand, [0x4e5240, 0x5a5a48, 0x6a6a5a])): Place {
   if (model(b, color === 0xb0aca0 ? 'tent_medical' : 'tent', x, z, yaw, rand)) return new Place(b, x, 0, z, 0).tipped(yaw);
   const p = vehicle(b, x, z, yaw, 2.5, 2.0);
   const t = p.tipped(0, 0, 0);
@@ -397,7 +397,7 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, bodies: BodyMo
   for (let k = 0; k < n; k++) body(b, x + (rand() - 0.5) * 10, z + (rand() - 0.5) * 10, rand() * 6, rand, rand() < 0.3 ? 'medic' : rand() < 0.3 ? 'fire' : 'civilian', bodies);
 }
 
-function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
+export function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
   const p = vehicle(b, x, z, yaw, 4.2, 1.25);
   const red = pick(rand, [0x7a2a22, 0x6a2620]);
   p.box(0x1e1e1e, 0, 0.35, 0, 8.2, 0.25, 2.1, 'metal');
@@ -427,7 +427,7 @@ function stretcher(p: Place, lx: number, lz: number, rand: Rand): void {
 
 // ── Bodies ──────────────────────────────────────────────────────────────────────
 
-type Dress = 'military' | 'police' | 'swat' | 'medic' | 'fire' | 'civilian';
+export type Dress = 'military' | 'police' | 'swat' | 'medic' | 'fire' | 'civilian';
 const DRESS: Record<Dress, { top: number; pants: number; head?: number }> = {
   military: { top: 0x4a5236, pants: 0x4a5236, head: 0x3e4630 },
   police: { top: 0x2a3448, pants: 0x1e2430, head: 0x1e2430 },

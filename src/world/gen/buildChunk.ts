@@ -92,9 +92,9 @@ export function buildChunk(layout: WorldLayout, i: number, j: number, bodies: Bo
   if (poi && ((poi.bw ?? 1) > 1 || (poi.bd ?? 1) > 1)) {
     // A big place: every chunk of it runs the whole plan with the same random numbers, keeping its part.
     b.clip = [i * CHUNK, j * CHUNK, (i + 1) * CHUNK, (j + 1) * CHUNK];
-    buildPoi(b, poi, mulberry32(hash3(layout.seed, poi.i * 7919 + 13, poi.j * 104729 + 7)));
+    buildPoi(b, poi, mulberry32(hash3(layout.seed, poi.i * 7919 + 13, poi.j * 104729 + 7)), layout.seed);
     b.clip = null;
-  } else if (poi) buildPoi(b, poi, rand);
+  } else if (poi) buildPoi(b, poi, rand, layout.seed);
   else if (zone === 'downtown') buildings = downtownBlock(b, i, j, X0, Z0, X1, Z1, rand);
   else if (zone === 'suburb') suburb(b, X0, Z0, X1, Z1, rand);
   else if (zone === 'town') town(b, X0, Z0, X1, Z1, rand);
