@@ -43,7 +43,16 @@ export type ContainerType =
   | 'warehouse'
   | 'plantStore'
   | 'militaryCrate'
-  | 'bodyZombie';
+  | 'bodyZombie'
+  // The laboratory.
+  | 'labLocker'
+  | 'labBench'
+  | 'labFridge'
+  | 'labDesk'
+  | 'serverRack'
+  | 'labTools'
+  | 'isolation'
+  | 'generator';
 
 interface LootTable {
   name: string;
@@ -126,6 +135,15 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   clothesRack: { name: 'Вешалка с одеждой', empty: 0.3, rolls: [1, 3], items: [['tshirt', 3], ['hoodie', 3], ['jeans', 3], ['cargoPants', 2], ['leatherJacket', 1], ['sneakers', 2], ['boots', 1], ['beanie', 1.5], ['cap', 1.5], ['schoolBackpack', 1.5], ['sportsBag', 1], ['hikingBackpack', 0.6]] },
   warehouse: { name: 'Паллета', empty: 0.25, rolls: [2, 4], items: [['beans', 3], ['soup', 3], ['water', 4], ['crackers', 2], ['juice', 2], ['tape', 1], ['rope', 1], ['planks', 1], ['batteries', 1]] },
   plantStore: { name: 'Шкаф с инструментом', empty: 0.25, rolls: [1, 3], items: [['water', 4], ['hammer', 1], ['crowbar', 1], ['tape', 2], ['rope', 2], ['workGloves', 1.5], ['hardhat', 1], ['workJacket', 0.8], ['boots', 0.6], ['nails', 1]] },
+  labLocker: { name: 'Шкафчик персонала', empty: 0.3, rolls: [1, 2], items: [['scrubsTop', 2], ['scrubsPants', 2], ['medGloves', 2], ['batteries', 1.5], ['chocolate', 1.5], ['painkillers', 1]] },
+  labBench: { name: 'Лабораторный стол', empty: 0.25, rolls: [1, 2], items: [['medGloves', 2], ['bandage', 2], ['painkillers', 1.5], ['antibiotics', 0.8], ['tape', 1], ['lighter', 1]] },
+  labFridge: { name: 'Холодильник с пробами', empty: 0.35, rolls: [1, 2], items: [['antibiotics', 1], ['painkillers', 1], ['water', 1.5], ['juice', 1]] },
+  labDesk: { name: 'Стол', empty: 0.3, rolls: [1, 2], items: [['batteries', 2], ['painkillers', 1], ['chocolate', 1.5], ['map', 0.5], ['junk', 2]] },
+  serverRack: { name: 'Серверная стойка', empty: 0.5, rolls: [1, 1], items: [['batteries', 2], ['tape', 1.5], ['junk', 2]] },
+  labTools: { name: 'Шкаф инженера', empty: 0.2, rolls: [1, 3], items: [['tape', 2], ['batteries', 2], ['workGloves', 1.5], ['hammer', 0.8], ['crowbar', 0.6], ['rope', 1]] },
+  isolation: { name: 'Медицинский шкаф изолятора', empty: 0.1, rolls: [2, 3], items: [['antibiotics', 2], ['painkillers', 2], ['bandage', 2], ['medGloves', 1], ['medBag', 0.6], ['serumG7', 0.5]] },
+  // Never rolled: the generator is started, not searched.
+  generator: { name: 'Генератор', empty: 1, rolls: [0, 0], items: [] },
   militaryCrate: { name: 'Армейский ящик', empty: 0.3, rolls: [1, 3], items: [['crackers', 3], ['water', 3], ['bandage', 2], ['batteries', 2], ['militaryHelmet', 0.6], ['militaryJacket', 0.4], ['tacticalRig', 0.3], ['rope', 1], ['map', 1]] },
   bodyZombie: { name: 'Тело', empty: 0.5, rolls: [1, 2], items: [['junk', 4], ['batteries', 1.2], ['lighter', 1], ['chocolate', 1], ['bandage', 0.8], ['painkillers', 0.6], ['cap', 0.6], ['beanie', 0.6], ['tshirt', 0.5], ['hoodie', 0.4], ['knife', 0.15], ['map', 0.3]] },
   reception: { name: 'Стойка охраны', empty: 0.2, rolls: [1, 3], items: [['batteries', 4], ['bat', 1], ['bandage', 2], ['painkillers', 2], ['soda', 2], ['crowbar', 0.6], ['axe', 0.5], ['hardhat', 0.5], ['cap', 1]] },

@@ -31,6 +31,8 @@ export interface SaveV1 {
   /** Boards the player nailed across doors: hinge key, count, side. */
   /** Locked doors opened (hinge keys). */
   unlocked?: string[];
+  /** Labs whose generator the player started (block "i,j"). */
+  powered?: string[];
   boards?: [string, number, number][];
 }
 

@@ -353,6 +353,60 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     for (const y of [5, 8, 11]) s.line(5, y, 11, y, 0x6a6458);
     s.rect(4, 3, 3, 2, 0xd0b040);
   },
+  keycardGreen: (s) => {
+    s.rect(2, 4, 12, 8, 0x3a8a4a);
+    s.rect(2, 6, 12, 2, C.black);
+    s.rect(4, 9, 4, 2, C.white);
+  },
+  keycardBlue: (s) => {
+    s.rect(2, 4, 12, 8, 0x3a5aa0);
+    s.rect(2, 6, 12, 2, C.black);
+    s.rect(4, 9, 4, 2, C.white);
+  },
+  fuse: (s) => {
+    s.rect(6, 3, 4, 10, 0xd8d0c0);
+    s.rect(5, 2, 6, 2, C.steel);
+    s.rect(5, 12, 6, 2, C.steel);
+    s.line(8, 5, 8, 10, 0xb08a30);
+  },
+  labNote1: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [5, 8, 11]) s.line(5, y, 11, y, 0x6a6458);
+    s.rect(10, 3, 2, 2, 0x3a8a4a);
+  },
+  labNote2: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [5, 8, 11]) s.line(5, y, 11, y, 0x6a6458);
+    s.rect(10, 3, 2, 2, 0x3a6ab0);
+  },
+  labNote3: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [5, 8, 11]) s.line(5, y, 11, y, 0x6a6458);
+    s.rect(10, 3, 2, 2, 0xb08a30);
+  },
+  labNote4: (s) => {
+    s.rect(3, 2, 10, 12, C.white);
+    for (let y = 4; y < 13; y += 2) s.line(4, y, 11, y, 0x3a3a3a);
+  },
+  labJournal1: (s) => {
+    s.rect(3, 2, 10, 12, 0x1e4a4e);
+    s.rect(5, 5, 6, 2, C.white);
+  },
+  labJournal2: (s) => {
+    s.rect(3, 2, 10, 12, 0x2a2c30);
+    s.rect(3, 2, 2, 12, 0x5a5048);
+    s.rect(6, 5, 5, 1, C.paper);
+  },
+  labJournal3: (s) => {
+    s.rect(3, 2, 10, 12, C.paper);
+    for (const y of [5, 8]) s.line(5, y, 11, y, 0x6a6458);
+    s.line(5, 11, 8, 11, 0x6a6458);
+  },
+  serumG7: (s) => {
+    s.rect(6, 2, 4, 2, C.steelDark);
+    s.rect(5, 4, 6, 10, 0xc8d8dc);
+    s.rect(6, 7, 4, 6, 0x6ab0a0);
+  },
   junk: (s) => {
     s.line(2, 12, 9, 5, C.rust, 2);
     s.line(9, 5, 13, 7, C.rust, 2);

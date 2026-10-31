@@ -333,6 +333,25 @@ export class Doors {
     if (d) this.unlocked.add(doorKey(d.spot));
   }
 
+  /**
+   * The power came back: every loaded door with this lock inside a rectangle lets go and swings open
+   * (for good: remembered as unlocked).
+   */
+  releaseLock(lock: string, x0: number, z0: number, x1: number, z1: number): number {
+    let n = 0;
+    for (const [building, doors] of this.sets) {
+      doors.forEach((d, index) => {
+        if (d.spot.lock !== lock || d.spot.hx < x0 || d.spot.hx > x1 || d.spot.hz < z0 || d.spot.hz > z1) return;
+        const ref = { building, index };
+        if (!this.lockOf(ref)) return;
+        this.unlock(ref);
+        if (!d.open) this.toggle(ref);
+        n++;
+      });
+    }
+    return n;
+  }
+
   serializeUnlocked(): string[] {
     return [...this.unlocked];
   }

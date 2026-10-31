@@ -1,5 +1,6 @@
 import {
   AmbientLight,
+  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -9,6 +10,7 @@ import {
   LineBasicMaterial,
   LineSegments,
   Mesh,
+  MeshBasicMaterial,
   PerspectiveCamera,
   Quaternion,
   Scene,
@@ -64,6 +66,8 @@ import { Weather } from '../world/Weather';
 import { Pois } from '../world/Pois';
 import { Landmarks } from '../render/Landmarks';
 import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
+import { LAB_H, LAB_LIGHTS } from '../world/gen/poiLab';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
@@ -94,6 +98,11 @@ const _dayColor = new Color();
 const _indoorHaze = new Color(0x0b0b0c);
 /** Loose-container ids of zombie bodies (above every chunk and interior id). */
 const ZOMBIE_BODY_ID = 3e14;
+
+/** The block a point is on ("i,j"). */
+function blockKey(x: number, z: number): string {
+  return `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
+}
 
 /** Edges of turned boxes (centre, half sizes, yaw) as line segments; one unit box when scaled by the outline. */
 function boxEdges(boxes: SearchBox[]): BufferGeometry {
@@ -236,6 +245,9 @@ export class WorldScene implements IScene {
   private readonly ragdolls = new Ragdolls();
   private readonly corpses = new CorpseBatch(16);
   private readonly corpseRd = new Map<Zombie, Ragdoll>();
+  /** Labs whose generator runs (block "i,j"; saved) and the glowing ceiling panels of those rooms. */
+  private readonly powered = new Set<string>();
+  private labPanels: Mesh | null = null;
   /** A faint outline round the container under the crosshair; ?interactdebug=1 draws every search zone. */
   private readonly searchOutline = new LineSegments(boxEdges([[0, 0, 0, 0.5, 0.5, 0.5, 0]]), new LineBasicMaterial({ color: 0xe8dcb0, transparent: true, opacity: 0.32 }));
   private zoneDebug: LineSegments | null = null;
@@ -363,6 +375,11 @@ export class WorldScene implements IScene {
         return hit >= 0 && hit < t - 0.1;
       },
     };
+    // The lab's generator: power where a point is, and starting it.
+    this.interaction.power = {
+      on: (x, z) => this.powered.has(blockKey(x, z)),
+      start: (x, z) => this.powerLab(x, z),
+    };
     this.searchOutline.visible = false;
     this.searchOutline.frustumCulled = false;
     this.scene.add(this.searchOutline);
@@ -456,6 +473,8 @@ export class WorldScene implements IScene {
       this.twins = save.twins ?? [];
       this.doors.restoreBoards(save.boards);
       this.doors.restoreUnlocked(save.unlocked);
+      for (const k of save.powered ?? []) this.powered.add(k);
+      this.labLights();
       this.bodies = save.bodies ?? [];
       this.containers.restore(save.containers);
       for (const b of this.bodies) this.containers.addLoose(b, []);
@@ -805,6 +824,7 @@ export class WorldScene implements IScene {
       bornAt: this.bornAt,
       boards: this.doors.serializeBoards(),
       unlocked: this.doors.serializeUnlocked(),
+      powered: [...this.powered],
     });
   }
 
@@ -990,6 +1010,48 @@ export class WorldScene implements IScene {
     const crowns: number[] = [];
     this.atmo.vegetation.crownsNear(feet.x, feet.z, 30, (x, y, z, r) => crowns.push(x, y, z, r + 0.3));
     return deathSurroundings(this.world, feet.y, ceiling, crowns);
+  }
+
+  /** The generator started: the lab's electronic locks let go, its lamps come on; remembered. */
+  private powerLab(x: number, z: number): void {
+    const key = blockKey(x, z);
+    if (this.powered.has(key)) return;
+    this.powered.add(key);
+    const i = Math.floor(x / CHUNK);
+    const j = Math.floor(z / CHUNK);
+    this.doors.releaseLock('labPower', i * CHUNK, j * CHUNK, (i + 1) * CHUNK, (j + 1) * CHUNK);
+    this.labLights();
+    this.save();
+  }
+
+  /** Lamps of every powered lab: real lights for the nearest (WorldLife's pool), a glowing panel each. */
+  private labLights(): void {
+    const lamps: number[] = [];
+    const panels: BufferGeometry[] = [];
+    for (const key of this.powered) {
+      const [i, j] = key.split(',').map(Number);
+      const site = this.layout.poi(i, j);
+      if (!site || site.kind !== 'lab') continue;
+      for (const [lx, lz] of LAB_LIGHTS) {
+        const [x, z] = siteToWorld(site, lx, lz);
+        lamps.push(x, LAB_H - 0.35, z);
+        const g = new BoxGeometry(site.r & 1 ? 0.35 : 1.2, 0.04, site.r & 1 ? 1.2 : 0.35);
+        g.translate(x, LAB_H - 0.08, z);
+        panels.push(g);
+      }
+    }
+    this.life.powered = lamps;
+    if (this.labPanels) {
+      this.labPanels.geometry.dispose();
+      this.labPanels.removeFromParent();
+      this.labPanels = null;
+    }
+    if (panels.length) {
+      this.labPanels = new Mesh(mergeGeometries(panels)!, new MeshBasicMaterial({ color: 0xe6eef4 }));
+      for (const g of panels) g.dispose();
+      this.labPanels.name = 'labPanels';
+      this.scene.add(this.labPanels);
+    }
   }
 
   private drawSearchZones(dt: number): void {

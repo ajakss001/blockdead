@@ -5,10 +5,29 @@ import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
 import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
 
-/** Locks on POI doors: the key that opens it, the note with its code (both found nearby). */
-const LOCKS: Record<string, { key: ItemId; code: ItemId; name: string; digits: string }> = {
-  armory: { key: 'armoryKey', code: 'armoryNote', name: 'от оружейной', digits: '4-7-1-9' },
+/**
+ * Locks on POI doors. A key (or an access card) opens it; or a code — every note that holds a part of
+ * it; an electronic one only while its building has power (the lab's generator), and then maybe a code too.
+ */
+interface Lock {
+  key?: ItemId;
+  code?: ItemId[];
+  power?: boolean;
+  /** What the prompt says while it holds. */
+  prompt: string;
+  /** Said when a key / card opens it. */
+  keyName?: string;
+  digits?: string;
+}
+const LOCKS: Record<string, Lock> = {
+  armory: { key: 'armoryKey', code: ['armoryNote'], prompt: 'Заперто — открыть ключом или кодом', keyName: 'ключ от оружейной', digits: '4-7-1-9' },
+  labGreen: { key: 'keycardGreen', prompt: 'Считыватель: нужен пропуск уровня 1', keyName: 'пропуск уровня 1' },
+  labBlue: { key: 'keycardBlue', prompt: 'Считыватель: нужен пропуск уровня 2', keyName: 'пропуск уровня 2' },
+  labPower: { power: true, prompt: 'Электронный замок — нет питания' },
+  labIsolation: { power: true, code: ['labNote1', 'labNote2', 'labNote3', 'labNote4'], prompt: 'Изолятор: кодовый замок', digits: '3-8-1-5' },
 };
+/** Fuses the lab's generator takes. */
+const FUSES = 3;
 
 /** Boarding a door up: a board and four nails, seconds of hammering; prying one off. */
 const NAILS_PER_PLANK = 4;
@@ -55,6 +74,8 @@ export class Interaction {
    * (set by the scene; without it the old "faced and near" rule is used).
    */
   aim: { eye(out: Vector3): Vector3; dir(out: Vector3): Vector3; blocked(o: Vector3, d: Vector3, t: number): boolean } | null = null;
+  /** The lab's power: is it on where a point is, and start the generator there (the scene keeps it). */
+  power: { on(x: number, z: number): boolean; start(x: number, z: number): void } | null = null;
   /** The container under the crosshair (refreshed with the prompt): the scene outlines it. */
   focus: ContainerRef | null = null;
   private targeting = false;
@@ -129,6 +150,7 @@ export class Interaction {
         return;
       }
       if (!ref) hud.toast('Здесь нечего обыскивать', 900);
+      else if (ref.type === 'generator') this.startGenerator(ref);
       else if (this.containers.isOpened(ref)) {
         sfx.containerOpen(CONTAINER_SOUND[ref.type] ?? 'shelf', spot(ref));
         this.panel.open(ref);
@@ -166,12 +188,17 @@ export class Interaction {
       const hold = this.ctx.input.mode === 'kbm' ? 'держать E' : 'удерживать';
       if (state === 'boarded') this.ctx.hud.setPrompt(`Заколочено досками: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — оторвать доску` : ''}`);
       else if (state === 'barricaded') this.ctx.hud.setPrompt('Дверь заколочена');
-      else if (state === 'locked') this.ctx.hud.setPrompt(`${key}Заперто — открыть ключом или кодом`);
+      else if (state === 'locked') this.ctx.hud.setPrompt(`${key}${this.lockPrompt(door)}`);
       else this.ctx.hud.setPrompt(`${key}${state === 'open' ? 'Закрыть' : 'Открыть'} дверь${this.canNail(door) ? ` · ${hold} — заколотить` : ''}`);
       return;
     }
     if (!ref) {
       this.ctx.hud.setPrompt(null);
+      return;
+    }
+    if (ref.type === 'generator') {
+      const on = this.power?.on(ref.x, ref.z);
+      this.ctx.hud.setPrompt(on ? 'Генератор работает' : `${key}Запустить генератор (предохранители ${Math.min(FUSES, this.inventory.count('fuse'))}/${FUSES})`);
       return;
     }
     const verb = this.containers.isOpened(ref) ? 'Открыть' : 'Обыскать';
@@ -183,15 +210,30 @@ export class Interaction {
     const lock = this.doors.lockOf(door);
     if (lock) {
       const l = LOCKS[lock];
-      const by = l && (this.inventory.count(l.key) > 0 ? 'key' : this.inventory.count(l.code) > 0 ? 'code' : null);
+      const inv = this.inventory;
+      const powered = !!at && !!this.power?.on(at.x, at.z);
+      const notes = l?.code ? l.code.filter((id) => inv.count(id) > 0).length : 0;
+      let by: 'key' | 'code' | 'power' | null = null;
+      if (l && (!l.power || powered)) {
+        if (l.key && inv.count(l.key) > 0) by = 'key';
+        else if (l.code && notes === l.code.length) by = 'code';
+        else if (!l.key && !l.code) by = 'power';
+      }
       if (!l || !by) {
-        this.ctx.hud.toast(l ? `Заперто. Нужен ключ ${l.name} или код` : 'Заперто', 1600);
+        const msg = !l
+          ? 'Заперто'
+          : l.power && !powered
+            ? 'Электронный замок мёртв: нет питания'
+            : l.code && !l.key
+              ? `Нужен код: известно цифр ${notes} из ${l.code.length}`
+              : `Заперто. Нужен ${l.keyName ?? 'ключ'}${l.code ? ' или код' : ''}`;
+        this.ctx.hud.toast(msg, 1800);
         if (at) sfx.doorStuck(at);
         this.player.busy = false;
         return;
       }
       this.doors.unlock(door);
-      this.ctx.hud.toast(by === 'key' ? 'Ключ подошёл' : `Код набран: ${l.digits}`, 1600);
+      this.ctx.hud.toast(by === 'key' ? (l.key?.startsWith('keycard') ? 'Пропуск принят' : 'Ключ подошёл') : by === 'code' ? `Код набран: ${l.digits}` : 'Замок открыт', 1600);
     }
     const state = this.doors.describe(door);
     if (!this.doors.toggle(door)) {
@@ -199,6 +241,36 @@ export class Interaction {
       if (at) sfx.doorStuck(at);
     } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
     this.player.busy = false;
+  }
+
+  /** What a locked door's prompt says (an electronic lock tells whether it has power). */
+  private lockPrompt(door: DoorRef): string {
+    const l = LOCKS[this.doors.lockOf(door) ?? ''];
+    if (!l) return 'Заперто';
+    const at = this.doors.info(door);
+    if (l.power && at && this.power?.on(at.x, at.z)) return l.code ? `${l.prompt} — набрать код` : 'Замок открыт';
+    return l.prompt;
+  }
+
+  /** The lab's generator: three fuses in, it starts — the lights, the electronic locks. */
+  private startGenerator(ref: ContainerRef): void {
+    const hud = this.ctx.hud;
+    if (!this.power) return;
+    if (this.power.on(ref.x, ref.z)) {
+      hud.toast('Генератор уже работает', 1200);
+      return;
+    }
+    const have = this.inventory.count('fuse');
+    if (have < FUSES) {
+      hud.toast(`Не хватает предохранителей: ${have} из ${FUSES}`, 1600);
+      sfx.containerOpen('locker', spot(ref));
+      return;
+    }
+    this.inventory.remove('fuse', FUSES);
+    this.syncBody();
+    this.power.start(ref.x, ref.z);
+    sfx.containerOpen('locker', spot(ref));
+    hud.toast('Генератор запущен: свет и электронные замки работают', 2200);
   }
 
   /** A hammer (in hand or in the bag), a board and four nails — and a closed door that takes one more. */

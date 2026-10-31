@@ -78,7 +78,19 @@ export type ItemId =
   | 'map'
   | 'walkie'
   | 'armoryKey'
-  | 'armoryNote';
+  | 'armoryNote'
+  // The laboratory (POI stage 3): access cards, fuses, the code in four notes, the story, the serum.
+  | 'keycardGreen'
+  | 'keycardBlue'
+  | 'fuse'
+  | 'labNote1'
+  | 'labNote2'
+  | 'labNote3'
+  | 'labNote4'
+  | 'labJournal1'
+  | 'labJournal2'
+  | 'labJournal3'
+  | 'serumG7';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -215,6 +227,17 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   walkie: { name: 'Рация', kind: 'tool', weight: 0.4, stack: 1, note: 'Только шипение на всех каналах.' },
   armoryKey: { name: 'Ключ от оружейной', kind: 'tool', weight: 0.02, stack: 1, note: 'Тяжёлый ключ с биркой «Оружейная». Открывает дверь в участке.' },
   armoryNote: { name: 'Записка с кодом', kind: 'tool', weight: 0.01, stack: 1, note: '«Код оружейной сменили: 4-7-1-9. Не записывать!» — записали.' },
+  keycardGreen: { name: 'Пропуск «Гелиос», уровень 1', kind: 'tool', weight: 0.01, stack: 1, note: 'Зелёная карта с полоской. Открывает лабораторный зал.' },
+  keycardBlue: { name: 'Пропуск «Гелиос», уровень 2', kind: 'tool', weight: 0.01, stack: 1, note: 'Синяя карта инженера. Открывает генераторную.' },
+  fuse: { name: 'Предохранитель', kind: 'tool', weight: 0.1, stack: 5, note: 'Керамический, на 60 ампер. Генератору нужно три.' },
+  labNote1: { name: 'Журнал охраны', kind: 'tool', weight: 0.05, stack: 1, note: '«Код изолятора меняют по понедельникам. Первая цифра — 3, остальное знает старшая смена. Пропуск лаборантов — в шкафчике.»' },
+  labNote2: { name: 'Записка лаборанта', kind: 'tool', weight: 0.01, stack: 1, note: '«Вторая цифра — 8. Синюю карту инженера оставила в холодильнике с пробами, не ругайтесь.»' },
+  labNote3: { name: 'Служебная записка', kind: 'tool', weight: 0.01, stack: 1, note: '«Генератор отключён по приказу. Предохранители раздали по отделам. Третья цифра кода — 1.»' },
+  labNote4: { name: 'Распечатка с сервера', kind: 'tool', weight: 0.02, stack: 1, note: '«…журнал доступа: изолятор, код 3-8-1-?, последняя смена: 5. Связь потеряна в 04:12.»' },
+  labJournal1: { name: 'Буклет НИИ «Гелиос»', kind: 'tool', weight: 0.05, stack: 1, note: '«НИИ „Гелиос“: изучаем северные грибковые штаммы ради медицины будущего.» На обороте кто-то написал: «будущего не будет».' },
+  labJournal2: { name: 'Лабораторный журнал', kind: 'tool', weight: 0.2, stack: 1, note: 'День 12: штамм Г-7 растёт в темноте и тянется к теплу. День 19: у двоих сотрудников жар и бессонница, их перевели в изолятор. День 23: они больше не узнают нас.' },
+  labJournal3: { name: 'Последняя запись', kind: 'tool', weight: 0.05, stack: 1, note: '«Изолятор полон. Генератор отключили, чтобы двери держали. Препарат Г-7 не лечит, но останавливает. Если вы это читаете — уходите на север.»' },
+  serumG7: { name: 'Препарат Г-7', kind: 'medical', weight: 0.05, stack: 3, health: 0.3, cures: true, note: 'Экспериментальный. Останавливает заражение даже поздно.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },

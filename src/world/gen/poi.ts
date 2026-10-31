@@ -21,11 +21,12 @@ export const POI = {
   plant: { id: 5, name: 'Водоочистная станция', chance: 0.5, size: 1, minDist: 18, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
   park: { id: 7, name: 'Сквер', chance: 0.5, size: 1, minDist: 5, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 2, downtown: true, near: null },
   checkpoint: { id: 6, name: 'Военный КПП', chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
+  lab: { id: 8, name: 'НИИ «Гелиос»', chance: 0.45, size: 1, minDist: 20, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 10, downtown: false, near: null },
 } as const;
 
 export type PoiKind = keyof typeof POI;
 /** Placement order: earlier types win a contested block. */
-const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park'];
+const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab'];
 /** The country road grid runs along every 4th chunk line (see layout). */
 const MAJOR_EVERY = 4;
 
@@ -216,5 +217,10 @@ export const POI_LANDMARKS: Partial<Record<PoiKind, [number, number, number, num
   checkpoint: [
     [12, 0, 20, 3, 5.5, 3],
     [12, 5.5, 20, 3.4, 2.2, 3.4],
+  ],
+  lab: [
+    [15, 0, -24, 0.5, 22, 0.5],
+    [15, 21, -24, 2.2, 0.3, 2.2],
+    [0, 0, -7, 40, 3.6, 30],
   ],
 };

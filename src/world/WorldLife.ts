@@ -257,9 +257,19 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.audio.thunder(delay, power);
   }
 
-  /** The real lights go to the nearest lit rooms; they flicker with their room. */
+  /** Lamps on mains power (a lab whose generator runs): world x, y, z each; steady cold light, nearest first. */
+  powered: number[] = [];
+
+  /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
   private updateRoomLights(player: Vector3): void {
     if (this.lights.length === 0) return;
+    const P = this.powered;
+    const lamps: [number, number][] = [];
+    for (let i = 0; i < P.length; i += 3) {
+      const d = Math.hypot(P[i] - player.x, P[i + 1] - player.y - 1.5, P[i + 2] - player.z);
+      if (d < ROOM_LIGHT_RANGE) lamps.push([d, i]);
+    }
+    lamps.sort((a, b) => a[0] - b[0]);
     const near: [number, number][] = [];
     for (let i = 0; i < this.rooms.length; i += 5) {
       const d = Math.hypot(this.rooms[i] - player.x, (this.rooms[i + 1] - player.y - 1.5) * 1.5, this.rooms[i + 2] - player.z);
@@ -267,12 +277,20 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     }
     near.sort((a, b) => a[0] - b[0]);
     this.lights.forEach((l, n) => {
-      const hit = near[n];
+      if (n < lamps.length) {
+        const i = lamps[n][1];
+        l.position.set(P[i], P[i + 1], P[i + 2]);
+        l.color.setHex(0xdce6f0);
+        l.intensity = 9;
+        return;
+      }
+      const hit = near[n - lamps.length];
       if (!hit) {
         l.intensity = 0;
         return;
       }
       const i = hit[1];
+      l.color.setHex(0xffc887);
       l.position.set(this.rooms[i], this.rooms[i + 1] - 0.1, this.rooms[i + 2]);
       l.intensity = 7 * flicker(this.time, this.rooms[i + 4], this.rooms[i + 3]);
     });
