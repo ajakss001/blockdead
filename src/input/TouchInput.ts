@@ -1,3 +1,5 @@
+import type { EventBus } from '../core/EventBus';
+import type { GameEvents } from '../core/events';
 import type { Action, InputManager } from './InputManager';
 
 /** Joystick travel in CSS px. */
@@ -21,6 +23,7 @@ export class TouchInput {
   private readonly stick = document.createElement('div');
   private readonly knob = document.createElement('div');
   private sprintButton!: HTMLButtonElement;
+  private useButton!: HTMLButtonElement;
 
   private stickId = -1;
   private stickX = 0;
@@ -32,6 +35,7 @@ export class TouchInput {
   constructor(
     private readonly input: InputManager,
     parent: HTMLElement,
+    events?: EventBus<GameEvents>,
   ) {
     this.root.className = 'touch';
     this.stick.className = 'touch__stick';
@@ -46,13 +50,16 @@ export class TouchInput {
       (this.sprintButton = this.button('Бег', 'sprint', 'latch', 'touch__btn--sprint')),
       this.button('Присед', 'crouch', 'toggle', 'touch__btn--crouch'),
       this.button('Свет', 'flashlight', 'toggle', 'touch__btn--light'),
-      this.button('Обыск', 'use', 'tap', 'touch__btn--use'),
+      (this.useButton = this.button('Обыск', 'use', 'tap', 'touch__btn--use')),
       this.button('Рюкзак', 'inventory', 'tap', 'touch__btn--bag'),
       this.button('Прыжок', 'jump', 'tap', 'touch__btn--jump'),
       this.weaponButton(),
     );
     this.root.append(this.stick, buttons);
     parent.append(this.root);
+    // The search / door button only while the crosshair is on something to use.
+    this.useButton.hidden = true;
+    events?.on('ui:target', ({ target }) => (this.useButton.hidden = !target));
 
     this.root.addEventListener('pointerdown', this.onDown);
     this.root.addEventListener('pointermove', this.onMove);

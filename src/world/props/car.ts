@@ -17,7 +17,7 @@ import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
 import type { ContainerSpot } from '../gen/pieces';
-import { type ModelInfo, type ModelLibrary, modelGeometry, pickModel } from '../models';
+import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, pickModel } from '../models';
 
 /** Third-party vehicle and prop models (set in the worker once loaded); null = procedural only. */
 let library: ModelLibrary | null = null;
@@ -137,11 +137,9 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
         .multiply(new Matrix4().makeRotationY(o.yaw))
         .multiply(new Matrix4().makeRotationFromEuler(new Euler(o.flatTire ? -0.02 : 0, 0, o.flatTire ? -0.01 : 0)));
       placeModel(batch, m, matrix, m.tint ? paintFor(o.paint, rand) : null, dirt);
-      if (containers) {
-        const t = new Vector3(m.min[0] + 0.25, 0.8, 0).applyMatrix4(matrix);
-        containers.push({ type: 'trunk', x: t.x, z: t.z });
-      }
-      world.addOrientedBox(o.x, o.z, m.size[0] / 2, m.size[2] / 2, o.yaw);
+      if (containers) containers.push(trunkSpot(m, matrix, o.yaw));
+      // As tall as the car: the crosshair (and a climb) can go over it.
+      world.addOrientedBox(o.x, o.z, m.size[0] / 2, m.size[2] / 2, o.yaw, -0.5, m.size[1] + 0.05);
       return;
     }
   }
@@ -259,14 +257,30 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
 
   for (const g of geos) g.dispose();
 
-  // Searchable trunk just behind the rear bumper.
+  // Searchable trunk: the lid and the rear bumper.
   if (containers) {
-    const t = new Vector3(-2.2, 0.8, 0).applyMatrix4(car);
-    containers.push({ type: 'trunk', x: t.x, z: t.z });
+    const t = new Vector3(-1.95, 0.68, 0).applyMatrix4(car);
+    containers.push({ type: 'trunk', x: t.x, z: t.z, box: [t.x, t.y, t.z, 0.45, 0.36, WIDTH / 2 - 0.08, o.yaw] });
   }
 
-  // Collider: the body itself, rotated with the car (bumper to bumper, mirrors excluded).
-  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH, WIDTH / 2, o.yaw);
+  // Collider: the body itself, rotated with the car (bumper to bumper, mirrors excluded), as tall as it.
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH, WIDTH / 2, o.yaw, -0.5, 1.5);
+}
+
+/**
+ * A model's trunk as a search zone: the rear of the car — lid and bumper (a sedan's, up to the lid),
+ * a pickup's bed, a van's rear doors — not the roof or the bonnet.
+ */
+function trunkSpot(m: ModelInfo, matrix: Matrix4, yaw: number): ContainerSpot {
+  const [L, H, W] = m.size;
+  const rear = m.min[0];
+  const pickup = m.name === 'pickup';
+  const tall = m.group !== 'car' && m.group !== 'wreck';
+  const depth = pickup ? Math.min(1.9, L * 0.36) : tall ? 0.45 : Math.min(0.95, L * 0.21);
+  const y0 = pickup ? 0.45 : 0.3;
+  const y1 = pickup ? Math.min(1.15, H * 0.55) : tall ? H * 0.88 : Math.min(1.15, H * 0.7);
+  const c = new Vector3(rear + depth / 2 - 0.02, (y0 + y1) / 2, m.min[2] + W / 2).applyMatrix4(matrix);
+  return { type: 'trunk', x: c.x, z: c.z, box: [c.x, c.y, c.z, depth / 2 + 0.03, (y1 - y0) / 2, W / 2 - 0.12, yaw] };
 }
 
 /** Faded paint over a model's own texture: a light multiply so the texture keeps its detail. */
@@ -275,9 +289,11 @@ function paintFor(paint: number, rand: () => number): Color {
   return c.multiplyScalar(1.7).lerp(new Color(1, 1, 1), 0.35 + rand() * 0.25);
 }
 
-/** A model into the batch: vehicle metal by default, slightly rough. */
+/** A model into the batch: vehicle metal by default, slightly rough; its glass as murky translucent car glass. */
 export function placeModel(batch: StaticBatch, m: ModelInfo, matrix: Matrix4, paint: Color | null, tint?: VertexTint, roughness = 0.75, metalness = 0.25): void {
   batch.addModel(modelGeometry(library!, m), m.layer, matrix, paint, roughness, metalness, tint);
+  const glass = modelGlass(library!, m);
+  if (glass) batch.add(glass, 0x2a3036, matrix, 'carGlass');
 }
 
 /** Greenhouse faces split into a grid of cells; inner cells are glass, the frame is painted pillars. */

@@ -14,6 +14,7 @@ export type GrungeKind =
   | 'skin'
   | 'foliage'
   | 'carpaint'
+  | 'paint'
   | 'glass'
   | 'facadeConcrete'
   | 'facadeBrick'
@@ -303,6 +304,10 @@ export function generateGrungeCanvas(
           shade *= 1 - rust * 0.2;
           break;
         }
+        case 'paint':
+          // Painted panels of a big vehicle: faint mottling and grey dust low down, no rust, no stains.
+          shade *= 1 - 0.12 * smooth(0.45, 0.9, v) - 0.05 * smooth(0.5, 0.8, blotch(u, v));
+          break;
         case 'glass':
           // Dust settles in soft clouds, lighter than the glass.
           shade *= 0.9 + 0.35 * smooth(0.35, 0.75, n);

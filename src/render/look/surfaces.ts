@@ -16,6 +16,7 @@ export type Surface =
   | 'glass'
   | 'windowGlass'
   | 'carPaint'
+  | 'busPaint'
   | 'rubber'
   | 'carGlass'
   | 'trim'
@@ -66,6 +67,8 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   glass: { kind: 'grime', detail: 0xbfc4c8, noise: 0.3, roughness: 0.3, metalness: 0.1, tile: 1, castShadow: false },
   // Abandoned cars. Paint: matte, faded, rust blooms and drips; mud/dust come from vertex tints.
   carPaint: { kind: 'carpaint', detail: 0xdad6ce, noise: 0.3, roughness: 0.78, metalness: 0.25, tile: 1.2, bump: 0.4, castShadow: true },
+  // Buses: clean-ish painted panels (no rust blooms that could read as stains on a big surface).
+  busPaint: { kind: 'paint', detail: 0xd8d4cc, noise: 0.22, roughness: 0.7, metalness: 0.2, tile: 2.5, castShadow: true },
   // Intact windows and shop glass: clear and lightly tinted, a cold sheen from the flashlight.
   windowGlass: { kind: 'glass', detail: 0x9aa8b2, noise: 0.2, roughness: 0.1, metalness: 0.35, tile: 3, alpha: 0.35, castShadow: false },
   rubber: { kind: 'grime', detail: 0x9c9a96, noise: 0.5, roughness: 1, metalness: 0, tile: 0.6, castShadow: true },

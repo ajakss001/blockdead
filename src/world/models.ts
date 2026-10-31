@@ -19,6 +19,8 @@ export interface ModelInfo {
   size: [number, number, number];
   vertices: number;
   indices: number;
+  /** The last this many indices are glass panes (drawn as translucent car glass). */
+  glass?: number;
   vOffset: number;
   iOffset: number;
   normals: boolean;
@@ -56,10 +58,27 @@ export async function loadModelLibrary(base: string): Promise<ModelLibrary | nul
   }
 }
 
-/** Decoded geometry of a model (cached): position, normal, uv (atlas layer space), color. */
+/** Decoded geometry of a model without its glass (cached): position, normal, uv (atlas layer space), color. */
 export function modelGeometry(lib: ModelLibrary, m: ModelInfo): BufferGeometry {
   const hit = lib.cache.get(m.name);
   if (hit) return hit;
+  const g = decode(lib, m, 0, m.indices - (m.glass ?? 0));
+  lib.cache.set(m.name, g);
+  return g;
+}
+
+/** A model's glass panes (cached), or null if it has none. */
+export function modelGlass(lib: ModelLibrary, m: ModelInfo): BufferGeometry | null {
+  if (!m.glass) return null;
+  const key = `${m.name}#glass`;
+  const hit = lib.cache.get(key);
+  if (hit) return hit;
+  const g = decode(lib, m, m.indices - m.glass, m.glass);
+  lib.cache.set(key, g);
+  return g;
+}
+
+function decode(lib: ModelLibrary, m: ModelInfo, first: number, count: number): BufferGeometry {
   const view = new DataView(lib.bin, m.vOffset, m.vertices * lib.stride);
   const n = m.vertices;
   const pos = new Float32Array(n * 3);
@@ -81,9 +100,8 @@ export function modelGeometry(lib: ModelLibrary, m: ModelInfo): BufferGeometry {
   g.setAttribute('normal', new BufferAttribute(nrm, 3));
   g.setAttribute('uv', new BufferAttribute(uv, 2));
   g.setAttribute('color', new BufferAttribute(col, 3));
-  g.setIndex(new BufferAttribute(new Uint16Array(lib.bin, m.iOffset, m.indices).slice(), 1));
+  g.setIndex(new BufferAttribute(new Uint16Array(lib.bin, m.iOffset + first * 2, count).slice(), 1));
   if (!m.normals) g.computeVertexNormals();
-  lib.cache.set(m.name, g);
   return g;
 }
 

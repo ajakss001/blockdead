@@ -96,7 +96,10 @@ export class Site {
   /** A searchable container at a local point (y: the floor it stands on), of a type, maybe with things always in it. */
   container(type: ContainerType, lx: number, lz: number, fixed?: ItemId[], y = 0): void {
     const [x, z] = this.p.pt(lx, lz);
-    this.b.containers.push({ type, x, z, ...(y ? { y } : {}), ...(fixed ? { fixed } : {}) });
+    this.b.container(type, x, z, y);
+    const spot = this.b.containers[this.b.containers.length - 1];
+    if (!y) delete spot.y;
+    if (fixed) spot.fixed = fixed;
   }
 
   /** A collider over a local rectangle from y0 to y1 (on an upper floor). */

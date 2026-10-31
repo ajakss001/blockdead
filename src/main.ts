@@ -111,7 +111,7 @@ async function boot(): Promise<void> {
 
   mountCrosshair(uiEl);
   if (kbm) new PlayOverlay(ctx, kbm, uiEl);
-  else new TouchInput(input, uiEl);
+  else new TouchInput(input, uiEl, events);
   new DebugPanel(ctx, uiEl);
 
   if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx } });

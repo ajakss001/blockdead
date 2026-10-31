@@ -6,6 +6,8 @@ import {
   DirectionalLight,
   Fog,
   Group,
+  LineBasicMaterial,
+  LineSegments,
   Mesh,
   PerspectiveCamera,
   Quaternion,
@@ -15,7 +17,8 @@ import {
 import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
-import { CHUNK, ROAD_HALF } from '../world/gen/layout';
+import { CHUNK, DOWNTOWN_RADIUS, ROAD_HALF } from '../world/gen/layout';
+import { type SceneKind, sceneAt } from '../world/gen/chaos';
 import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
 import type { Worn } from '../systems/Inventory';
 import type { GameContext } from '../GameContext';
@@ -48,6 +51,7 @@ import { ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
 import { CorpseBatch } from '../render/CorpseBatch';
 import { zombieRagdoll } from '../render/zombieBody';
 import { PART, type Ragdoll, Ragdolls, type StaticBox } from '../physics/ragdoll';
+import type { SearchBox } from '../world/gen/pieces';
 import { PlayerDeath } from '../player/PlayerDeath';
 import { deathSurroundings, type DeathSurroundings } from '../player/DeathCamera';
 import { blowDamage, type PlayerSense, type Zombie, ZombieSim } from '../systems/zombies';
@@ -63,7 +67,7 @@ import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
-import type { ContainerRef } from '../systems/Containers';
+import { type ContainerRef, searchBox } from '../systems/Containers';
 import type { TwinRecord } from '../systems/SaveGame';
 
 /**
@@ -90,6 +94,59 @@ const _dayColor = new Color();
 const _indoorHaze = new Color(0x0b0b0c);
 /** Loose-container ids of zombie bodies (above every chunk and interior id). */
 const ZOMBIE_BODY_ID = 3e14;
+
+/** Edges of turned boxes (centre, half sizes, yaw) as line segments; one unit box when scaled by the outline. */
+function boxEdges(boxes: SearchBox[]): BufferGeometry {
+  const pos: number[] = [];
+  const E = [
+    [0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7], [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+  for (const [cx, cy, cz, hx, hy, hz, yaw] of boxes) {
+    const c = Math.cos(yaw);
+    const sn = Math.sin(yaw);
+    const corner = (k: number) => {
+      const u = k & 1 ? hx : -hx;
+      const v = k & 2 ? hz : -hz;
+      const y = k & 4 ? hy : -hy;
+      return [cx + u * c + v * sn, cy + y, cz - u * sn + v * c];
+    };
+    for (const [a, b] of E) pos.push(...corner(a), ...corner(b));
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+  return g;
+}
+
+/** A body's search zone: a box along it (feet to head), round its parts. */
+function bodyBox(rd: Ragdoll): SearchBox {
+  const P = rd.poses;
+  const feet = P[PART.shinL].p.clone().add(P[PART.shinR].p).multiplyScalar(0.5);
+  const ax = P[PART.head].p.x - feet.x;
+  const az = P[PART.head].p.z - feet.z;
+  const yaw = Math.atan2(-az, ax);
+  const c = Math.cos(yaw);
+  const sn = Math.sin(yaw);
+  let u0 = Infinity;
+  let u1 = -Infinity;
+  let v0 = Infinity;
+  let v1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  for (const { p } of P) {
+    const u = p.x * c - p.z * sn;
+    const v = p.x * sn + p.z * c;
+    u0 = Math.min(u0, u);
+    u1 = Math.max(u1, u);
+    v0 = Math.min(v0, v);
+    v1 = Math.max(v1, v);
+    y0 = Math.min(y0, p.y);
+    y1 = Math.max(y1, p.y);
+  }
+  const um = (u0 + u1) / 2;
+  const vm = (v0 + v1) / 2;
+  // Back from the turned frame: x = u·cos + v·sin, z = −u·sin + v·cos.
+  return [um * c + vm * sn, (y0 + y1) / 2, -um * sn + vm * c, (u1 - u0) / 2 + 0.18, (y1 - y0) / 2 + 0.14, (v1 - v0) / 2 + 0.16, yaw];
+}
 const _sunDir = new Vector3();
 const _sunColor = new Color();
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
@@ -122,7 +179,8 @@ const HELD: Partial<Record<ItemId, RightItem>> = { knife: 'knife', axe: 'axe', b
 /** The procedural, endless world: chunks stream around the player from a seed (?seed=…). */
 export class WorldScene implements IScene {
   readonly scene = new Scene();
-  readonly camera = new PerspectiveCamera(BASE_VFOV, 1, 0.05, 120);
+  // Near 0.1 m (the body keeps the eye 0.3 m off walls): twice the depth precision of 0.05 on phones.
+  readonly camera = new PerspectiveCamera(BASE_VFOV, 1, 0.1, 120);
   overlay?: { scene: Scene; camera: PerspectiveCamera };
 
   private ctx!: GameContext;
@@ -178,6 +236,10 @@ export class WorldScene implements IScene {
   private readonly ragdolls = new Ragdolls();
   private readonly corpses = new CorpseBatch(16);
   private readonly corpseRd = new Map<Zombie, Ragdoll>();
+  /** A faint outline round the container under the crosshair; ?interactdebug=1 draws every search zone. */
+  private readonly searchOutline = new LineSegments(boxEdges([[0, 0, 0, 0.5, 0.5, 0.5, 0]]), new LineBasicMaterial({ color: 0xe8dcb0, transparent: true, opacity: 0.32 }));
+  private zoneDebug: LineSegments | null = null;
+  private zoneDebugT = 0;
   /** The player's death (ragdoll, camera) once it happened. */
   private death: PlayerDeath | null = null;
   private deathShown = false;
@@ -292,6 +354,24 @@ export class WorldScene implements IScene {
       document.getElementById('ui')!,
     );
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
+    // Search by the crosshair: a ray from the eye into the search zones, walls and objects in front stop it.
+    this.interaction.aim = {
+      eye: (out) => this.camera.getWorldPosition(out),
+      dir: (out) => this.camera.getWorldDirection(out),
+      blocked: (o, d, t) => {
+        const hit = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, t);
+        return hit >= 0 && hit < t - 0.1;
+      },
+    };
+    this.searchOutline.visible = false;
+    this.searchOutline.frustumCulled = false;
+    this.scene.add(this.searchOutline);
+    if (new URLSearchParams(location.search).get('interactdebug') === '1') {
+      this.zoneDebug = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0x40ff80, depthTest: false, transparent: true, opacity: 0.8 }));
+      this.zoneDebug.frustumCulled = false;
+      this.zoneDebug.renderOrder = 10;
+      this.scene.add(this.zoneDebug);
+    }
     this.saves = new SaveGame(ctx.platform, seed);
     this.dread = new AnxietyAudio(ctx.events, ctx.loop);
     this.life = new WorldLife(this.scene, this.dread, (x, z) => layout.walkHeightAt(x, z));
@@ -409,6 +489,28 @@ export class WorldScene implements IScene {
         c.yaw = Math.atan2(-(cx - px), -(cz - pz));
       }
     }
+    // ?chaos=evacuation|cordon|police|heli: start 14 m from the nearest intersection with that scene.
+    const chaos = new URLSearchParams(location.search).get('chaos') as SceneKind | null;
+    if (chaos) {
+      const ci = Math.floor(c.position.x / CHUNK);
+      const cj = Math.floor(c.position.z / CHUNK);
+      const L = this.layout;
+      let best: [number, number] | null = null;
+      for (let r = 0; r <= 14 && !best; r++) {
+        for (let i = ci - r; i <= ci + r && !best; i++) {
+          for (let j = cj - r; j <= cj + r && !best; j++) {
+            if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== r) continue;
+            const urban = L.isUrban(i, j) || L.isUrban(i - 1, j) || L.isUrban(i, j - 1) || L.isUrban(i - 1, j - 1);
+            if (sceneAt(L.seed, i, j, urban, Math.max(Math.abs(i), Math.abs(j)) <= DOWNTOWN_RADIUS + 1)?.kind === chaos) best = [i * CHUNK, j * CHUNK];
+          }
+        }
+      }
+      if (best) {
+        c.position.set(best[0] + 10, 0.05, best[1] + 10);
+        c.prevPosition.copy(c.position);
+        c.yaw = Math.atan2(10, 10);
+      }
+    }
     const { x, z } = c.position;
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
@@ -499,8 +601,14 @@ export class WorldScene implements IScene {
       const pelvis = rd.poses[PART.pelvis].p;
       z.pos.x = pelvis.x;
       z.pos.z = pelvis.z;
-      if (z.twin) continue;
-      const ref = { id: ZOMBIE_BODY_ID + z.id, type: 'bodyZombie' as const, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z) };
+      const box = bodyBox(rd);
+      if (z.twin) {
+        // A dead survivor's body: searchable along the body where it came to rest.
+        const twinRef = this.bodies.find((b) => b.id === z.twin!.id);
+        if (twinRef) Object.assign(twinRef, { x: box[0], z: box[2], box });
+        continue;
+      }
+      const ref = { id: ZOMBIE_BODY_ID + z.id, type: 'bodyZombie' as const, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
       this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, 'bodyZombie', ref.zone));
     }
     // Zombies are solid to the player (and the walls still win).
@@ -571,6 +679,7 @@ export class WorldScene implements IScene {
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
     this.interaction.render(frameDt);
+    this.drawSearchZones(frameDt);
     this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y);
     this.doors.update(frameDt);
     const p = this.player.controller.position;
@@ -881,6 +990,23 @@ export class WorldScene implements IScene {
     const crowns: number[] = [];
     this.atmo.vegetation.crownsNear(feet.x, feet.z, 30, (x, y, z, r) => crowns.push(x, y, z, r + 0.3));
     return deathSurroundings(this.world, feet.y, ceiling, crowns);
+  }
+
+  private drawSearchZones(dt: number): void {
+    const f = this.dead ? null : this.interaction.focus;
+    this.searchOutline.visible = !!f;
+    if (f) {
+      const b = searchBox(f);
+      this.searchOutline.position.set(b[0], b[1], b[2]);
+      this.searchOutline.scale.set(b[3] * 2, b[4] * 2, b[5] * 2);
+      this.searchOutline.rotation.set(0, b[6], 0);
+    }
+    if (this.zoneDebug && (this.zoneDebugT -= dt) <= 0) {
+      this.zoneDebugT = 0.5;
+      const c = this.player.controller.position;
+      this.zoneDebug.geometry.dispose();
+      this.zoneDebug.geometry = boxEdges(this.containers.boxesNear(c.x, c.z, 25));
+    }
   }
 
   /** The death as it plays: the figure on its ragdoll, the camera, colour, sound; then the screen. */

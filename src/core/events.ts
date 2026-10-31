@@ -19,4 +19,6 @@ export interface GameEvents {
   /** A game action that holds the mouse (a search): losing the lock now is not "leave the game". */
   'ui:busy': { busy: boolean };
   'debug:stress': { instances: number; meshes: number };
+  /** The crosshair is (not) on something to use: a container's search zone or a door (touch shows its button). */
+  'ui:target': { target: boolean };
 }

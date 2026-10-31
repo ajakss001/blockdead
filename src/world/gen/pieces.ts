@@ -1,4 +1,4 @@
-import { BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Euler, IcosahedronGeometry, Matrix4, Quaternion, Vector3 } from 'three';
+import { Box3, BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Euler, IcosahedronGeometry, Matrix4, Quaternion, Vector3 } from 'three';
 import { gableRoof } from '../../render/lowpoly';
 import type { Surface } from '../../render/look/surfaces';
 import type { StaticBatch } from '../../render/StaticBatch';
@@ -7,11 +7,24 @@ import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
 
 /** A searchable spot in the world (world XZ of its front face, Y of its floor). */
+/**
+ * Where a container can be searched: a box fitted to the object (≤ 5 cm over), world space — centre,
+ * half sizes, turn about Y. The crosshair's ray must hit it.
+ */
+export type SearchBox = [cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, yaw: number];
+
+/** The fitted box of an axis-aligned world AABB, padded 3 cm. */
+export function aabbBox(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number, pad = 0.03): SearchBox {
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2 + pad, (maxY - minY) / 2 + pad, (maxZ - minZ) / 2 + pad, 0];
+}
+
 export interface ContainerSpot {
   type: ContainerType;
   x: number;
   z: number;
   y?: number;
+  /** The search zone (absent: a default box round the spot). */
+  box?: SearchBox;
   /** Explicit id (interior floors: stable whichever floors are furnished). */
   id?: number;
   /** Always in it, on top of the rolled loot (a key, a note). */
@@ -110,11 +123,55 @@ export class Builder {
     this.shelters.push(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), roofY);
   }
 
-  /** Register a searchable container at a point in the current frame. */
-  container(type: ContainerType, x: number, z: number, y = 0): void {
-    if (this.idBase === null) this.containers.push({ type, x: this.wx(x), z: this.wz(z), y });
-    else this.containers.push({ type, x: this.wx(x), z: this.wz(z), y, id: this.idBase + this.idN++ });
+  /**
+   * Register a searchable container at a point in the current frame. `box`: its search zone as an AABB in
+   * the current frame [minX, minY, minZ, maxX, maxY, maxZ] (a Place passes what it drew).
+   */
+  container(type: ContainerType, x: number, z: number, y = 0, box?: number[]): void {
+    // No box given: what was drawn since the last container, near the spot (the piece just built).
+    if (!box) box = this.drawnNear(x, z, y);
+    this.logMark = this.log.length;
+    let zone: SearchBox | undefined;
+    if (box && box[0] <= box[3]) {
+      const [x0, x1] = this.flip ? [2 * this.flip.cx - box[3], 2 * this.flip.cx - box[0]] : [box[0], box[3]];
+      const [z0, z1] = this.flip ? [2 * this.flip.cz - box[5], 2 * this.flip.cz - box[2]] : [box[2], box[5]];
+      zone = aabbBox(x0, box[1], z0, x1, box[4], z1);
+    }
+    const spot: ContainerSpot = { type, x: this.wx(x), z: this.wz(z), y, ...(zone ? { box: zone } : {}) };
+    if (this.idBase !== null) spot.id = this.idBase + this.idN++;
+    this.containers.push(spot);
   }
+
+  /** Bounds of every block / template added (frame AABBs, 6 numbers each), and where the last container was. */
+  private readonly log: number[] = [];
+  private logMark = 0;
+
+  private logged(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+    this.log.push(x0, y0, z0, x1, y1, z1);
+    this.track?.(x0, y0, z0, x1, y1, z1);
+  }
+
+  /** Union of what was drawn since the last container whose middle is within 1.8 m of (x, z) and at the floor y. */
+  drawnNear(x: number, z: number, y: number): number[] | undefined {
+    const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    const L = this.log;
+    for (let k = this.logMark; k < L.length; k += 6) {
+      const cx = (L[k] + L[k + 3]) / 2;
+      const cz = (L[k + 2] + L[k + 5]) / 2;
+      if (Math.hypot(cx - x, cz - z) > 1.8 || L[k + 4] < y - 0.05 || L[k + 1] > y + 2.6) continue;
+      for (let a = 0; a < 3; a++) {
+        out[a] = Math.min(out[a], L[k + a]);
+        out[a + 3] = Math.max(out[a + 3], L[k + a + 3]);
+      }
+    }
+    return out[0] <= out[3] ? out : undefined;
+  }
+
+  /**
+   * While set, every block / template added reports its bounds here (in the current frame, before the
+   * flip): a Place collects what a piece of furniture drew, for its search box.
+   */
+  track: ((minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number) => void) | null = null;
 
   /** Containers from here on get ids base, base + 1, … (null: the caller numbers them). */
   setIdBase(base: number | null): void {
@@ -157,6 +214,7 @@ export class Builder {
       x0 = 2 * this.flip.cx - (x + sx);
       z0 = 2 * this.flip.cz - (z + sz);
     }
+    this.logged(x, y, z, x + sx, y + sy, z + sz);
     this.p.set(x0 + sx / 2, y + sy / 2, z0 + sz / 2);
     this.s.set(sx, sy, sz);
     this.batch.add(this.box, color, this.m.compose(this.p, this.q.identity(), this.s), surface);
@@ -166,6 +224,9 @@ export class Builder {
 
   /** Arbitrary template with a local transform (in the current frame). */
   geo(template: BufferGeometry, color: number, matrix: Matrix4, surface: Surface): void {
+    if (!template.boundingBox) template.computeBoundingBox();
+    _bb.copy(template.boundingBox!).applyMatrix4(matrix);
+    this.logged(_bb.min.x, _bb.min.y, _bb.min.z, _bb.max.x, _bb.max.y, _bb.max.z);
     if (this.flip) matrix = this.m.copy(this.flipM).multiply(matrix);
     this.batch.add(template, color, matrix, surface);
   }
@@ -191,6 +252,7 @@ export class Builder {
 }
 
 const _m = new Matrix4();
+const _bb = new Box3();
 const _q = new Quaternion();
 const _e = new Euler();
 const _p = new Vector3();
@@ -548,18 +610,24 @@ function shopFloor(b: Builder, kind: F.ShopKind, xa: number, za: number, xb: num
   if (messy) F.papers(new Place(b, xa, 0, za), rand, 0.3, 0.3, w - 0.3, d - 0.3, 6);
 }
 
-/** Jagged teeth of glass left in a smashed frame (in the plane z, facing ±Z). */
+/**
+ * Jagged teeth of glass left in a smashed frame (in the plane z, facing ±Z). Each tooth in its own
+ * plane, 8 mm from the next: overlapping teeth never fight for the same pixels.
+ */
 export function glassTeeth(b: Builder, x: number, y: number, z: number, w: number, h: number, rand: Rand): void {
   const n = 3 + Math.floor(rand() * 3);
+  const plane = (k: number) => z - 0.024 + (k % 7) * 0.008;
   for (let i = 0; i < n; i++) {
     const tw = 0.12 + rand() * 0.3;
     const th = 0.15 + rand() * 0.5;
     const tx = x + rand() * Math.max(0.01, w - tw);
     const fromTop = rand() < 0.5;
-    b.block(0x5a6a72, tx, fromTop ? y + h - th : y, z - 0.01, tw, th, 0.02, 'glass');
+    b.block(0x5a6a72, tx, fromTop ? y + h - th : y, plane(i), tw, th, 0.004, 'glass');
   }
   // Teeth along the side posts too.
-  for (const sx of [x, x + w - 0.08]) if (rand() < 0.7) b.block(0x5a6a72, sx, y + h * (0.2 + rand() * 0.5), z - 0.01, 0.08, 0.3 + rand() * 0.4, 0.02, 'glass');
+  [x, x + w - 0.08].forEach((sx, k) => {
+    if (rand() < 0.7) b.block(0x5a6a72, sx, y + h * (0.2 + rand() * 0.5), plane(5 + k), 0.08, 0.3 + rand() * 0.4, 0.004, 'glass');
+  });
 }
 
 /**
@@ -732,6 +800,6 @@ export function trashBins(b: Builder, x: number, z: number): void {
   b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x, 0.45, z), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
   b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x + 0.7, 0.45, z + 0.1), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
   b.colliders.addBox(x - 0.35, z - 0.35, x + 1.05, z + 0.45);
-  b.containers.push({ type: 'trash', x: x + 0.35, z });
+  b.container('trash', x + 0.35, z, 0, [x - 0.3, 0, z - 0.3, x + 1.0, 0.9, z + 0.4]);
   if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, x + 0.35, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
 }

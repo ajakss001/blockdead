@@ -19,6 +19,8 @@ export function meshesFromBuffers(buffers: SurfaceBuffers[], name = 'batch'): Gr
     const mesh = new Mesh(g, materials[b.bucket]);
     mesh.name = `${name}:${b.bucket}`;
     mesh.castShadow = b.bucket === 'cast';
+    // Translucent glass and decals after everything opaque, always in the same order (no flicker).
+    if (b.bucket === 'glass') mesh.renderOrder = 2;
     mesh.receiveShadow = true;
     // Static: skip per-frame matrix recomputation.
     mesh.matrixAutoUpdate = false;

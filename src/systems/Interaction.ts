@@ -16,12 +16,18 @@ const NAIL_TIME = 4;
 const PRY_TIME = 3;
 import type { ContainerRef, Containers } from './Containers';
 import type { Inventory } from './Inventory';
+import { Vector3 } from 'three';
+
+const _o = new Vector3();
+const _d = new Vector3();
 
 /** Sound position of a container: its front, at about hand height. */
 const spot = (ref: ContainerRef) => ({ x: ref.x, y: ref.y + 0.8, z: ref.z });
 
 /** First search of a container takes time and leaves you exposed (Zomboid); reopening is instant. */
 const SEARCH_TIME = 2;
+/** How far the crosshair reaches a search zone (m). */
+const REACH = 2;
 const PROMPT_INTERVAL = 0.1;
 /** Hotkey 1 draws the first of these that is in the backpack. */
 const WEAPON_PRIORITY: ItemId[] = ['axe', 'crowbar', 'bat', 'knife', 'hammer'];
@@ -44,6 +50,14 @@ export class Interaction {
   private promptT = 0;
   private lastWeapon: ItemId | null = null;
   private searchTime = SEARCH_TIME;
+  /**
+   * The crosshair: eye and view direction, and whether anything solid stands within t of the eye along it
+   * (set by the scene; without it the old "faced and near" rule is used).
+   */
+  aim: { eye(out: Vector3): Vector3; dir(out: Vector3): Vector3; blocked(o: Vector3, d: Vector3, t: number): boolean } | null = null;
+  /** The container under the crosshair (refreshed with the prompt): the scene outlines it. */
+  focus: ContainerRef | null = null;
+  private targeting = false;
   /** Class: search time multipliers (all containers, car trunks). */
   searchMul = 1;
   carMul = 1;
@@ -139,11 +153,14 @@ export class Interaction {
     this.promptT = PROMPT_INTERVAL;
     if (this.searchT >= 0 || this.panel.isOpen) {
       this.ctx.hud.setPrompt(null);
+      this.focus = null;
       return;
     }
     const key = this.ctx.input.mode === 'kbm' ? 'E — ' : '';
     const ref = this.target();
     const door = this.doorTarget();
+    this.focus = ref && !(door && this.doorCloser(door, ref)) ? ref : null;
+    this.setTargeting(!!ref || !!door);
     if (door && (!ref || this.doorCloser(door, ref))) {
       const state = this.doors.describe(door);
       const hold = this.ctx.input.mode === 'kbm' ? 'держать E' : 'удерживать';
@@ -265,9 +282,23 @@ export class Interaction {
     return true;
   }
 
+  /** Only what the crosshair is on: the ray from the eye hits its search zone within reach, nothing in front. */
   private target(): ContainerRef | null {
-    const c = this.player.controller;
-    return this.containers.target(c.position.x, c.position.z, -Math.sin(c.yaw), -Math.cos(c.yaw), c.position.y);
+    const aim = this.aim;
+    if (!aim) {
+      const c = this.player.controller;
+      return this.containers.target(c.position.x, c.position.z, -Math.sin(c.yaw), -Math.cos(c.yaw), c.position.y);
+    }
+    const o = aim.eye(_o);
+    const d = aim.dir(_d);
+    return this.containers.targetRay(o.x, o.y, o.z, d.x, d.y, d.z, REACH, (t) => !aim.blocked(o, d, t));
+  }
+
+  /** Tell the touch controls whether there is something to use (only when it changes). */
+  private setTargeting(on: boolean): void {
+    if (on === this.targeting) return;
+    this.targeting = on;
+    this.ctx.events.emit('ui:target', { target: on });
   }
 
   private doorTarget(): DoorRef | null {

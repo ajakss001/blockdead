@@ -58,7 +58,7 @@ function model(b: Builder, group: string, x: number, z: number, yaw: number, ran
   if (!m) return null;
   const mat = new Matrix4().compose(new Vector3(x, (o.lift ?? 0) + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, yaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
   placeModel(b.batch, m, mat, o.paint !== undefined && m.tint ? new Color(o.paint) : null);
-  if (o.collide !== false) b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, yaw);
+  if (o.collide !== false) b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, yaw, -0.5, (o.lift ?? 0) + m.size[1] + 0.3);
   return m;
 }
 
@@ -97,7 +97,7 @@ function armyTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): P
   p.box(olive, -0.9, 0.85, 0, 4.6, 0.5, 2.4, 'metal');
   p.box(pick(rand, [0x5a5a44, 0x4e5240]), -0.9, 1.35, 0, 4.6, 1.5, 2.4, 'rubber');
   p.rbox(olive, -3.45, 0.55, 0, 0.6, 0.05, 2.3, 0, 0, -0.2, 'metal');
-  wheels(p, [2.5, -1.4, -2.6], 1.15);
+  wheels(p, [2.5, -1.4, -2.6], 1.0);
   return p;
 }
 
@@ -197,21 +197,57 @@ function van(b: Builder, x: number, z: number, yaw: number, body: number, stripe
   p.rbox(body, -2.9, 1.5, -1.45, 0.05, 1.8, 0.9, -1.3, 0, 0, 'carPaint');
   p.rbox(body, -2.9, 1.5, 1.45, 0.05, 1.8, 0.9, 1.3, 0, 0, 'carPaint');
   p.box(0x0e0e0e, -2.61, 0.7, 0, 0.01, 1.7, 2.0, 'metal');
-  wheels(p, [1.8, -1.9], 1.05, 0.4);
+  wheels(p, [1.8, -1.9], 0.92, 0.4);
   return p;
 }
 
-/** Long box: city bus with a door open, windows dark, a flat tire. */
+/**
+ * City / school bus, 11.2 × 2.5 × 3 m. Wheels under the body in open arches (a dark inner wall, the
+ * tyres inside the side line); the window band is a dark recessed cabin behind pillars, and the panes sit in
+ * the openings between them — no pane lies on a painted surface, so nothing z-fights at any distance.
+ * Painted panels (busPaint): dust low down, no rust blooms that could read as stains.
+ */
 function bus(b: Builder, x: number, z: number, yaw: number, rand: Rand): Place {
   const p = vehicle(b, x, z, yaw, 5.6, 1.3);
-  const paint = pick(rand, [0xa89a6a, 0x8a9488, 0xb0a88e]);
-  p.box(paint, 0, 0.45, 0, 11.2, 2.6, 2.5, 'carPaint');
-  p.box(0x14181a, 0.2, 1.55, 1.255, 10.2, 0.9, 0.01, 'carGlass');
-  p.box(0x14181a, 0.2, 1.55, -1.255, 10.2, 0.9, 0.01, 'carGlass');
-  p.box(0x14181a, 5.605, 1.3, 0, 0.01, 1.3, 2.2, 'carGlass');
-  p.box(0x0c0c0c, 4.0, 0.5, 1.256, 1.1, 2.2, 0.01, 'metal');
-  p.box(0x6a6a62, 0, 0.4, 0, 11.2, 0.12, 2.52, 'metal');
-  wheels(p, [3.8, -3.4], 1.2, 0.5);
+  const paint = pick(rand, [0xb8922e, 0x9ea6aa, 0x8a968c, 0xa89a7a]);
+  const L = 5.6;
+  const W = 1.25;
+  const cabin = 0x101214;
+  const arches: [number, number][] = [
+    [3.25, 4.55],
+    [-3.95, -2.65],
+  ];
+  // Skirt between and around the arches, the wheel wells in them.
+  const skirt: [number, number][] = [
+    [4.55, L],
+    [-2.65, 3.25],
+    [-L, -3.95],
+  ];
+  for (const [x0, x1] of skirt) p.box(paint, (x0 + x1) / 2, 0.32, 0, x1 - x0, 0.73, W * 2, 'busPaint');
+  // The dark inner wall of each arch, between the wheels (the tyres stand in the open arch).
+  for (const [x0, x1] of arches) p.box(0x121212, (x0 + x1) / 2, 0.32, 0, x1 - x0, 0.73, 1.6, 'rubber');
+  wheels(p, [3.9, -3.3], 1.02, 0.5);
+  // Below the windows, the roof.
+  p.box(paint, 0, 1.05, 0, L * 2, 0.5, W * 2, 'busPaint');
+  p.box(paint, 0, 2.45, 0, L * 2, 0.55, W * 2, 'busPaint');
+  // Window band: the dark cabin set back 8 cm, pillars flush with the sides, a rear wall.
+  p.box(cabin, 0, 1.55, 0, L * 2 - 0.2, 0.9, W * 2 - 0.16, 'rubber');
+  // (Clear of the corner posts and the rear wall: no two faces share the side line.)
+  for (let px = -L + 0.35; px <= L - 0.4; px += 1.25) {
+    for (const sz of [-1, 1]) p.box(paint, px, 1.55, sz * (W - 0.042), 0.18, 0.9, 0.085, 'busPaint');
+  }
+  p.box(paint, -L + 0.05, 1.55, 0, 0.1, 0.9, W * 2, 'busPaint');
+  for (const sz of [-1, 1]) p.box(paint, L - 0.05, 1.55, sz * (W - 0.07), 0.1, 0.9, 0.14, 'busPaint');
+  // Panes in the openings: side panes 4 cm in front of the cabin and 4 cm behind the side line,
+  // the windshield between the cabin and the front.
+  for (const sz of [-1, 1]) p.box(0x2a3036, 0, 1.58, sz * (W - 0.04), L * 2 - 0.2, 0.84, 0.006, 'carGlass');
+  p.box(0x2a3036, L - 0.04, 1.58, 0, 0.006, 0.84, W * 2 - 0.3, 'carGlass');
+  // Front: destination sign, lamps, bumpers; the door on the kerb side, a little proud of the panel.
+  p.box(0x1a1c1e, L + 0.01, 2.55, 0, 0.02, 0.28, 1.6, 'rubber');
+  for (const sz of [-1, 1]) p.box(0xcfc8b0, L + 0.01, 0.75, sz * 0.95, 0.02, 0.16, 0.3, 'lamp');
+  p.box(0x2a2a28, L + 0.06, 0.3, 0, 0.12, 0.3, W * 2 - 0.1, 'rubber');
+  p.box(0x2a2a28, -L - 0.06, 0.3, 0, 0.12, 0.3, W * 2 - 0.1, 'rubber');
+  p.box(0x26282a, 4.6, 0.35, W + 0.008, 1.0, 2.05, 0.016, 'metal');
   return p;
 }
 
@@ -364,7 +400,7 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, bodies: BodyMo
 function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
   const p = vehicle(b, x, z, yaw, 4.2, 1.25);
   const red = pick(rand, [0x7a2a22, 0x6a2620]);
-  p.box(0x1e1e1e, 0, 0.35, 0, 8.2, 0.3, 2.1, 'metal');
+  p.box(0x1e1e1e, 0, 0.35, 0, 8.2, 0.25, 2.1, 'metal');
   p.box(red, 3.2, 0.6, 0, 1.8, 2.1, 2.4, 'carPaint');
   p.box(0x14181a, 4.11, 1.6, 0, 0.02, 0.8, 2.1, 'carGlass');
   p.box(red, -0.9, 0.6, 0, 6.2, 1.7, 2.4, 'carPaint');
@@ -375,7 +411,8 @@ function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): v
   p.box(0xb8a838, 2.8, 2.7, 0, 0.3, 0.12, 1.2, 'lamp');
   // Hose reeled out across the road.
   for (let k = 0; k < 4; k++) p.rbox(0x8a7a5a, -1 - k * 1.7, 0.04, 2.0 + k * 0.6, 1.8, 0.08, 0.08, 0.4 - k * 0.3, 0, 0, 'rubber');
-  wheels(p, [3.0, -1.6, -3.0], 1.15, 0.5);
+  // Tyres inside the side line (the body is 2.4 m wide), under it.
+  wheels(p, [3.0, -1.6, -3.0], 1.0, 0.5);
 }
 
 function stretcher(p: Place, lx: number, lz: number, rand: Rand): void {

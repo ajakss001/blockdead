@@ -80,15 +80,40 @@ export class Place {
     return spotHash(x, z + this.y * 7.3, salt);
   }
 
+  /** What this place and the places made from it drew since the last container (frame AABB). */
+  private readonly drawn = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  private parent: Place | null = null;
+  private readonly record = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void => {
+    for (let p: Place | null = this; p; p = p.parent) {
+      const d = p.drawn;
+      d[0] = Math.min(d[0], x0);
+      d[1] = Math.min(d[1], y0);
+      d[2] = Math.min(d[2], z0);
+      d[3] = Math.max(d[3], x1);
+      d[4] = Math.max(d[4], y1);
+      d[5] = Math.max(d[5], z1);
+    }
+  };
+
+  /** Geometry through the builder, its bounds recorded (the piece's search box). */
+  private geo(template: BufferGeometry, color: number, matrix: Matrix4, surface: Surface): void {
+    this.b.track = this.record;
+    this.b.geo(template, color, matrix, surface);
+    this.b.track = null;
+  }
+
   /** A sub-place at a local offset, turned by `dr` more quarters. */
   at(lx: number, lz: number, dr = 0): Place {
     const [x, z] = this.pt(lx, lz);
-    return new Place(this.b, x, this.y, z, ((this.r + dr) & 3) as Quarter);
+    const p = new Place(this.b, x, this.y, z, ((this.r + dr) & 3) as Quarter);
+    p.parent = this;
+    return p;
   }
 
   /** The same spot with the piece knocked over / pushed askew: yaw, then pitch (forward) and roll (sideways); lifted by `lift`. */
   tipped(yaw: number, pitch = 0, roll = 0, lift = 0): Place {
     const p = new Place(this.b, this.x, this.y, this.z, this.r);
+    p.parent = this;
     p.free = new Matrix4().compose(_p.set(this.x, this.y + lift, this.z), _q.setFromEuler(_e.set(pitch, (this.r * Math.PI) / 2 + yaw, roll, 'YXZ')), _s.set(1, 1, 1));
     return p;
   }
@@ -101,37 +126,39 @@ export class Place {
   box(color: number, lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, surface: Surface = 'wood', solid = false): void {
     if (this.free) {
       _l.compose(_p.set(lx, ly + sy / 2, lz), _q.identity(), _s.set(sx, sy, sz));
-      this.b.geo(this.b.box, color, _m.multiplyMatrices(this.free, _l), surface);
+      this.geo(this.b.box, color, _m.multiplyMatrices(this.free, _l), surface);
       return;
     }
     const [cx, cz] = this.pt(lx, lz);
     const odd = this.r & 1;
     const ax = odd ? sz : sx;
     const az = odd ? sx : sz;
+    this.b.track = this.record;
     this.b.block(color, cx - ax / 2, this.y + ly, cz - az / 2, ax, sy, az, surface);
+    this.b.track = null;
     if (solid) this.b.solid(cx - ax / 2, cz - az / 2, cx + ax / 2, cz + az / 2, this.y + ly, this.y + ly + sy);
   }
 
   /** Rotated box by local center. */
   rbox(color: number, lx: number, cy: number, lz: number, sx: number, sy: number, sz: number, yaw: number, pitch = 0, roll = 0, surface: Surface = 'wood'): void {
     _l.compose(_p.set(lx, cy, lz), _q.setFromEuler(_e.set(pitch, yaw, roll, 'YXZ')), _s.set(sx, sy, sz));
-    this.b.geo(this.b.box, color, _m.multiplyMatrices(this.base(), _l), surface);
+    this.geo(this.b.box, color, _m.multiplyMatrices(this.base(), _l), surface);
   }
 
   /** 8-sided cylinder by local center; `pitch` π/2 lays it along Z. */
   cyl(color: number, lx: number, cy: number, lz: number, radius: number, h: number, surface: Surface = 'metal', pitch = 0): void {
     _l.compose(_p.set(lx, cy, lz), _q.setFromEuler(_e.set(pitch, 0, 0)), _s.set(radius, h, radius));
-    this.b.geo(this.b.cyl8, color, _m.multiplyMatrices(this.base(), _l), surface);
+    this.geo(this.b.cyl8, color, _m.multiplyMatrices(this.base(), _l), surface);
   }
 
   cone(color: number, lx: number, cy: number, lz: number, radius: number, h: number, surface: Surface = 'lamp'): void {
     _l.compose(_p.set(lx, cy, lz), _q.identity(), _s.set(radius, h, radius));
-    this.b.geo(this.b.cone6, color, _m.multiplyMatrices(this.base(), _l), surface);
+    this.geo(this.b.cone6, color, _m.multiplyMatrices(this.base(), _l), surface);
   }
 
   blob(color: number, lx: number, cy: number, lz: number, sx: number, sy: number, sz: number, surface: Surface = 'foliage'): void {
     _l.compose(_p.set(lx, cy, lz), _q.identity(), _s.set(sx, sy, sz));
-    this.b.geo(this.b.ico, color, _m.multiplyMatrices(this.base(), _l), surface);
+    this.geo(this.b.ico, color, _m.multiplyMatrices(this.base(), _l), surface);
   }
 
   /** Flat sheet lying on a surface at height ly (paper, a towel), rotated by yaw. */
@@ -159,10 +186,14 @@ export class Place {
     this.b.life(kind, cx, this.y + ly, cz, n[0], n[1], w, h, seed, tag);
   }
 
-  /** Searchable spot in front of the piece. */
+  /**
+   * Searchable spot in front of the piece; its search box is what the piece drew (since the last
+   * container of this place or one under it). The count starts again here, for this place and up.
+   */
   container(type: ContainerType, lx: number, lz: number): void {
     const [cx, cz] = this.pt(lx, lz);
-    this.b.container(type, cx, cz, this.y);
+    this.b.container(type, cx, cz, this.y, this.drawn[0] <= this.drawn[3] ? [...this.drawn] : undefined);
+    for (let p: Place | null = this; p; p = p.parent) p.drawn.splice(0, 6, Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity);
   }
 
   /** Collider over a local rectangle (center, size), `h` tall from the floor. */

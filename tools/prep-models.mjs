@@ -10,7 +10,10 @@
  * Per model: the node tree flattened into world space; turned so its length runs along +X (nose +X,
  * as the game's cars), standing on y = 0, centered, scaled to its real size; every material baked
  * into the model's single atlas layer (textures into cells, plain colors into small swatches);
- * simplified to its triangle budget (meshoptimizer, material borders kept).
+ * triangles wound the way their normals face (sources are double-sided, the game culls back faces);
+ * simplified to its triangle budget with every border locked and a small error (meshoptimizer: no
+ * tears, no holes — a model may stay over budget rather than break); wheels are never simplified;
+ * glass panes kept apart (drawn as the game's translucent car glass, 1.5 cm off the body).
  *
  * The game draws these merged into its chunk meshes with the world material (no extra draw calls).
  * Usage: npm run prep-models
@@ -35,7 +38,7 @@ await MeshoptSimplifier.ready;
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
-/** Inverse-transpose of the upper 3×3 (for normals), column-major. */
+/** Inverse of the upper 3×3 by rows (applied by columns it is the normal matrix: inverse-transpose). */
 function normalMatrix(m) {
   const [a, b, c, d, e, f, g, h, i] = [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
   const A = e * i - f * h;
@@ -50,11 +53,17 @@ function normalMatrix(m) {
   };
 }
 
+/** Wheels by node or material name (Turkish "teker" too), never the steering wheel. */
+const WHEEL = /wheel|tire|tyre|rim|teker/i;
+const GLASS = /glass|window|transp/i;
+
 /** Triangle primitives under the scene (or one named node), in world space. */
 function collect(doc, only) {
   const parts = [];
-  const walk = (node, parent, inside) => {
+  const walk = (node, parent, inside, wheel) => {
     const m = mat4.mul(parent, node.getMatrix());
+    const name = node.getName();
+    const isWheel = wheel || (WHEEL.test(name) && !/steer/i.test(name));
     const take = inside || !only || node.getName() === only;
     const mesh = node.getMesh();
     if (take && mesh) {
@@ -78,9 +87,10 @@ function collect(doc, only) {
           pos[k * 3 + 2] = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14];
           if (N) {
             N.getElement(k, v);
-            const x = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
-            const y = n[3] * v[0] + n[4] * v[1] + n[5] * v[2];
-            const z = n[6] * v[0] + n[7] * v[1] + n[8] * v[2];
+            // n holds the inverse by rows: its transpose (the normal matrix) is it by columns.
+            const x = n[0] * v[0] + n[3] * v[1] + n[6] * v[2];
+            const y = n[1] * v[0] + n[4] * v[1] + n[7] * v[2];
+            const z = n[2] * v[0] + n[5] * v[1] + n[8] * v[2];
             const l = Math.hypot(x, y, z) || 1;
             nrm.set([x / l, y / l, z / l], k * 3);
           }
@@ -98,12 +108,16 @@ function collect(doc, only) {
         let idx = I ? Uint32Array.from(I.getArray()) : Uint32Array.from({ length: count }, (_, k) => k);
         // A mirrored node turns triangles inside out.
         if (det < 0) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
-        parts.push({ pos, nrm, uv, col, idx, mat: p.getMaterial(), hasNormals: !!N });
+        const mat = p.getMaterial();
+        // Baked fake shadows (a black quad under the car) are not part of the model.
+        if (mat && /shadow/i.test(mat.getName())) continue;
+        const glass = !!mat && mat.getAlphaMode() === 'BLEND' && mat.getBaseColorFactor()[3] < 0.9 && GLASS.test(mat.getName());
+        parts.push({ pos, nrm, uv, col, idx, mat, hasNormals: !!N, wheel: isWheel || (!!mat && WHEEL.test(mat.getName())), glass });
       }
     }
-    for (const c of node.listChildren()) walk(c, m, take && (inside || !!only));
+    for (const c of node.listChildren()) walk(c, m, take && (inside || !!only), isWheel);
   };
-  for (const s of doc.getRoot().listScenes()) for (const n of s.listChildren()) walk(n, mat4.id(), false);
+  for (const s of doc.getRoot().listScenes()) for (const n of s.listChildren()) walk(n, mat4.id(), false, false);
   return parts;
 }
 
@@ -147,18 +161,224 @@ function normalize(parts, cfg) {
   return bounds(parts);
 }
 
-/** Simplify every material part by the same ratio to fit the budget (borders between parts stay). */
-function simplify(parts, budget) {
-  const total = parts.reduce((s, p) => s + p.idx.length / 3, 0);
-  if (total <= budget) return;
-  const ratio = budget / total;
+/**
+ * Wind every triangle the way its vertex normals face (the sources are double-sided, so their
+ * winding is arbitrary; the game culls back faces — a wrong winding is a hole). Without normals:
+ * facing away from the model's middle. Where winding and normals disagree the source cannot be
+ * trusted either way (normals turned inwards on some panels): such a face is kept from both sides,
+ * each copy with normals along its own facing.
+ */
+function orient(parts, b) {
+  const mid = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+  let flipped = 0;
   for (const p of parts) {
+    const P = p.pos;
+    const extra = [];
+    for (let k = 0; k < p.idx.length; k += 3) {
+      const [i, j, l] = [p.idx[k], p.idx[k + 1], p.idx[k + 2]];
+      const e1 = [P[j * 3] - P[i * 3], P[j * 3 + 1] - P[i * 3 + 1], P[j * 3 + 2] - P[i * 3 + 2]];
+      const e2 = [P[l * 3] - P[i * 3], P[l * 3 + 1] - P[i * 3 + 1], P[l * 3 + 2] - P[i * 3 + 2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      let want;
+      if (p.hasNormals) want = [0, 1, 2].map((a) => p.nrm[i * 3 + a] + p.nrm[j * 3 + a] + p.nrm[l * 3 + a]);
+      else want = [0, 1, 2].map((a) => (P[i * 3 + a] + P[j * 3 + a] + P[l * 3 + a]) / 3 - mid[a]);
+      if (n[0] * want[0] + n[1] * want[1] + n[2] * want[2] < 0) {
+        p.idx[k + 1] = l;
+        p.idx[k + 2] = j;
+        flipped++;
+        if (p.hasNormals) extra.push(i, j, l);
+      }
+    }
+    if (extra.length === 0) continue;
+    // The other side: its own vertices, normals reversed.
+    const base = p.pos.length / 3;
+    const n = extra.length;
+    const grow = (arr, w) => {
+      const out = new Float32Array(arr.length + n * w);
+      out.set(arr);
+      extra.forEach((v, e) => {
+        for (let a = 0; a < w; a++) out[(base + e) * w + a] = arr[v * w + a];
+      });
+      return out;
+    };
+    p.pos = grow(p.pos, 3);
+    p.nrm = grow(p.nrm, 3);
+    p.uv = grow(p.uv, 2);
+    p.col = grow(p.col, 3);
+    for (let e = 0; e < n * 3; e++) p.nrm[base * 3 + e] = -p.nrm[base * 3 + e];
+    const idx = new Uint32Array(p.idx.length + n);
+    idx.set(p.idx);
+    for (let e = 0; e < n; e++) idx[p.idx.length + e] = base + e;
+    p.idx = idx;
+  }
+  return flipped;
+}
+
+/**
+ * Simplify the body parts (not wheels, not glass) by one ratio to fit the budget. Every border locked
+ * (material borders, UV seams, open edges: nothing can tear), normals and UVs weighted, the error kept
+ * small; if that cannot reach the budget the model stays over it — up to 1.5× — before the error grows
+ * a little, never past 2.5 % of its size.
+ */
+function simplify(parts, budget) {
+  const tris = (list) => list.reduce((s, p) => s + p.idx.length / 3, 0);
+  const glass = tris(parts.filter((p) => p.glass));
+  const wheels = parts.filter((p) => p.wheel && !p.glass);
+  const body = parts.filter((p) => !p.wheel && !p.glass);
+  if (tris(wheels) + tris(body) + glass <= budget) return 0;
+  // Wheels on their own (never merged into the body's pass): at most a quarter of the budget.
+  const wheelBudget = Math.min(tris(wheels), budget * 0.25);
+  return Math.max(reduce(wheels, wheelBudget / Math.max(1, tris(wheels))), reduce(body, Math.max(0.05, (budget - wheelBudget - glass) / Math.max(1, tris(body)))));
+}
+
+/** One ratio over a set of parts; returns the worst error. */
+function reduce(list, ratio) {
+  let worst = 0;
+  if (ratio >= 1) return 0;
+  for (const p of list) {
     const target = Math.max(3, Math.floor((p.idx.length * ratio) / 3) * 3);
     if (target >= p.idx.length) continue;
-    // Keep the borders between materials if that reaches the target; otherwise let them move.
-    let [idx] = MeshoptSimplifier.simplify(p.idx, p.pos, 3, target, 0.5, ['LockBorder']);
-    if (idx.length > target * 1.3) [idx] = MeshoptSimplifier.simplify(p.idx, p.pos, 3, target, 0.5);
-    if (idx.length >= 3) p.idx = idx;
+    const n = p.pos.length / 3;
+    const attrs = new Float32Array(n * 5);
+    for (let k = 0; k < n; k++) attrs.set([p.nrm[k * 3], p.nrm[k * 3 + 1], p.nrm[k * 3 + 2], p.uv[k * 2], p.uv[k * 2 + 1]], k * 5);
+    let best = null;
+    for (const err of [0.008, 0.015, 0.025]) {
+      const [idx, e] = MeshoptSimplifier.simplifyWithAttributes(p.idx, p.pos, 3, attrs, 5, [0.5, 0.5, 0.5, 0.2, 0.2], null, target, err, ['LockBorder']);
+      best = { idx, e };
+      if (idx.length <= target * 1.5) break;
+    }
+    if (best && best.idx.length >= 3) {
+      p.idx = best.idx;
+      worst = Math.max(worst, best.e);
+    }
+  }
+  return worst;
+}
+
+/**
+ * Coplanar faces that overlap flicker in the game (z-fighting): stickers on a panel, doubled shells.
+ * Exact duplicates are dropped; otherwise the face of the smaller part (the sticker), or the smaller
+ * face, is lifted 5 mm along its normal on vertices of its own.
+ */
+function separateCoplanar(parts) {
+  const EPS = 0.004;
+  const tris = [];
+  parts.forEach((p, pi) => {
+    if (p.glass) return;
+    for (let k = 0; k < p.idx.length; k += 3) {
+      const v = [0, 1, 2].map((c) => [p.pos[p.idx[k + c] * 3], p.pos[p.idx[k + c] * 3 + 1], p.pos[p.idx[k + c] * 3 + 2]]);
+      const e1 = v[1].map((x, a) => x - v[0][a]);
+      const e2 = v[2].map((x, a) => x - v[0][a]);
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      const area = Math.hypot(...n) / 2;
+      if (area < 1e-6) continue;
+      const u = n.map((x) => x / (area * 2));
+      tris.push({ pi, k, v, n: u, d: u[0] * v[0][0] + u[1] * v[0][1] + u[2] * v[0][2], area, size: p.idx.length });
+    }
+  });
+  // By plane offset only (direction bins would split nearly equal normals at their edges).
+  const key = (t, dd) => Math.round(t.d / EPS) + dd;
+  const bins = new Map();
+  for (const t of tris) {
+    const k = key(t, 0);
+    if (!bins.has(k)) bins.set(k, []);
+    bins.get(k).push(t);
+  }
+  const drop = new Set();
+  const lift = new Set();
+  for (const t of tris) {
+    for (const dd of [-1, 0, 1]) {
+      for (const o of bins.get(key(t, dd)) ?? []) {
+        if (o === t || drop.has(o) || drop.has(t) || lift.has(o) || lift.has(t)) continue;
+        if (t.n[0] * o.n[0] + t.n[1] * o.n[1] + t.n[2] * o.n[2] < 0.999) continue;
+        // Each corner close to the other's plane (nearly parallel planes can share an offset and be apart).
+        if (![[t, o], [o, t]].every(([x, y]) => x.v.every((q) => Math.abs(y.n[0] * q[0] + y.n[1] * q[1] + y.n[2] * q[2] - y.d) <= EPS))) continue;
+        if (!overlap2d(t, o)) continue;
+        const same = t.v.every((a) => o.v.some((b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.001));
+        if (same) drop.add(o);
+        else lift.add(o.size < t.size || (o.size === t.size && o.area < t.area) ? o : t);
+      }
+    }
+  }
+  for (const t of drop) parts[t.pi].dead = [...(parts[t.pi].dead ?? []), t.k];
+  for (const t of lift) {
+    const p = parts[t.pi];
+    const base = p.pos.length / 3;
+    const pos = new Float32Array(p.pos.length + 9);
+    pos.set(p.pos);
+    const nrm = new Float32Array(p.nrm.length + 9);
+    nrm.set(p.nrm);
+    const uv = new Float32Array(p.uv.length + 6);
+    uv.set(p.uv);
+    const col = new Float32Array(p.col.length + 9);
+    col.set(p.col);
+    for (let c = 0; c < 3; c++) {
+      const src = p.idx[t.k + c];
+      for (let a = 0; a < 3; a++) {
+        pos[(base + c) * 3 + a] = p.pos[src * 3 + a] + t.n[a] * 0.005;
+        nrm[(base + c) * 3 + a] = p.nrm[src * 3 + a];
+        col[(base + c) * 3 + a] = p.col[src * 3 + a];
+      }
+      uv[(base + c) * 2] = p.uv[src * 2];
+      uv[(base + c) * 2 + 1] = p.uv[src * 2 + 1];
+      p.idx[t.k + c] = base + c;
+    }
+    Object.assign(p, { pos, nrm, uv, col });
+  }
+  for (const p of parts) {
+    if (!p.dead) continue;
+    const dead = new Set(p.dead);
+    const keep = [];
+    for (let k = 0; k < p.idx.length; k += 3) if (!dead.has(k)) keep.push(p.idx[k], p.idx[k + 1], p.idx[k + 2]);
+    p.idx = Uint32Array.from(keep);
+    delete p.dead;
+  }
+  return { dropped: drop.size, lifted: lift.size };
+}
+
+/** Two coplanar triangles overlap with some area (shrunk 1 mm: sharing an edge is fine). */
+function overlap2d(a, b) {
+  const n = a.n;
+  const ax = Math.abs(n[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0];
+  let U = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]];
+  const l = Math.hypot(...U);
+  U = U.map((x) => x / l);
+  const V = [n[1] * U[2] - n[2] * U[1], n[2] * U[0] - n[0] * U[2], n[0] * U[1] - n[1] * U[0]];
+  const flat = (t) => {
+    const pts = t.v.map((p) => [p[0] * U[0] + p[1] * U[1] + p[2] * U[2], p[0] * V[0] + p[1] * V[1] + p[2] * V[2]]);
+    const c = [(pts[0][0] + pts[1][0] + pts[2][0]) / 3, (pts[0][1] + pts[1][1] + pts[2][1]) / 3];
+    return pts.map(([x, y]) => {
+      const L = Math.hypot(x - c[0], y - c[1]) || 1;
+      const k = Math.max(0, L - 0.001) / L;
+      return [c[0] + (x - c[0]) * k, c[1] + (y - c[1]) * k];
+    });
+  };
+  const A = flat(a);
+  const B = flat(b);
+  for (const poly of [A, B]) {
+    for (let k = 0; k < 3; k++) {
+      const p = poly[k];
+      const q = poly[(k + 1) % 3];
+      const axis = [q[1] - p[1], p[0] - q[0]];
+      const pa = A.map((v) => v[0] * axis[0] + v[1] * axis[1]);
+      const pb = B.map((v) => v[0] * axis[0] + v[1] * axis[1]);
+      if (Math.max(...pa) <= Math.min(...pb) || Math.max(...pb) <= Math.min(...pa)) return false;
+    }
+  }
+  return true;
+}
+
+/** Glass 1.5 cm off the body, outwards (away from the model's middle along its normal). */
+function liftGlass(parts, b) {
+  const mid = [(b.min[0] + b.max[0]) / 2, b.max[1] * 0.45, (b.min[2] + b.max[2]) / 2];
+  for (const p of parts) {
+    if (!p.glass) continue;
+    for (let k = 0; k < p.pos.length; k += 3) {
+      const n = [p.nrm[k], p.nrm[k + 1], p.nrm[k + 2]];
+      const out = [p.pos[k] - mid[0], p.pos[k + 1] - mid[1], p.pos[k + 2] - mid[2]];
+      const sgn = n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0 ? -1 : 1;
+      for (let a = 0; a < 3; a++) p.pos[k + a] += n[a] * sgn * 0.015;
+    }
   }
 }
 
@@ -300,8 +520,23 @@ for (const cfg of MODELS) {
     console.warn(`${cfg.name}: nothing under ${cfg.node ?? 'the scene'}, skipped`);
     continue;
   }
-  const b = normalize(parts, cfg);
-  simplify(parts, cfg.budget);
+  const b0 = normalize(parts, cfg);
+  const flipped = orient(parts, b0);
+  const before = parts.reduce((n, p) => n + p.idx.length / 3, 0);
+  const err = simplify(parts, cfg.budget);
+  liftGlass(parts, b0);
+  // Until nothing overlaps (a lifted sticker may meet another one).
+  const sep = { dropped: 0, lifted: 0 };
+  for (let pass = 0; pass < 12; pass++) {
+    const r = separateCoplanar(parts);
+    sep.dropped += r.dropped;
+    sep.lifted += r.lifted;
+    if (r.dropped + r.lifted === 0) break;
+  }
+  // Bounds again: lifted glass and stickers may stand a few millimetres proud of the box.
+  const b = bounds(parts);
+  // Glass last: the game draws the tail of the index buffer as translucent car glass.
+  parts.sort((x, y) => Number(x.glass) - Number(y.glass));
   const { atlas, textured, flats } = bakeAtlas(parts);
   if (cfg.recolor) {
     // Strong reds (red-cross emblems, red splashes) into the given color, keeping their shading.
@@ -316,6 +551,7 @@ for (const cfg of MODELS) {
   // Merge parts, drop unused vertices.
   let vCount = 0;
   let iCount = 0;
+  let glassIndices = 0;
   for (const p of parts) {
     const used = new Int32Array(p.pos.length / 3).fill(-1);
     let n = 0;
@@ -324,6 +560,7 @@ for (const cfg of MODELS) {
     p.used = n;
     vCount += n;
     iCount += p.idx.length;
+    if (p.glass) glassIndices += p.idx.length;
   }
   if (vCount > 65535) throw new Error(`${cfg.name}: ${vCount} vertices > 65535`);
   const size = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
@@ -362,6 +599,7 @@ for (const cfg of MODELS) {
     size: size.map((v) => +v.toFixed(4)),
     vertices: vCount,
     indices: iCount,
+    glass: glassIndices,
     vOffset,
     iOffset,
     normals: parts.every((p) => p.hasNormals),
@@ -370,7 +608,7 @@ for (const cfg of MODELS) {
     license: (meta.license ?? '').replace(/\s*\(.*\)$/, ''),
     url: meta.source ?? '',
   });
-  console.log(`${cfg.name.padEnd(18)} ${String(Math.round(tris)).padStart(5)} tris  ${size.map((v) => v.toFixed(2)).join(' × ')} m  textures ${textured}, colors ${flats}`);
+  console.log(`${cfg.name.padEnd(18)} ${String(before).padStart(6)} → ${String(Math.round(tris)).padStart(5)} tris (glass ${glassIndices / 3}, error ${(err * 100).toFixed(1)}%, flipped ${flipped}, coplanar: dropped ${sep.dropped}, lifted ${sep.lifted})  ${size.map((v) => v.toFixed(2)).join(' × ')} m  textures ${textured}, colors ${flats}`);
 }
 
 mkdirSync(OUT, { recursive: true });

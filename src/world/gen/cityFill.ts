@@ -145,7 +145,7 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
     const x = clear(X0 + 2 + rand() * (X1 - X0 - 7), 0.9);
     const southWall = rand() < 0.5;
     dumpster(b, x, southWall ? zS + 0.1 : zN - 1.2, 'x');
-    b.containers.push({ type: 'trash', x: x + 0.9, z: southWall ? zS + 1.6 : zN - 1.7 });
+    b.container('trash', x + 0.9, southWall ? zS + 1.6 : zN - 1.7);
   }
   for (let k = 0; k < 2; k++) crates(b, clear(X0 + 2 + rand() * (X1 - X0 - 6), 0.5), rand() < 0.5 ? zS + 0.2 : zN - 1.2, rand);
   for (let k = 0; k < 4; k++) groundDecal(b, rand() < 0.7 ? 'decalLitter' : 'decalOil', X0 + rand() * (X1 - X0), PAVE.plaza, zMid + (rand() - 0.5) * (width - 2), 2, rand);
@@ -220,7 +220,7 @@ function crates(b: Builder, x: number, z: number, rand: Rand): void {
   b.block(0x6a5a40, x, 0, z, 1.0, 0.14, 1.0, 'wood', true);
   const h = 1 + Math.floor(rand() * 2);
   for (let k = 0; k < h; k++) b.block(PAL.crate, x + 0.08 + (rand() - 0.5) * 0.1, 0.14 + k * 0.62, z + 0.08, 0.84, 0.6, 0.84, 'wood');
-  if (rand() < 0.35) b.containers.push({ type: 'crate', x: x + 0.5, z: z + 0.5 });
+  if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);
 }
 
 /** Corrugated sheet fence, 2.2 m, along X or Z, with an optional gap. */

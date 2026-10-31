@@ -104,8 +104,8 @@ function gasStation(S: Site, rand: Rand): void {
   p.box(0x6a5a44, 16.8, 0, -12, 1.2, 0.9, 3, 'wood', true);
   S.container('garage', 16.6, -12);
   for (let k = 0; k < 4; k++) p.cyl(0x1a1a1a, 7.2, 0.12 + k * 0.24, -14.8, 0.35, 0.22, 'rubber');
-  S.container('crate', 7.5, -4);
   p.box(0x6a5e4a, 7.5, 0, -4, 1, 0.8, 1, 'wood', true);
+  S.container('crate', 7.5, -4);
 }
 
 /**

@@ -111,7 +111,7 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
     b.block(PAL.metal, cx + dx + 1.92, 0, cz + 2.2, 0.08, 0.95, 0.08, 'metal', true);
   }
   b.block(0x3e4a34, cx - 0.6, 0, cz - 2.6, 1.0, 0.5, 0.6, 'wood', true);
-  b.containers.push({ type: 'crate', x: cx - 0.1, z: cz - 1.9 });
+  b.container('crate', cx - 0.1, cz - 1.9);
   for (let i = 0; i < 3; i++) groundDecal(b, 'decalLitter', cx + (rand() - 0.5) * 8, 0, cz + (rand() - 0.5) * 8, 2.4, rand);
   for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

@@ -1,6 +1,7 @@
 import type { ItemId, ItemStack } from '../data/items';
 import { type ContainerType, LOOT, rollLoot } from '../data/loot';
 import type { Zone } from '../world/gen/layout';
+import type { SearchBox } from '../world/gen/pieces';
 
 export interface ContainerRef {
   id: number;
@@ -10,8 +11,44 @@ export interface ContainerRef {
   /** Floor height (high-rise storeys). */
   y: number;
   zone: Zone;
+  /** Search zone fitted to the object: centre, half sizes, turn about Y (absent: a default box at the spot). */
+  box?: SearchBox;
   /** Always in it on the first search (a key, a note). */
   fixed?: ItemId[];
+}
+
+/** A container's search zone; old saves' bodies and the like without one get a box at the spot. */
+export function searchBox(c: ContainerRef): SearchBox {
+  return c.box ?? [c.x, c.y + 0.5, c.z, 0.45, 0.5, 0.45, 0];
+}
+
+/** Distance along a ray (unit direction) to where it enters a turned box, or −1 (inside counts as 0). */
+export function rayBox(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, b: SearchBox): number {
+  const [cx, cy, cz, hx, hy, hz, yaw] = b;
+  // Into the box's frame: undo its turn about Y.
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const px = ox - cx;
+  const pz = oz - cz;
+  const lo = [px * c - pz * s, oy - cy, px * s + pz * c];
+  const ld = [dx * c - dz * s, dy, dx * s + dz * c];
+  const h = [hx, hy, hz];
+  let t0 = -Infinity;
+  let t1 = Infinity;
+  for (let a = 0; a < 3; a++) {
+    if (Math.abs(ld[a]) < 1e-9) {
+      if (Math.abs(lo[a]) > h[a]) return -1;
+      continue;
+    }
+    let ta = (-h[a] - lo[a]) / ld[a];
+    let tb = (h[a] - lo[a]) / ld[a];
+    if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta);
+    t1 = Math.min(t1, tb);
+    if (t0 > t1) return -1;
+  }
+  if (t1 < 0) return -1;
+  return Math.max(0, t0);
 }
 
 /**
@@ -27,7 +64,7 @@ export class Containers {
 
   constructor(readonly seed: number) {}
 
-  addChunk(key: number, zone: Zone, list: { id: number; type: ContainerType; x: number; z: number; y?: number; fixed?: ItemId[] }[]): void {
+  addChunk(key: number, zone: Zone, list: { id: number; type: ContainerType; x: number; z: number; y?: number; fixed?: ItemId[]; box?: SearchBox }[]): void {
     this.byChunk.set(key, list.map((c) => ({ ...c, y: c.y ?? 0, zone })));
   }
 
@@ -46,6 +83,33 @@ export class Containers {
   }
 
   /** Closest container within reach, on the player's storey, that the player is roughly facing. */
+  /**
+   * The container whose search zone the ray (eye, unit direction) hits first within `reach`; `clear`
+   * says whether nothing (a wall, another object) stands in front of that hit. Null if none, or blocked.
+   */
+  targetRay(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, reach: number, clear: (t: number) => boolean): ContainerRef | null {
+    let best: ContainerRef | null = null;
+    let bestT = reach;
+    for (const list of [...this.byChunk.values(), this.loose]) {
+      for (const c of list) {
+        if (Math.abs(c.x - ox) > reach + 3 || Math.abs(c.z - oz) > reach + 3) continue;
+        const t = rayBox(ox, oy, oz, dx, dy, dz, searchBox(c));
+        if (t >= 0 && t < bestT) {
+          bestT = t;
+          best = c;
+        }
+      }
+    }
+    return best && clear(bestT) ? best : null;
+  }
+
+  /** Every search zone near a point (debug drawing). */
+  boxesNear(x: number, z: number, r: number): SearchBox[] {
+    const out: SearchBox[] = [];
+    for (const list of [...this.byChunk.values(), this.loose]) for (const c of list) if (Math.abs(c.x - x) < r && Math.abs(c.z - z) < r) out.push(searchBox(c));
+    return out;
+  }
+
   target(x: number, z: number, dirX: number, dirZ: number, y = 0, reach = 1.9): ContainerRef | null {
     let best: ContainerRef | null = null;
     let bestScore = Infinity;
