@@ -2,7 +2,7 @@ import * as F from './furniture';
 import { spotHash } from './lifeKinds';
 import type { Builder, Rand } from './pieces';
 import type { PoiSite } from './poi';
-import { checkpoint, hypermarket, mall, waterPlant } from './poiBuild2';
+import { checkpoint, hypermarket, mall, park, waterPlant } from './poiBuild2';
 import { LOT, Site } from './poiSite';
 
 /** Build the POI on its block. */
@@ -13,6 +13,7 @@ export function buildPoi(b: Builder, s: PoiSite, rand: Rand): void {
   else if (s.kind === 'hyper') hypermarket(site, rand);
   else if (s.kind === 'mall') mall(site, rand);
   else if (s.kind === 'plant') waterPlant(site, rand);
+  else if (s.kind === 'park') park(site, rand);
   else checkpoint(site, rand);
 }
 

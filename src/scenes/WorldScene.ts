@@ -81,6 +81,8 @@ const DAY = {
 const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
 const _indoorHaze = new Color(0x0b0b0c);
+const _sunDir = new Vector3();
+const _sunColor = new Color();
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
 /** How each weapon's blow on a body sounds. */
@@ -281,6 +283,8 @@ export class WorldScene implements IScene {
       (x, y, z, r) => this.zombies.noiseAt(x, y, z, r),
     );
     this.player.onStrikeWorld = (x, y, z) => this.atmo.strikeAt(x, y, z);
+    // The trees' far-away impostors are baked once, now.
+    this.atmo.vegetation.bake(ctx.renderer.gl);
     this.landmarks = new Landmarks(this.scene, layout);
     this.weather = new Weather(this.scene, document.getElementById('ui')!, (delay, power) => this.life.thunder(delay, power));
     this.interiors.onAmbient = (owner, spots) => {
@@ -534,6 +538,10 @@ export class WorldScene implements IScene {
       crouched: this.player.controller.crouched,
       urban: zone === 'downtown' || zone === 'town',
       rain: this.weather.rain,
+      camera: this.camera,
+      sunDir: _sunDir.copy(this.moon.position).sub(this.moon.target.position).normalize(),
+      sunColor: _sunColor.copy(this.moon.color).multiplyScalar(this.moon.intensity * this.clock.daylight),
+      fogFar: (this.scene.fog as Fog).far,
     });
     this.applyDaylight(this.clock.daylight);
     // Lightning lights the world for a moment; fog thickens at night and in the rain, clears slowly by day.
@@ -583,8 +591,9 @@ export class WorldScene implements IScene {
   private groundKind(x: number, z: number): Ground {
     const y = this.layout.walkHeightAt(x, z);
     if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z)) return Ground.None;
-    // A POI's lot is paved: only weeds in the cracks.
-    if (this.layout.poi(Math.floor(x / CHUNK), Math.floor(z / CHUNK))) return Ground.Paved;
+    // A POI's lot is paved (only weeds in the cracks); a square is all lawn.
+    const site = this.layout.poi(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
+    if (site) return site.kind === 'park' ? Ground.Grass : Ground.Paved;
     const zone = this.chunks.zoneAt(x, z);
     const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
     const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
@@ -820,6 +829,7 @@ export class WorldScene implements IScene {
     this.life.clothEnabled = preset.lifeCloth;
     this.life.roomLights = preset.roomLights;
     this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
+    this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();

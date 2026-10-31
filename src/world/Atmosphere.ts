@@ -1,4 +1,4 @@
-import type { Scene, Vector3 } from 'three';
+import type { Camera, Color, Scene, Vector3 } from 'three';
 import { type LoopKind, sfx } from '../audio/Sound';
 import { Foliage, Ground } from '../render/Foliage';
 import type { Particles } from '../render/Particles';
@@ -6,9 +6,14 @@ import { WetDecals } from '../render/WetDecals';
 import { ATMO } from './atmoConfig';
 import type { CollisionWorld } from './CollisionWorld';
 import type { Doors } from './Doors';
-import { LIFE, spotHash } from './gen/lifeKinds';
+import { LEAFY, LIFE, spotHash } from './gen/lifeKinds';
+import { type Plant, Vegetation } from '../render/Vegetation';
+import type { Species } from '../render/vegetation/models';
 import { Street } from './Street';
 import { LIFE_STRIDE } from './WorldLife';
+
+/** Tree spot tag → species (lifeKinds TREE). */
+const TREE_SPECIES: Species[] = ['maple', 'oak', 'elm', 'spruce', 'pine', 'dead'];
 
 /** Leaks drip (seen and heard) within this distance, m; taps, loops, phones — their own. */
 const DRIP_RANGE = 14;
@@ -67,6 +72,11 @@ export interface AtmoFrame {
   /** In town (rats, rattles, a cart). */
   urban: boolean;
   rain: number;
+  /** For the trees: the camera, the sun (direction to it, colour × strength), the fog's reach. */
+  camera: Camera;
+  sunDir: Vector3;
+  sunColor: Color;
+  fogFar: number;
 }
 
 /**
@@ -84,6 +94,7 @@ export class Atmosphere {
   private dirty = false;
   readonly foliage: Foliage;
   readonly street: Street;
+  readonly vegetation: Vegetation;
   private readonly wet: WetDecals;
   private trees: number[] = [];
   private cars: number[] = [];
@@ -127,6 +138,7 @@ export class Atmosphere {
     this.foliage = new Foliage(scene, ground, groundY);
     this.wet = new WetDecals(scene);
     this.street = new Street(scene, particles, world, noise, groundY);
+    this.vegetation = new Vegetation(scene);
   }
 
   /** Quality preset: grass reach, density, cap. */
@@ -182,6 +194,7 @@ export class Atmosphere {
     this.particles.windX = Math.cos(windDir) * wind;
     this.particles.windZ = Math.sin(windDir) * wind;
     this.street.update(dt, player, f.speed, f.crouched, !indoors, f.urban, gust, windDir);
+    this.vegetation.update(this.time, gust, f.camera, f.eye, f.sunDir, f.sunColor, f.fogFar);
 
     // Leaves let go in the gusts.
     if (!indoors) {
@@ -189,7 +202,7 @@ export class Atmosphere {
       while (this.leafDebt >= 1) {
         this.leafDebt -= 1;
         const near: number[] = [];
-        for (let i = 0; i < this.trees.length; i += 5) if (!this.trees[i + 4] && Math.hypot(this.trees[i] - px, this.trees[i + 2] - pz) < LEAF_RANGE) near.push(i);
+        for (let i = 0; i < this.trees.length; i += 5) if (this.trees[i + 4] <= LEAFY && Math.hypot(this.trees[i] - px, this.trees[i + 2] - pz) < LEAF_RANGE) near.push(i);
         if (near.length === 0) break;
         const i = near[Math.floor(Math.random() * near.length)];
         const a = Math.random() * Math.PI * 2;
@@ -387,6 +400,7 @@ export class Atmosphere {
     const hydrants: number[] = [];
     const pools: number[] = [];
     const lamps: number[] = [];
+    const plants: Plant[] = [];
     const oldLeaks = this.leaks;
     this.leaks = [];
     this.taps = [];
@@ -408,6 +422,13 @@ export class Atmosphere {
             break;
           case LIFE.tree:
             trees.push(x, y, z, spots[i + 6], spots[i + 9]);
+            plants.push({ species: TREE_SPECIES[spots[i + 9]] ?? 'maple', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 4], spots[i + 5]), scale: spots[i + 7] || 1 });
+            break;
+          case LIFE.bush:
+            plants.push({ species: spots[i + 7] ? 'bushSpread' : 'bushRound', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 4], spots[i + 5]), scale: spots[i + 6] || 1 });
+            break;
+          case LIFE.hedge:
+            plants.push({ species: 'hedge', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 5], spots[i + 4]), scale: spots[i + 6] || 1 });
             break;
           case LIFE.car:
             cars.push(x, z, spots[i + 4], spots[i + 5]);
@@ -460,6 +481,7 @@ export class Atmosphere {
     this.leakList = leaks;
     this.pools = pools;
     this.foliage.setSources({ trees, cars, ivy });
+    this.vegetation.setPlants(plants);
     this.street.setSpots({ perches, cars, fires, hydrants });
     this.wet.setLeaks(leaks, this.rainPools.length ? pools.concat(this.rainPools) : pools);
   }
@@ -469,6 +491,7 @@ export class Atmosphere {
     this.foliage.mesh.count = Math.max(1, this.foliage.mesh.count);
     this.wet.mesh.count = Math.max(1, this.wet.mesh.count);
     this.street.critters.mesh.count = Math.max(1, this.street.critters.mesh.count);
+    this.vegetation.prewarm();
     return () => {
       this.dirty = true;
     };
@@ -479,5 +502,6 @@ export class Atmosphere {
     this.foliage.dispose();
     this.wet.dispose();
     this.street.dispose();
+    this.vegetation.dispose();
   }
 }

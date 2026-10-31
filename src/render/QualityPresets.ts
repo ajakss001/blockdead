@@ -33,6 +33,11 @@ export interface QualityPreset {
    * `cell` m, at most `cap` quads. Beyond — the ground's own tone.
    */
   foliage: { radius: number; cell: number; cap: number };
+  /**
+   * Trees and bushes: full crowns nearer than `near` m, fewer cards to `mid`, impostors beyond; the share of
+   * cards kept; variants per species.
+   */
+  vegetation: { near: number; mid: number; fullKeep: number; midKeep: number; variants: number };
 }
 
 export const QUALITY_LEVELS: readonly QualityLevel[] = ['low', 'medium', 'high'];
@@ -41,6 +46,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   low: {
     level: 'low',
     foliage: { radius: 13, cell: 0.95, cap: 1400 },
+    vegetation: { near: 12, mid: 30, fullKeep: 0.8, midKeep: 0.5, variants: 1 },
     chunkRadius: 1,
     resolutionScaleMin: 0.6,
     resolutionScaleMax: 0.85,
@@ -60,6 +66,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   medium: {
     level: 'medium',
     foliage: { radius: 20, cell: 0.75, cap: 3600 },
+    vegetation: { near: 18, mid: 45, fullKeep: 0.95, midKeep: 0.6, variants: 2 },
     chunkRadius: 1,
     resolutionScaleMin: 0.7,
     resolutionScaleMax: 1,
@@ -79,6 +86,7 @@ export const QUALITY_PRESETS: Readonly<Record<QualityLevel, QualityPreset>> = {
   high: {
     level: 'high',
     foliage: { radius: 30, cell: 0.6, cap: 7000 },
+    vegetation: { near: 26, mid: 70, fullKeep: 1, midKeep: 0.65, variants: 4 },
     chunkRadius: 2,
     resolutionScaleMin: 0.85,
     resolutionScaleMax: 1,

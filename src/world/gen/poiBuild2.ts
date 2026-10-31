@@ -1,6 +1,7 @@
 import * as F from './furniture';
 import type { Place } from './furniture';
-import { LIFE, spotHash } from './lifeKinds';
+import { LIFE, spotHash, TREE } from './lifeKinds';
+import { hedge, lampPost, plantTree, trashBins } from './pieces';
 import type { Rand } from './pieces';
 import { LOT, type Site } from './poiSite';
 
@@ -520,5 +521,74 @@ export function checkpoint(S: Site, rand: Rand): void {
     p.box(0x5a5a56, x, 0, rz - 4.6, 0.12, 2.6, 0.12, 'metal', true);
     p.box(0xd8d4c8, x, 1.9, rz - 4.6, 4.2, 0.7, 0.06, 'plaster');
     signText(p, 'ЭВАКУАЦИЯ >', x, 2.08, rz - 4.55, 0.068, 0xa02a20);
+  }
+}
+
+/**
+ * A square (сквер): a lawn gone to seed, two paths crossing at a dry fountain, benches, lamps, rows of
+ * maples, oaks and elms (some dead), bushes, an overgrown hedge round it with gaps where the paths go out.
+ */
+export function park(S: Site, rand: Rand): void {
+  const p = S.p;
+  const b = S.b;
+  p.box(0x4a5632, 0, 0, 0, LOT * 2, 0.05, LOT * 2, 'ground');
+  // Paths, crossing.
+  p.box(0x8a8478, 0, 0.05, 0, 2.6, 0.02, LOT * 2, 'asphalt');
+  p.box(0x8a8478, 0, 0.05, 0, LOT * 2, 0.02, 2.6, 'asphalt');
+  // The fountain, dry, leaves in the basin.
+  p.cyl(0x8a867c, 0, 0.3, 0, 3, 0.6, 'concrete');
+  p.cyl(0x3a3a30, 0, 0.6, 0, 2.7, 0.02, 'plaster');
+  p.cyl(0x8a867c, 0, 1.1, 0, 0.35, 1.2, 'concrete');
+  p.cyl(0x8a867c, 0, 1.75, 0, 0.9, 0.12, 'concrete');
+  p.solid(0, 0, 5.6, 5.6, 0.6);
+  // Benches facing the paths, lamps on the corners of the crossing.
+  for (const [x, z, r] of [
+    [-8, 2.1, 2],
+    [8, 2.1, 2],
+    [-8, -2.1, 0],
+    [8, -2.1, 0],
+    [2.1, 9, 1],
+    [-2.1, -9, 3],
+  ] as const) F.bench(p.at(x, z, r), rand, rand() < 0.2);
+  for (const [x, z] of [
+    [4, 4],
+    [-4, -4],
+    [4, -14],
+    [-4, 14],
+  ] as const) {
+    const [wx, wz] = p.pt(x, z);
+    lampPost(b, wx, wz, 0, 0);
+  }
+  const [tx, tz] = p.pt(5, 5);
+  trashBins(b, tx, tz);
+  // Trees in each quarter, bushes between.
+  for (const [qx, qz] of [
+    [1, 1],
+    [-1, 1],
+    [1, -1],
+    [-1, -1],
+  ] as const) {
+    for (let k = 0; k < 4; k++) {
+      const lx = qx * (6 + spotHash(qx * 7 + k, qz, 50) * 16);
+      const lz = qz * (6 + spotHash(qz * 5 + k, qx, 51) * 16);
+      const [wx, wz] = p.pt(lx, lz);
+      const species = spotHash(wx, wz, 52) < 0.1 ? TREE.dead : Math.floor(spotHash(wx, wz, 53) * 3);
+      plantTree(b, wx, 0.05, wz, 0.95 + spotHash(wx, wz, 54) * 0.45, spotHash(wz, wx, 55) * 6.28, species);
+    }
+    for (let k = 0; k < 3; k++) {
+      const lx = qx * (4 + spotHash(qx + k * 3, qz, 56) * 18);
+      const lz = qz * (4 + spotHash(qz + k * 3, qx, 57) * 18);
+      const [wx, wz] = p.pt(lx, lz);
+      b.life(LIFE.bush, wx, 0.05, wz, 0, 1, 0.9 + spotHash(wx, wz, 58) * 0.5, spotHash(wx, wz, 59) < 0.4 ? 1 : 0, spotHash(wx, wz, 60));
+    }
+  }
+  // The hedge round it, gaps where the paths leave.
+  const E = LOT - 1;
+  const corners = [p.pt(-E, -E), p.pt(E, -E), p.pt(E, E), p.pt(-E, E)];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az] = corners[k];
+    const [bx, bz] = corners[(k + 1) % 4];
+    const [mx, mz] = [(ax + bx) / 2, (az + bz) / 2];
+    hedge(b, ax, az, bx, bz, Math.abs(bz - az) < 1e-6 ? mx : mz, 3.2);
   }
 }

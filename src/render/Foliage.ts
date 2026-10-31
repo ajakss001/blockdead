@@ -15,7 +15,7 @@ import {
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { spotHash } from '../world/gen/lifeKinds';
+import { LEAFY, spotHash } from '../world/gen/lifeKinds';
 
 /** What a ground cell is, for growing things: nothing (indoors, under a roof), open ground, paving, a curb line. */
 export const Ground = { None: 0, Grass: 1, Paved: 2, Curb: 3 } as const;
@@ -205,14 +205,14 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
       const g = tile === TILE.litter ? _c.setRGB(0.85 + tint * 0.3, 0.8 + tint * 0.2, 0.75) : _c.setRGB(0.55 + tint * 0.25, 0.62 + tint * 0.25, 0.5 + tint * 0.15);
       color.push(g.r, g.g, g.b);
     };
-    // A tuft: two crossed cards.
+    // A tuft: three crossed cards.
     const tuft = (x: number, z: number, size: number, tile: number) => {
       const y = this.groundY(x, z) - 0.02;
       const yaw = spotHash(x, z, 3) * Math.PI;
       const h = size * (0.7 + spotHash(z, x, 4) * 0.6);
       const tint = spotHash(x, z, 5);
-      for (let i = 0; i < 2; i++) {
-        _m.compose(_p.set(x, y, z), _q.setFromAxisAngle(_y, yaw + i * Math.PI * 0.5), _s.set(size, h, 1));
+      for (let i = 0; i < 3; i++) {
+        _m.compose(_p.set(x, y, z), _q.setFromAxisAngle(_y, yaw + (i * Math.PI) / 3), _s.set(size, h, 1));
         push(tile, 1, tint);
       }
     };
@@ -241,7 +241,7 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
           const d = Math.hypot(trees[i] - jx, trees[i + 2] - jz);
           if (d < trees[i + 3] * 1.3 && d > 0.25) {
             near = Math.max(near, 1 - d / (trees[i + 3] * 1.3));
-            if (!trees[i + 4]) leafy = true;
+            if (trees[i + 4] <= LEAFY) leafy = true;
           }
         }
         if (leafy && spotHash(jx, jz, 9) < 0.35) flat(jx, jz, 0.55 + spotHash(jx, jz, 10) * 0.35);
@@ -328,17 +328,25 @@ function atlas(): HTMLCanvasElement {
     return seed / 2147483647;
   };
   const greens = ['#4f5a2e', '#5d6634', '#6b6a38', '#45502a', '#7a7440', '#3e4a28'];
-  // Grass: thin blades from the bottom edge, leaning.
-  for (let i = 0; i < 46; i++) {
-    const x = 4 + rnd() * (S - 8);
-    const h = S * (0.35 + rnd() * 0.6);
-    const lean = (rnd() - 0.5) * 14;
-    g.strokeStyle = greens[Math.floor(rnd() * greens.length)];
-    g.lineWidth = 1.5 + rnd() * 1.5;
+  // Grass: a tuft of broad blades from one root, fanning out, tapering to a point; dark at the ground,
+  // light at the tips.
+  for (let i = 0; i < 16; i++) {
+    const root = S / 2 + (rnd() - 0.5) * S * 0.25;
+    const h = S * (0.45 + rnd() * 0.53);
+    const lean = (root - S / 2) * 1.2 + (rnd() - 0.5) * S * 0.35;
+    const w = 2.2 + rnd() * 2.6;
+    const grad = g.createLinearGradient(0, S, 0, S - h);
+    const tone = rnd();
+    grad.addColorStop(0, '#26301a');
+    grad.addColorStop(0.45, tone < 0.5 ? '#4a5a2a' : '#56602e');
+    grad.addColorStop(1, tone < 0.3 ? '#9a9a5a' : '#7e9248');
+    g.fillStyle = grad;
     g.beginPath();
-    g.moveTo(x, S);
-    g.quadraticCurveTo(x + lean * 0.3, S - h * 0.6, x + lean, S - h);
-    g.stroke();
+    g.moveTo(root - w, S);
+    g.quadraticCurveTo(root - w * 0.6 + lean * 0.35, S - h * 0.55, root + lean, S - h);
+    g.quadraticCurveTo(root + w * 0.6 + lean * 0.35, S - h * 0.55, root + w, S);
+    g.closePath();
+    g.fill();
   }
   // Weed: a stalk with broad leaves.
   g.save();

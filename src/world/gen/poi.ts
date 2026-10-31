@@ -19,12 +19,13 @@ export const POI = {
   hyper: { id: 4, name: 'Гипермаркет ValuMart', chance: 0.6, size: 1, minDist: 12, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 14, downtown: false, near: null },
   mall: { id: 3, name: 'Торговый центр MegaPlaza', chance: 0.55, size: 1, minDist: 16, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 16, downtown: false, near: null },
   plant: { id: 5, name: 'Водоочистная станция', chance: 0.5, size: 1, minDist: 18, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
+  park: { id: 7, name: 'Сквер', chance: 0.5, size: 1, minDist: 5, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 2, downtown: true, near: null },
   checkpoint: { id: 6, name: 'Военный КПП', chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
 } as const;
 
 export type PoiKind = keyof typeof POI;
 /** Placement order: earlier types win a contested block. */
-const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas'];
+const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park'];
 /** The country road grid runs along every 4th chunk line (see layout). */
 const MAJOR_EVERY = 4;
 
@@ -155,6 +156,7 @@ export function poiSpawnPoints(kind: PoiKind): { outside: [number, number][]; in
   if (kind === 'hyper') return { outside: grid(-20, 20, 14, 24, 5), inside: [...grid(-21, 21, -11, 5.5, 12), ...grid(-20, 10, -20, -14, 4)] };
   if (kind === 'mall') return { outside: grid(-20, 20, 13, 24, 5), inside: [...grid(-7, 7, -9, 1, 5), ...grid(-22, -13, -20, 8, 4), ...grid(10, 20, -16, 4, 5)] };
   if (kind === 'plant') return { outside: grid(-20, 20, -2, 20, 4), inside: [[8, 9], [15, 4], [-14, 8]] };
+  if (kind === 'park') return { outside: [[-12, 12], [10, -14]], inside: [] };
   if (kind === 'checkpoint') return { outside: [[-10, 24], [4, 26], [-2, 10], [10, 14], [-16, 12]], inside: [[-14, 6], [-6, 6], [4, -4]] };
   if (kind === 'gas')
     return {

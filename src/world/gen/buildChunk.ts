@@ -7,12 +7,12 @@ import { curbParking, downtownBlock } from './cityFill';
 import { type BuildingDesc, groundDecal, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
-import { LIFE, spotHash } from './lifeKinds';
+import { LIFE, spotHash, TREE } from './lifeKinds';
 import { hash3 } from './noise';
 import { buildPoi } from './poiBuild';
 import { type BodyMode, chaosScene, sceneAt } from './chaos';
 import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
-import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, lampPost, mailbox, PAL, pick, pine, type Rand, trashBins, tree } from './pieces';
+import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, hedge, lampPost, mailbox, PAL, pick, pine, plantTree, type Rand, trashBins, tree } from './pieces';
 
 export interface ChunkData {
   i: number;
@@ -159,6 +159,7 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
       hydrant(b, x - ROAD_HALF - 0.55, SIDEWALK_H, z + CHUNK * 0.42);
+      for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + side * (ROAD_HALF + 1.0), z + CHUNK * t, SIDEWALK_H);
     }
     // Downtown: the queue that never got out; elsewhere cars sit where people left them.
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
@@ -187,6 +188,7 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
       hydrant(b, x + CHUNK * 0.58, SIDEWALK_H, z - ROAD_HALF - 0.55);
+      for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + CHUNK * t, z + side * (ROAD_HALF + 1.0), SIDEWALK_H);
     }
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
     if (layout.urbanZ(i, j)) {
@@ -221,6 +223,15 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       else if (roll < (core ? 0.55 : 0.25)) checkpoint(b, x, z, rand);
     }
   }
+}
+
+/** A street tree in an iron grate on the sidewalk (maple, oak or elm; now and then a dead one), half the slots. */
+function streetTree(b: Builder, x: number, z: number, y: number): void {
+  if (spotHash(x, z, 45) > 0.5) return;
+  b.block(0x2a2a28, x - 0.65, y, z - 0.65, 1.3, 0.012, 1.3, 'metal');
+  b.block(0x3a2e24, x - 0.5, y, z - 0.5, 1.0, 0.016, 1.0, 'ground');
+  const species = spotHash(x, z, 46) < 0.1 ? TREE.dead : Math.floor(spotHash(x, z, 47) * 3);
+  plantTree(b, x, y, z, 0.75 + spotHash(x, z, 48) * 0.3, spotHash(z, x, 49) * Math.PI * 2, species);
 }
 
 /** A fire hydrant on the sidewalk (half the time); some were knocked open and still spout water. */
@@ -297,6 +308,8 @@ function suburb(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand
       const hz0 = south ? Z0 + setback : Z1 - setback - d;
       const res = buildHouse(b, { x0: hx0, z0: hz0, w, d, frontPlusZ: !south, rand });
       fence(b, lx0 + 0.1, frontLine, lx1 - 0.1, frontLine, res.doorX, 1.4, 'picket', rand);
+      // An overgrown hedge inside some fences, a gap at the gate.
+      if (spotHash(lx0, frontLine, 44) < 0.4) hedge(b, lx0 + 0.7, frontLine + (south ? 0.9 : -0.9), lx1 - 0.7, frontLine + (south ? 0.9 : -0.9), res.doorX, 2);
       // Path from the gate to the door.
       const pz0 = Math.min(frontLine, res.frontZ);
       b.block(PAL.path, res.doorX - 0.6, 0, pz0, 1.2, 0.035, Math.abs(res.frontZ - frontLine), 'asphalt');

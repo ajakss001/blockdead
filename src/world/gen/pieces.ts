@@ -57,7 +57,7 @@ export interface DoorOptions {
 export { PAL, pick, type Rand } from './palette';
 import { PAL, pick, type Rand } from './palette';
 import * as F from './furniture';
-import { LIFE, spotHash } from './lifeKinds';
+import { LIFE, spotHash, TREE } from './lifeKinds';
 import { Place, type Quarter, SHOP_KINDS, SHOP_SIGN } from './furniture';
 
 const WALL_T = 0.2;
@@ -640,35 +640,76 @@ export function fence(
   }
 }
 
+/**
+ * A broad-leaved tree: a spot for the Vegetation (species, turn, scale) and a collider round the trunk.
+ * Draws seven numbers from `rand` — as many as the old crowns did, so the rest of the block (loot, doors)
+ * stays as it was. Some are dead (bare, some snapped), some overgrown; fallen branches lie under a few.
+ */
 export function tree(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
-  const h = 2.2 * scale;
-  b.life(LIFE.tree, x, y, z, 0, 0, 1.6 * scale, h + scale, spotHash(x, z, 31));
-  b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.16 * scale, h + 0.3, 0.16 * scale)), 'wood');
-  const leaves = pick(rand, PAL.leaves);
-  _e.set(rand() * 3, rand() * 3, rand() * 3);
-  b.batch.add(b.ico, leaves, _m.compose(_p.set(x, y + h + 0.5 * scale, z), _q.setFromEuler(_e), _s.setScalar(1.4 * scale)), 'foliage');
-  _e.set(rand() * 3, rand() * 3, rand() * 3);
-  b.batch.add(b.ico, leaves, _m.compose(_p.set(x + 0.3 * scale, y + h + 1.4 * scale, z - 0.2 * scale), _q.setFromEuler(_e), _s.setScalar(0.95 * scale)), 'foliage');
-  b.colliders.addBox(x - 0.18 * scale, z - 0.18 * scale, x + 0.18 * scale, z + 0.18 * scale);
+  const r = [rand(), rand(), rand(), rand(), rand(), rand(), rand()];
+  const species = spotHash(x, z, 32) < 0.14 ? TREE.dead : Math.floor(spotHash(x, z, 33) * 3);
+  const s = scale * (spotHash(x, z, 34) < 0.22 ? 1.3 : 1);
+  plantTree(b, x, y, z, s, r[0] * Math.PI * 2, species);
 }
 
-/** Dead pine: tall narrow cones — forests need silhouettes other than round crowns. */
-export function pine(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
-  const h = 5.5 * scale;
-  b.life(LIFE.tree, x, y, z, 0, 0, 1.4 * scale, h, spotHash(x, z, 31), 1);
-  b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x, y + h / 2, z), _q.identity(), _s.set(0.13 * scale, h, 0.13 * scale)), 'wood');
-  const leaves = pick(rand, PAL.leaves);
-  for (let k = 0; k < 3; k++) {
-    const r = (1.5 - k * 0.38) * scale;
-    _e.set(0, rand() * 3, 0);
-    b.batch.add(b.cone6, leaves, _m.compose(_p.set(x, y + h * (0.42 + k * 0.2), z), _q.setFromEuler(_e), _s.set(r, h * 0.34, r)), 'foliage');
+/** A tree spot of a given species (see lifeKinds TREE), its trunk collider, maybe fallen branches. */
+export function plantTree(b: Builder, x: number, y: number, z: number, s: number, yaw: number, species: number): void {
+  const conifer = species === TREE.spruce || species === TREE.pine;
+  b.life(LIFE.tree, x, y, z, Math.sin(yaw), Math.cos(yaw), (conifer ? 2.4 : 3) * s, s, spotHash(x, z, 31), species);
+  const t = (conifer ? 0.16 : 0.2) * s;
+  b.colliders.addBox(x - t, z - t, x + t, z + t);
+  if (!conifer && spotHash(x, z, 35) < 0.3) {
+    // Branches the wind brought down.
+    for (let k = 0; k < 1 + Math.floor(spotHash(z, x, 36) * 2); k++) {
+      const a = spotHash(x + k, z, 37) * Math.PI * 2;
+      const d = 1.2 + spotHash(x, z + k, 38) * 1.8;
+      _e.set(Math.PI / 2, a, 0, 'YXZ');
+      b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x + Math.cos(a) * d, y + 0.05, z + Math.sin(a) * d), _q.setFromEuler(_e), _s.set(0.05, 1.2 + spotHash(z, x + k, 39), 0.05)), 'wood');
+    }
   }
-  b.colliders.addBox(x - 0.15 * scale, z - 0.15 * scale, x + 0.15 * scale, z + 0.15 * scale);
 }
 
+/** A spruce or a pine (or a dead one): four draws from `rand`, as before. */
+export function pine(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
+  const r = [rand(), rand(), rand(), rand()];
+  const species = spotHash(x, z, 32) < 0.08 ? TREE.dead : spotHash(x, z, 33) < 0.5 ? TREE.spruce : TREE.pine;
+  plantTree(b, x, y, z, scale * (spotHash(x, z, 34) < 0.2 ? 1.25 : 1), r[0] * Math.PI * 2, species);
+}
+
+/** A bush (round, or low and spreading): four draws from `rand`, as before. */
 export function bush(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
-  _e.set(rand() * 3, rand() * 3, rand() * 3);
-  b.batch.add(b.ico, pick(rand, PAL.leaves), _m.compose(_p.set(x, y + 0.35 * scale, z), _q.setFromEuler(_e), _s.set(0.8 * scale, 0.55 * scale, 0.8 * scale)), 'foliage');
+  const r = [rand(), rand(), rand(), rand()];
+  const yaw = r[0] * Math.PI * 2;
+  b.life(LIFE.bush, x, y, z, Math.sin(yaw), Math.cos(yaw), scale, spotHash(x, z, 40) < 0.35 ? 1 : 0, spotHash(x, z, 41));
+}
+
+/**
+ * A clipped hedge gone wild, from (ax, az) to (bx, bz) along X or Z, in 3 m stretches (spots for the
+ * Vegetation and colliders), with a gap for a gate at `gapAt`.
+ */
+export function hedge(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.8): void {
+  const alongX = Math.abs(bz - az) < 1e-6;
+  const a = alongX ? Math.min(ax, bx) : Math.min(az, bz);
+  const c = alongX ? Math.max(ax, bx) : Math.max(az, bz);
+  const fixed = alongX ? az : ax;
+  const spans: [number, number][] = gapAt === undefined ? [[a, c]] : [
+    [a, gapAt - gapW / 2],
+    [gapAt + gapW / 2, c],
+  ];
+  for (const [s0, s1] of spans) {
+    const len = s1 - s0;
+    if (len < 1) continue;
+    const n = Math.max(1, Math.round(len / 3));
+    const seg = len / n;
+    for (let k = 0; k < n; k++) {
+      const m = s0 + seg * (k + 0.5);
+      const x = alongX ? m : fixed;
+      const z = alongX ? fixed : m;
+      b.life(LIFE.hedge, x, 0, z, alongX ? 1 : 0, alongX ? 0 : 1, seg / 3, 0.9 + spotHash(x, z, 42) * 0.3, spotHash(x, z, 43));
+    }
+    if (alongX) b.colliders.addBox(s0, fixed - 0.5, s1, fixed + 0.5);
+    else b.colliders.addBox(fixed - 0.5, s0, fixed + 0.5, s1);
+  }
 }
 
 /** Street lamp; the arm points along +X/−X/+Z/−Z towards the road. */
