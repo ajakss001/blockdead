@@ -90,4 +90,15 @@ export class Shelters {
     }
     return false;
   }
+
+  /** The roof over a point (under it), or null outdoors. */
+  roofAt(x: number, z: number, y: number): number | null {
+    let best: number | null = null;
+    for (const a of this.byChunk.values()) {
+      for (let i = 0; i + SHELTER_STRIDE - 1 < a.length; i += SHELTER_STRIDE) {
+        if (x >= a[i] && z >= a[i + 1] && x <= a[i + 2] && z <= a[i + 3] && y < a[i + 4] - 0.5) best = Math.min(best ?? Infinity, a[i + 4]);
+      }
+    }
+    return best;
+  }
 }

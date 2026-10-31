@@ -16,6 +16,9 @@ export const FilmShader = {
     /** Anxiety 0..1 (already pulsed with the heartbeat): the edges close in. */
     uDread: { value: 0 },
     uDesaturate: { value: 0.28 },
+    /** Dying: the colour drains, the edges darken, then black (0..1 each). */
+    uDeath: { value: 0 },
+    uFade: { value: 0 },
     uResolution: { value: new Vector2(1, 1) },
   },
   vertexShader: /* glsl */ `
@@ -32,6 +35,8 @@ export const FilmShader = {
     uniform float uVignette;
     uniform float uDread;
     uniform float uDesaturate;
+    uniform float uDeath;
+    uniform float uFade;
     uniform vec2 uResolution;
     varying vec2 vUv;
 
@@ -51,7 +56,7 @@ export const FilmShader = {
 
       // Cold grade in linear space: drain color, push shadows towards blue-black.
       float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      c = mix(c, vec3(L), uDesaturate);
+      c = mix(c, vec3(L), mix(uDesaturate, 0.95, uDeath));
       c *= vec3(0.96, 0.98, 1.06);
       c += vec3(0.0006, 0.0009, 0.0022);
       // Soft roll-off so the flashlight hotspot doesn't clip to flat white.
@@ -66,12 +71,13 @@ export const FilmShader = {
 
       vec2 uv = vUv - 0.5;
       uv.x *= uResolution.x / uResolution.y;
-      s *= 1.0 - dot(uv, uv) * uVignette * 0.6;
+      s *= 1.0 - dot(uv, uv) * (uVignette + uDeath * 1.6) * 0.6;
       // Fear narrows the view: a dark tunnel that tightens with anxiety.
       float r = length(uv);
       float tunnel = smoothstep(0.8 - uDread * 0.5, 1.05, r);
       s *= 1.0 - uDread * (tunnel * 0.97 + 0.12);
 
+      s *= 1.0 - uFade;
       s += (ign(gl_FragCoord.xy) - 0.5) / 255.0;
       gl_FragColor = vec4(clamp(s, 0.0, 1.0), 1.0);
     }

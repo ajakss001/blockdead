@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  type Object3D,
   type BufferGeometry,
   CylinderGeometry,
   Group,
@@ -27,6 +28,7 @@ const SHOULDER_X = 0.19;
 const UPPER_ARM = 0.29;
 const FOREARM = 0.25;
 const UNDERSHIRT = 0x8a8a82;
+const NECK_Y = SHOULDER_Y + 0.06;
 
 // prettier-ignore
 const TORSO: LoftRing[] = [
@@ -70,6 +72,9 @@ export class CharacterFigure {
   private readonly torso: Mesh;
   private readonly arms: Arm[] = [];
   private readonly head = new Group();
+  /** The head (and hat) turn about the neck: neck pivot → a wrapper back down to the figure's origin. */
+  private readonly neck = new Group();
+  private readonly headWrap = new Group();
   private readonly held = new Map<HeldId, Group>();
   private readonly hats = new Map<ItemId, Group>();
   /** Vests and bags (low-poly placeholders until real models), keyed by item. */
@@ -103,7 +108,11 @@ export class CharacterFigure {
       this.root.add(g);
       this.held.set(id, g);
     }
-    this.root.add(this.head);
+    this.neck.position.y = NECK_Y;
+    this.headWrap.position.y = -NECK_Y;
+    this.headWrap.add(this.head);
+    this.neck.add(this.headWrap);
+    this.root.add(this.neck);
     this.buildHats();
     this.buildGear();
     this.setAppearance(DEFAULT_APPEARANCE);
@@ -146,6 +155,30 @@ export class CharacterFigure {
   dispose(): void {
     for (const g of this.geometries) g.dispose();
     this.body.dispose();
+  }
+
+  /**
+   * The figure stood straight (arms hanging, legs straight, nothing in the hands), cut into the pieces a
+   * ragdoll moves (each with its part: side by its x in the figure's frame, which faces −Z). The pieces
+   * stay in the figure; the caller detaches them.
+   */
+  ragdollPieces(): { obj: Object3D; part: 'pelvis' | 'chest' | 'head' | 'upperArm' | 'foreArm' | 'thigh' | 'shin' }[] {
+    for (const g of this.held.values()) g.visible = false;
+    this.body.poseLegs([[0, 0], [0, 0]], [[0, 0], [0, 0]]);
+    for (const arm of this.arms) {
+      const shoulder = new Vector3(SHOULDER_X * arm.side, SHOULDER_Y, 0);
+      const elbow = shoulder.clone().addScaledVector(Y_DOWN, UPPER_ARM);
+      const wrist = elbow.clone().addScaledVector(Y_DOWN, FOREARM);
+      orientLimb(arm.upper, shoulder, elbow);
+      orientLimb(arm.fore, elbow, wrist);
+      arm.hand.position.copy(wrist);
+      arm.hand.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2);
+    }
+    this.neck.quaternion.identity();
+    const out: ReturnType<CharacterFigure['ragdollPieces']> = [{ obj: this.torso, part: 'chest' }, { obj: this.neck, part: 'head' }];
+    for (const arm of this.arms) out.push({ obj: arm.upper, part: 'upperArm' }, { obj: arm.fore, part: 'foreArm' }, { obj: arm.hand, part: 'foreArm' });
+    for (const g of this.gear.values()) out.push({ obj: g, part: 'chest' });
+    return [...out, ...this.body.ragdollPieces()];
   }
 
   /** Arms: hanging, carrying a one-handed item, or holding a two-handed weapon across the body. */
@@ -337,7 +370,7 @@ export class CharacterFigure {
       }
       g.position.y = y;
       g.visible = false;
-      this.root.add(g);
+      this.headWrap.add(g);
       this.hats.set(id, g);
     };
     const brim = this.geo(new BoxGeometry(0.16, 0.012, 0.1));

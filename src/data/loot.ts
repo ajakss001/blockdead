@@ -42,7 +42,8 @@ export type ContainerType =
   | 'clothesRack'
   | 'warehouse'
   | 'plantStore'
-  | 'militaryCrate';
+  | 'militaryCrate'
+  | 'bodyZombie';
 
 interface LootTable {
   name: string;
@@ -126,6 +127,7 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   warehouse: { name: 'Паллета', empty: 0.25, rolls: [2, 4], items: [['beans', 3], ['soup', 3], ['water', 4], ['crackers', 2], ['juice', 2], ['tape', 1], ['rope', 1], ['planks', 1], ['batteries', 1]] },
   plantStore: { name: 'Шкаф с инструментом', empty: 0.25, rolls: [1, 3], items: [['water', 4], ['hammer', 1], ['crowbar', 1], ['tape', 2], ['rope', 2], ['workGloves', 1.5], ['hardhat', 1], ['workJacket', 0.8], ['boots', 0.6], ['nails', 1]] },
   militaryCrate: { name: 'Армейский ящик', empty: 0.3, rolls: [1, 3], items: [['crackers', 3], ['water', 3], ['bandage', 2], ['batteries', 2], ['militaryHelmet', 0.6], ['militaryJacket', 0.4], ['tacticalRig', 0.3], ['rope', 1], ['map', 1]] },
+  bodyZombie: { name: 'Тело', empty: 0.5, rolls: [1, 2], items: [['junk', 4], ['batteries', 1.2], ['lighter', 1], ['chocolate', 1], ['bandage', 0.8], ['painkillers', 0.6], ['cap', 0.6], ['beanie', 0.6], ['tshirt', 0.5], ['hoodie', 0.4], ['knife', 0.15], ['map', 0.3]] },
   reception: { name: 'Стойка охраны', empty: 0.2, rolls: [1, 3], items: [['batteries', 4], ['bat', 1], ['bandage', 2], ['painkillers', 2], ['soda', 2], ['crowbar', 0.6], ['axe', 0.5], ['hardhat', 0.5], ['cap', 1]] },
 };
 

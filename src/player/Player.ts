@@ -91,48 +91,15 @@ export class Player {
   /** The blow lands on the world (not a zombie) at a point: a car there may start wailing. */
   onStrikeWorld: ((x: number, y: number, z: number) => void) | null = null;
 
-  /** Seconds since the survivor went down (−1 = alive); what killed them, to look at as they fall. */
-  private deathT = -1;
-  private deathLook: Vector3 | null = null;
-  private readonly deathFrom = new Vector3();
-  private deathYaw = 0;
-  private deathPitch = 0;
+  /** Dead: the scene's death camera has the view; no arms, no body, no input. */
+  private dead = false;
 
-  /** Dying: the body drops (camera to the floor, rolling onto its side), the eyes on the killer. */
-  startDeath(killer: Vector3 | null): void {
-    this.deathT = 0;
-    this.deathLook = killer ? killer.clone() : null;
-    this.deathFrom.copy(this.camera.position);
-    this.deathYaw = this.controller.yaw;
-    this.deathPitch = this.controller.pitch;
-    this.flashlight.intensity *= 0.6;
-  }
-
-  private renderDeath(dt: number): void {
-    this.deathT += dt;
-    const k = Math.min(1, this.deathT / 1.1);
-    const fall = k * k * (3 - 2 * k);
-    const c = this.controller;
-    // The head comes down to the floor, a little back; the view rolls onto its side.
-    const floor = c.position.y + 0.22;
-    const back = 0.35 * fall;
-    this.camera.position.set(this.deathFrom.x + Math.sin(this.deathYaw) * back, this.deathFrom.y + (floor - this.deathFrom.y) * fall, this.deathFrom.z + Math.cos(this.deathYaw) * back);
-    // Eyes on whatever did it (its head), else up at the ceiling / sky.
-    let yaw = this.deathYaw;
-    let pitch = this.deathPitch + (0.6 - this.deathPitch) * fall;
-    if (this.deathLook) {
-      const dx = this.deathLook.x - this.camera.position.x;
-      const dz = this.deathLook.z - this.camera.position.z;
-      const dy = this.deathLook.y + 1.5 - this.camera.position.y;
-      let ty = Math.atan2(-dx, -dz);
-      ty = this.deathYaw + Math.atan2(Math.sin(ty - this.deathYaw), Math.cos(ty - this.deathYaw));
-      yaw = this.deathYaw + (ty - this.deathYaw) * Math.min(1, this.deathT / 0.8);
-      pitch = this.deathPitch + (Math.atan2(dy, Math.hypot(dx, dz)) - this.deathPitch) * fall;
-    }
-    // A jolt on every bite while it goes on.
-    const shake = this.deathLook ? Math.sin(this.deathT * 23) * 0.02 * (1 - fall * 0.5) : 0;
-    this.camera.rotation.set(pitch + shake, yaw, 1.25 * fall, 'YXZ');
-    this.viewmodel.scene.visible = this.deathT < 0.35;
+  /** The survivor died: hide the first-person arms, weapon and legs (the ragdoll figure takes over). */
+  startDeath(): void {
+    this.dead = true;
+    this.viewmodel.scene.visible = false;
+    this.body.root.visible = false;
+    this.flashlight.intensity = 0;
   }
 
   /** A blow taken: the camera jolts. */
@@ -245,10 +212,7 @@ export class Player {
   render(alpha: number, frameDt: number): void {
     const c = this.controller;
     this.ctx.input.consumeLook(this.look);
-    if (this.deathT >= 0) {
-      this.renderDeath(frameDt);
-      return;
-    }
+    if (this.dead) return;
     c.applyLook(this.look.x, this.look.y);
 
     const x = lerp(c.prevPosition.x, c.position.x, alpha);

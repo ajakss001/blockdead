@@ -75,6 +75,12 @@ export class Containers {
     if (!this.opened.has(ref.id)) this.opened.set(ref.id, items);
   }
 
+  /** Take a loose container away (a body cleared out of sight). */
+  removeLoose(id: number): void {
+    const i = this.loose.findIndex((c) => c.id === id);
+    if (i >= 0) this.loose.splice(i, 1);
+  }
+
   get looseRefs(): readonly ContainerRef[] {
     return this.loose;
   }

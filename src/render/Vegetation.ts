@@ -182,6 +182,20 @@ vMapUv = (vec2(mod(aTile, ${IMP_GRID}.0), floor(aTile / ${IMP_GRID}.0)) + uv) / 
     this.dirty = true;
   }
 
+  /** Crowns near a point, as spheres (centre, radius, m): what a camera must keep out of. */
+  crownsNear(x: number, z: number, r: number, visit: (cx: number, cy: number, cz: number, radius: number) => void): void {
+    for (const p of this.plants) {
+      if (Math.abs(p.x - x) > r + 8 || Math.abs(p.z - z) > r + 8) continue;
+      const model = this.models[this.first.get(p.species)! + (Math.floor(Math.abs(p.pick) * 1000) % Math.min(this.lod.variants, VARIANTS[p.species]))];
+      if (!model) continue;
+      const h = model.height * p.scale;
+      const rad = model.radius * p.scale;
+      if (h < 0.6) continue;
+      // The crown starts where the trunk ends (a model is trunk + 0.9 of the crown's radius tall).
+      visit(p.x, p.y + Math.max(0, h - 0.9 * rad) + rad, p.z, rad);
+    }
+  }
+
   setPlants(list: Plant[]): void {
     this.plants = list;
     this.dirty = true;

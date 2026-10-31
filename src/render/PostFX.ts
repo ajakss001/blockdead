@@ -58,6 +58,12 @@ export class PostFX {
     this.filmPass.uniforms.uDread.value = Math.min(1, Math.max(0, amount));
   }
 
+  /** Dying: `death` 0..1 drains the colour and closes the edges; `fade` 0..1 goes to black. */
+  setDeath(death: number, fade: number): void {
+    this.filmPass.uniforms.uDeath.value = death;
+    this.filmPass.uniforms.uFade.value = fade;
+  }
+
   render(dt: number): void {
     this.syncSize();
     this.time += dt;

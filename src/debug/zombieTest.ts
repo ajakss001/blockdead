@@ -298,21 +298,7 @@ export function main(): number {
     const d1 = Math.hypot(near.pos.x + 2, near.pos.z - 6);
     check(d1 < Math.min(4, d0 - 4), `it walks to where the noise was (${d0.toFixed(1)} → ${d1.toFixed(1)} m)`);
   }
-  // 19. Killed with a wall right behind it: the body falls the clear way, never through the wall; with
-  //     the wall close on every side it would slump — out in the open it falls flat.
-  {
-    const sim = new ZombieSim(world, 0);
-    const z = sim.spawnAt(3.2, 0);
-    sim.hit(z, 500, 1.5, 0);
-    const dx = -Math.sin(z.yaw);
-    const reach = z.pos.x + dx * 1.75;
-    run(sim, player(-20, -30), 3);
-    check(z.state === 'dead' && reach < 4 && z.fall > 0.95, `wall behind: falls away from it (head ends at x ${reach.toFixed(2)} < 4, fallen ${z.fall.toFixed(2)})`);
-    const o = sim.spawnAt(-10, 10);
-    sim.hit(o, 500, -11, 10);
-    run(sim, player(-20, -30), 3);
-    check(o.fallMax === 1 && o.fall > 0.95, 'in the open: falls flat, straight away from the blow');
-  }
+  // Bodies (ragdolls) are checked by npm run test:ragdoll.
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');
   return fails.length ? 1 : 0;
 }

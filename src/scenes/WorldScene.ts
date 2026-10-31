@@ -8,6 +8,7 @@ import {
   Group,
   Mesh,
   PerspectiveCamera,
+  Quaternion,
   Scene,
   Vector3,
 } from 'three';
@@ -43,11 +44,17 @@ import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
-import { ZombieCrowd } from '../render/ZombieCrowd';
+import { ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
+import { CorpseBatch } from '../render/CorpseBatch';
+import { zombieRagdoll } from '../render/zombieBody';
+import { PART, type Ragdoll, Ragdolls, type StaticBox } from '../physics/ragdoll';
+import { PlayerDeath } from '../player/PlayerDeath';
+import { deathSurroundings, type DeathSurroundings } from '../player/DeathCamera';
 import { blowDamage, type PlayerSense, type Zombie, ZombieSim } from '../systems/zombies';
 import { Ground } from '../render/Foliage';
 import { Particles } from '../render/Particles';
 import { Atmosphere } from '../world/Atmosphere';
+import { rollLoot } from '../data/loot';
 import { ATMO } from '../world/atmoConfig';
 import { Weather } from '../world/Weather';
 import { Pois } from '../world/Pois';
@@ -81,6 +88,8 @@ const DAY = {
 const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
 const _indoorHaze = new Color(0x0b0b0c);
+/** Loose-container ids of zombie bodies (above every chunk and interior id). */
+const ZOMBIE_BODY_ID = 3e14;
 const _sunDir = new Vector3();
 const _sunColor = new Color();
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
@@ -165,6 +174,17 @@ export class WorldScene implements IScene {
   private layout!: WorldLayout;
   private zombies!: ZombieSim;
   private crowd!: ZombieCrowd;
+  /** The dead: physics ragdolls (a few awake at once) drawn by one CPU-skinned mesh. */
+  private readonly ragdolls = new Ragdolls();
+  private readonly corpses = new CorpseBatch(16);
+  private readonly corpseRd = new Map<Zombie, Ragdoll>();
+  /** The player's death (ragdoll, camera) once it happened. */
+  private death: PlayerDeath | null = null;
+  private deathShown = false;
+  /** ?die=1: die this many seconds in. ?zdebug=1: the zombie in front (K kills it / brings another). */
+  private debugDieT = new URLSearchParams(location.search).get('die') === '1' ? 1.2 : -1;
+  private debugZombie: Zombie | null = null;
+  private debugSpawnT = new URLSearchParams(location.search).get('zdebug') === '1' ? 1 : -1;
   /** Visible dirt steps of the worn clothes, to re-dress the body only when a step changes. */
   private dirtShown = '';
   /** Who the survivor is: looks and former job (class). */
@@ -227,7 +247,14 @@ export class WorldScene implements IScene {
     );
     if (zcount > 0) this.pois = new Pois(layout, this.zombies);
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
-    this.scene.add(this.crowd.mesh, this.particles.points);
+    this.scene.add(this.crowd.mesh, this.corpses.mesh, this.particles.points);
+    this.ragdolls.limit = ctx.quality.preset.level === 'low' ? 2 : 4;
+    // ?zdebug=1: K brings a zombie in front of the player / kills it with a random blow.
+    if (new URLSearchParams(location.search).get('zdebug') === '1') {
+      const onKey = (e: KeyboardEvent) => e.code === 'KeyK' && !e.repeat && !this.dead && this.debugKey();
+      window.addEventListener('keydown', onKey);
+      this.unsubs.push(() => window.removeEventListener('keydown', onKey));
+    }
     // A blow at its contact frame: a zombie in reach takes it (the head counts double).
     this.player.onStrike = (item) => this.strikeZombie(item);
 
@@ -427,6 +454,11 @@ export class WorldScene implements IScene {
 
   fixedUpdate(dt: number): void {
     const c = this.player.controller;
+    if (this.debugSpawnT > 0 && (this.debugSpawnT -= dt) <= 0) this.debugKey();
+    if (this.debugDieT > 0 && (this.debugDieT -= dt) <= 0) {
+      const f = new Vector3(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
+      this.die('Отладка', c.position.clone().addScaledVector(f, 1));
+    }
     c.canSprint = this.survival.canSprint;
     c.sprintFactor = this.survival.sprintFactor;
     c.jumpFactor = this.survival.jumpFactor;
@@ -450,6 +482,27 @@ export class WorldScene implements IScene {
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
     for (const a of this.zombies.attacks) this.bitten(a.damage, a.from.pos, this.zombies.attacks.length);
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
+    // The dead go limp: a ragdoll each, from the pose they died in.
+    for (const z of this.zombies.died) this.zombieRagdoll(z);
+    for (const z of this.zombies.removed) {
+      const rd = this.corpseRd.get(z);
+      if (rd) this.ragdolls.remove(rd);
+      this.corpseRd.delete(z);
+      this.corpses.remove(z.id);
+      this.containers.removeLoose(ZOMBIE_BODY_ID + z.id);
+    }
+    this.ragdolls.update(dt);
+    // Asleep: frozen for good where it lies; ordinary bodies can be searched there, until cleared away.
+    for (const [z, rd] of this.corpseRd) {
+      if (!rd.asleep || z.rest) continue;
+      z.rest = true;
+      const pelvis = rd.poses[PART.pelvis].p;
+      z.pos.x = pelvis.x;
+      z.pos.z = pelvis.z;
+      if (z.twin) continue;
+      const ref = { id: ZOMBIE_BODY_ID + z.id, type: 'bodyZombie' as const, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z) };
+      this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, 'bodyZombie', ref.zone));
+    }
     // Zombies are solid to the player (and the walls still win).
     for (const z of this.zombies.list) {
       if (z.state === 'dead' || Math.abs(z.pos.y - c.position.y) > 1.2) continue;
@@ -499,7 +552,7 @@ export class WorldScene implements IScene {
     this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat: this.zombies.threat(c.position) });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
-    this.dread.update(dt, a);
+    if (!this.dead) this.dread.update(dt, a);
     this.ctx.fx.setDread(a * 0.8 + this.dread.pulse * a * 0.25);
     if (this.survival.health <= 0 && !this.dead) this.die(this.survival.infection >= 1 ? 'Заражение: вы обратились' : this.survival.hunger > 0.85 || this.survival.thirst > 0.85 ? 'Истощение' : this.deathCause || 'Раны');
     this.moodleT -= dt;
@@ -511,8 +564,10 @@ export class WorldScene implements IScene {
 
   render(alpha: number, frameDt: number): void {
     this.crowd.update(this.zombies.list, frameDt);
+    this.corpses.update();
     this.particles.update(frameDt);
     this.player.render(alpha, frameDt);
+    if (this.death) this.renderDeath(frameDt);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
     this.interaction.render(frameDt);
@@ -700,10 +755,24 @@ export class WorldScene implements IScene {
     if (wall >= 0 && wall < res.dist - 0.1) return false;
     const strength = classMods(this.classId).strength;
     const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
-    const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z);
+    const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point);
     sfx.strike(STRIKE_SOUND[item] ?? 'blunt', res.point, res.head, killed);
     this.particles.burst(res.point, res.head ? 14 : 10);
     return true;
+  }
+
+  /**
+   * A zombie dies: its ragdoll (among the walls, cars and furniture round it) and its corpse in the batch.
+   */
+  private zombieRagdoll(z: Zombie): void {
+    if (!z.death) return;
+    const scale = ZombieSim.scale(z);
+    const boxes: StaticBox[] = [];
+    this.world.boxesNear(z.pos.x, z.pos.z, 2.6, (b) => boxes.push(b));
+    const rd = zombieRagdoll(z, scale, this.crowd.clock, boxes);
+    this.ragdolls.add(rd);
+    this.corpseRd.set(z, rd);
+    this.corpses.add(z.id, rd, scale, zombieTints(z));
   }
 
   /**
@@ -762,11 +831,34 @@ export class WorldScene implements IScene {
   private die(cause: string, killer?: Vector3): void {
     if (this.dead) return;
     this.dead = true;
-    // First see it happen: the survivor goes down, looking at what got them; then the screen.
-    this.player.startDeath(killer ?? null);
-    window.setTimeout(() => this.showDeathScreen(cause), 2600);
-    const c = this.player.controller.position;
+    this.deathCause = cause || this.deathCause;
+    // The arms go; the whole survivor falls as a ragdoll and the camera rises over them. No input, no
+    // touch buttons, no "click to play" while it plays.
+    this.player.startDeath();
+    this.ctx.events.emit('ui:modal', { open: true });
+    for (const el of document.querySelectorAll<HTMLElement>('.touch, .crosshair')) el.style.visibility = 'hidden';
+    const c = this.player.controller;
+    const feet = c.position.clone();
+    const boxes: StaticBox[] = [];
+    this.world.boxesNear(feet.x, feet.z, 4, (b) => boxes.push(b));
+    this.camera.updateMatrixWorld();
     const inv = this.inventory;
+    this.death = new PlayerDeath(this.scene, {
+      look: this.look,
+      worn: inv.worn,
+      dirt: inv.wornDirt,
+      tint: inv.wornTint,
+      hand: inv.hand,
+      feet,
+      yaw: c.yaw,
+      velocity: c.velocity.clone(),
+      eye: this.camera.getWorldPosition(new Vector3()),
+      eyeQ: this.camera.getWorldQuaternion(new Quaternion()),
+      killer: killer ?? null,
+      boxes,
+      around: this.deathSurroundings(feet),
+    });
+    this.ragdolls.add(this.death.ragdoll, true);
     const items: ItemStack[] = inv.stacks.map((s) => ({ ...s }));
     if (inv.hand) items.push({ id: inv.hand, count: 1 });
     for (const slot of WEAR_SLOTS) {
@@ -774,8 +866,61 @@ export class WorldScene implements IScene {
       if (id) items.push({ id, count: 1, dirt: inv.wornDirt[slot], ...(inv.wornTint[slot] !== undefined ? { tint: inv.wornTint[slot] } : {}) });
     }
     const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: c.x, y: c.y, z: c.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items });
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items });
     this.save();
+  }
+
+  /**
+   * The level round the body for the death camera: walls, cars, furniture and trunks (the colliders), tree
+   * crowns, and indoors the ceiling (the storey's, or the roof's if lower).
+   */
+  private deathSurroundings(feet: Vector3): DeathSurroundings {
+    const indoors = this.shelters.covers(feet.x, feet.z, feet.y + 1) || this.interiors.buildingAt(feet.x, feet.z) !== null;
+    const roof = this.shelters.roofAt(feet.x, feet.z, feet.y + 1);
+    const ceiling = indoors ? Math.min(roof ?? Infinity, feet.y + FLOOR_H - 0.2) : null;
+    const crowns: number[] = [];
+    this.atmo.vegetation.crownsNear(feet.x, feet.z, 30, (x, y, z, r) => crowns.push(x, y, z, r + 0.3));
+    return deathSurroundings(this.world, feet.y, ceiling, crowns);
+  }
+
+  /** The death as it plays: the figure on its ragdoll, the camera, colour, sound; then the screen. */
+  private renderDeath(frameDt: number): void {
+    const d = this.death!;
+    if (!this.ctx.loop.paused) d.update(frameDt);
+    d.place();
+    const cam = d.camera;
+    this.camera.position.copy(cam.position);
+    this.camera.quaternion.copy(cam.quaternion);
+    this.ctx.fx.setDeath(Math.min(1, cam.t / 4), cam.fade);
+    sfx.setMuffle(Math.min(1, cam.t / 2.5) * 0.85);
+    this.dread.dying(cam.t, cam.fade);
+    if (cam.done && !this.deathShown) {
+      this.deathShown = true;
+      this.showDeathScreen(this.deathCause);
+    }
+  }
+
+  /** ?zdebug=1, K: kill the zombie in front (a random blow), or bring one if there is none. */
+  private debugKey(): void {
+    const c = this.player.controller;
+    const z = this.debugZombie;
+    if (z && z.state !== 'dead') {
+      const weapons = [FISTS, HELD_CFG.knife, HELD_CFG.hammer, HELD_CFG.bat, HELD_CFG.axe];
+      const cfg = weapons[Math.floor(Math.random() * weapons.length)];
+      const head = Math.random() < 0.3;
+      // Lethal whatever it is; how hard it lands is the weapon's.
+      z.hp = 0.5;
+      const dmg = (head ? 2 : 1) * cfg.damage[1];
+      const a = Math.random() * Math.PI * 2;
+      const point = z.pos.clone().add(new Vector3(0, head ? 1.6 : 0.9 + Math.random() * 0.5, 0));
+      this.zombies.hit(z, dmg, z.pos.x + Math.sin(a) * 1.5, z.pos.z + Math.cos(a) * 1.5, head, point);
+      return;
+    }
+    const f = new Vector3(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
+    const x = c.position.x + f.x * 2.6;
+    const zz = c.position.z + f.z * 2.6;
+    this.debugZombie = this.zombies.spawnAt(x, zz, 'idle', undefined, c.position.y);
+    this.debugZombie.yaw = Math.atan2(-f.x, -f.z);
   }
 
   private showDeathScreen(cause: string): void {
@@ -783,17 +928,26 @@ export class WorldScene implements IScene {
     if (document.pointerLockElement) document.exitPointerLock();
     const minutes = Math.max(0, this.clock.minutes - this.bornAt);
     const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
+    const n10 = days % 10;
+    const n100 = days % 100;
+    const word = n10 === 1 && n100 !== 11 ? 'день' : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? 'дня' : 'дней';
     const el = document.createElement('div');
     el.className = 'death-screen';
-    el.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(6,6,8,.88);color:#d8d2c4;font:16px/1.4 system-ui,sans-serif;text-align:center';
-    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вот как вы умерли</div><div style="opacity:.85">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.7">Прожито: ${days} д ${hours} ч</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>`;
+    el.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#000;color:#d8d2c4;font:16px/1.4 system-ui,sans-serif;text-align:center';
+    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вы прожили ${days} ${word}</div><div style="opacity:.85">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.6">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>`;
     const btn = document.createElement('button');
     btn.className = 'death-screen__new';
     btn.textContent = 'Новый персонаж';
     btn.style.cssText = 'margin-top:10px;padding:12px 26px;font:inherit;font-size:18px;background:#3a3630;color:#eee;border:1px solid #6a6458;border-radius:4px;cursor:pointer';
     btn.addEventListener('click', () => location.reload());
-    el.append(btn);
+    const menu = btn.cloneNode() as HTMLButtonElement;
+    menu.className = 'death-screen__menu';
+    menu.textContent = 'В меню';
+    menu.addEventListener('click', () => location.replace(location.pathname));
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;justify-content:center';
+    row.append(btn, menu);
+    el.append(row);
     (document.getElementById('ui') ?? document.body).append(el);
   }
 
@@ -810,6 +964,7 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.crowd.dispose();
+    this.corpses.dispose();
     this.particles.dispose();
     this.atmo.dispose();
     this.weather.dispose();
@@ -834,6 +989,7 @@ export class WorldScene implements IScene {
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();
     this.chunks.radius = preset.chunkRadius;
+    this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
   }
 
   private resize(width: number, height: number): void {

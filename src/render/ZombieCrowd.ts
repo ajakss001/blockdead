@@ -1,65 +1,21 @@
-import {
-  BoxGeometry,
-  type BufferGeometry,
-  Float32BufferAttribute,
-  InstancedBufferAttribute,
-  InstancedMesh,
-  Matrix4,
-  type MeshStandardMaterial,
-  Quaternion,
-  Vector3,
-} from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { InstancedBufferAttribute, InstancedMesh, Matrix4, type MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import { type Zombie, ZombieSim } from '../systems/zombies';
 import { characterMaterial } from './look/materials';
+import { bodyGeometry, HIP_X, HIP_Y, NECK_Y, SHOULDER_X, SHOULDER_Y } from './zombieBody';
 
 /**
- * All zombies in one draw call: an InstancedMesh of a low-poly body (~150 triangles). The shamble is
- * done in the vertex shader from two numbers per zombie (walk phase, how much it walks): legs and arms
- * swing about the hips and shoulders, the torso leans forward, the head lolls. Clothes and skin colors
- * per zombie from a muted palette. No blood (kid-friendly): torn, dirty clothes and grey skin only.
+ * All living zombies in one draw call: an InstancedMesh of a low-poly body (~170 triangles). The shamble is
+ * done in the vertex shader from a few numbers per zombie (walk phase, how much it walks): legs and arms
+ * swing about the hips and shoulders, the torso leans forward, the head lolls (zombieBody.aliveJoint is the
+ * same on the CPU: a ragdoll starts from it). The dead are drawn by CorpseBatch from their ragdolls.
+ * Clothes and skin colours per zombie from a muted palette. No blood (kid-friendly).
  */
-
-// Part ids (vertex attribute aPart): what color, and which joint it hangs from.
-const SKIN = 0;
-const SHIRT = 1;
-const PANTS = 2;
-const SHOES = 3;
-// Joints (aJoint): 0 torso/head, 1/2 left/right leg, 3/4 left/right arm, 5 head.
-const HIP_Y = 0.9;
-const SHOULDER_Y = 1.42;
 
 const SHIRTS = [0x4a4d52, 0x4a503a, 0x7a7262, 0x37465a, 0x5a4434, 0x2c2f35, 0x6a5848, 0x3a4a3e, 0x6e3b32];
 const PANTS_C = [0x263247, 0x1f2124, 0x5a5242, 0x332f2a, 0x34405a];
 const SKINS = [0x7d8a76, 0x8a8c7c, 0x6f7d70, 0x938d7c];
 
-function part(geo: BufferGeometry, color: number, joint: number): BufferGeometry {
-  const n = geo.getAttribute('position').count;
-  geo.setAttribute('aPart', new Float32BufferAttribute(new Array(n).fill(color), 1));
-  geo.setAttribute('aJoint', new Float32BufferAttribute(new Array(n).fill(joint), 1));
-  return geo;
-}
-
-function bodyGeometry(): BufferGeometry {
-  const box = (sx: number, sy: number, sz: number, x: number, y: number, z: number) => new BoxGeometry(sx, sy, sz).translate(x, y, z);
-  const parts: BufferGeometry[] = [];
-  for (const s of [-1, 1]) {
-    const leg = s < 0 ? 1 : 2;
-    parts.push(part(box(0.15, 0.8, 0.17, 0.1 * s, 0.5, 0), PANTS, leg));
-    parts.push(part(box(0.14, 0.1, 0.26, 0.1 * s, 0.05, 0.04), SHOES, leg));
-    const arm = s < 0 ? 3 : 4;
-    parts.push(part(box(0.11, 0.34, 0.12, 0.25 * s, SHOULDER_Y - 0.17, 0), SHIRT, arm));
-    parts.push(part(box(0.09, 0.3, 0.1, 0.25 * s, SHOULDER_Y - 0.49, 0.01), SKIN, arm));
-    parts.push(part(box(0.09, 0.09, 0.07, 0.25 * s, SHOULDER_Y - 0.68, 0.02), SKIN, arm));
-  }
-  parts.push(part(box(0.38, 0.28, 0.22, 0, 1.03, 0), SHIRT, 0));
-  parts.push(part(box(0.42, 0.28, 0.24, 0, 1.3, 0), SHIRT, 0));
-  parts.push(part(box(0.1, 0.08, 0.1, 0, 1.48, 0.01), SKIN, 5));
-  parts.push(part(box(0.2, 0.23, 0.22, 0, 1.63, 0.02), SKIN, 5));
-  const merged = mergeGeometries(parts)!;
-  for (const p of parts) p.dispose();
-  return merged;
-}
+const f = (n: number) => n.toFixed(3);
 
 export class ZombieCrowd {
   readonly mesh: InstancedMesh;
@@ -68,6 +24,8 @@ export class ZombieCrowd {
   private readonly pants: InstancedBufferAttribute;
   private readonly skin: InstancedBufferAttribute;
   private readonly time = { value: 0 };
+  /** The shader's clock (a ragdoll starting from a zombie's pose needs it). */
+  clock = 0;
 
   constructor(readonly capacity: number) {
     const geo = bodyGeometry();
@@ -89,47 +47,42 @@ export class ZombieCrowd {
           `#include <common>
           attribute float aPart; attribute float aJoint; attribute vec3 aAnim;
           attribute vec3 aCloth; attribute vec3 aPants; attribute vec3 aSkin;
-          uniform float uTime; varying vec3 vTint;
+          uniform float uTime;
+          varying vec3 vTint;
           mat3 rotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c); }
           mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
-          // The pose of a vertex: joint swing, then the whole upper body leaning from the hips.
+          // The pose of a vertex: a leg or an arm swinging (knee and elbow ride along), the upper body leaning.
           vec3 zpose(vec3 p, out mat3 r) {
             float ph = aAnim.x, g = max(0.0, aAnim.y), v = aAnim.z;
-            // Dead (negative gait): how far it has gone limp — legs fold at the hips, arms trail, head lolls back.
-            float dead = max(0.0, -aAnim.y);
             float sw = sin(ph) * g;
             r = mat3(1.0);
-            if (aJoint > 0.5 && aJoint < 2.5) {
-              // Dead: the legs go slack and lie flat, a little apart (no knees in the air).
-              float side = aJoint < 1.5 ? -1.0 : 1.0;
-              float a = (aJoint < 1.5 ? sw : -sw) * 0.45 * (1.0 - dead) + dead * 0.06;
-              r = rotZ(side * (0.1 + 0.12 * v) * dead) * rotX(a);
-              p = r * (p - vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0)) + vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
-              return p;
+            int jt = int(aJoint + 0.5);
+            if (jt == 1 || jt == 2 || jt == 6 || jt == 7) {
+              float s = (jt == 1 || jt == 6) ? -1.0 : 1.0;
+              mat3 rh = rotX((jt == 1 || jt == 6 ? sw : -sw) * 0.45);
+              vec3 hp = vec3(${f(HIP_X)} * s, ${f(HIP_Y)}, 0.0);
+              r = rh;
+              return rh * (p - hp) + hp;
             }
-            if (aJoint > 2.5 && aJoint < 4.5) {
+            if (jt == 3 || jt == 4 || jt == 8 || jt == 9) {
               // Arms half raised forward, swinging a little against the legs, the left one hanging lower.
-              float side = aJoint < 3.5 ? -1.0 : 1.0;
-              float lift = -0.55 - 0.25 * v - (side < 0.0 ? 0.0 : 0.25) + 0.12 * sin(uTime * 1.3 + v * 6.0);
-              float a = (lift + (aJoint < 3.5 ? -sw : sw) * 0.18) * (1.0 - dead);
-              // Dead: the arms flop out to the sides on the ground (one flung up past the head now and then),
-              // in the plane of the body — never sticking up into the air.
-              float splay = side < 0.0 ? 0.8 + 0.7 * v : (v > 0.6 ? 2.7 : 1.0 + 0.5 * (1.0 - v));
-              r = rotZ(side * splay * dead) * rotX(a);
-              vec3 sh = vec3(0.25 * side, ${SHOULDER_Y.toFixed(2)}, 0.0);
-              p = r * (p - sh) + sh;
+              float s = (jt == 3 || jt == 8) ? -1.0 : 1.0;
+              float lift = -0.55 - 0.25 * v - (s < 0.0 ? 0.0 : 0.25) + 0.12 * sin(uTime * 1.3 + v * 6.0);
+              mat3 ra = rotX(lift + (jt == 3 || jt == 8 ? -sw : sw) * 0.18);
+              vec3 sh = vec3(${f(SHOULDER_X)} * s, ${f(SHOULDER_Y)}, 0.0);
+              p = ra * (p - sh) + sh;
+              r = ra;
             }
-            if (aJoint > 4.5) {
+            if (jt == 5) {
               // Head lolling to one side.
-              // Dead: rolled to one side, not bent back into the floor.
-              mat3 h = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0) * (1.0 - dead) + dead * (v < 0.5 ? -0.55 : 0.55)) * rotX(0.2 * (1.0 - dead));
-              vec3 nk = vec3(0.0, 1.46, 0.0);
-              p = h * (p - nk) + nk;
-              r = h;
+              mat3 hm = rotZ(0.25 * (v - 0.5) + 0.06 * sin(uTime * 0.9 + v * 9.0)) * rotX(0.2);
+              vec3 nk = vec3(0.0, ${f(NECK_Y)}, 0.0);
+              p = hm * (p - nk) + nk;
+              r = hm;
             }
             // Torso: leaning forward and rocking with the steps.
-            mat3 t = rotZ(0.06 * sin(ph) * g) * rotX((0.22 + 0.08 * g) * (1.0 - dead));
-            p = t * (p - vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0)) + vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
+            mat3 t = rotZ(0.06 * sin(ph) * g) * rotX(0.22 + 0.08 * g);
+            p = t * (p - vec3(0.0, ${f(HIP_Y)}, 0.0)) + vec3(0.0, ${f(HIP_Y)}, 0.0);
             r = t * r;
             return p;
           }`,
@@ -142,12 +95,16 @@ export class ZombieCrowd {
           vec3 objectTangent = vec3(tangent.xyz);
           #endif`,
         )
-        .replace('#include <begin_vertex>', `vec3 transformed = zp;
-          vTint = aPart < 0.5 ? aSkin : aPart < 1.5 ? aCloth : aPart < 2.5 ? aPants : vec3(0.12, 0.11, 0.1);`);
+        .replace(
+          '#include <begin_vertex>',
+          `vec3 transformed = zp;
+          vTint = aPart < 0.5 ? aSkin : aPart < 1.5 ? aCloth : aPart < 2.5 ? aPants : vec3(0.12, 0.11, 0.1);`,
+        );
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vTint;')
         .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse * vTint, opacity );');
     };
+    mat.customProgramCacheKey = () => 'zombies-jointed';
     this.mesh = new InstancedMesh(geo, mat, capacity);
     this.mesh.name = 'zombies';
     this.mesh.count = 0;
@@ -157,44 +114,34 @@ export class ZombieCrowd {
   /** Instances from the simulation (nearest first is not needed: the sim keeps fewer than capacity). */
   update(list: readonly Zombie[], dt: number): void {
     this.time.value += dt;
-    const n = Math.min(list.length, this.capacity);
+    this.clock = this.time.value;
     const m = _m;
     const a = this.anim.array as Float32Array;
-    for (let i = 0; i < n; i++) {
-      const z = list[i];
-      // Kind (size, slimmer women), a shudder when hit, and the fall when dead (backwards, from the feet).
+    let i = 0;
+    for (const z of list) {
+      if (z.state === 'dead') continue;
+      if (i >= this.capacity) break;
+      // Kind (size, slimmer women), a shudder when hit.
       const s = ZombieSim.scale(z);
       _pos.copy(z.pos);
-      if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
       _q.setFromAxisAngle(_up, z.yaw);
-      if (z.state === 'dead') {
-        _q.multiply(_qf.setFromAxisAngle(_zAxis, z.roll * z.fall)).multiply(_qf2.setFromAxisAngle(_xAxis, -(Math.PI / 2) * z.fall));
-        // Lying on its back the pivot (the feet) is the body's middle: lift it by half its depth so the
-        // back rests on the floor instead of sinking in.
-        _pos.y += (0.13 + 0.1 * Math.abs(z.roll)) * Math.sin((z.fall * Math.PI) / 2) * s;
-      }
-      else if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
+      if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
+      if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
       m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' ? 0.9 : 1), s, s));
       this.mesh.setMatrixAt(i, m);
       a[i * 3] = z.phase;
-      a[i * 3 + 1] = z.state === 'dead' ? -Math.min(1, z.fall * 1.3) : z.gait;
+      a[i * 3 + 1] = z.gait;
       a[i * 3 + 2] = (z.look % 97) / 97;
       if (this.ids[i] !== z.id) {
         this.ids[i] = z.id;
-        const l = z.look;
-        if (z.twin) {
-          // The dead survivor: their own clothes and skin.
-          setColor(this.cloth, i, z.twin.colors[0], 0.85);
-          setColor(this.pants, i, z.twin.colors[1], 0.85);
-          setColor(this.skin, i, z.twin.colors[2], 0.8);
-        } else {
-          setColor(this.cloth, i, SHIRTS[l % SHIRTS.length], 0.75 + ((l >> 3) % 5) * 0.06);
-          setColor(this.pants, i, PANTS_C[(l >> 2) % PANTS_C.length], 0.8 + ((l >> 5) % 4) * 0.05);
-          setColor(this.skin, i, SKINS[(l >> 4) % SKINS.length], 1);
-        }
+        const t = zombieTints(z, _tint);
+        this.cloth.setXYZ(i, t[3], t[4], t[5]);
+        this.pants.setXYZ(i, t[6], t[7], t[8]);
+        this.skin.setXYZ(i, t[0], t[1], t[2]);
       }
+      i++;
     }
-    this.mesh.count = n;
+    this.mesh.count = i;
     this.mesh.instanceMatrix.needsUpdate = true;
     this.anim.needsUpdate = true;
     this.cloth.needsUpdate = true;
@@ -218,9 +165,26 @@ const _pos = new Vector3();
 const _sc = new Vector3();
 const _qf = new Quaternion();
 const _xAxis = new Vector3(1, 0, 0);
-const _qf2 = new Quaternion();
-const _zAxis = new Vector3(0, 0, 1);
 
-function setColor(attr: InstancedBufferAttribute, i: number, hex: number, k: number): void {
-  attr.setXYZ(i, (((hex >> 16) & 255) / 255) * k, (((hex >> 8) & 255) / 255) * k, ((hex & 255) / 255) * k);
+const _tint = new Float32Array(9);
+
+function setColor(out: Float32Array, at: number, hex: number, k: number): void {
+  out[at] = (((hex >> 16) & 255) / 255) * k;
+  out[at + 1] = (((hex >> 8) & 255) / 255) * k;
+  out[at + 2] = ((hex & 255) / 255) * k;
+}
+
+/** A zombie's colours, skin / shirt / pants (rgb each): a dead survivor's own, else from the palette by look. */
+export function zombieTints(z: Zombie, out = new Float32Array(9)): Float32Array {
+  const l = z.look;
+  if (z.twin) {
+    setColor(out, 0, z.twin.colors[2], 0.8);
+    setColor(out, 3, z.twin.colors[0], 0.85);
+    setColor(out, 6, z.twin.colors[1], 0.85);
+  } else {
+    setColor(out, 0, SKINS[(l >> 4) % SKINS.length], 1);
+    setColor(out, 3, SHIRTS[l % SHIRTS.length], 0.75 + ((l >> 3) % 5) * 0.06);
+    setColor(out, 6, PANTS_C[(l >> 2) % PANTS_C.length], 0.8 + ((l >> 5) % 4) * 0.05);
+  }
+  return out;
 }

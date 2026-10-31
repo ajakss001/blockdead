@@ -23,6 +23,9 @@ export class AnxietyAudio {
   private beatPhase = 0;
   private sinceBeat = 10;
   private muted = false;
+  /** Dying: when the next slowing beat comes (s since death), the low hum. */
+  private nextBeat = 0;
+  private hum: { gain: GainNode; oscs: OscillatorNode[] } | null = null;
 
   constructor(
     events: EventBus<GameEvents>,
@@ -69,6 +72,45 @@ export class AnxietyAudio {
       if (anxiety > HEART_FROM) this.heartbeat(smooth(HEART_FROM, 0.9, anxiety), 60 / bpm);
     }
     // No breathing sounds: the heartbeat only, and only when it is really bad.
+  }
+
+  /**
+   * Dying, `t` s in: the heart slows and stops (by ~6.5 s), a low hum swells under everything; `fade` 0..1
+   * takes the hum away with the picture. No stingers.
+   */
+  dying(t: number, fade: number): void {
+    if (!this.ac || !this.master || this.ac.state !== 'running') return;
+    if (t >= this.nextBeat && t < 6.5) {
+      const interval = 0.75 + t * 0.24;
+      this.nextBeat = t + interval;
+      this.heartbeat(Math.max(0.15, 1 - t / 7), interval);
+    }
+    if (!this.hum) {
+      const gain = this.ac.createGain();
+      gain.gain.value = 0;
+      gain.connect(this.master);
+      const oscs = [41, 61.5, 82].map((f, k) => {
+        const o = this.ac!.createOscillator();
+        o.frequency.value = f;
+        const g = this.ac!.createGain();
+        g.gain.value = [1, 0.45, 0.18][k];
+        o.connect(g).connect(gain);
+        o.start();
+        return o;
+      });
+      this.hum = { gain, oscs };
+    }
+    this.hum.gain.gain.setTargetAtTime(0.05 * Math.min(1, t / 3) * (1 - fade), this.ac.currentTime, 0.3);
+  }
+
+  /** The hum off (a new life). */
+  stopDying(): void {
+    if (!this.hum || !this.ac) return;
+    const hum = this.hum;
+    this.hum = null;
+    this.nextBeat = 0;
+    hum.gain.gain.setTargetAtTime(0, this.ac.currentTime, 0.2);
+    for (const o of hum.oscs) o.stop(this.ac.currentTime + 1.5);
   }
 
   /** On the game's one AudioContext (audio/Sound), into its world bus. */

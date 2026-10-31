@@ -113,6 +113,7 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
   warehouse: 'crate',
   plantStore: 'locker',
   militaryCrate: 'crate',
+  bodyZombie: 'bag',
   suitcase: 'bag',
   bodyMilitary: 'bag',
   bodyPolice: 'bag',
@@ -132,6 +133,8 @@ class Sound {
   private master: GainNode | null = null;
   world: GainNode | null = null;
   private ui: GainNode | null = null;
+  /** The world bus's low-pass (dying: everything goes dull and far). */
+  private muffle: BiquadFilterNode | null = null;
   private send: GainNode | null = null;
   noise: AudioBuffer | null = null;
   private voices = 0;
@@ -169,6 +172,12 @@ class Sound {
     this.volume = Math.max(0, Math.min(1, v));
     localStorage.setItem(VOLUME_KEY, String(this.volume));
     this.apply();
+  }
+
+  /** 0 clear … 1 the world heard as if from far under water (dying). */
+  setMuffle(k: number): void {
+    if (!this.ac || !this.muffle) return;
+    this.muffle.frequency.setTargetAtTime(20000 * Math.pow(0.012, k), this.ac.currentTime, 0.1);
   }
 
   /** Reverb amount for where the listener is: 0 open field … 0.4 a bare room. */
@@ -990,7 +999,10 @@ class Sound {
     this.master = ac.createGain();
     this.master.connect(ac.destination);
     this.world = ac.createGain();
-    this.world.connect(this.master);
+    this.muffle = ac.createBiquadFilter();
+    this.muffle.type = 'lowpass';
+    this.muffle.frequency.value = 20000;
+    this.world.connect(this.muffle).connect(this.master);
     this.ui = ac.createGain();
     this.ui.connect(this.master);
     const len = ac.sampleRate;

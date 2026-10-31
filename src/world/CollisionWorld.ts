@@ -301,6 +301,15 @@ export class CollisionWorld implements ColliderSink {
     return true;
   }
 
+  /** Every box overlapping the square round (x, z) of half-size r: its bounds and, for a turned box, its frame. */
+  boxesNear(x: number, z: number, r: number, visit: (b: Readonly<Pick<Box, 'minX' | 'minZ' | 'maxX' | 'maxZ' | 'minY' | 'maxY' | 'obb'>>) => void): void {
+    this.query(x - r, z - r, x + r, z + r);
+    for (const id of [...this.candidates]) {
+      const b = this.boxes.get(id);
+      if (b) visit(b);
+    }
+  }
+
   private query(minX: number, minZ: number, maxX: number, maxZ: number): void {
     this.candidates.length = 0;
     const stamp = ++this.stamp;

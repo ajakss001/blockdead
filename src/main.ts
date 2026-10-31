@@ -95,7 +95,7 @@ async function boot(): Promise<void> {
     input,
     debug,
     hud,
-    fx: { setDread: (amount) => postfx.setDread(amount) },
+    fx: { setDread: (amount) => postfx.setDread(amount), setDeath: (death, fade) => postfx.setDeath(death, fade) },
     requestPointerLock: () => void kbm?.requestLock(),
   };
   scene.init(ctx);

@@ -60,13 +60,14 @@ export interface Zombie {
   lastDist: number;
   groanCd: number;
   hp: number;
-  /** 0..1 how far it has fallen (dead); hit shake (s left). */
-  fall: number;
-  /** How far it can fall before something stops it (a wall behind: it slumps against it), 0..1. */
-  fallMax: number;
-  /** Falling (dead): angular speed of the topple (per quarter turn), and a sideways twist to land on. */
-  fallV: number;
-  roll: number;
+  /**
+   * Dead: how it died — the blow (where from, how hard, on the head, where it landed) and how it was moving
+   * (walk phase, gait) — for its ragdoll. Null while alive.
+   */
+  death: { fromX: number; fromZ: number; damage: number; head: boolean; point: Vector3 | null; phase: number; gait: number; speed: number } | null;
+  /** Dead and its ragdoll asleep: frozen — nothing moves it or its limbs again. When it died (sim time). */
+  rest: boolean;
+  diedAt: number;
   shake: number;
   /** Search: the point it looks around and where its eyes are now. */
   lookYaw: number;
@@ -138,6 +139,8 @@ export const ZOMBIE_TUNING = {
   despawn: 95,
   /** Bodies lie this long before they go. */
   corpse: 90,
+  /** Bodies lying about at once (the oldest out of sight go first). */
+  maxCorpses: 12,
   farHz: 4,
   nearThink: 20,
 };
@@ -161,6 +164,9 @@ export class ZombieSim {
   readonly attacks: { damage: number; from: Zombie }[] = [];
   /** Twins killed this step (the scene drops their loot). */
   readonly killedTwins: Zombie[] = [];
+  /** Zombies killed this step (their bodies can be searched) and bodies taken away (out of sight). */
+  readonly died: Zombie[] = [];
+  readonly removed: Zombie[] = [];
   /** Kept for back-compat: groaning zombies of this step. */
   readonly groans: Zombie[] = [];
   target: number;
@@ -241,10 +247,9 @@ export class ZombieSim {
       lastDist: Infinity,
       groanCd: 2 + r() * 8,
       hp: T.hp,
-      fall: 0,
-      fallMax: 1,
-      fallV: 0,
-      roll: 0,
+      death: null,
+      rest: false,
+      diedAt: 0,
       shake: 0,
       lookYaw: 0,
       swing: 0,
@@ -261,26 +266,19 @@ export class ZombieSim {
 
   update(dt: number, p: PlayerSense, viewDir?: Vector3): void {
     this.time += dt;
-    this.sounds.length = 0;
+    // What the last step reported is gone; blows struck since (the player's, before this step) stay.
+    this.sounds.splice(0, this.reported[0]);
     this.attacks.length = 0;
-    this.killedTwins.length = 0;
+    this.killedTwins.splice(0, this.reported[1]);
+    this.died.splice(0, this.reported[2]);
+    this.removed.length = 0;
     this.groans.length = 0;
     this.populate(dt, p, viewDir);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const z = this.list[i];
       if (z.state === 'dead') {
-        // Topples like a body, not a plank turning: slow at first, faster under its own weight, a
-        // bounce off the ground, then still.
-        if (z.fall < z.fallMax || Math.abs(z.fallV) > 0.01) {
-          z.fallV += 5.5 * Math.sin((z.fall * Math.PI) / 2) * dt + (z.fall < 0.05 ? 1.5 * dt : 0);
-          z.fall += z.fallV * dt;
-          if (z.fall >= z.fallMax) {
-            z.fall = z.fallMax;
-            z.fallV = Math.abs(z.fallV) > 0.6 ? -z.fallV * 0.22 : 0;
-          }
-        }
-        z.timer -= dt;
-        if (z.timer <= 0) this.list.splice(i, 1);
+        // Dead is its own state: no thinking, no chasing, no shoving. Its ragdoll (the scene's) moves the
+        // body until it sleeps; the simulation never touches it again.
         continue;
       }
       if (z.shake > 0) z.shake -= dt;
@@ -296,7 +294,11 @@ export class ZombieSim {
       this.ambient(z, dist);
     }
     this.separate();
+    this.reported = [this.sounds.length, this.killedTwins.length, this.died.length];
   }
+
+  /** How many sounds, killed twins and deaths the last step reported (cleared by the next one). */
+  private reported = [0, 0, 0];
 
   // ── Perception and decisions ────────────────────────────────────────────────────────────────────
 
@@ -478,18 +480,25 @@ export class ZombieSim {
     }
   }
 
-  /** Free room along a direction from the feet, for a falling body (at knee, hip and chest height), m. */
-  private clearance(p: Vector3, dx: number, dz: number): number {
-    let room = BODY_LEN + 0.2;
-    for (const h of [0.35, 0.8, 1.3]) {
-      const d = this.world.rayHit(p.x, p.y + h, p.z, dx, 0, dz, BODY_LEN + 0.2);
-      if (d >= 0) room = Math.min(room, d);
-    }
-    return room;
+/**
+   * Death: its AI, chasing, shoving and shudder stop at once; how it died is kept for its ragdoll (the
+   * scene turns it into one this step).
+   */
+  private kill(z: Zombie, fromX: number, fromZ: number, damage: number, head: boolean, point: Vector3 | null): void {
+    z.death = { fromX, fromZ, damage, head, point: point?.clone() ?? null, phase: z.phase, gait: z.gait, speed: z.speed };
+    z.state = 'dead';
+    z.shake = 0;
+    z.speed = 0;
+    z.gait = 0;
+    z.rest = false;
+    z.diedAt = this.time;
+    z.timer = T.corpse;
+    this.sounds.push({ z, kind: 'die' });
+    this.died.push(z);
   }
 
   /** A blow from the player. Returns true if it killed. */
-  hit(z: Zombie, damage: number, fromX: number, fromZ: number): boolean {
+  hit(z: Zombie, damage: number, fromX: number, fromZ: number, head = false, point: Vector3 | null = null): boolean {
     if (z.state === 'dead') return false;
     z.hp -= damage;
     z.shake = 0.25;
@@ -503,30 +512,7 @@ export class ZombieSim {
     z.awareness = 1.2;
     z.target.set(fromX, z.pos.y, fromZ);
     if (z.hp <= 0) {
-      z.state = 'dead';
-      z.fall = 0.02;
-      // The blow starts the fall: harder blows knock it down faster; it twists a little as it goes.
-      z.fallV = 0.5 + Math.min(1.2, damage / 60);
-      z.roll = (this.rnd() - 0.5) * 0.9;
-      z.timer = T.corpse;
-      z.speed = 0;
-      // Falls away from the blow — or, with a wall there, the clearest way near it; with no room at all it
-      // slumps against the wall (the body never goes through it).
-      const away = Math.atan2(dx, dz);
-      let best = away;
-      let room = -1;
-      for (const turn of [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9, Math.PI]) {
-        const a = away + turn;
-        const c = this.clearance(z.pos, Math.sin(a), Math.cos(a));
-        if (c > room + 0.05) {
-          room = c;
-          best = a;
-        }
-        if (c >= BODY_LEN) break;
-      }
-      z.fallMax = room >= BODY_LEN ? 1 : Math.max(0.25, Math.asin(Math.min(1, Math.max(0.2, room - 0.15) / BODY_LEN)) / (Math.PI / 2));
-      z.yaw = Math.atan2(-Math.sin(best), -Math.cos(best));
-      this.sounds.push({ z, kind: 'die' });
+      this.kill(z, fromX, fromZ, damage, head, point);
       if (z.twin) this.killedTwins.push(z);
       return true;
     }
@@ -640,10 +626,30 @@ export class ZombieSim {
   }
 
   private populate(dt: number, p: PlayerSense, viewDir?: Vector3): void {
+    // Bodies go only where the player can't see it happen: too many of them (oldest first), or old ones.
+    const unseen = (z: Zombie) => {
+      const dx = z.pos.x - p.pos.x;
+      const dz = z.pos.z - p.pos.z;
+      const d = Math.hypot(dx, dz);
+      return d > 30 || !viewDir || (dx * viewDir.x + dz * viewDir.z) / (d * Math.max(1e-3, Math.hypot(viewDir.x, viewDir.z))) < 0.2;
+    };
+    const bodies = this.list.filter((z) => z.state === 'dead' && !z.twin).sort((a, b) => a.diedAt - b.diedAt);
+    let over = bodies.length - T.maxCorpses;
+    for (const z of bodies) {
+      const old = this.time - z.diedAt > T.corpse;
+      if ((over > 0 || old) && unseen(z)) {
+        this.list.splice(this.list.indexOf(z), 1);
+        this.removed.push(z);
+        over--;
+      }
+    }
     for (let i = this.list.length - 1; i >= 0; i--) {
       const z = this.list[i];
       if (z.twin) continue;
-      if (Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z) > T.despawn && z.state !== 'chase') this.list.splice(i, 1);
+      if (Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z) > T.despawn && z.state !== 'chase') {
+        this.list.splice(i, 1);
+        if (z.state === 'dead') this.removed.push(z);
+      }
     }
     this.spawnTimer -= dt;
     const alive = this.list.reduce((n, z) => n + (z.state !== 'dead' && !z.twin ? 1 : 0), 0);
@@ -669,8 +675,6 @@ export class ZombieSim {
   }
 }
 
-/** A body's length when it falls flat, m (feet to the top of the head). */
-const BODY_LEN = 1.75;
 
 /** Damage of one blow: the weapon's range (min–max, `roll` 0..1), the class's strength, double on the head. */
 export function blowDamage(range: readonly [number, number], strength: number, head: boolean, roll: number): number {

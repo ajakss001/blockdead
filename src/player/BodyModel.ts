@@ -1,4 +1,4 @@
-import { Group, Mesh, type BufferGeometry } from 'three';
+import { Group, Mesh, type BufferGeometry, type Object3D } from 'three';
 import { clamp } from '../core/math';
 import { ellipseLoft } from '../render/lowpoly';
 import { characterMaterial, VERTEX_COLORED } from '../render/look/materials';
@@ -162,6 +162,21 @@ export class BodyModel {
     this.thighR.rotation.x = stance + Math.sin(p + Math.PI) * swing + crouchT * 1.15;
     this.shinR.rotation.x = -stance * 0.5 - Math.max(0, Math.sin(p + Math.PI + 1.3)) * knee - crouchT * 1.95;
     this.hips.position.y = HIP_HEIGHT - crouchT * CROUCH_DROP - Math.abs(Math.sin(p)) * 0.03 * (swing / 0.42);
+  }
+
+  /**
+   * Legs set directly (a body lying down): per leg (left, right) the thigh's and the shin's rotation —
+   * x forward-positive like the walk, z outward — applied about Z after X.
+   */
+  poseLegs(thigh: [number, number][], shin: [number, number][]): void {
+    this.hips.position.y = HIP_HEIGHT;
+    [this.thighL, this.thighR].forEach((t, k) => t.rotation.set(thigh[k][0], 0, thigh[k][1], 'ZYX'));
+    [this.shinL, this.shinR].forEach((t, k) => t.rotation.set(shin[k][0], 0, shin[k][1], 'ZYX'));
+  }
+
+  /** The pieces a ragdoll moves: pelvis, thighs, shins with the shoes. */
+  ragdollPieces(): { obj: Object3D; part: 'pelvis' | 'thigh' | 'shin' }[] {
+    return [{ obj: this.pelvis, part: 'pelvis' }, ...this.thighs.map((obj) => ({ obj, part: 'thigh' as const })), { obj: this.shinL, part: 'shin' }, { obj: this.shinR, part: 'shin' }];
   }
 
   dispose(): void {
