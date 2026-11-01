@@ -49,9 +49,11 @@ import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
-import { ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
+import { oneArmed, ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
 import { CorpseBatch } from '../render/CorpseBatch';
 import { ZombieModels } from '../render/ZombieModels';
+import { isModelKind, type ModelKind, ZOMBIE_STATS } from '../zombies/stats';
+import { zombieKindAt } from '../world/zombieKinds';
 import { zombieRagdoll } from '../render/zombieBody';
 import { PART, type Ragdoll, Ragdolls, type StaticBox } from '../physics/ragdoll';
 import type { SearchBox } from '../world/gen/pieces';
@@ -326,13 +328,16 @@ export class WorldScene implements IScene {
         },
         doorNear: (x, y, z, r) => this.doors.closedNear(x, y, z, r),
         hitDoor: (ref, d) => this.doors.damage(ref as DoorRef, d),
+        kindAt: (x, z, _y, pick) => this.kindAt(x, z, pick),
       },
       zcount,
       seed,
     );
-    // A share of the dead are one-armed workers, drawn up close as their own model (?workers=0..1).
-    const wq = new URLSearchParams(location.search).get('workers');
-    this.zombies.workerShare = wq !== null ? Math.min(1, Math.max(0, Number(wq) || 0)) : 0.3;
+    // A share of the dead are of the modelled kinds (src/zombies), drawn up close as their own models; which
+    // kind by place (`kindAt`). ?models=0..1 sets the share (?workers= as before).
+    const q = new URLSearchParams(location.search);
+    const wq = q.get('models') ?? q.get('workers');
+    this.zombies.modelShare = wq !== null ? Math.min(1, Math.max(0, Number(wq) || 0)) : 0.6;
     if (zcount > 0) this.pois = new Pois(layout, this.zombies);
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
     this.models = new ZombieModels(ctx.quality.preset.level);
@@ -646,7 +651,7 @@ export class WorldScene implements IScene {
         if (twinRef) Object.assign(twinRef, { x: box[0], z: box[2], box });
         continue;
       }
-      const type = z.uniform?.loot ?? 'bodyZombie';
+      const type = z.uniform?.loot ?? (isModelKind(z.kind) ? ZOMBIE_STATS[z.kind].loot : 'bodyZombie');
       const ref = { id: ZOMBIE_BODY_ID + z.id, type, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
       this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, type, ref.zone));
     }
@@ -920,6 +925,11 @@ export class WorldScene implements IScene {
     return true;
   }
 
+  /** Which modelled kind a new zombie at (x, z) is (src/world/zombieKinds.ts). */
+  private kindAt(x: number, z: number, pick: number): ModelKind {
+    return zombieKindAt(this.layout, this.chunks.zoneAt(x, z), x, z, pick);
+  }
+
   /**
    * A zombie dies: its ragdoll (among the walls, cars and furniture round it) and its corpse in the batch.
    */
@@ -928,16 +938,17 @@ export class WorldScene implements IScene {
     const scale = ZombieSim.scale(z);
     const boxes: StaticBox[] = [];
     this.world.boxesNear(z.pos.x, z.pos.z, 2.6, (b) => boxes.push(b));
-    // Drawn as a model: the ragdoll starts from the model's pose and drives the model's bones.
-    const start = this.models.deathStart(z, scale);
-    const rd = zombieRagdoll(z, scale, this.crowd.clock, boxes, start ?? undefined);
+    // Drawn as a model: the ragdoll starts from the model's pose and drives the model's bones (the model is
+    // built at its own height: no scale).
+    const start = this.models.deathStart(z, 1);
+    const rd = zombieRagdoll(z, start ? 1 : scale, this.crowd.clock, boxes, start ?? undefined);
     this.ragdolls.add(rd);
     this.corpseRd.set(z, rd);
-    const asModel = start ? this.models.addCorpse(z, rd, scale) : null;
-    if (!asModel?.ok) this.corpses.add(z.id, rd, scale, zombieTints(z), z.kind === 'worker');
+    const asModel = start ? this.models.addCorpse(z, rd, 1) : null;
+    if (!asModel?.ok) this.corpses.add(z.id, rd, scale, zombieTints(z), oneArmed(z));
     // Too many model corpses: the oldest is laid in the batch.
     const old = asModel?.evicted && this.zombies.list.find((x) => x.id === asModel.evicted!.id);
-    if (old) this.corpses.add(old.id, asModel!.evicted!.rd, ZombieSim.scale(old), zombieTints(old), true);
+    if (old) this.corpses.add(old.id, asModel!.evicted!.rd, 1, zombieTints(old), oneArmed(old));
   }
 
   /**

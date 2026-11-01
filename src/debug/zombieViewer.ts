@@ -49,6 +49,7 @@ function setView(v: string): void {
   controls.update();
 }
 
+const ref = document.getElementById('ref') as HTMLImageElement;
 let zombie: ZombieInstance | null = null;
 let anim: ZombieAnimator | null = null;
 let clipName: ClipName | 'Rest' = (q.get('anim') as ClipName) ?? 'Idle';
@@ -58,6 +59,7 @@ function load(type: ZombieType): void {
   if (zombie) scene.remove(zombie.mesh);
   zombie = createZombie(type);
   scene.add(zombie.mesh);
+  ref.src = `/refs/zombie_${type.id}.jpg`;
   anim = new ZombieAnimator(zombie.mesh, type.animSpeed);
   play(clipName);
 }
@@ -94,7 +96,6 @@ const outline = document.getElementById('outline') as HTMLInputElement;
 outline.checked = q.get('outline') !== '0';
 outline.onchange = () => setZombieOutline(outline.checked);
 setZombieOutline(outline.checked);
-const ref = document.getElementById('ref') as HTMLImageElement;
 (document.getElementById('showref') as HTMLInputElement).onchange = (e) => (ref.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none');
 document.getElementById('export')!.onclick = () => exportGlb();
 const stats = document.getElementById('stats')!;
@@ -185,4 +186,10 @@ async function shot(name: string, view = 'front', dist = 4.4, y = 0.95, clip: Cl
   await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: renderer.domElement.toDataURL('image/jpeg', 0.9) });
   return name;
 }
-Object.assign(window, { __viewer: { play, setView, shot, scene, renderer, camera, controls } });
+/** Switch the type (debug): its triangles, body and outline. */
+function pick(id: string): [number, number] {
+  typeSel.value = id;
+  load(ZOMBIE_TYPES[id]);
+  return [zombie!.built.triangles, zombie!.built.outlineTriangles];
+}
+Object.assign(window, { __viewer: { play, setView, shot, pick, scene, renderer, camera, controls } });

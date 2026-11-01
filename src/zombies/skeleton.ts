@@ -68,9 +68,11 @@ export interface Proportions {
   stoop: number;
   /** Neck length (a long neck juts further forward when stooped). */
   neck: number;
-  /** The jaw at rest: hanging open (rad) and off to one side (+ to the character's right, rad). */
   /** Head size (a cartoon head is drawn bigger: 1.3). */
   head?: number;
+  /** Leg length (short-legged 0.85 … long-legged 1.1); the body above makes up the height. */
+  legs?: number;
+  /** The jaw at rest: hanging open (rad) and off to one side (+ to the character's right, rad). */
   jawOpen?: number;
   jawSide?: number;
 }
@@ -105,22 +107,26 @@ export function skeletonDims(p: Proportions): SkeletonDims {
   const k = p.height / 1.8;
   const g = p.girth;
   const neckLen = 0.08 * k * p.neck;
-  const chestY = 1.2 * k;
-  const shoulderY = 1.45 * k;
-  const neckY = 1.5 * k;
+  // Longer or shorter legs: the hip joint moves, the trunk above stretches to keep the height.
+  const L = p.legs ?? 1;
+  const hipJ = 0.91 * k * L;
+  const up = (y: number) => hipJ + ((y - 0.91) * k * (1.8 * k - hipJ)) / (0.89 * k);
+  const chestY = up(1.2);
+  const shoulderY = up(1.45);
+  const neckY = up(1.5);
   return {
     p,
     k,
-    hipsY: 0.96 * k,
-    spineY: 1.04 * k,
+    hipsY: up(0.96),
+    spineY: up(1.04),
     chestY,
     shoulderY,
     shoulderX: 0.19 * p.shoulders,
     neckY,
     headY: neckY + neckLen,
-    hipJointY: 0.91 * k,
+    hipJointY: hipJ,
     hipX: 0.092 * g,
-    kneeY: 0.5 * k,
+    kneeY: 0.085 * k + (0.5 - 0.085) * k * L,
     ankleY: 0.085 * k,
     upperArm: 0.3 * k * p.arms,
     foreArm: 0.27 * k * p.arms,

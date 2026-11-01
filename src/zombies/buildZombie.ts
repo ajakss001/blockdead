@@ -62,7 +62,24 @@ export interface PartSpec {
   glow?: number;
   /** Gets the black outline (default true; small decals, hairs and teeth don't). */
   outline?: boolean;
+  /** A pattern drawn over the colour (camouflage, grime, a check, a print): see `Pattern`. */
+  paint?: Pattern;
 }
+
+/**
+ * A surface pattern, drawn per pixel by the shared material from the bone-frame position (it sticks to the
+ * part, costs no triangles): `spots` — blotches of a and b over the colour (camouflage, grime; `share` of the
+ * area); `check` — a and b in cells; `flowers` — blossoms of a with b hearts (`share` of the cells);
+ * `print` — blobs of a or b. `scale`: cells per metre.
+ */
+export interface Pattern {
+  kind: 'spots' | 'check' | 'flowers' | 'print';
+  a: number;
+  b: number;
+  scale: number;
+  share: number;
+}
+const PATTERN_KIND = { spots: 1, check: 2, flowers: 3, print: 4 } as const;
 
 export interface ZombieType {
   id: string;
@@ -162,6 +179,9 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   const col: number[] = [];
   const glow: number[] = [];
   const line: number[] = [];
+  const pat0: number[] = [];
+  const pat1: number[] = [];
+  const pat2: number[] = [];
   const skin: number[] = [];
   const body: number[] = [];
   const hull: number[] = [];
@@ -170,6 +190,9 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   const v = new Vector3();
   const add = (p: PartSpec, outline: boolean) => {
     const g = p.geo;
+    const pt = outline ? undefined : p.paint;
+    const ca = new Color(pt?.a ?? 0);
+    const cb = new Color(pt?.b ?? 0);
     const P = g.getAttribute('position');
     const N = g.getAttribute('normal');
     const bi = boneIndex(p.bone);
@@ -180,7 +203,11 @@ export function buildZombie(type: ZombieType): BuiltZombie {
     if (outline) c.setRGB(0, 0, 0);
     else c.setHex(p.color);
     for (let i = 0; i < P.count; i++) {
-      v.fromBufferAttribute(P, i).applyMatrix4(m);
+      v.fromBufferAttribute(P, i);
+      pat0.push(v.x, v.y, v.z, pt ? PATTERN_KIND[pt.kind] : 0);
+      pat1.push(ca.r, ca.g, ca.b, pt?.scale ?? 0);
+      pat2.push(cb.r, cb.g, cb.b, pt?.share ?? 0);
+      v.applyMatrix4(m);
       pos.push(v.x, v.y, v.z);
       if (smooth) v.fromArray(smooth, i * 3);
       else v.fromBufferAttribute(N, i);
@@ -207,6 +234,9 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   geometry.setAttribute('color', new BufferAttribute(new Float32Array(col), 3));
   geometry.setAttribute('aGlow', new BufferAttribute(new Float32Array(glow), 1));
   geometry.setAttribute('aOutline', new BufferAttribute(new Float32Array(line), 1));
+  geometry.setAttribute('aPat0', new BufferAttribute(new Float32Array(pat0), 4));
+  geometry.setAttribute('aPat1', new BufferAttribute(new Float32Array(pat1), 4));
+  geometry.setAttribute('aPat2', new BufferAttribute(new Float32Array(pat2), 4));
   geometry.setAttribute('skinIndex', new Uint16BufferAttribute(skin, 4));
   geometry.setAttribute('skinWeight', new BufferAttribute(new Float32Array(skin.length).map((_, i) => (i % 4 === 0 ? 1 : 0)), 4));
   const all = body.concat(hull);
@@ -264,6 +294,40 @@ export function zombieOutline(): boolean {
   return outlineOn;
 }
 
+/** The patterns (see `Pattern`): kind in vPat0.w, the bone-frame position in vPat0.xyz, a/scale, b/share. */
+const PATTERN_GLSL = /* glsl */ `
+float zHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float zNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(zHash(i), zHash(i + vec3(1, 0, 0)), f.x), mix(zHash(i + vec3(0, 1, 0)), zHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(zHash(i + vec3(0, 0, 1)), zHash(i + vec3(1, 0, 1)), f.x), mix(zHash(i + vec3(0, 1, 1)), zHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+vec3 zPattern(vec3 base) {
+  vec3 p = vPat0.xyz * vPat1.w;
+  float kind = vPat0.w;
+  float share = vPat2.w;
+  if (kind < 1.5) {
+    float n = zNoise(p) * 0.65 + zNoise(p * 2.13 + 17.1) * 0.35;
+    if (n < 0.2 + 0.35 * share) return vPat1.rgb;
+    if (n > 0.8 - 0.35 * share) return vPat2.rgb;
+    return base;
+  }
+  if (kind < 2.5) {
+    vec3 f = floor(p);
+    return mod(f.x + f.y + f.z, 2.0) < 0.5 ? vPat1.rgb : vPat2.rgb;
+  }
+  vec3 c = floor(p);
+  float h = zHash(c);
+  if (h > share) return base;
+  vec3 q = fract(p) - 0.5 - 0.22 * (vec3(zHash(c + 3.1), zHash(c + 5.7), zHash(c + 9.3)) - 0.5);
+  float d = length(q);
+  if (kind < 3.5) return d < 0.11 ? vPat2.rgb : d < 0.3 ? vPat1.rgb : base;
+  return d < 0.34 ? (h < share * 0.5 ? vPat1.rgb : vPat2.rgb) : base;
+}
+`;
+
 let material: MeshToonMaterial | null = null;
 
 /** The one toon material of every procedural zombie: vertex colours, self-lit eyes, the hull pushed out. */
@@ -277,11 +341,15 @@ export function zombieMaterial(): MeshToonMaterial {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uOutline = outlineWidth;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aGlow;\nattribute float aOutline;\nuniform float uOutline;\nvarying float vGlow;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute float aGlow;\nattribute float aOutline;\nattribute vec4 aPat0;\nattribute vec4 aPat1;\nattribute vec4 aPat2;\nuniform float uOutline;\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;',
+      )
       // Along the raw normal: skinning then turns the push with the bone.
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;');
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;\nvPat0 = aPat0;\nvPat1 = aPat1;\nvPat2 = aPat2;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vGlow;')
+      .replace('#include <common>', `#include <common>\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;\n${PATTERN_GLSL}`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\nif (vPat0.w > 0.5) diffuseColor.rgb = zPattern(diffuseColor.rgb);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow;');
   };
   mat.customProgramCacheKey = () => 'zombie-toon';

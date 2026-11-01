@@ -3,7 +3,7 @@ import type { Kit, PartSpec, ZombieType } from '../buildZombie';
 import { type BoneName, chestPlumb, type SkeletonDims } from '../skeleton';
 
 /**
- * The one-armed worker (refs/zombie_worker.png): tall, thin, badly hunched, the long neck jutting forward,
+ * The one-armed worker (refs/zombie_worker.jpg): tall, thin, badly hunched, the long neck jutting forward,
  * the right arm long and bony (the hand hangs below mid-thigh). Bald long head with sunken cheeks, a peeled
  * patch on the crown, stitches on the right cheek, a few hairs; the right eye glows, the left is swollen
  * shut; the jaw hangs open and off to one side; one ear torn. Tee with a ragged hem, denim overalls (bib,

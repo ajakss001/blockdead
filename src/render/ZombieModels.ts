@@ -5,21 +5,21 @@ import type { Zombie, ZombieState } from '../systems/zombies';
 import { ZombieAnimator } from '../zombies/animations';
 import { createZombie, setZombieOutline, type ZombieInstance, type ZombieType } from '../zombies/buildZombie';
 import { BONES, type BoneName, PARENT, boneIndex, ragdollShape, restWorld } from '../zombies/skeleton';
-import { WORKER } from '../zombies/types';
+import { ZOMBIE_TYPES } from '../zombies/types';
 
 /**
  * The procedural zombie models in the game (src/zombies): the nearest few zombies of a modelled kind (the
- * one-armed worker) are drawn as their own SkinnedMesh — one draw call each, outline included — and leave
- * the instanced crowd, which keeps drawing the rest (the far workers in his colours, one-armed).
+ * one-armed worker, the medic, the soldier… — 12 types) are drawn as their own SkinnedMesh — one draw call
+ * each, outline included — and leave the instanced crowd, which keeps drawing the rest (in their colours).
  * Phones: 3 near models, no outline; better devices 6 / 10 with the outline.
  *
  * Clips: Idle / Walk / Run blended by speed (walk and run timed by the simulation's step phase, so the feet
  * keep pace), Attack when it lunges (the grab lands with the bite), HitReaction when staggered. Death is the
- * ragdoll's: it starts from the model's own pose, and a dead worker's corpse is the same model with its
+ * ragdoll's: it starts from the model's own pose, and a dead one's corpse is the same model with its
  * bones driven by the ragdoll's bodies (a few at once; older ones go to the corpse batch).
  */
 
-const TYPE_OF: Partial<Record<Zombie['kind'], ZombieType>> = { worker: WORKER };
+const TYPE_OF: Partial<Record<Zombie['kind'], ZombieType>> = ZOMBIE_TYPES;
 /** Drawn as a model within this distance (m). */
 const NEAR = 32;
 
@@ -112,7 +112,7 @@ export class ZombieModels {
     for (const { z } of want) {
       let l = this.live.find((x) => x.id === z.id);
       if (!l) {
-        l = this.live.find((x) => x.id < 0) ?? this.newLive(TYPE_OF[z.kind]!);
+        l = this.slot(TYPE_OF[z.kind]!);
         l.id = z.id;
         l.last = null;
         l.inst.mesh.visible = true;
@@ -122,6 +122,19 @@ export class ZombieModels {
     }
     // Corpses still falling.
     for (const c of this.corpses) if (!c.done) this.writeCorpse(c);
+  }
+
+  /** A free slot of this type; else a free one of another type is rebuilt (at the limit) or a new one made. */
+  private slot(type: ZombieType): Live {
+    const same = this.live.find((x) => x.id < 0 && x.inst.built.type === type);
+    if (same) return same;
+    const other = this.live.length >= this.limits.live ? this.live.findIndex((x) => x.id < 0) : -1;
+    if (other >= 0) {
+      const old = this.live.splice(other, 1)[0];
+      old.anim.mixer.stopAllAction();
+      this.group.remove(old.inst.mesh);
+    }
+    return this.newLive(type);
   }
 
   private newLive(type: ZombieType): Live {
@@ -205,7 +218,8 @@ export class ZombieModels {
       this.releaseCorpse(old);
     }
     l.inst.mesh.updateMatrixWorld(true);
-    const inst = this.free.pop() ?? createZombie(l.inst.built.type);
+    const fi = this.free.findIndex((f) => f.built.type === l.inst.built.type);
+    const inst = fi >= 0 ? this.free.splice(fi, 1)[0] : createZombie(l.inst.built.type);
     const { keys } = this.keys(inst, scale);
     const rel = BONES.map((n, i) => {
       const p = DRIVEN[n];
@@ -241,6 +255,7 @@ export class ZombieModels {
     c.inst.mesh.visible = false;
     this.group.remove(c.inst.mesh);
     this.free.push(c.inst);
+    if (this.free.length > 4) this.free.shift();
   }
 
   private writeCorpse(c: Corpse): void {

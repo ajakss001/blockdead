@@ -10,7 +10,11 @@ import { ITEMS } from '../data/items';
 import { CLIP_NAMES, ZombieAnimator, zombieClips } from '../zombies/animations';
 import { buildZombie, createZombie } from '../zombies/buildZombie';
 import { BONES } from '../zombies/skeleton';
-import { WORKER } from '../zombies/types';
+import { WORKER, ZOMBIE_TYPES } from '../zombies/types';
+import { isModelKind, MODEL_KINDS, ZOMBIE_STATS } from '../zombies/stats';
+import { WorldLayout } from '../world/gen/layout';
+import { nearestPoi, siteToWorld } from '../world/gen/poi';
+import { zombieKindAt } from '../world/zombieKinds';
 
 /**
  * npm run test:zombies — perception and behaviour on a flat test ground with one wall (x 4..5, z −20..20).
@@ -319,10 +323,10 @@ export function main(): number {
     const hit = sim.hitTest(new Vector3(-2, 1.63, 0.25), new Vector3(1, 0, 0), 3, 0);
     check(hit?.zombie === h && hit.head, 'the worker head is hit where it is: ahead of his feet');
     const mix = new ZombieSim(world, 0);
-    mix.workerShare = 0.3;
+    mix.modelShare = 0.3;
     let n = 0;
     for (let i = 0; i < 400; i++) if (mix.spawnAt(i, 50).kind === 'worker') n++;
-    check(n > 90 && n < 150, `a share of 0.3 makes ${n} workers in 400`);
+    check(n > 90 && n < 150, `a share of 0.3 makes ${n} workers in 400 (no world kinds: the worker)`);
   }
   // 20. The procedural model (src/zombies): budget, one skeleton for all, rigid skinning, the missing arm.
   {
@@ -359,6 +363,64 @@ export function main(): number {
       }
     }
     check(broken === 0, `every clip plays on the one-armed worker (${broken} broken frames)`);
+  }
+  // 21. Every modelled type: a type file for each kind, the budget, rigid skinning, every clip plays; their
+  // numbers in the simulation; the kind by place.
+  {
+    const missing = MODEL_KINDS.filter((k) => !ZOMBIE_TYPES[k]);
+    check(missing.length === 0, `a model for each of the ${MODEL_KINDS.length} kinds${missing.length ? ` (missing ${missing.join()})` : ''}`);
+    const tris: string[] = [];
+    let over = 0;
+    let loose = 0;
+    let broken = 0;
+    for (const t of Object.values(ZOMBIE_TYPES)) {
+      const b = buildZombie(t);
+      tris.push(`${t.id} ${b.triangles}`);
+      if (b.triangles > 3000) over++;
+      const sw = b.geometry.getAttribute('skinWeight');
+      for (let i = 0; i < sw.count; i++) if (sw.getX(i) !== 1) loose++;
+      const inst = createZombie(t);
+      const anim = new ZombieAnimator(inst.mesh, t.animSpeed);
+      for (const n of CLIP_NAMES) {
+        anim.mixer.stopAllAction();
+        anim.actions[n].reset().play();
+        for (let f = 0; f < 40; f++) {
+          anim.update(1 / 30);
+          inst.mesh.updateMatrixWorld(true);
+          const head = new Vector3().setFromMatrixPosition(inst.bones[BONES.indexOf('Head')].matrixWorld);
+          if (!Number.isFinite(head.x) || head.length() > 2.6) broken++;
+        }
+      }
+    }
+    check(over === 0, `every type within 3000 triangles: ${tris.join(', ')}`);
+    check(loose === 0 && broken === 0, `every type rigid (${loose} loose vertices) and every clip plays (${broken} broken frames)`);
+    const sim = new ZombieSim(world, 0);
+    const sol = sim.spawnAt(0, 0, 'idle', 'soldier');
+    const gran = sim.spawnAt(2, 0, 'idle', 'grandma');
+    check(sol.hp === 180 && gran.hp === 60, `health by kind: soldier ${sol.hp}, grandma ${gran.hp} (worker 100)`);
+    const jog = sim.spawnAt(0, -10, 'chase', 'jogger');
+    const chef = sim.spawnAt(-2, -10, 'chase', 'chef');
+    const p = player(-1, 0);
+    for (const z of [jog, chef]) (z.awareness = 1.2), z.target.copy(p.pos);
+    run(sim, p, 1.5);
+    check(jog.speed > chef.speed * 1.8, `the jogger follows faster than the chef (${jog.speed.toFixed(2)} vs ${chef.speed.toFixed(2)} m/s)`);
+    const placed = new ZombieSim({ ...world, kindAt: () => 'police' }, 0);
+    placed.modelShare = 1;
+    check(placed.spawnAt(3, 3).kind === 'police', 'the world picks the kind by place');
+    // By place on a real map: police at the station, soldiers at the base.
+    const L = new WorldLayout(1);
+    const share = (kind: 'police' | 'base', want: string) => {
+      const s = nearestPoi(L, kind, 0, 0, 60);
+      if (!s) return -1;
+      const [x, z] = siteToWorld(s, 0, 0);
+      let n = 0;
+      for (let i = 0; i < 200; i++) if (zombieKindAt(L, 'town', x, z, i / 200) === want) n++;
+      return n / 200;
+    };
+    const pol = share('police', 'police');
+    const mil = share('base', 'soldier');
+    check(pol > 0.6 && (mil < 0 || mil > 0.6), `by place: ${Math.round(pol * 100)}% police at the station, ${Math.round(mil * 100)}% soldiers at the base`);
+    check(MODEL_KINDS.every((k) => isModelKind(k) && ZOMBIE_STATS[k].hp > 0), 'stats for every kind');
   }
   // Bodies (ragdolls) are checked by npm run test:ragdoll.
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');

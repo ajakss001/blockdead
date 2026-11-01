@@ -1,5 +1,6 @@
 import { InstancedBufferAttribute, InstancedMesh, Matrix4, type MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import { type Zombie, ZombieSim } from '../systems/zombies';
+import { isModelKind, ZOMBIE_STATS } from '../zombies/stats';
 import { characterMaterial } from './look/materials';
 import { bodyGeometry, HIP_X, HIP_Y, NECK_Y, SHOULDER_X, SHOULDER_Y } from './zombieBody';
 
@@ -130,11 +131,11 @@ export class ZombieCrowd {
       _q.setFromAxisAngle(_up, z.yaw);
       if (z.shake > 0) _pos.x += (Math.random() - 0.5) * 0.06 * z.shake * 4, _pos.z += (Math.random() - 0.5) * 0.06 * z.shake * 4;
       if (z.state === 'stagger') _q.multiply(_qf.setFromAxisAngle(_xAxis, -0.25));
-      m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' ? 0.9 : 1), s, s));
+      m.compose(_pos, _q, _sc.set(s * (z.kind === 'woman' || (isModelKind(z.kind) && ZOMBIE_STATS[z.kind].female) ? 0.9 : 1), s, s));
       this.mesh.setMatrixAt(i, m);
       a[i * 3] = z.phase;
       a[i * 3 + 1] = z.gait;
-      a[i * 3 + 2] = (z.look % 97) / 97 + (z.kind === 'worker' ? 1 : 0);
+      a[i * 3 + 2] = (z.look % 97) / 97 + (oneArmed(z) ? 1 : 0);
       if (this.ids[i] !== z.id) {
         this.ids[i] = z.id;
         const t = zombieTints(z, _tint);
@@ -178,17 +179,23 @@ function setColor(out: Float32Array, at: number, hex: number, k: number): void {
 }
 
 /** A zombie's colours, skin / shirt / pants (rgb each): a dead survivor's own, else from the palette by look. */
+/** Drawn without a left arm (the worker), near and far, alive and dead. */
+export function oneArmed(z: Zombie): boolean {
+  return isModelKind(z.kind) && !!ZOMBIE_STATS[z.kind].oneArm;
+}
+
 export function zombieTints(z: Zombie, out = new Float32Array(9)): Float32Array {
   const l = z.look;
   if (z.twin) {
     setColor(out, 0, z.twin.colors[2], 0.8);
     setColor(out, 3, z.twin.colors[0], 0.85);
     setColor(out, 6, z.twin.colors[1], 0.85);
-  } else if (z.kind === 'worker') {
-    // The one-armed worker's own colours (his near model: src/zombies/types/worker.ts).
-    setColor(out, 0, 0x909a87, 1);
-    setColor(out, 3, 0xd5d2c1, 0.85);
-    setColor(out, 6, 0x56739a, 0.9);
+  } else if (isModelKind(z.kind)) {
+    // A modelled kind far away: its model's colours (src/zombies/stats.ts).
+    const c = ZOMBIE_STATS[z.kind].colors;
+    setColor(out, 0, c[0], 1);
+    setColor(out, 3, c[1], 0.85);
+    setColor(out, 6, c[2], 0.9);
   } else if (z.uniform) {
     setColor(out, 0, SKINS[(l >> 4) % SKINS.length], 1);
     setColor(out, 3, z.uniform.shirt, 0.8 + ((l >> 3) % 4) * 0.05);
