@@ -1,4 +1,4 @@
-import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
+import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
@@ -291,7 +291,11 @@ export class InventoryPanel {
     card.append(icon(id, 'inv__card-icon'));
     const text = el('div', 'inv__card-text');
     const dirt = def.wear ? this.dirtAt(sel) : null;
-    const info = describe(def) + (dirt !== null ? ` · грязь ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '');
+    const worn = def.durability ? this.dirtAt(sel) : null;
+    const info =
+      describe(def) +
+      (dirt !== null ? ` · грязь ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
+      (worn !== null ? ` · прочность ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
     text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
     card.append(text);
     const actions = el('div', 'inv__actions');
@@ -484,8 +488,8 @@ export class InventoryPanel {
     const ref = this.container;
     if (!ref) return false;
     let got = 0;
-    if (ITEMS[id].wear) {
-      // Clothing: piece by piece, each with its own dirt.
+    if (onePiece(ITEMS[id])) {
+      // Clothing and weapons: piece by piece, each with its own dirt / wear.
       for (let n = 0; n < count; n++) {
         const dirt = this.host.containers.peekDirt(ref, id);
         if (this.host.inventory.add(id, 1, dirt, this.host.containers.peekTint(ref, id)) === 0) break;
@@ -520,7 +524,7 @@ export class InventoryPanel {
   private store(id: ItemId, count: number): void {
     const ref = this.container;
     if (!ref) return;
-    if (ITEMS[id].wear) {
+    if (onePiece(ITEMS[id])) {
       for (let k = 0; k < count; k++) {
         const dirt = this.host.inventory.peekDirt(id);
         const tint = this.host.inventory.peekTint(id);
@@ -554,7 +558,7 @@ export class InventoryPanel {
   /** Dirt of the selected piece of clothing (the one an action would move). */
   private dirtAt(p: Place): number {
     const inv = this.host.inventory;
-    if (p.from === 'slot') return p.slot === 'hand' ? 0 : inv.wornDirt[p.slot];
+    if (p.from === 'slot') return p.slot === 'hand' ? inv.handWear : inv.wornDirt[p.slot];
     if (p.from === 'bag') return inv.peekDirt(p.id);
     return this.container ? this.host.containers.peekDirt(this.container, p.id) : 0;
   }

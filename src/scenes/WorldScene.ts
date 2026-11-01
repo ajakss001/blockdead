@@ -36,6 +36,8 @@ import { worldMaterials } from '../render/look/worldMaterials';
 import { airTemperature, Clock, feltTemperature, Shelters } from '../systems/Climate';
 import { dirtSteps, soilClothes } from '../systems/Dirt';
 import { Containers } from '../systems/Containers';
+import { weaponOf } from '../weapons/config';
+import { GroundWeapons } from '../weapons/GroundWeapons';
 import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
@@ -171,6 +173,7 @@ const _zView = new Vector3();
 const STRIKE_SOUND: Record<string, FleshBlow> = { axe: 'chop', knife: 'stab', fists: 'fist', bat: 'blunt', hammer: 'metal', crowbar: 'metal' };
 const _so = new Vector3();
 const _sd = new Vector3();
+const _wallHit = new Vector3();
 const BASE_VFOV = 75;
 const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
@@ -213,6 +216,8 @@ export class WorldScene implements IScene {
   private readonly survival = new Survival();
   private readonly inventory = new Inventory();
   private containers!: Containers;
+  /** Weapons lying about, picked up with E (weapons/GroundWeapons). */
+  private ground!: GroundWeapons;
   private interaction!: Interaction;
   private panel!: InventoryPanel;
   private saves!: SaveGame;
@@ -345,6 +350,14 @@ export class WorldScene implements IScene {
 
     // Survival layer: containers follow their chunks; the inventory screen pauses the game.
     this.containers = new Containers(seed);
+    // Weapons lying by some containers (on the floor of their storey, where nothing stands).
+    this.ground = new GroundWeapons(
+      seed,
+      (x, y, z) => (y > 0.5 ? y : layout.walkHeightAt(x, z)),
+      (x, y, z) => this.world.rayHit(x, y + 1.6, z, 0, -1, 0, 1.5) < 0,
+    );
+    this.containers.onChunk = (key, list) => (list ? this.ground.addChunk(key, list) : this.ground.removeChunk(key));
+    this.scene.add(this.ground.group);
     this.doors = new Doors(this.scene, this.world);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
     this.chunks.onChunkLoaded = (key, data) => {
@@ -377,6 +390,7 @@ export class WorldScene implements IScene {
       document.getElementById('ui')!,
     );
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
+    this.interaction.ground = this.ground;
     // Search by the crosshair: a ray from the eye into the search zones, walls and objects in front stop it.
     this.interaction.aim = {
       eye: (out) => this.camera.getWorldPosition(out),
@@ -417,7 +431,13 @@ export class WorldScene implements IScene {
       this.world,
       (x, y, z, r) => this.zombies.noiseAt(x, y, z, r),
     );
-    this.player.onStrikeWorld = (x, y, z) => this.atmo.strikeAt(x, y, z);
+    // A blow to a wall: steel strikes sparks, the knife (and a fist) only a little dust; the weapon wears.
+    this.player.onStrikeWorld = (x, y, z, item) => {
+      this.atmo.strikeAt(x, y, z);
+      if (weaponOf(item)?.sparks) this.particles.sparks(x, y, z, 9);
+      else this.particles.burst(_wallHit.set(x, y, z), 4, 0.4);
+      this.weaponBlow();
+    };
     // The trees' far-away impostors are baked once, now.
     this.atmo.vegetation.bake(ctx.renderer.gl);
     this.landmarks = new Landmarks(this.scene, layout);
@@ -489,6 +509,7 @@ export class WorldScene implements IScene {
       this.labLights();
       this.bodies = save.bodies ?? [];
       this.containers.restore(save.containers);
+      this.ground.restore(save.ground);
       for (const b of this.bodies) this.containers.addLoose(b, []);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
@@ -840,6 +861,7 @@ export class WorldScene implements IScene {
       stats: this.survival.serialize(),
       inventory: this.inventory.serialize(),
       containers: this.containers.serialize(),
+      ground: this.ground.serialize(),
       clock: this.clock.minutes,
       character: { appearance: this.look, classId: this.classId },
       dead: this.dead || undefined,
@@ -911,7 +933,17 @@ export class WorldScene implements IScene {
     const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point);
     sfx.strike(STRIKE_SOUND[item] ?? 'blunt', res.point, res.head, killed);
     this.particles.burst(res.point, res.head ? 14 : 10);
+    this.weaponBlow();
     return true;
+  }
+
+  /** A blow of the weapon in hand landed: it wears, and at the end of its blows it breaks. */
+  private weaponBlow(): void {
+    const id = this.inventory.hand;
+    if (!id || !this.inventory.wearHand()) return;
+    this.ctx.hud.toast(`Сломалось: ${ITEMS[id].name}`, 1800);
+    sfx.item('move');
+    this.syncBody();
   }
 
   /** Which modelled kind a new zombie at (x, z) is (src/world/zombieKinds.ts). */

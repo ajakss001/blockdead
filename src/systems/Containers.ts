@@ -62,14 +62,20 @@ export class Containers {
   /** Containers that are not part of any chunk (a fallen twin's body), with their contents. */
   private readonly loose: ContainerRef[] = [];
 
+  /** A chunk's containers came (the list) or went (null): weapons lying by them follow (weapons/GroundWeapons). */
+  onChunk: ((key: number, list: readonly ContainerRef[] | null) => void) | null = null;
+
   constructor(readonly seed: number) {}
 
   addChunk(key: number, zone: Zone, list: { id: number; type: ContainerType; x: number; z: number; y?: number; fixed?: ItemId[]; box?: SearchBox }[]): void {
-    this.byChunk.set(key, list.map((c) => ({ ...c, y: c.y ?? 0, zone })));
+    const refs = list.map((c) => ({ ...c, y: c.y ?? 0, zone }));
+    this.byChunk.set(key, refs);
+    this.onChunk?.(key, refs);
   }
 
   removeChunk(key: number): void {
     this.byChunk.delete(key);
+    this.onChunk?.(key, null);
   }
 
   get loadedCount(): number {

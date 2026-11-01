@@ -1,5 +1,7 @@
-import { BoxGeometry, type BufferGeometry, ConeGeometry, CylinderGeometry, Group, type Material, Mesh } from 'three';
-import { bladeMaterial, characterMaterial } from '../render/look/materials';
+import { type BufferGeometry, CylinderGeometry, Group, type Material, Mesh } from 'three';
+import { characterMaterial } from '../render/look/materials';
+import { heldMatrix, weaponMesh } from '../weapons/buildWeapon';
+import { WEAPON_IDS, WEAPONS, type WeaponId, weaponDamage } from '../weapons/config';
 
 /** Things that go in the hands: weapons and tools, plus the flashlight (left hand). */
 export type HeldId = 'knife' | 'axe' | 'bat' | 'crowbar' | 'hammer' | 'torch';
@@ -99,6 +101,8 @@ export interface HeldConfig {
   damage: readonly [number, number];
   /** How far a blow reaches from the eye, m. */
   reach: number;
+  /** Least time between the starts of two blows, s (weapons/config); none: the swing's own length. */
+  interval?: number;
 }
 
 const key = (at: V3, axis: V3, edge: V3, body?: V3, slide?: number): Key => ({ at, axis, edge, body, slide });
@@ -210,12 +214,19 @@ const ROLL_L = -34.8 * DEG;
 const AXE_R = 1.0 * DEG;
 const AXE_L = -49.9 * DEG;
 
+/** Stats of a modelled weapon (weapons/config): one damage (a worker falls in `hits` blows), reach, the pace of blows. */
+function stats(id: WeaponId): Pick<HeldConfig, 'damage' | 'reach' | 'interval'> {
+  const w = WEAPONS[id];
+  const d = weaponDamage(w);
+  return { damage: [d, d], reach: w.reach, interval: w.interval };
+}
+
 export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
-  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.27, 0.01], windup: 7 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.2, damage: [10, 15], reach: 1.3 },
-  hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.31, -0.02], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4, damage: [15, 20], reach: 1.4 },
-  axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5, damage: [35, 45], reach: 1.8 },
+  knife: { twoHanded: false, main: { along: 0.05, roll: 0 }, keys: KNIFE, head: [0, 0.26, 0], windup: 7 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.2, ...stats('tacticalKnife') },
+  hammer: { twoHanded: false, main: { along: 0.07, roll: 0 }, keys: HAMMER, head: [0, 0.305, -0.04], windup: 0.16, strike: 0.09, recover: 0.3, noise: 0.4, ...stats('hammer') },
+  axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5, ...stats('fireAxe') },
   bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45, damage: [20, 30], reach: 1.8 },
-  crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.66, -0.06], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5, damage: [20, 25], reach: 1.7 },
+  crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, -0.05], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5, ...stats('crowbar') },
   torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0, damage: [0, 0], reach: 1 },
 };
 
@@ -225,6 +236,14 @@ export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }
 /** Model of a held item in its grip frame (see HeldConfig). Geometries are collected for disposal. */
 export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
   const g = new Group();
+  // The modelled weapons (weapons/buildWeapon): one shared mesh, turned from its model frame into this one.
+  const wid = WEAPON_IDS.find((w) => WEAPONS[w].item === id);
+  if (wid) {
+    const m = weaponMesh(wid);
+    m.applyMatrix4(heldMatrix(wid));
+    g.add(m);
+    return g;
+  }
   const add = (geo: BufferGeometry, mat: Material, x = 0, y = 0, z = 0) => {
     geos.push(geo);
     const m = new Mesh(geo, mat);
@@ -234,49 +253,12 @@ export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
   };
   const shaft = (r0: number, r1: number, len: number, seg = 6) => new CylinderGeometry(r1, r0, len, seg).translate(0, len / 2, 0);
   const wood = characterMaterial('handle', 0x6e5034);
-  const steel = characterMaterial('torch', 0x4a4e52);
   switch (id) {
-    case 'knife': {
-      add(new BoxGeometry(0.022, 0.1, 0.03), characterMaterial('handle', 0x3b2a1e), 0, 0.05, 0);
-      add(new BoxGeometry(0.03, 0.012, 0.036), steel, 0, 0.105, 0);
-      // Flat blade, edge forward (−Z), spine back.
-      const blade = new BoxGeometry(0.005, 0.16, 0.032, 1, 2, 1);
-      const pos = blade.getAttribute('position');
-      for (let i = 0; i < pos.count; i++) {
-        // Taper to a point near the spine at the top: edge forward (−Z), spine back.
-        const t = (pos.getY(i) + 0.08) / 0.16;
-        pos.setZ(i, pos.getZ(i) * (1 - t * 0.85) + 0.012 * t);
-      }
-      blade.computeVertexNormals();
-      add(blade, bladeMaterial(), 0, 0.19, 0);
-      break;
-    }
-    case 'hammer':
-      add(shaft(0.013, 0.012, 0.32), wood);
-      add(new BoxGeometry(0.03, 0.032, 0.12), steel, 0, 0.31, -0.02);
-      break;
-    case 'axe': {
-      // Fire axe: red shaft, steel head — the edge forward, the pick behind.
-      add(shaft(0.017, 0.015, 0.78), characterMaterial('handle', 0x8a3a24));
-      add(new BoxGeometry(0.02, 0.07, 0.07), steel, 0, 0.72, 0);
-      const edge = new BoxGeometry(0.012, 0.16, 0.09);
-      add(edge, bladeMaterial(), 0, 0.72, -0.075);
-      const pick = new ConeGeometry(0.018, 0.12, 4).rotateX(Math.PI / 2);
-      add(pick, steel, 0, 0.73, 0.09);
-      break;
-    }
     case 'bat':
       add(shaft(0.017, 0.036, 0.72, 8), wood);
       add(new CylinderGeometry(0.026, 0.026, 0.018, 8), wood, 0, 0.005, 0);
       // Grip tape.
       add(shaft(0.019, 0.019, 0.2, 8), characterMaterial('cuff', 0x1c1c1e), 0, 0.02, 0);
-      break;
-    case 'crowbar':
-      add(shaft(0.011, 0.011, 0.6), characterMaterial('torch', 0x7a2a22));
-      // Hooked claw at the top, bending forward.
-      add(new CylinderGeometry(0.01, 0.009, 0.1, 6).rotateX(-1.0), characterMaterial('torch', 0x7a2a22), 0, 0.63, -0.04);
-      // Flat chisel end at the butt.
-      add(new BoxGeometry(0.012, 0.04, 0.026), characterMaterial('torch', 0x7a2a22), 0, -0.01, -0.006);
       break;
     case 'torch': {
       add(shaft(0.018, 0.018, 0.15, 8), characterMaterial('torch', 0x33363a));

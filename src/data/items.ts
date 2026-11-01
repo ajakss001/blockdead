@@ -1,3 +1,4 @@
+import { WEAPONS } from '../weapons/config';
 /**
  * Item catalog. Effects are fractions of the 0..1 survival scales (hunger −0.3 = a third of an
  * empty stomach). Weights in kg; the backpack holds BACKPACK_CAPACITY.
@@ -155,6 +156,8 @@ export interface ItemDef {
   equip?: boolean;
   /** Clothing: where and how it is worn. */
   wear?: WearDef;
+  /** Weapons: blows that land before it breaks (weapons/config); how worn it is rides in the stack's `dirt`. */
+  durability?: number;
   /** One line for the item card. */
   note?: string;
 }
@@ -177,11 +180,11 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   painkillers: { name: 'Обезболивающее', kind: 'medical', weight: 0.05, stack: 10, pain: -0.5, health: 0.05 },
   antibiotics: { name: 'Антибиотики', kind: 'medical', weight: 0.05, stack: 5, health: 0.15, cures: true, note: 'Останавливают заражение, если принять рано.' },
   batteries: { name: 'Батарейки', kind: 'tool', weight: 0.1, stack: 8, battery: 1 },
-  knife: { name: 'Кухонный нож', kind: 'weapon', weight: 0.3, stack: 1, equip: true, note: 'Быстрый, тихий, недалеко бьёт' },
+  knife: { name: WEAPONS.tacticalKnife.name, kind: 'weapon', weight: 0.3, stack: 1, equip: true, durability: WEAPONS.tacticalKnife.durability, note: 'Быстрый, тихий, недалеко бьёт' },
   bat: { name: 'Бейсбольная бита', kind: 'weapon', weight: 1.0, stack: 1, equip: true, note: 'Длинная, сбивает с ног' },
-  hammer: { name: 'Молоток', kind: 'tool', weight: 0.8, stack: 1, equip: true, note: 'Инструмент и оружие' },
-  crowbar: { name: 'Монтировка', kind: 'weapon', weight: 1.4, stack: 1, equip: true, note: 'Тяжёлая, вскрывает двери' },
-  axe: { name: 'Пожарный топор', kind: 'weapon', weight: 1.8, stack: 1, equip: true, note: 'Медленный, но смертельный' },
+  hammer: { name: WEAPONS.hammer.name, kind: 'tool', weight: 0.8, stack: 1, equip: true, durability: WEAPONS.hammer.durability, note: 'Инструмент и оружие' },
+  crowbar: { name: WEAPONS.crowbar.name, kind: 'weapon', weight: 1.4, stack: 1, equip: true, durability: WEAPONS.crowbar.durability, note: 'Тяжёлый, вскрывает двери' },
+  axe: { name: WEAPONS.fireAxe.name, kind: 'weapon', weight: 1.8, stack: 1, equip: true, durability: WEAPONS.fireAxe.durability, note: 'Медленный, но смертельный' },
   nails: { name: 'Гвозди', kind: 'material', weight: 0.02, stack: 50 },
   planks: { name: 'Доска', kind: 'material', weight: 1.8, stack: 4 },
   rope: { name: 'Верёвка', kind: 'material', weight: 0.5, stack: 3 },
@@ -292,7 +295,7 @@ export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: k
 export interface ItemStack {
   id: ItemId;
   count: number;
-  /** Clothing only (one per stack): how dirty, 0..1. */
+  /** Clothing (one per stack): how dirty, 0..1; a weapon: how worn, 0..1 (1 = broken). */
   dirt?: number;
   /** Clothing only: color of this piece if it differs from the item's default. */
   tint?: number;
@@ -307,4 +310,9 @@ export function useVerb(def: ItemDef): string | null {
   if (def.battery) return 'Вставить в фонарь';
   if (def.wear) return 'Надеть';
   return null;
+}
+
+/** Kept one piece per stack with its own state (clothing: dirt; weapons: wear). */
+export function onePiece(def: ItemDef): boolean {
+  return !!def.wear || !!def.durability;
 }

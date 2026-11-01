@@ -22,6 +22,8 @@ export interface SaveV1 {
   clock?: number;
   /** Touched containers only; untouched ones are re-rolled from the seed. */
   containers: [number, [ItemId, number, number?, number?][]][];
+  /** Weapons lying about that the player picked up (weapons/GroundWeapons keys). */
+  ground?: number[];
   /** The survivor died: the next start is a new character (the world, twins and bodies stay). */
   dead?: boolean;
   /** Dead survivors walking, and the bodies of those killed again (their things inside). */

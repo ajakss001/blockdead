@@ -1,9 +1,11 @@
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
-import { type ItemId, NOTE_VARS } from '../data/items';
+import { type ItemId, ITEMS, NOTE_VARS } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
 import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
+import type { GroundWeapon, GroundWeapons } from '../weapons/GroundWeapons';
+import { WEAPONS } from '../weapons/config';
 
 /**
  * Locks on POI doors. A key (or an access card) opens it; or a code — every note that holds a part of
@@ -78,6 +80,8 @@ export class Interaction {
   power: { on(x: number, z: number): boolean; start(x: number, z: number): void } | null = null;
   /** The container under the crosshair (refreshed with the prompt): the scene outlines it. */
   focus: ContainerRef | null = null;
+  /** Weapons lying about (set by the scene): the one under the crosshair is picked up with E. */
+  ground: GroundWeapons | null = null;
   private targeting = false;
   /** Class: search time multipliers (all containers, car trunks). */
   searchMul = 1;
@@ -137,6 +141,11 @@ export class Interaction {
         }
       }
     } else if (use) {
+      const lying = this.groundTarget();
+      if (lying) {
+        this.pickUp(lying);
+        return;
+      }
       const door = this.doorTarget();
       const ref = this.target();
       if (door && (!ref || this.doorCloser(door, ref))) {
@@ -176,9 +185,18 @@ export class Interaction {
     if (this.searchT >= 0 || this.panel.isOpen) {
       this.ctx.hud.setPrompt(null);
       this.focus = null;
+      this.ground?.setFocus(null);
       return;
     }
     const key = this.ctx.input.mode === 'kbm' ? 'E — ' : '';
+    const lying = this.groundTarget();
+    this.ground?.setFocus(lying);
+    if (lying) {
+      this.focus = null;
+      this.setTargeting(true);
+      this.ctx.hud.setPrompt(`${key}Подобрать: ${WEAPONS[lying.weapon].name}`);
+      return;
+    }
     const ref = this.target();
     const door = this.doorTarget();
     this.focus = ref && !(door && this.doorCloser(door, ref)) ? ref : null;
@@ -364,6 +382,33 @@ export class Interaction {
     const o = aim.eye(_o);
     const d = aim.dir(_d);
     return this.containers.targetRay(o.x, o.y, o.z, d.x, d.y, d.z, REACH, (t) => !aim.blocked(o, d, t));
+  }
+
+  /** The weapon lying under the crosshair within reach, nothing solid in between. */
+  private groundTarget(): GroundWeapon | null {
+    const aim = this.aim;
+    if (!this.ground || !aim) return null;
+    const o = aim.eye(_o);
+    const d = aim.dir(_d);
+    return this.ground.target(o, d, REACH, (t) => !aim.blocked(o, d, t));
+  }
+
+  /** Into the empty hand, else into the bag (if it is not too heavy). */
+  private pickUp(w: GroundWeapon): void {
+    const inv = this.inventory;
+    const item = WEAPONS[w.weapon].item;
+    if (!inv.hand) {
+      inv.hand = item;
+      inv.handWear = 0;
+      inv.version++;
+      this.syncBody();
+    } else if (inv.add(item, 1) === 0) {
+      this.ctx.hud.toast('Слишком тяжело', 900);
+      return;
+    }
+    this.ground!.take(w);
+    sfx.item('pick');
+    this.ctx.hud.toast(`Подобрано: ${ITEMS[item].name}`, 1200);
   }
 
   /** Tell the touch controls whether there is something to use (only when it changes). */

@@ -89,7 +89,7 @@ export class Player {
   /** The blow lands (contact frame): true if it hit something that is not the world (a zombie). */
   onStrike: ((item: string) => boolean) | null = null;
   /** The blow lands on the world (not a zombie) at a point: a car there may start wailing. */
-  onStrikeWorld: ((x: number, y: number, z: number) => void) | null = null;
+  onStrikeWorld: ((x: number, y: number, z: number, item: string) => void) | null = null;
 
   /** Dead: the scene's death camera has the view; no arms, no body, no input. */
   private dead = false;
@@ -174,7 +174,8 @@ export class Player {
     if (strikeNoise > 0) {
       this.controller.addNoise(strikeNoise);
       // A zombie in the way takes the blow (the scene checks); otherwise the world does.
-      if (!this.onStrike?.(this.viewmodel.currentItem)) this.strikeSound();
+      if (this.onStrike?.(this.viewmodel.currentItem)) this.viewmodel.recoil();
+      else this.strikeSound();
       this.hitKick = 0.03;
     }
 
@@ -183,7 +184,7 @@ export class Player {
   /** The blow lands: what is in front within reach, and what it is made of (stage 4 adds damage). */
   private strikeSound(): void {
     const item = this.viewmodel.currentItem;
-    const reach = item === 'fists' ? 1.1 : item === 'knife' ? 1.3 : 1.75;
+    const reach = this.viewmodel.swing.reach;
     const o = this.camera.getWorldPosition(_o);
     const d = this.camera.getWorldDirection(_d);
     const dist = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, reach);
@@ -206,7 +207,10 @@ export class Player {
       break;
     }
     sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
-    this.onStrikeWorld?.(o.x + d.x * dist, o.y + d.y * dist, o.z + d.z * dist);
+    this.viewmodel.recoil();
+    // A little in front of the surface: sparks fly off it, not inside it.
+    const at = dist - 0.04;
+    this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item);
   }
 
   render(alpha: number, frameDt: number): void {

@@ -75,6 +75,10 @@ export class Viewmodel {
   /** -1 = idle, otherwise seconds since the attack started. */
   private attackT = -1;
   private strikeFired = false;
+  /** Seconds until the next blow may start (the weapon's interval). */
+  private cooldown = 0;
+  /** Recoil of a blow that met something, 1 → 0. */
+  private kick = 0;
   private strikePending = false;
   /** Set when a swing starts (sound); the caller clears it. */
   swingStarted = false;
@@ -180,10 +184,12 @@ export class Viewmodel {
       this.attackT = this.scrubT;
       return;
     }
-    const canAttack = this.pendingItem === null && this.rightDown < 0.2;
+    this.cooldown -= dt * this.swingRate;
+    const canAttack = this.pendingItem === null && this.rightDown < 0.2 && this.cooldown <= 0;
     if (this.attackT < 0) {
       if (wantsAttack && canAttack) {
         this.attackT = 0;
+        this.cooldown = this.config(this.item).interval ?? 0;
         this.strikeFired = false;
         this.swingStarted = true;
       }
@@ -208,8 +214,14 @@ export class Viewmodel {
     return this.config(this.item).noise;
   }
 
+  /** The blow met a zombie or a wall: the arms jolt back. */
+  recoil(): void {
+    this.kick = 1;
+  }
+
   update(dt: number, f: ViewmodelFrame): void {
     this.time += dt;
+    this.kick = Math.max(0, this.kick - dt * 7);
     this.sprintT = damp(this.sprintT, f.sprinting ? 1 : 0, 10, dt);
     this.leftUp = damp(this.leftUp, f.flashlightOn ? 1 : 0, 10, dt);
 
@@ -255,8 +267,9 @@ export class Viewmodel {
     const bobX = Math.sin(f.stepPhase) * 0.01 * amp;
     const bobY = -Math.abs(Math.sin(f.stepPhase)) * 0.012 * amp;
     const breathe = Math.sin(this.time * 1.6) * 0.0035;
-    this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe, 0);
-    this.root.rotation.set(this.swayY * 1.2, this.swayX * 2, this.swayX * 1.5);
+    const kick = this.kick * this.kick;
+    this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
+    this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
   }
 
   /** Shared grunge materials are owned by look/materials; only the lens is ours. */

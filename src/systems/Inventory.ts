@@ -1,4 +1,4 @@
-import { BACKPACK_CAPACITY, type ItemId, ITEMS, type ItemStack, WEAR_SLOTS, type WearSlot } from '../data/items';
+import { BACKPACK_CAPACITY, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
 
 export type Worn = Record<WearSlot, ItemId | null>;
 
@@ -6,6 +6,8 @@ export interface InventoryData {
   /** [id, count, dirt?, tint?] — dirt and tint only on clothing. */
   stacks: [ItemId, number, number?, number?][];
   hand: ItemId | null;
+  /** Wear of the weapon in hand, 0..1. */
+  handWear?: number;
   worn?: Partial<Worn>;
   /** Dirt of the worn pieces, 0..1 (older saves: clean). */
   wornDirt?: Partial<Record<WearSlot, number>>;
@@ -20,6 +22,8 @@ export interface InventoryData {
 export class Inventory {
   readonly stacks: ItemStack[] = [];
   hand: ItemId | null = 'knife';
+  /** How worn the weapon in hand is, 0..1 (it breaks at 1). */
+  handWear = 0;
   readonly worn: Worn = { head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
   readonly wornDirt: Record<WearSlot, number> = { head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
   readonly wornTint: Partial<Record<WearSlot, number>> = {};
@@ -86,7 +90,7 @@ export class Inventory {
     }
     while (left > 0) {
       const put = Math.min(left, def.stack);
-      this.stacks.push(def.wear ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}) } : { id, count: put });
+      this.stacks.push(onePiece(def) ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}) } : { id, count: put });
       left -= put;
     }
     if (added > 0) this.version++;
@@ -166,12 +170,16 @@ export class Inventory {
   /** Takes a hand-held item from the backpack; the previous one goes back in. */
   equip(id: ItemId): boolean {
     if (!ITEMS[id].equip || this.hand === id) return false;
+    const wear = this.peekDirt(id);
     if (this.remove(id, 1) === 0) return false;
     const prev = this.hand;
+    const prevWear = this.handWear;
     this.hand = id;
-    if (prev && this.add(prev, 1) === 0) {
+    this.handWear = wear;
+    if (prev && this.add(prev, 1, prevWear) === 0) {
       this.hand = prev;
-      this.add(id, 1);
+      this.handWear = prevWear;
+      this.add(id, 1, wear);
       return false;
     }
     this.version++;
@@ -181,8 +189,21 @@ export class Inventory {
   /** Hand → backpack; false if it doesn't fit. */
   holster(): boolean {
     if (!this.hand) return false;
-    if (this.add(this.hand, 1) === 0) return false;
+    if (this.add(this.hand, 1, this.handWear) === 0) return false;
     this.hand = null;
+    this.handWear = 0;
+    this.version++;
+    return true;
+  }
+
+  /** A blow of the weapon in hand landed: it wears by one of its blows. True when it just broke (gone from the hand). */
+  wearHand(): boolean {
+    const n = this.hand ? ITEMS[this.hand].durability : undefined;
+    if (!n) return false;
+    this.handWear = Math.min(1, this.handWear + 1 / n);
+    if (this.handWear < 1 - 1e-6) return false;
+    this.hand = null;
+    this.handWear = 0;
     this.version++;
     return true;
   }
@@ -191,6 +212,7 @@ export class Inventory {
     return {
       stacks: this.stacks.map((s) => (s.tint !== undefined ? [s.id, s.count, s.dirt ?? 0, s.tint] : s.dirt !== undefined ? [s.id, s.count, s.dirt] : [s.id, s.count])),
       hand: this.hand,
+      handWear: this.handWear,
       worn: { ...this.worn },
       wornDirt: { ...this.wornDirt },
       wornTint: { ...this.wornTint },
@@ -201,9 +223,10 @@ export class Inventory {
     this.stacks.length = 0;
     for (const [id, count, dirt, tint] of data.stacks) {
       if (!ITEMS[id]) continue;
-      this.stacks.push(ITEMS[id].wear ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count });
+      this.stacks.push(onePiece(ITEMS[id]) ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count });
     }
     this.hand = data.hand && ITEMS[data.hand] ? data.hand : null;
+    this.handWear = this.hand ? Math.min(1, Math.max(0, data.handWear ?? 0)) : 0;
     // Older saves: a piece that moved to another slot (the SWAT vest) goes there; no bag slot yet → the
     // school backpack everyone had built in.
     const saved: Partial<Worn> = { ...data.worn };
