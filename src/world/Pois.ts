@@ -65,6 +65,8 @@ export class Pois {
       const [lx, lz] = list[k % list.length];
       const [wx, wz] = siteToWorld(s, lx + (Math.random() - 0.5) * 1.2, lz + (Math.random() - 0.5) * 1.2);
       const z = this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
+      // The worker has his own clothes: a uniformed one is an ordinary man.
+      if (z.kind === 'worker') z.kind = 'man';
       // Soldiers at the base (most of them), staff at the airport (some).
       if (s.kind === 'base' && Math.random() < 0.85) z.uniform = { shirt: Math.random() < 0.5 ? 0x4a5236 : 0x5a5a3e, pants: 0x4a4e36, loot: 'bodyMilitary' };
       else if (s.kind === 'airport' && Math.random() < (crew ? 0.85 : 0.4)) {

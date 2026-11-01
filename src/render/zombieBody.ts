@@ -1,6 +1,6 @@
 import { BoxGeometry, type BufferGeometry, Float32BufferAttribute, Matrix4, Quaternion, Vector3 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { BODY_PARTS, PART, type PartPose, Ragdoll, type StaticBox } from '../physics/ragdoll';
+import { BODY_PARTS, type BodyShape, PART, type PartPose, Ragdoll, type StaticBox } from '../physics/ragdoll';
 import type { Zombie } from '../systems/zombies';
 
 /**
@@ -145,9 +145,10 @@ export function deathPoses(pos: Vector3, yaw: number, scale: number, phase: numb
  * moved, hit where the blow landed — harder for a heavier weapon, the head snapping back on a head hit —
  * on its floor among the level's boxes round it.
  */
-export function zombieRagdoll(z: Zombie, scale: number, clock: number, boxes: StaticBox[]): Ragdoll {
+export function zombieRagdoll(z: Zombie, scale: number, clock: number, boxes: StaticBox[], start?: { parts: PartPose[]; shape: BodyShape }): Ragdoll {
   const d = z.death!;
-  const parts = deathPoses(z.pos, z.yaw, scale, d.phase, d.gait, (z.look % 97) / 97, clock);
+  // A near procedural model (render/ZombieModels) gives its own pose and build.
+  const parts = start?.parts ?? deathPoses(z.pos, z.yaw, scale, d.phase, d.gait, (z.look % 97) / 97, clock);
   const at = d.point ?? parts[PART.chest].p;
   let part: number = PART.head;
   if (!d.head) {
@@ -168,6 +169,7 @@ export function zombieRagdoll(z: Zombie, scale: number, clock: number, boxes: St
     impulse: { part, at, dir, strength: 30 + Math.min(d.damage, 90) * 1.6 },
     floorY: z.pos.y,
     boxes,
+    shape: start?.shape,
   });
 }
 

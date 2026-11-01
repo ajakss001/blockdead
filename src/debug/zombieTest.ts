@@ -7,6 +7,10 @@ import type { GameEvents } from '../core/events';
 import { PlayerController } from '../player/PlayerController';
 import { Survival } from '../systems/Survival';
 import { ITEMS } from '../data/items';
+import { CLIP_NAMES, ZombieAnimator, zombieClips } from '../zombies/animations';
+import { buildZombie, createZombie } from '../zombies/buildZombie';
+import { BONES } from '../zombies/skeleton';
+import { WORKER } from '../zombies/types';
 
 /**
  * npm run test:zombies — perception and behaviour on a flat test ground with one wall (x 4..5, z −20..20).
@@ -297,6 +301,64 @@ export function main(): number {
     run(sim, p, 12);
     const d1 = Math.hypot(near.pos.x + 2, near.pos.z - 6);
     check(d1 < Math.min(4, d0 - 4), `it walks to where the noise was (${d0.toFixed(1)} → ${d1.toFixed(1)} m)`);
+  }
+  // 19. The one-armed worker: slow, its head hitbox ahead of its feet (hunched), and his share of spawns.
+  {
+    const sim = new ZombieSim(world, 0);
+    const w = sim.spawnAt(0, -10, 'idle', 'worker');
+    const m = sim.spawnAt(-2, -10, 'idle', 'man');
+    const p = player(-1, 0);
+    w.awareness = m.awareness = 1.2;
+    w.state = m.state = 'chase';
+    w.target.copy(p.pos);
+    m.target.copy(p.pos);
+    run(sim, p, 1.5);
+    check(w.speed > 0.8 && w.speed < m.speed * 0.85, `the worker follows slower than a man (${w.speed.toFixed(2)} vs ${m.speed.toFixed(2)} m/s)`);
+    const h = sim.spawnAt(0, 0, 'idle', 'worker');
+    h.yaw = 0;
+    const hit = sim.hitTest(new Vector3(-2, 1.63, 0.25), new Vector3(1, 0, 0), 3, 0);
+    check(hit?.zombie === h && hit.head, 'the worker head is hit where it is: ahead of his feet');
+    const mix = new ZombieSim(world, 0);
+    mix.workerShare = 0.3;
+    let n = 0;
+    for (let i = 0; i < 400; i++) if (mix.spawnAt(i, 50).kind === 'worker') n++;
+    check(n > 90 && n < 150, `a share of 0.3 makes ${n} workers in 400`);
+  }
+  // 20. The procedural model (src/zombies): budget, one skeleton for all, rigid skinning, the missing arm.
+  {
+    const b = buildZombie(WORKER);
+    const inst = createZombie(WORKER);
+    check(b.triangles <= 3000, `worker: ${b.triangles} triangles (+${b.outlineTriangles} outline) within 3000`);
+    check(inst.bones.map((x) => x.name).join() === BONES.join() && inst.mesh.skeleton.bones.length === 18, 'the shared skeleton: 18 named bones');
+    const si = b.geometry.getAttribute('skinIndex');
+    const sw = b.geometry.getAttribute('skinWeight');
+    let rigid = true;
+    let left = 0;
+    const armL = ['UpperArm_L', 'LowerArm_L', 'Hand_L'].map((x) => BONES.indexOf(x as (typeof BONES)[number]));
+    for (let i = 0; i < si.count; i++) {
+      if (sw.getX(i) !== 1 || sw.getY(i) + sw.getZ(i) + sw.getW(i) !== 0) rigid = false;
+      if (armL.includes(si.getX(i))) left++;
+    }
+    check(rigid, 'every vertex 100% on one bone');
+    check(left === 0, `no left arm: ${left} vertices on its bones (the bones stay)`);
+    const clips = zombieClips();
+    const names = new Set<string>(BONES);
+    const bad = Object.values(clips).flatMap((c) => c.tracks.filter((t) => !names.has(t.name.split('.')[0])).map((t) => t.name));
+    check(CLIP_NAMES.every((n) => clips[n]?.duration > 0) && bad.length === 0, `shared clips ${CLIP_NAMES.join(', ')} by bone name (${bad.length} unknown tracks)`);
+    // Every clip plays on the one-armed model without breaking a bone (no NaN, the body stays near its spot).
+    const anim = new ZombieAnimator(inst.mesh, WORKER.animSpeed);
+    let broken = 0;
+    for (const n of CLIP_NAMES) {
+      anim.mixer.stopAllAction();
+      anim.actions[n].reset().play();
+      for (let f = 0; f < 60; f++) {
+        anim.update(1 / 30);
+        inst.mesh.updateMatrixWorld(true);
+        const hand = new Vector3().setFromMatrixPosition(inst.bones[BONES.indexOf('Hand_R')].matrixWorld);
+        if (!Number.isFinite(hand.x) || hand.length() > 2.6) broken++;
+      }
+    }
+    check(broken === 0, `every clip plays on the one-armed worker (${broken} broken frames)`);
   }
   // Bodies (ragdolls) are checked by npm run test:ragdoll.
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');

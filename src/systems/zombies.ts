@@ -17,7 +17,7 @@ import { mulberry32 } from '../core/random';
  * the stairs between storeys (waypoints), outside to the entrance.
  */
 
-export type ZombieKind = 'man' | 'woman' | 'teen';
+export type ZombieKind = 'man' | 'woman' | 'teen' | 'worker';
 export type ZombieState = 'idle' | 'wander' | 'investigate' | 'search' | 'chase' | 'attack' | 'bang' | 'stagger' | 'dead';
 
 /** Body of a dead survivor walking: the clothes and what was carried (saved; looted when it falls). */
@@ -104,10 +104,15 @@ export interface PlayerSense {
 
 export type ZombieSound = 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing';
 
-const KIND: Record<ZombieKind, { chase: number; scale: number; pitch: number; weight: number }> = {
-  man: { chase: 1.4, scale: 1, pitch: 0.85, weight: 0.45 },
-  woman: { chase: 1.35, scale: 0.93, pitch: 1.2, weight: 0.4 },
-  teen: { chase: 2.1, scale: 0.86, pitch: 1.45, weight: 0.15 },
+/**
+ * Kinds: chase speed, body scale, voice, spawn share; `pace` slows its other walking, `headFwd` (m) is how
+ * far its head is ahead of its feet (the hunched worker, src/zombies/types/worker.ts: slow, medium health).
+ */
+const KIND: Record<ZombieKind, { chase: number; scale: number; pitch: number; weight: number; pace: number; headFwd: number }> = {
+  man: { chase: 1.4, scale: 1, pitch: 0.85, weight: 0.45, pace: 1, headFwd: 0 },
+  woman: { chase: 1.35, scale: 0.93, pitch: 1.2, weight: 0.4, pace: 1, headFwd: 0 },
+  teen: { chase: 2.1, scale: 0.86, pitch: 1.45, weight: 0.15, pace: 1, headFwd: 0 },
+  worker: { chase: 1.1, scale: 1, pitch: 0.75, weight: 0, pace: 0.9, headFwd: 0.25 },
 };
 
 export const ZOMBIE_TUNING = {
@@ -172,6 +177,8 @@ export class ZombieSim {
   /** Kept for back-compat: groaning zombies of this step. */
   readonly groans: Zombie[] = [];
   target: number;
+  /** Share of new zombies (kind not given) that are one-armed workers; picked by id, the random sequence stays. */
+  workerShare = 0;
   private time = 0;
   private nextId = 1;
   private readonly rnd: () => number;
@@ -225,9 +232,11 @@ export class ZombieSim {
 
   spawnAt(x: number, z: number, state: ZombieState = 'idle', kind?: ZombieKind, y = 0): Zombie {
     const r = this.rnd;
-    const k = kind ?? (r() < KIND.man.weight ? 'man' : r() < 0.73 ? 'woman' : 'teen');
+    let k = kind ?? (r() < KIND.man.weight ? 'man' : r() < 0.73 ? 'woman' : 'teen');
+    const id = this.nextId++;
+    if (!kind && this.workerShare > 0 && ((Math.imul(id, 2654435761) >>> 0) % 1000) / 1000 < this.workerShare) k = 'worker';
     const zb: Zombie = {
-      id: this.nextId++,
+      id,
       kind: k,
       pos: new Vector3(x, this.world.groundY(x, z, y), z),
       yaw: r() * Math.PI * 2,
@@ -535,7 +544,8 @@ export class ZombieSim {
       if (z.state === 'dead') continue;
       const s = ZombieSim.scale(z);
       // Head: sphere at the top.
-      const hc = _p.set(z.pos.x, z.pos.y + 1.63 * s, z.pos.z);
+      const f = KIND[z.kind].headFwd;
+      const hc = _p.set(z.pos.x + Math.sin(z.yaw) * f, z.pos.y + 1.63 * s, z.pos.z + Math.cos(z.yaw) * f);
       const th = raySphere(o, dir, hc, 0.13 * s + slack * 0.5);
       if (th >= 0 && th <= reach && (!best || th < best.dist)) {
         best = { zombie: z, head: true, dist: th, point: o.clone().addScaledVector(dir, th) };
@@ -554,9 +564,9 @@ export class ZombieSim {
     const k = KIND[z.kind];
     let want = 0;
     if (z.state === 'chase') want = k.chase;
-    else if (z.state === 'investigate') want = T.investigate;
-    else if (z.state === 'wander') want = T.wander;
-    else if (z.state === 'search') want = T.wander * 0.8;
+    else if (z.state === 'investigate') want = T.investigate * k.pace;
+    else if (z.state === 'wander') want = T.wander * k.pace;
+    else if (z.state === 'search') want = T.wander * 0.8 * k.pace;
     // Steering point: the world routes along stairs / to entrances; otherwise straight at the target.
     if (z.state !== 'search' || this.reached(z, 0.5)) {
       if (!(this.world.route?.(z.pos, z.target, z.steer) ?? false) && z.state !== 'search') z.steer.copy(z.target);

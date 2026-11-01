@@ -53,7 +53,9 @@ export class ZombieCrowd {
           mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
           // The pose of a vertex: a leg or an arm swinging (knee and elbow ride along), the upper body leaning.
           vec3 zpose(vec3 p, out mat3 r) {
-            float ph = aAnim.x, g = max(0.0, aAnim.y), v = aAnim.z;
+            // aAnim.z: look 0..1, +1 for the one-armed worker (his left arm, at +X here, is not drawn).
+            float ph = aAnim.x, g = max(0.0, aAnim.y), v = fract(aAnim.z);
+            bool noL = aAnim.z >= 1.0;
             float sw = sin(ph) * g;
             r = mat3(1.0);
             int jt = int(aJoint + 0.5);
@@ -67,6 +69,7 @@ export class ZombieCrowd {
             if (jt == 3 || jt == 4 || jt == 8 || jt == 9) {
               // Arms half raised forward, swinging a little against the legs, the left one hanging lower.
               float s = (jt == 3 || jt == 8) ? -1.0 : 1.0;
+              if (noL && s > 0.0) p = vec3(${f(SHOULDER_X)}, ${f(SHOULDER_Y)}, 0.0);
               float lift = -0.55 - 0.25 * v - (s < 0.0 ? 0.0 : 0.25) + 0.12 * sin(uTime * 1.3 + v * 6.0);
               mat3 ra = rotX(lift + (jt == 3 || jt == 8 ? -sw : sw) * 0.18);
               vec3 sh = vec3(${f(SHOULDER_X)} * s, ${f(SHOULDER_Y)}, 0.0);
@@ -112,14 +115,14 @@ export class ZombieCrowd {
   }
 
   /** Instances from the simulation (nearest first is not needed: the sim keeps fewer than capacity). */
-  update(list: readonly Zombie[], dt: number): void {
+  update(list: readonly Zombie[], dt: number, skip?: ReadonlySet<number>): void {
     this.time.value += dt;
     this.clock = this.time.value;
     const m = _m;
     const a = this.anim.array as Float32Array;
     let i = 0;
     for (const z of list) {
-      if (z.state === 'dead') continue;
+      if (z.state === 'dead' || skip?.has(z.id)) continue;
       if (i >= this.capacity) break;
       // Kind (size, slimmer women), a shudder when hit.
       const s = ZombieSim.scale(z);
@@ -131,7 +134,7 @@ export class ZombieCrowd {
       this.mesh.setMatrixAt(i, m);
       a[i * 3] = z.phase;
       a[i * 3 + 1] = z.gait;
-      a[i * 3 + 2] = (z.look % 97) / 97;
+      a[i * 3 + 2] = (z.look % 97) / 97 + (z.kind === 'worker' ? 1 : 0);
       if (this.ids[i] !== z.id) {
         this.ids[i] = z.id;
         const t = zombieTints(z, _tint);
@@ -181,6 +184,11 @@ export function zombieTints(z: Zombie, out = new Float32Array(9)): Float32Array 
     setColor(out, 0, z.twin.colors[2], 0.8);
     setColor(out, 3, z.twin.colors[0], 0.85);
     setColor(out, 6, z.twin.colors[1], 0.85);
+  } else if (z.kind === 'worker') {
+    // The one-armed worker's own colours (his near model: src/zombies/types/worker.ts).
+    setColor(out, 0, 0x909a87, 1);
+    setColor(out, 3, 0xd5d2c1, 0.85);
+    setColor(out, 6, 0x56739a, 0.9);
   } else if (z.uniform) {
     setColor(out, 0, SKINS[(l >> 4) % SKINS.length], 1);
     setColor(out, 3, z.uniform.shirt, 0.8 + ((l >> 3) % 4) * 0.05);

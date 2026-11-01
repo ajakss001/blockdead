@@ -4,6 +4,9 @@ import { playerRagdoll } from '../player/deathBody';
 import { DeathCamera, deathSurroundings } from '../player/DeathCamera';
 import { FISTS, HELD } from '../player/held';
 import { zombieRagdoll } from '../render/zombieBody';
+import { ZombieModels } from '../render/ZombieModels';
+import { BONES, PARENT, restLocals, skeletonDims } from '../zombies/skeleton';
+import { WORKER } from '../zombies/types';
 import { type PlayerSense, type ZombieWorld, ZombieSim } from '../systems/zombies';
 import { CollisionWorld } from '../world/CollisionWorld';
 
@@ -202,6 +205,59 @@ export function main(args: string[] = []): number {
     }
     const ms = (performance.now() - t0) / Math.max(1, steps);
     console.log(`     four awake ragdolls: ${ms.toFixed(2)} ms per 60 Hz step (${steps} steps)`);
+  }
+
+  // --- The one-armed worker drawn as a model: its ragdoll starts from the model's own pose, then drives its bones. ---
+  {
+    const flat: ZombieWorld = { groundY: () => 0, resolveCircle: () => {}, rayHit: () => -1 };
+    const sim = new ZombieSim(flat, 0);
+    const models = new ZombieModels('high');
+    const eye = new Vector3(0, 0, 0);
+    const rest = restLocals(skeletonDims(WORKER.proportions));
+    let jump = 0;
+    let gap = 0;
+    let under = 0;
+    let hips = 0;
+    let asleep = 0;
+    const runs = 6;
+    for (let k = 0; k < runs; k++) {
+      const zb = sim.spawnAt(2 + k * 4, 3, 'chase', 'worker');
+      zb.yaw = k * 1.3;
+      for (let f = 0; f < 20; f++) {
+        zb.speed = k % 2 ? 1.1 : 0.5;
+        zb.phase += 0.12;
+        models.update([zb], eye, 1 / 60);
+      }
+      zb.hp = 1;
+      sim.hit(zb, 50, zb.pos.x + Math.sin(k) * 2, zb.pos.z + Math.cos(k) * 2, k % 3 === 0, zb.pos.clone().setY(1.2));
+      const start = models.deathStart(zb, 1);
+      const live = models.bones(zb.id)!.map((b) => new Vector3().setFromMatrixPosition(b.matrixWorld));
+      const rd = zombieRagdoll(zb, 1, 0, [], start ?? undefined);
+      models.addCorpse(zb, rd, 1);
+      const dead = models.bones(zb.id)!;
+      dead.forEach((b, i) => (jump = Math.max(jump, new Vector3().setFromMatrixPosition(b.matrixWorld).distanceTo(live[i]))));
+      let steps = 0;
+      while (!rd.asleep && steps < 240) {
+        rd.step();
+        models.update([], eye, 1 / 60);
+        steps++;
+      }
+      models.update([], eye, 1 / 60);
+      if (rd.asleep) asleep++;
+      // Every joint where its parent bone says it is (no limb torn off the body), nothing under the floor.
+      BONES.forEach((n, i) => {
+        const p = PARENT[n];
+        const at = new Vector3().setFromMatrixPosition(dead[i].matrixWorld);
+        under = Math.min(under, at.y);
+        if (!p) return;
+        const want = rest[i].pos.clone().applyMatrix4(dead[BONES.indexOf(p)].matrixWorld);
+        gap = Math.max(gap, want.distanceTo(at));
+      });
+      hips = Math.max(hips, new Vector3().setFromMatrixPosition(dead[0].matrixWorld).y);
+    }
+    check(jump < 0.03, `worker model → ragdoll: no jump at the moment of death (${(jump * 100).toFixed(1)} cm)`);
+    check(gap < 0.06 && asleep === runs, `worker corpse driven by its ragdoll: joints hold together (worst ${(gap * 100).toFixed(1)} cm), ${asleep}/${runs} asleep`);
+    check(hips < 0.45 && under > -0.05, `worker corpse lies on the floor (hips at most ${hips.toFixed(2)} m, lowest joint ${under.toFixed(3)} m)`);
   }
 
   // --- The player's death: the camera never inside anything. ---

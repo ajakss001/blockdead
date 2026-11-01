@@ -51,6 +51,7 @@ import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
 import { ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
 import { CorpseBatch } from '../render/CorpseBatch';
+import { ZombieModels } from '../render/ZombieModels';
 import { zombieRagdoll } from '../render/zombieBody';
 import { PART, type Ragdoll, Ragdolls, type StaticBox } from '../physics/ragdoll';
 import type { SearchBox } from '../world/gen/pieces';
@@ -249,6 +250,8 @@ export class WorldScene implements IScene {
   private layout!: WorldLayout;
   private zombies!: ZombieSim;
   private crowd!: ZombieCrowd;
+  /** The near zombies of a modelled kind (the one-armed worker), each its own skinned model. */
+  private models!: ZombieModels;
   /** The dead: physics ragdolls (a few awake at once) drawn by one CPU-skinned mesh. */
   private readonly ragdolls = new Ragdolls();
   private readonly corpses = new CorpseBatch(16);
@@ -327,9 +330,13 @@ export class WorldScene implements IScene {
       zcount,
       seed,
     );
+    // A share of the dead are one-armed workers, drawn up close as their own model (?workers=0..1).
+    const wq = new URLSearchParams(location.search).get('workers');
+    this.zombies.workerShare = wq !== null ? Math.min(1, Math.max(0, Number(wq) || 0)) : 0.3;
     if (zcount > 0) this.pois = new Pois(layout, this.zombies);
     this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
-    this.scene.add(this.crowd.mesh, this.corpses.mesh, this.particles.points);
+    this.models = new ZombieModels(ctx.quality.preset.level);
+    this.scene.add(this.crowd.mesh, this.corpses.mesh, this.particles.points, this.models.group);
     this.ragdolls.limit = ctx.quality.preset.level === 'low' ? 2 : 4;
     // ?zdebug=1: K brings a zombie in front of the player / kills it with a random blow.
     if (new URLSearchParams(location.search).get('zdebug') === '1') {
@@ -621,6 +628,7 @@ export class WorldScene implements IScene {
       if (rd) this.ragdolls.remove(rd);
       this.corpseRd.delete(z);
       this.corpses.remove(z.id);
+      this.models.removeCorpse(z.id);
       this.containers.removeLoose(ZOMBIE_BODY_ID + z.id);
     }
     this.ragdolls.update(dt);
@@ -703,7 +711,8 @@ export class WorldScene implements IScene {
   }
 
   render(alpha: number, frameDt: number): void {
-    this.crowd.update(this.zombies.list, frameDt);
+    this.models.update(this.zombies.list, this.player.controller.position, frameDt);
+    this.crowd.update(this.zombies.list, frameDt, this.models.shown);
     this.corpses.update();
     this.particles.update(frameDt);
     this.player.render(alpha, frameDt);
@@ -919,10 +928,16 @@ export class WorldScene implements IScene {
     const scale = ZombieSim.scale(z);
     const boxes: StaticBox[] = [];
     this.world.boxesNear(z.pos.x, z.pos.z, 2.6, (b) => boxes.push(b));
-    const rd = zombieRagdoll(z, scale, this.crowd.clock, boxes);
+    // Drawn as a model: the ragdoll starts from the model's pose and drives the model's bones.
+    const start = this.models.deathStart(z, scale);
+    const rd = zombieRagdoll(z, scale, this.crowd.clock, boxes, start ?? undefined);
     this.ragdolls.add(rd);
     this.corpseRd.set(z, rd);
-    this.corpses.add(z.id, rd, scale, zombieTints(z));
+    const asModel = start ? this.models.addCorpse(z, rd, scale) : null;
+    if (!asModel?.ok) this.corpses.add(z.id, rd, scale, zombieTints(z), z.kind === 'worker');
+    // Too many model corpses: the oldest is laid in the batch.
+    const old = asModel?.evicted && this.zombies.list.find((x) => x.id === asModel.evicted!.id);
+    if (old) this.corpses.add(old.id, asModel!.evicted!.rd, ZombieSim.scale(old), zombieTints(old), true);
   }
 
   /**
@@ -1208,6 +1223,7 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.crowd.dispose();
+    this.models.dispose();
     this.corpses.dispose();
     this.particles.dispose();
     this.atmo.dispose();
@@ -1236,6 +1252,7 @@ export class WorldScene implements IScene {
     this.camera.updateProjectionMatrix();
     this.chunks.radius = preset.chunkRadius;
     this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
+    this.models.configure(preset.level);
   }
 
   private resize(width: number, height: number): void {

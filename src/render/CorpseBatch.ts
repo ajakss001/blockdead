@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry, DynamicDrawUsage, Matrix3, Matrix4, Mesh, Sphere, Vector3 } from 'three';
-import { PARTS, type Ragdoll } from '../physics/ragdoll';
+import { PART, PARTS, type Ragdoll } from '../physics/ragdoll';
 import { characterMaterial } from './look/materials';
 import { bodyBinding } from './zombieBody';
 
@@ -17,7 +17,7 @@ export class CorpseBatch {
   private readonly nor: BufferAttribute;
   private readonly col: BufferAttribute;
   private readonly uv: BufferAttribute;
-  private readonly slots: { id: number; rd: Ragdoll; scale: number; done: boolean }[] = [];
+  private readonly slots: { id: number; rd: Ragdoll; scale: number; done: boolean; oneArm: boolean }[] = [];
 
   constructor(readonly capacity: number) {
     const geo = new BufferGeometry();
@@ -45,10 +45,10 @@ export class CorpseBatch {
   }
 
   /** A new corpse driven by a ragdoll; tints = skin, shirt, pants (rgb each). Full: the oldest goes. */
-  add(id: number, rd: Ragdoll, scale: number, tints: Float32Array): void {
+  add(id: number, rd: Ragdoll, scale: number, tints: Float32Array, oneArm = false): void {
     if (this.slots.length >= this.capacity) this.remove(this.slots[0].id);
     const c = this.slots.length;
-    this.slots.push({ id, rd, scale, done: false });
+    this.slots.push({ id, rd, scale, done: false, oneArm });
     const col = this.col.array as Float32Array;
     for (let v = 0; v < VERTS; v++) {
       const k = BIND.kind[v];
@@ -111,7 +111,9 @@ export class CorpseBatch {
     for (let v = 0; v < VERTS; v++) {
       const p = BIND.part[v];
       const o = (c * VERTS + v) * 3;
-      _v.set(BIND.offset[v * 3] * k, BIND.offset[v * 3 + 1] * k, BIND.offset[v * 3 + 2] * k).applyMatrix4(_m[p]);
+      // The one-armed worker: no arm on that side (the body's +X, his left), its triangles fold to a point.
+      const kk = s.oneArm && (p === PART.upperArmR || p === PART.foreArmR) ? 0 : k;
+      _v.set(BIND.offset[v * 3] * kk, BIND.offset[v * 3 + 1] * kk, BIND.offset[v * 3 + 2] * kk).applyMatrix4(_m[p]);
       pos[o] = _v.x;
       pos[o + 1] = _v.y;
       pos[o + 2] = _v.z;

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BlockDead — просмотр зомби</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #e4e4e2;
+        font: 13px system-ui, sans-serif;
+      }
+      #ui {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: 6px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: 230px;
+      }
+      #ui button {
+        margin: 1px;
+      }
+      #ui .on {
+        background: #2b2b2b;
+        color: #fff;
+      }
+      #stats {
+        font-family: ui-monospace, monospace;
+        white-space: pre;
+      }
+      #ref {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        width: 40vw;
+        display: none;
+        border: 1px solid #999;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <label>Тип <select id="type"></select></label>
+      <div id="anims"></div>
+      <div id="views"></div>
+      <label><input type="checkbox" id="outline" checked /> обводка</label>
+      <label><input type="checkbox" id="showref" /> референс</label>
+      <button id="export">Экспорт GLB</button>
+      <div id="stats"></div>
+    </div>
+    <img id="ref" src="/refs/zombie_worker.png" alt="" />
+    <script type="module" src="/src/debug/zombieViewer.ts"></script>
+  </body>
+</html>
