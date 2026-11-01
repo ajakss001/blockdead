@@ -1,8 +1,6 @@
 import type { ZombieSim } from '../systems/zombies';
-import { isModelKind } from '../zombies/stats';
 import { CHUNK, type WorldLayout } from './gen/layout';
 import { POI, type PoiSite, poiSpawnPoints, siteToWorld } from './gen/poi';
-import { pickScenarios } from './gen/scenarios';
 
 /** The site's zombies turn up when you come this close (m), and again after you have been this far away. */
 const WAKE = 70;
@@ -59,21 +57,13 @@ export class Pois {
     const n = POI[s.kind].risk;
     const pts = poiSpawnPoints(s.kind);
     const inside = Math.ceil(n * 0.66);
-    // The crew scenario: pilots in white shirts, flight attendants in navy and burgundy.
-    const crew = s.kind === 'airport' && pickScenarios(this.layout.seed, s).some((p) => p.def.id === 'crew');
     for (let k = 0; k < n; k++) {
       const list = k < inside ? pts.inside : pts.outside;
       const [lx, lz] = list[k % list.length];
       const [wx, wz] = siteToWorld(s, lx + (Math.random() - 0.5) * 1.2, lz + (Math.random() - 0.5) * 1.2);
-      const z = this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
-      // Modelled kinds come in their own clothes (soldiers at the base, tourists at the airport: zombieKinds.ts).
-      if (isModelKind(z.kind)) continue;
-      // Soldiers at the base (most of them), staff at the airport (some).
-      if (s.kind === 'base' && Math.random() < 0.85) z.uniform = { shirt: Math.random() < 0.5 ? 0x4a5236 : 0x5a5a3e, pants: 0x4a4e36, loot: 'bodyMilitary' };
-      else if (s.kind === 'airport' && Math.random() < (crew ? 0.85 : 0.4)) {
-        const r = Math.random();
-        z.uniform = r < 0.35 ? { shirt: 0xe0e0da, pants: 0x1e2434, loot: 'bodyZombie' } : r < 0.7 ? { shirt: 0x2a3248, pants: 0x23252a, loot: 'bodyZombie' } : { shirt: 0x6a2030, pants: 0x2a2428, loot: 'bodyZombie' };
-      }
+      // Who they are (soldiers at the base, staff at the airport…) and what their bodies hold: zombieKinds.ts,
+      // the kind's clothes and loot (zombies/stats.ts).
+      this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
     }
   }
 }

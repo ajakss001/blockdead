@@ -1,4 +1,5 @@
 import type { ItemId, ItemStack } from '../data/items';
+import type { ModelKind } from '../zombies/stats';
 import type { ContainerRef } from './Containers';
 import type { Appearance } from '../player/appearance';
 import type { InventoryData } from './Inventory';
@@ -44,6 +45,8 @@ export interface TwinRecord {
   z: number;
   colors: [number, number, number];
   items: ItemStack[];
+  /** The model they get up as (by their clothes); old saves: from the class worn then, else a courier. */
+  kind?: ModelKind;
 }
 
 /**

@@ -12,14 +12,14 @@ import { MODEL_KINDS, type ModelKind, ZOMBIE_STATS } from '../zombies/stats';
  * crouching); awareness grows over time, at 1 the zombie follows.
  * Hearing — a noise is heard within `noise × 30` m, through walls too: the zombie goes to where it came
  * from and searches there (turning, short steps), it does not follow.
- * Following — slower than the player's run (teens a little quicker). Out of sight for ~5 s it goes to
+ * Following — slower than the player's run (joggers a little quicker). Out of sight for ~5 s it goes to
  * where it last saw the player, searches 10–15 s and loses interest.
  * Closed doors in the way are beaten on until they give. Inside high-rises the world routes it along
  * the stairs between storeys (waypoints), outside to the entrance.
  */
 
-/** The three crowd kinds, then the modelled ones (src/zombies: the worker, the medic, the soldier…). */
-export type ZombieKind = 'man' | 'woman' | 'teen' | ModelKind;
+/** Every zombie is one of the modelled kinds (src/zombies: the worker, the medic, the soldier…). */
+export type ZombieKind = ModelKind;
 export type ZombieState = 'idle' | 'wander' | 'investigate' | 'search' | 'chase' | 'attack' | 'bang' | 'stagger' | 'dead';
 
 /** Body of a dead survivor walking: the clothes and what was carried (saved; looted when it falls). */
@@ -62,8 +62,6 @@ export interface Zombie {
   lastDist: number;
   groanCd: number;
   hp: number;
-  /** In uniform (soldiers at the base, airport staff): shirt and pants colours, and what its body holds. */
-  uniform?: { shirt: number; pants: number; loot: 'bodyMilitary' | 'bodyZombie' };
   /**
    * Dead: how it died — the blow (where from, how hard, on the head, where it landed) and how it was moving
    * (walk phase, gait) — for its ragdoll. Null while alive.
@@ -109,23 +107,20 @@ export interface PlayerSense {
 export type ZombieSound = 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing';
 
 /**
- * Kinds: chase speed, body scale, voice, spawn share, health factor; `pace` scales its other walking,
- * `headFwd` (m) is how far its head is ahead of its feet (hunched). The modelled kinds come from their
- * factors on the one-armed worker (src/zombies/stats.ts: following at 1.1 m/s, 100 HP).
+ * Kinds: chase speed, body scale, voice, health factor; `pace` scales its other walking, `headFwd` (m) is
+ * how far its head is ahead of its feet (hunched). From their factors on the one-armed worker
+ * (src/zombies/stats.ts: following at 1.1 m/s, 100 HP).
  */
-type KindNumbers = { chase: number; scale: number; pitch: number; weight: number; pace: number; headFwd: number; hp: number };
-const KIND = {
-  man: { chase: 1.4, scale: 1, pitch: 0.85, weight: 0.45, pace: 1, headFwd: 0, hp: 1 },
-  woman: { chase: 1.35, scale: 0.93, pitch: 1.2, weight: 0.4, pace: 1, headFwd: 0, hp: 1 },
-  teen: { chase: 2.1, scale: 0.86, pitch: 1.45, weight: 0.15, pace: 1, headFwd: 0, hp: 1 },
-  ...Object.fromEntries(
-    MODEL_KINDS.map((k) => {
-      const s = ZOMBIE_STATS[k];
-      const pitch = k === 'worker' ? 0.75 : s.female ? 1.2 : 0.85;
-      return [k, { chase: 1.1 * s.speed, scale: s.height / 1.86, pitch, weight: 0, pace: 0.9 * s.speed, headFwd: s.headFwd, hp: s.hp }];
-    }),
-  ),
-} as Record<ZombieKind, KindNumbers>;
+type KindNumbers = { chase: number; scale: number; pitch: number; pace: number; headFwd: number; hp: number };
+const KIND = Object.fromEntries(
+  MODEL_KINDS.map((k) => {
+    const s = ZOMBIE_STATS[k];
+    const pitch = k === 'worker' ? 0.75 : s.female ? 1.2 : 0.85;
+    return [k, { chase: 1.1 * s.speed, scale: s.height / 1.86, pitch, pace: 0.9 * s.speed, headFwd: s.headFwd, hp: s.hp }];
+  }),
+) as Record<ZombieKind, KindNumbers>;
+/** Without a world to ask where (tests): a town's people. */
+const ANYWHERE: ModelKind[] = ['courier', 'office', 'jogger', 'grandma', 'tourist', 'builder', 'worker', 'chef', 'police', 'medic'];
 
 export const ZOMBIE_TUNING = {
   radius: 0.32,
@@ -189,11 +184,6 @@ export class ZombieSim {
   /** Kept for back-compat: groaning zombies of this step. */
   readonly groans: Zombie[] = [];
   target: number;
-  /**
-   * Share of new zombies (kind not given) that are of a modelled kind — which one, the world says by place
-   * (`kindAt`; else the worker). Picked by id: the random sequence stays.
-   */
-  modelShare = 0;
   private time = 0;
   private nextId = 1;
   private readonly rnd: () => number;
@@ -247,10 +237,10 @@ export class ZombieSim {
 
   spawnAt(x: number, z: number, state: ZombieState = 'idle', kind?: ZombieKind, y = 0): Zombie {
     const r = this.rnd;
-    let k = kind ?? (r() < KIND.man.weight ? 'man' : r() < 0.73 ? 'woman' : 'teen');
     const id = this.nextId++;
-    if (!kind && this.modelShare > 0 && ((Math.imul(id, 2654435761) >>> 0) % 1000) / 1000 < this.modelShare)
-      k = this.world.kindAt?.(x, z, y, ((Math.imul(id ^ 0x5bd1, 2246822519) >>> 0) % 1000) / 1000) ?? 'worker';
+    // Which kind (not given): the world says by place, picked by id (the random sequence stays).
+    const pick = ((Math.imul(id ^ 0x5bd1, 2246822519) >>> 0) % 1000) / 1000;
+    const k = kind ?? this.world.kindAt?.(x, z, y, pick) ?? ANYWHERE[Math.floor(pick * ANYWHERE.length)];
     const zb: Zombie = {
       id,
       kind: k,

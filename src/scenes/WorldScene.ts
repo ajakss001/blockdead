@@ -49,11 +49,9 @@ import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
 import type { IScene } from './IScene';
-import { oneArmed, ZombieCrowd, zombieTints } from '../render/ZombieCrowd';
-import { CorpseBatch } from '../render/CorpseBatch';
 import { ZombieModels } from '../render/ZombieModels';
-import { isModelKind, type ModelKind, ZOMBIE_STATS } from '../zombies/stats';
-import { zombieKindAt } from '../world/zombieKinds';
+import { type ModelKind, ZOMBIE_STATS } from '../zombies/stats';
+import { twinKind, zombieKindAt } from '../world/zombieKinds';
 import { zombieRagdoll } from '../render/zombieBody';
 import { PART, type Ragdoll, Ragdolls, type StaticBox } from '../physics/ragdoll';
 import type { SearchBox } from '../world/gen/pieces';
@@ -251,12 +249,10 @@ export class WorldScene implements IScene {
   private stepN = 0;
   private layout!: WorldLayout;
   private zombies!: ZombieSim;
-  private crowd!: ZombieCrowd;
-  /** The near zombies of a modelled kind (the one-armed worker), each its own skinned model. */
+  /** Every zombie, living and dead: the procedural models, batched per type, up to the fog. */
   private models!: ZombieModels;
-  /** The dead: physics ragdolls (a few awake at once) drawn by one CPU-skinned mesh. */
+  /** The dead: physics ragdolls (a few awake at once) driving their models' bones. */
   private readonly ragdolls = new Ragdolls();
-  private readonly corpses = new CorpseBatch(16);
   private readonly corpseRd = new Map<Zombie, Ragdoll>();
   /** Labs whose generator runs (block "i,j"; saved) and the glowing ceiling panels of those rooms. */
   private readonly powered = new Set<string>();
@@ -333,15 +329,10 @@ export class WorldScene implements IScene {
       zcount,
       seed,
     );
-    // A share of the dead are of the modelled kinds (src/zombies), drawn up close as their own models; which
-    // kind by place (`kindAt`). ?models=0..1 sets the share (?workers= as before).
-    const q = new URLSearchParams(location.search);
-    const wq = q.get('models') ?? q.get('workers');
-    this.zombies.modelShare = wq !== null ? Math.min(1, Math.max(0, Number(wq) || 0)) : 0.6;
+    // Every zombie is one of the modelled kinds (src/zombies), which one by place (`kindAt`).
     if (zcount > 0) this.pois = new Pois(layout, this.zombies);
-    this.crowd = new ZombieCrowd(Math.max(zcount, ctx.quality.preset.zombiesVisible));
     this.models = new ZombieModels(ctx.quality.preset.level);
-    this.scene.add(this.crowd.mesh, this.corpses.mesh, this.particles.points, this.models.group);
+    this.scene.add(this.particles.points, this.models.group);
     this.ragdolls.limit = ctx.quality.preset.level === 'low' ? 2 : 4;
     // ?zdebug=1: K brings a zombie in front of the player / kills it with a random blow.
     if (new URLSearchParams(location.search).get('zdebug') === '1') {
@@ -632,7 +623,6 @@ export class WorldScene implements IScene {
       const rd = this.corpseRd.get(z);
       if (rd) this.ragdolls.remove(rd);
       this.corpseRd.delete(z);
-      this.corpses.remove(z.id);
       this.models.removeCorpse(z.id);
       this.containers.removeLoose(ZOMBIE_BODY_ID + z.id);
     }
@@ -651,7 +641,7 @@ export class WorldScene implements IScene {
         if (twinRef) Object.assign(twinRef, { x: box[0], z: box[2], box });
         continue;
       }
-      const type = z.uniform?.loot ?? (isModelKind(z.kind) ? ZOMBIE_STATS[z.kind].loot : 'bodyZombie');
+      const type = ZOMBIE_STATS[z.kind].loot;
       const ref = { id: ZOMBIE_BODY_ID + z.id, type, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
       this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, type, ref.zone));
     }
@@ -716,12 +706,11 @@ export class WorldScene implements IScene {
   }
 
   render(alpha: number, frameDt: number): void {
-    this.models.update(this.zombies.list, this.player.controller.position, frameDt);
-    this.crowd.update(this.zombies.list, frameDt, this.models.shown);
-    this.corpses.update();
     this.particles.update(frameDt);
     this.player.render(alpha, frameDt);
     if (this.death) this.renderDeath(frameDt);
+    // After the camera moved: the zombies in its view, up to the fog.
+    this.models.update(this.zombies.list, this.player.controller.position, frameDt, this.camera, (this.scene.fog as Fog).far + 2);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
     this.interaction.render(frameDt);
@@ -931,24 +920,24 @@ export class WorldScene implements IScene {
   }
 
   /**
-   * A zombie dies: its ragdoll (among the walls, cars and furniture round it) and its corpse in the batch.
+   * A zombie dies: its ragdoll (among the walls, cars and furniture round it) starts from its model's pose
+   * and drives the model's bones.
    */
   private zombieRagdoll(z: Zombie): void {
-    if (!z.death) return;
-    const scale = ZombieSim.scale(z);
+    const start = z.death && this.models.deathStart(z);
+    if (!start) return;
     const boxes: StaticBox[] = [];
     this.world.boxesNear(z.pos.x, z.pos.z, 2.6, (b) => boxes.push(b));
-    // Drawn as a model: the ragdoll starts from the model's pose and drives the model's bones (the model is
-    // built at its own height: no scale).
-    const start = this.models.deathStart(z, 1);
-    const rd = zombieRagdoll(z, start ? 1 : scale, this.crowd.clock, boxes, start ?? undefined);
+    const rd = zombieRagdoll(z, start, boxes);
     this.ragdolls.add(rd);
     this.corpseRd.set(z, rd);
-    const asModel = start ? this.models.addCorpse(z, rd, 1) : null;
-    if (!asModel?.ok) this.corpses.add(z.id, rd, scale, zombieTints(z), oneArmed(z));
-    // Too many model corpses: the oldest is laid in the batch.
-    const old = asModel?.evicted && this.zombies.list.find((x) => x.id === asModel.evicted!.id);
-    if (old) this.corpses.add(old.id, asModel!.evicted!.rd, 1, zombieTints(old), oneArmed(old));
+    // Too many corpses drawn: the oldest goes, with its ragdoll and what could be searched on it.
+    const { evicted } = this.models.addCorpse(z, rd);
+    const old = evicted !== null && [...this.corpseRd.keys()].find((x) => x.id === evicted);
+    if (!old || old.twin) return;
+    this.ragdolls.remove(this.corpseRd.get(old)!);
+    this.corpseRd.delete(old);
+    this.containers.removeLoose(ZOMBIE_BODY_ID + old.id);
   }
 
   /**
@@ -998,7 +987,7 @@ export class WorldScene implements IScene {
   private twinsNear(p: Vector3): void {
     for (const t of this.twins) {
       if (this.twinZombies.has(t.id) || Math.hypot(t.x - p.x, t.z - p.z) > 70) continue;
-      const z = this.zombies.spawnAt(t.x, t.z, 'idle', 'man', t.y);
+      const z = this.zombies.spawnAt(t.x, t.z, 'idle', t.kind ?? twinKind({}, this.classId), t.y);
       z.twin = { id: t.id, x: t.x, y: t.y, z: t.z, colors: t.colors };
       this.twinZombies.set(t.id, z);
     }
@@ -1059,7 +1048,7 @@ export class WorldScene implements IScene {
       if (id) items.push({ id, count: 1, dirt: inv.wornDirt[slot], ...(inv.wornTint[slot] !== undefined ? { tint: inv.wornTint[slot] } : {}) });
     }
     const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items });
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items, kind: twinKind(inv.worn, this.classId) });
     this.save();
   }
 
@@ -1233,9 +1222,7 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
-    this.crowd.dispose();
     this.models.dispose();
-    this.corpses.dispose();
     this.particles.dispose();
     this.atmo.dispose();
     this.weather.dispose();

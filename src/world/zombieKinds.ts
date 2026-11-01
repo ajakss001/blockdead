@@ -30,6 +30,7 @@ const SCENARIO: Record<string, Mix> = {
   foodCourt: [['chef', 0.6]],
   fireCrew: [['firefighter', 0.7]],
   swat: [['soldier', 0.4]],
+  crew: [['office', 0.4]],
 };
 
 const SCENE: Record<string, Mix> = {
@@ -53,6 +54,42 @@ function pickFrom(mix: Mix, pick: number): ModelKind {
   let r = pick * sum;
   for (const [k, w] of mix) if ((r -= w) < 0) return k;
   return mix[mix.length - 1][0];
+}
+
+/** A dead survivor gets up as the model their clothes match (the uniform first, then the class). */
+const WORN: [string, ModelKind][] = [
+  ['fireCoat', 'firefighter'],
+  ['fireHelmet', 'firefighter'],
+  ['gorkaJacket', 'soldier'],
+  ['militaryHelmet', 'soldier'],
+  ['swatShirt', 'soldier'],
+  ['swatHelmet', 'soldier'],
+  ['policeShirt', 'police'],
+  ['policeCap', 'police'],
+  ['scrubsTop', 'medic'],
+  ['hardhat', 'builder'],
+  ['officeShirt', 'office'],
+  ['workJacket', 'worker'],
+  ['leatherJacket', 'courier'],
+  ['hoodie', 'jogger'],
+  ['tshirt', 'tourist'],
+];
+const CLASS: Record<string, ModelKind> = {
+  military: 'soldier',
+  swat: 'soldier',
+  police: 'police',
+  firefighter: 'firefighter',
+  medic: 'medic',
+  mechanic: 'worker',
+  builder: 'builder',
+  office: 'office',
+  unemployed: 'courier',
+};
+
+export function twinKind(worn: Partial<Record<string, string | null | undefined>>, classId?: string): ModelKind {
+  const on = new Set(Object.values(worn));
+  for (const [item, kind] of WORN) if (on.has(item)) return kind;
+  return (classId && CLASS[classId]) || 'courier';
 }
 
 /** The kind for a zombie at (x, z) in `zone`; `pick` in [0, 1) chooses within the place's mix. */

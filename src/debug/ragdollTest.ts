@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
-import { bodyParts, FIGURE_SHAPE, PARTS, type Ragdoll, Ragdolls, type StaticBox, ZOMBIE_SHAPE } from '../physics/ragdoll';
+import { type BodyShape, bodyParts, FIGURE_SHAPE, PARTS, type Ragdoll, Ragdolls, type StaticBox, ZOMBIE_SHAPE } from '../physics/ragdoll';
 import { playerRagdoll } from '../player/deathBody';
 import { DeathCamera, deathSurroundings } from '../player/DeathCamera';
 import { FISTS, HELD } from '../player/held';
@@ -110,6 +110,7 @@ export function main(args: string[] = []): number {
     box(s, 4, -30, 5, 30, 0, 3);
     car(s, -6, 4, 0.4);
     const sim = new ZombieSim(flat, 0);
+    const models = new ZombieModels('low');
     const weapons = [FISTS, HELD.knife, HELD.hammer, HELD.bat, HELD.crowbar, HELD.axe];
     const spots: [number, number][] = [
       [3.4, -8],
@@ -132,7 +133,7 @@ export function main(args: string[] = []): number {
     let inside = 0;
     let deep = 0;
     const sigs: number[][] = [];
-    const bodies: { rd: Ragdoll; z: ReturnType<ZombieSim['spawnAt']> }[] = [];
+    const bodies: { rd: Ragdoll; z: ReturnType<ZombieSim['spawnAt']>; shape: BodyShape }[] = [];
     spots.forEach(([x, z], k) => {
       const zb = sim.spawnAt(x, z, 'chase');
       zb.yaw = (k * 2.39) % (Math.PI * 2);
@@ -145,19 +146,20 @@ export function main(args: string[] = []): number {
       const point = zb.pos.clone().add(new Vector3(0, head ? 1.6 : 0.9 + (k % 4) * 0.12, 0));
       zb.hp = 0.5;
       sim.hit(zb, (head ? 2 : 1) * w.damage[1], x + Math.sin(a) * 1.5, z + Math.cos(a) * 1.5, head, point);
-      const rd = zombieRagdoll(zb, ZombieSim.scale(zb), k * 0.71, near(s, x, z));
+      const start = models.deathStart(zb)!;
+      const rd = zombieRagdoll(zb, start, near(s, x, z));
       ragdolls.add(rd);
-      bodies.push({ rd, z: zb });
+      bodies.push({ rd, z: zb, shape: start.shape });
     });
     // Until all sleep (3 s at most), every frame: not the bind pose, nothing under the floor or in a wall.
     for (let f = 0; f < 200; f++) {
       ragdolls.update(1 / 60);
-      for (const { rd } of bodies) {
+      for (const { rd, shape } of bodies) {
         if (rd.asleep) continue;
         let turn = 0;
         for (let i = 1; i < PARTS; i++) turn = Math.max(turn, rd.poses[0].q.angleTo(rd.poses[i].q));
         if (turn < 0.08) bind++;
-        corners(rd, ZOMBIE_SHAPE, 1, (p) => {
+        corners(rd, shape, 1, (p) => {
           low = Math.min(low, p.y);
           for (const b of s.boxes) {
             const d = depth(b, p);
@@ -198,7 +200,7 @@ export function main(args: string[] = []): number {
       const zb = sim.spawnAt(30 + k * 3, 30, 'chase');
       zb.hp = 0.5;
       sim.hit(zb, 40, 30 + k * 3, 28);
-      four.push(zombieRagdoll(zb, 1, 0, []));
+      four.push(zombieRagdoll(zb, models.deathStart(zb)!, []));
     }
     while (four.some((r) => !r.asleep) && steps < 180) {
       for (const r of four) r.step();
@@ -232,12 +234,14 @@ export function main(args: string[] = []): number {
       }
       zb.hp = 1;
       sim.hit(zb, 50, zb.pos.x + Math.sin(k) * 2, zb.pos.z + Math.cos(k) * 2, k % 3 === 0, zb.pos.clone().setY(1.2));
-      const start = models.deathStart(zb, 1);
-      const live = models.bones(zb.id)!.map((b) => new Vector3().setFromMatrixPosition(b.matrixWorld));
-      const rd = zombieRagdoll(zb, 1, 0, [], start ?? undefined);
-      models.addCorpse(zb, rd, 1);
+      // Near ones (the mixer's pose) and far ones (the baked frame's) alike.
+      if (k >= runs / 2) models.update([zb], new Vector3(200, 0, 200), 1 / 60);
+      const start = models.deathStart(zb)!;
+      const live = models.bones(zb)!.map((b) => new Vector3().setFromMatrixPosition(b));
+      const rd = zombieRagdoll(zb, start, []);
+      models.addCorpse(zb, rd);
       const dead = models.bones(zb.id)!;
-      dead.forEach((b, i) => (jump = Math.max(jump, new Vector3().setFromMatrixPosition(b.matrixWorld).distanceTo(live[i]))));
+      dead.forEach((b, i) => (jump = Math.max(jump, new Vector3().setFromMatrixPosition(b).distanceTo(live[i]))));
       let steps = 0;
       while (!rd.asleep && steps < 240) {
         rd.step();
@@ -249,13 +253,13 @@ export function main(args: string[] = []): number {
       // Every joint where its parent bone says it is (no limb torn off the body), nothing under the floor.
       BONES.forEach((n, i) => {
         const p = PARENT[n];
-        const at = new Vector3().setFromMatrixPosition(dead[i].matrixWorld);
+        const at = new Vector3().setFromMatrixPosition(dead[i]);
         under = Math.min(under, at.y);
         if (!p) return;
-        const want = rest[i].pos.clone().applyMatrix4(dead[BONES.indexOf(p)].matrixWorld);
+        const want = rest[i].pos.clone().applyMatrix4(dead[BONES.indexOf(p)]);
         gap = Math.max(gap, want.distanceTo(at));
       });
-      hips = Math.max(hips, new Vector3().setFromMatrixPosition(dead[0].matrixWorld).y);
+      hips = Math.max(hips, new Vector3().setFromMatrixPosition(dead[0]).y);
     }
     check(jump < 0.03, `${type.id} model → ragdoll: no jump at the moment of death (${(jump * 100).toFixed(1)} cm)`);
     check(gap < 0.06 && asleep === runs, `${type.id} corpse driven by its ragdoll: joints hold together (worst ${(gap * 100).toFixed(1)} cm), ${asleep}/${runs} asleep`);

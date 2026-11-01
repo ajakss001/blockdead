@@ -182,7 +182,7 @@ export function main(): number {
   // 12. Out of sight: after ~5 s off to the last place, searches 10–15 s, then gives up.
   {
     const sim = new ZombieSim(world, 0);
-    const z = sim.spawnAt(0, 0, 'idle', 'man');
+    const z = sim.spawnAt(0, 0, 'idle', 'tourist');
     z.yaw = 0;
     run(sim, player(0, 8), 2);
     const chased = z.state === 'chase';
@@ -197,10 +197,10 @@ export function main(): number {
     check(chased && tSearch >= 0 && tSearch <= 6.5, `out of sight → searches after ${tSearch.toFixed(1)} s (≤ ~5 s + walk)`);
     check(tIdle >= 0 && tIdle - tSearch >= 9.5 && tIdle - tSearch <= 15.5, `searches ${(tIdle - tSearch).toFixed(1)} s, then loses interest`);
   }
-  // 13. Slower than the player's run (4.6 m/s): even a teen.
+  // 13. Slower than the player's run (4.6 m/s): even a jogger.
   {
     const sim = new ZombieSim(world, 0);
-    const z = sim.spawnAt(0, 0, 'chase', 'teen');
+    const z = sim.spawnAt(0, 0, 'chase', 'jogger');
     z.yaw = 0;
     z.awareness = 2;
     let max = 0;
@@ -208,12 +208,13 @@ export function main(): number {
       sim.update(1 / 60, player(0, 10 + i * 0.05));
       max = Math.max(max, z.speed);
     }
-    check(max > 1.5 && max < 4.6 * 0.6, `a teen follows at ${max.toFixed(2)} m/s: quicker than the others, slower than the run`);
+    check(max > 1.5 && max < 4.6 * 0.6, `a jogger follows at ${max.toFixed(2)} m/s: quicker than the others, slower than the run`);
   }
   // 14. Head ×2, and the hit test finds the head.
   {
     const sim = new ZombieSim(world, 0);
-    const z = sim.spawnAt(0, -1.5, 'idle', 'man');
+    const z = sim.spawnAt(0, -1.5, 'idle', 'tourist');
+    z.yaw = 0;
     const head = sim.hitTest(new Vector3(0, 1.63, 0), new Vector3(0, 0, -1), 2);
     const body = sim.hitTest(new Vector3(0, 1.0, 0), new Vector3(0, 0, -1), 2);
     check(head?.zombie === z && head.head && body?.zombie === z && !body.head, 'hit test: head at the top, body below');
@@ -227,7 +228,7 @@ export function main(): number {
   // 15. Bites: close and seen → it attacks, the blow reaches the player.
   {
     const sim = new ZombieSim(world, 0);
-    const z = sim.spawnAt(0, 0, 'idle', 'man');
+    const z = sim.spawnAt(0, 0, 'idle', 'tourist');
     z.yaw = 0;
     let bites = 0;
     for (let i = 0; i < 60 * 4; i++) {
@@ -310,23 +311,26 @@ export function main(): number {
   {
     const sim = new ZombieSim(world, 0);
     const w = sim.spawnAt(0, -10, 'idle', 'worker');
-    const m = sim.spawnAt(-2, -10, 'idle', 'man');
+    const m = sim.spawnAt(-2, -10, 'idle', 'courier');
     const p = player(-1, 0);
     w.awareness = m.awareness = 1.2;
     w.state = m.state = 'chase';
     w.target.copy(p.pos);
     m.target.copy(p.pos);
     run(sim, p, 1.5);
-    check(w.speed > 0.8 && w.speed < m.speed * 0.85, `the worker follows slower than a man (${w.speed.toFixed(2)} vs ${m.speed.toFixed(2)} m/s)`);
+    check(w.speed > 0.8 && w.speed < m.speed * 0.85, `the worker follows slower than a courier (${w.speed.toFixed(2)} vs ${m.speed.toFixed(2)} m/s)`);
     const h = sim.spawnAt(0, 0, 'idle', 'worker');
     h.yaw = 0;
     const hit = sim.hitTest(new Vector3(-2, 1.63, 0.25), new Vector3(1, 0, 0), 3, 0);
     check(hit?.zombie === h && hit.head, 'the worker head is hit where it is: ahead of his feet');
     const mix = new ZombieSim(world, 0);
-    mix.modelShare = 0.3;
-    let n = 0;
-    for (let i = 0; i < 400; i++) if (mix.spawnAt(i, 50).kind === 'worker') n++;
-    check(n > 90 && n < 150, `a share of 0.3 makes ${n} workers in 400 (no world kinds: the worker)`);
+    const kinds = new Map<string, number>();
+    for (let i = 0; i < 400; i++) {
+      const k = mix.spawnAt(i, 50).kind;
+      kinds.set(k, (kinds.get(k) ?? 0) + 1);
+    }
+    const most = Math.max(...kinds.values());
+    check(kinds.size >= 9 && [...kinds.keys()].every((k) => ZOMBIE_TYPES[k]) && most < 80, `no world to ask: every zombie a model, ${kinds.size} kinds in 400 (most common ${most})`);
   }
   // 20. The procedural model (src/zombies): budget, one skeleton for all, rigid skinning, the missing arm.
   {
@@ -405,7 +409,6 @@ export function main(): number {
     run(sim, p, 1.5);
     check(jog.speed > chef.speed * 1.8, `the jogger follows faster than the chef (${jog.speed.toFixed(2)} vs ${chef.speed.toFixed(2)} m/s)`);
     const placed = new ZombieSim({ ...world, kindAt: () => 'police' }, 0);
-    placed.modelShare = 1;
     check(placed.spawnAt(3, 3).kind === 'police', 'the world picks the kind by place');
     // By place on a real map: police at the station, soldiers at the base.
     const L = new WorldLayout(1);

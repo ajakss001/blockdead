@@ -329,32 +329,80 @@ vec3 zPattern(vec3 base) {
 `;
 
 let material: MeshToonMaterial | null = null;
+let ramp: DataTexture | null = null;
 
-/** The one toon material of every procedural zombie: vertex colours, self-lit eyes, the hull pushed out. */
-export function zombieMaterial(): MeshToonMaterial {
-  if (material) return material;
-  const ramp = new DataTexture(new Uint8Array([105, 175, 255]), 3, 1, RedFormat);
+function toonRamp(): DataTexture {
+  if (ramp) return ramp;
+  ramp = new DataTexture(new Uint8Array([105, 175, 255]), 3, 1, RedFormat);
   ramp.minFilter = ramp.magFilter = NearestFilter;
   ramp.needsUpdate = true;
-  const mat = new MeshToonMaterial({ vertexColors: true, gradientMap: ramp });
+  return ramp;
+}
+
+/**
+ * The toon shader of the zombies: vertex colours, patterns, self-lit eyes, the hull pushed out along the raw
+ * normal (before skinning: the push turns with the bone). Batched: an instanced mesh skinned from a texture —
+ * per instance (row) the 18 skin matrices (bone × inverse rest), 4 texels (columns) each.
+ */
+function toonCompile(sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string }, batched: boolean): void {
+  sh.uniforms.uOutline = outlineWidth;
+  const skin = batched
+    ? {
+        decl: '\nattribute vec4 skinIndex;\nuniform highp sampler2D uSkin;\nmat4 zSkin;',
+        normal: `#include <beginnormal_vertex>
+{
+  int zb = int(skinIndex.x + 0.5) * 4;
+  zSkin = mat4(texelFetch(uSkin, ivec2(zb, gl_InstanceID), 0), texelFetch(uSkin, ivec2(zb + 1, gl_InstanceID), 0),
+               texelFetch(uSkin, ivec2(zb + 2, gl_InstanceID), 0), texelFetch(uSkin, ivec2(zb + 3, gl_InstanceID), 0));
+  objectNormal = mat3(zSkin) * objectNormal;
+}`,
+        vertex: '\ntransformed = (zSkin * vec4(transformed, 1.0)).xyz;',
+      }
+    : { decl: '', normal: '#include <beginnormal_vertex>', vertex: '' };
+  sh.vertexShader = sh.vertexShader
+    .replace(
+      '#include <common>',
+      `#include <common>\nattribute float aGlow;\nattribute float aOutline;\nattribute vec4 aPat0;\nattribute vec4 aPat1;\nattribute vec4 aPat2;\nuniform float uOutline;\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;${skin.decl}`,
+    )
+    .replace('#include <beginnormal_vertex>', skin.normal)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;\nvPat0 = aPat0;\nvPat1 = aPat1;\nvPat2 = aPat2;${skin.vertex}`);
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', `#include <common>\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;\n${PATTERN_GLSL}`)
+    .replace('#include <color_fragment>', '#include <color_fragment>\nif (vPat0.w > 0.5) diffuseColor.rgb = zPattern(diffuseColor.rgb);')
+    .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow;');
+}
+
+/** The one toon material of a SkinnedMesh zombie (the viewer, GLB export). */
+export function zombieMaterial(): MeshToonMaterial {
+  if (material) return material;
+  const mat = new MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
   mat.name = 'zombie-toon';
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uOutline = outlineWidth;
-    sh.vertexShader = sh.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nattribute float aGlow;\nattribute float aOutline;\nattribute vec4 aPat0;\nattribute vec4 aPat1;\nattribute vec4 aPat2;\nuniform float uOutline;\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;',
-      )
-      // Along the raw normal: skinning then turns the push with the bone.
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;\nvPat0 = aPat0;\nvPat1 = aPat1;\nvPat2 = aPat2;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;\n${PATTERN_GLSL}`)
-      .replace('#include <color_fragment>', '#include <color_fragment>\nif (vPat0.w > 0.5) diffuseColor.rgb = zPattern(diffuseColor.rgb);')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow;');
-  };
+  mat.onBeforeCompile = (sh) => toonCompile(sh, false);
   mat.customProgramCacheKey = () => 'zombie-toon';
   material = mat;
   return mat;
+}
+
+/** The toon material of an instanced batch skinned from `skin` (render/ZombieModels): one per batch. */
+export function zombieBatchMaterial(skin: DataTexture): MeshToonMaterial {
+  const mat = new MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
+  mat.name = 'zombie-toon-batch';
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uSkin = { value: skin };
+    toonCompile(sh, true);
+  };
+  mat.customProgramCacheKey = () => 'zombie-toon-batch';
+  return mat;
+}
+
+/** A view of a type's geometry (the same buffers) drawing the body only, or the body and its outline. */
+export function zombieGeometryView(built: BuiltZombie, outline: boolean): BufferGeometry {
+  const g = new BufferGeometry();
+  for (const [name, a] of Object.entries(built.geometry.attributes)) g.setAttribute(name, a);
+  g.setIndex(built.geometry.index);
+  g.setDrawRange(0, (outline ? built.triangles + built.outlineTriangles : built.triangles) * 3);
+  g.boundingSphere = built.geometry.boundingSphere!.clone();
+  return g;
 }
 
 // ── Instances ────────────────────────────────────────────────────────────────────────────────────────
