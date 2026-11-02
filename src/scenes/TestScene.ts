@@ -82,7 +82,7 @@ export class TestScene implements IScene {
     this.angle += ORBIT_SPEED * dt;
   }
 
-  render(alpha: number, _frameDt: number): void {
+  render(alpha: number, _frameDt: number, _gameDt: number): void {
     // Interpolate between fixed steps: smooth motion regardless of display refresh rate.
     const a = this.prevAngle + (this.angle - this.prevAngle) * alpha;
     this.camera.position.set(Math.cos(a) * ORBIT_RADIUS, EYE_HEIGHT, Math.sin(a) * ORBIT_RADIUS);

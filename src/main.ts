@@ -64,8 +64,8 @@ async function boot(): Promise<void> {
 
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
-  const draw = (alpha: number, frameDt: number) => {
-    scene.render(alpha, frameDt);
+  const draw = (alpha: number, frameDt: number, gameDt: number) => {
+    scene.render(alpha, frameDt, gameDt);
     renderer.beginFrame();
     profiler.begin('draw');
     postfx.render(frameDt);
@@ -75,9 +75,9 @@ async function boot(): Promise<void> {
   const loop = new GameLoop(
     {
       fixedUpdate: (dt) => scene.fixedUpdate(dt),
-      render: (alpha, frameDt) => {
+      render: (alpha, frameDt, gameDt) => {
         quality.update(performance.now());
-        draw(alpha, frameDt);
+        draw(alpha, frameDt, gameDt);
       },
     },
     profiler,
@@ -128,11 +128,11 @@ async function boot(): Promise<void> {
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.
   const t0 = performance.now();
   const cleanup = scene.prewarm?.();
-  draw(0, 0);
+  draw(0, 0, 0);
   cleanup?.();
   // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
-  draw(0, 0);
+  draw(0, 0, 0);
   console.info(`[boot] shaders warmed in ${Math.round(performance.now() - t0)} ms`);
   document.getElementById('loading')?.remove();
   platform.gameReady();

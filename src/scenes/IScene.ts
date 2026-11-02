@@ -18,7 +18,10 @@ export interface IScene {
   createCharacter?(): Promise<void>;
   /** Fixed-rate simulation step. */
   fixedUpdate(dt: number): void;
-  /** Per-frame visual update (interpolation, camera look). Drawing itself is done by the caller. */
-  render(alpha: number, frameDt: number): void;
+  /**
+   * Per-frame visual update (interpolation, camera look). Drawing itself is done by the caller. gameDt: the
+   * world's time this frame (0 while paused, GameLoop) — what belongs to the world moves by it.
+   */
+  render(alpha: number, frameDt: number, gameDt: number): void;
   dispose(): void;
 }

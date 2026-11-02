@@ -9,7 +9,7 @@ import type { WorldScene } from '../scenes/WorldScene';
  * - `__grid(shots, labels, cols)` lay frames out over the page for one screenshot;
  * - `__ui(visible)` hide/show the HUD.
  */
-export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (alpha: number, dt: number) => void): void {
+export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (alpha: number, dt: number, gameDt: number) => void): void {
   const s = scene as unknown as {
     player: { controller: Record<string, unknown> & { position: { set(x: number, y: number, z: number): void }; prevPosition: { copy(v: unknown): void } }; flashlightOn: boolean; setFlashlight(on: boolean): void };
     chunks: { update(x: number, z: number, dx: number, dz: number): void };
@@ -45,7 +45,7 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
     for (let k = 0; k < frames; k++) {
       s.fixedUpdate(1 / 60);
       c.pitch = pitch;
-      draw(1, 1 / 60);
+      draw(1, 1 / 60, ctx.loop.paused ? 0 : 1 / 60);
     }
     ctx.input.setMove(0, 0);
     return gl.domElement.toDataURL('image/jpeg', 0.8);
@@ -86,7 +86,7 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
         s.fixedUpdate(1 / 60);
         c.pitch = pitch;
         c.yaw = 0.6;
-        draw(1, 1 / 60);
+        draw(1, 1 / 60, ctx.loop.paused ? 0 : 1 / 60);
       }
     };
     const out: string[] = [];
@@ -126,7 +126,7 @@ export function installDevHarness(ctx: GameContext, scene: WorldScene, draw: (al
         s.fixedUpdate(1 / 60);
         c.pitch = pitch;
         c.yaw = 0.6;
-        draw(1, 1 / 60);
+        draw(1, 1 / 60, ctx.loop.paused ? 0 : 1 / 60);
       }
     };
     vm.scrubT = null;

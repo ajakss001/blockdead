@@ -15,6 +15,7 @@ import { isModelKind, MODEL_KINDS, ZOMBIE_STATS } from '../zombies/stats';
 import { WorldLayout } from '../world/gen/layout';
 import { nearestPoi, siteToWorld } from '../world/gen/poi';
 import { zombieKindAt } from '../world/zombieKinds';
+import { pauseChecks } from './pauseCheck';
 
 /**
  * npm run test:zombies — perception and behaviour on a flat test ground with one wall (x 4..5, z −20..20).
@@ -425,6 +426,8 @@ export function main(): number {
     check(pol > 0.6 && (mil < 0 || mil > 0.6), `by place: ${Math.round(pol * 100)}% police at the station, ${Math.round(mil * 100)}% soldiers at the base`);
     check(MODEL_KINDS.every((k) => isModelKind(k) && ZOMBIE_STATS[k].hp > 0), 'stats for every kind');
   }
+  console.log('— pause and long frames —');
+  pauseChecks(check);
   // Bodies (ragdolls) are checked by npm run test:ragdoll.
   console.log(fails.length ? `\ntest:zombies FAILED (${fails.length})` : '\ntest:zombies passed');
   return fails.length ? 1 : 0;

@@ -713,12 +713,13 @@ export class WorldScene implements IScene {
     }
   }
 
-  render(alpha: number, frameDt: number): void {
-    this.particles.update(frameDt);
+  /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
+  render(alpha: number, frameDt: number, gameDt: number): void {
+    this.particles.update(gameDt);
     this.player.render(alpha, frameDt);
-    if (this.death) this.renderDeath(frameDt);
-    // After the camera moved: the zombies in its view, up to the fog.
-    this.models.update(this.zombies.list, this.player.controller.position, frameDt, this.camera, (this.scene.fog as Fog).far + 2);
+    if (this.death) this.renderDeath(gameDt);
+    // After the camera moved: the zombies in its view, up to the fog (paused: their mixers and twitches too).
+    this.models.update(this.zombies.list, this.player.controller.position, gameDt, this.camera, (this.scene.fog as Fog).far + 2);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
     this.interaction.render(frameDt);
@@ -734,7 +735,7 @@ export class WorldScene implements IScene {
     this.weather.update(frameDt, this.camera.position, Math.cos(wa) * wind, Math.sin(wa) * wind, !this.indoors, this.lookDir.y, paused);
     this.life.rain = this.weather.rain;
     this.life.hour = this.clock.hour;
-    this.atmo.update(paused ? 0 : frameDt, p, this.indoors, wa, this.life.windGust, {
+    this.atmo.update(gameDt, p, this.indoors, wa, this.life.windGust, {
       eye: this.camera.position,
       look: this.lookDir,
       flashlight: this.player.flashlightOn && this.player.battery > 0,
@@ -754,9 +755,9 @@ export class WorldScene implements IScene {
     // Lightning lights the world for a moment; fog thickens at night and in the rain, clears slowly by day.
     this.ambient.intensity = this.ambientBase + this.weather.flash * 2.2;
     const fogWant = (ATMO.night.fogNight + (1 - ATMO.night.fogNight) * this.clock.daylight) * (1 - (1 - ATMO.night.fogRain) * this.weather.rain);
-    if (!paused) this.fogK += (fogWant - this.fogK) * Math.min(1, frameDt / ATMO.night.fogLag);
+    this.fogK += (fogWant - this.fogK) * Math.min(1, gameDt / ATMO.night.fogLag);
     (this.scene.fog as Fog).far = this.ctx.quality.preset.fogFar * this.fogK;
-    if (!paused) this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, frameDt * 1.5);
+    this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, gameDt * 1.5);
     (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
     this.landmarks.update(frameDt, this.camera.position, this.scene.fog as Fog);
     this.noteT -= frameDt;
@@ -772,11 +773,9 @@ export class WorldScene implements IScene {
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
     const cp = this.camera.position;
     sfx.setListener(cp.x, cp.y, cp.z, this.lookDir.x, this.lookDir.y, this.lookDir.z);
-    if (!this.ctx.loop.paused) sfx.update(frameDt);
-    if (!this.ctx.loop.paused) {
-      this.saveT += frameDt;
-      if (this.saveT >= AUTOSAVE_INTERVAL) this.save();
-    }
+    if (gameDt > 0) sfx.update(gameDt);
+    this.saveT += gameDt;
+    if (gameDt > 0 && this.saveT >= AUTOSAVE_INTERVAL) this.save();
   }
 
   /** Day / night: sky, fog, ambient, sun or moon, clouds, lit windows, the arms' own lights. */
@@ -1163,9 +1162,9 @@ export class WorldScene implements IScene {
   }
 
   /** The death as it plays: the figure on its ragdoll, the camera, colour, sound; then the screen. */
-  private renderDeath(frameDt: number): void {
+  private renderDeath(gameDt: number): void {
     const d = this.death!;
-    if (!this.ctx.loop.paused) d.update(frameDt);
+    if (gameDt > 0) d.update(gameDt);
     d.place();
     const cam = d.camera;
     this.camera.position.copy(cam.position);

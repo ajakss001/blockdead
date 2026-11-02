@@ -12,6 +12,7 @@ import {
   QuaternionKeyframeTrack,
   VectorKeyframeTrack,
 } from 'three';
+import { type GaitBuild, gaitBuild, gaitPose, type GaitSpec, REF_BUILD, RUN, WALK } from './gait';
 import { BONES, type BoneName, restLocals, type SkeletonDims } from './skeleton';
 
 /**
@@ -28,11 +29,13 @@ export const CLIP_NAMES: ClipName[] = ['Idle', 'Walk', 'Run', 'Attack', 'HitReac
 type R = [number, number, number];
 interface Pose {
   r: Partial<Record<BoneName, R>>;
+  /** Turns given whole (the solved legs of Walk and Run), over `r`. */
+  q?: Partial<Record<BoneName, Quaternion>>;
   hips?: R;
 }
 
 const TAU = Math.PI * 2;
-const { sin, cos, max, exp } = Math;
+const { sin, exp } = Math;
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const ss = (a: number, b: number, t: number) => {
   const x = clamp01((t - a) / (b - a));
@@ -45,14 +48,14 @@ function bake(name: ClipName, duration: number, f: (t: number) => Pose): Animati
   const n = Math.max(2, Math.round(duration * 30) + 1);
   const times = Array.from({ length: n }, (_, i) => (i / (n - 1)) * duration);
   const poses = times.map(f);
-  const used = BONES.filter((b) => poses.some((p) => p.r[b]));
+  const used = BONES.filter((b) => poses.some((p) => p.r[b] || p.q?.[b]));
   const q = new Quaternion();
   const e = new Euler();
   const tracks = used.map((b) => {
     const v: number[] = [];
     for (const p of poses) {
       const r = p.r[b] ?? [0, 0, 0];
-      q.setFromEuler(e.set(r[0], r[1], r[2])).toArray(v, v.length);
+      (p.q?.[b] ?? q.setFromEuler(e.set(r[0], r[1], r[2]))).toArray(v, v.length);
     }
     return new QuaternionKeyframeTrack(`${b}.quaternion`, times, v);
   });
@@ -89,62 +92,36 @@ function idle(t: number): Pose {
   };
 }
 
-/** Walk: one stride per cycle, shuffling, the right leg dragged (a limp), the body lurching onto it. */
-function walk(t: number): Pose {
-  const p = (TAU * t) / 1.4;
-  const s = sin(p);
-  return {
-    hips: [0.025 * s, -0.03 + 0.015 * cos(2 * p) - 0.03 * max(0, -s), 0],
-    r: {
-      Hips: [0, 0.08 * s, 0.07 * s],
-      Spine: [0, -0.08 * s, -0.05 * s],
-      Chest: [-0.06, -0.06 * s, 0.06 * s],
-      Neck: [0.06 * sin(2 * p), 0, -0.08 * s],
-      Head: [-0.04 * sin(2 * p + 0.6), 0.05 * s, 0.1 * sin(p + 0.8)],
-      Jaw: [-0.05 - 0.05 * sin(2 * p), 0, 0],
-      UpperLeg_L: [0.1 + 0.38 * s, 0, 0],
-      LowerLeg_L: [-(0.1 + 0.55 * max(0, cos(p + 0.4))), 0, 0],
-      Foot_L: [-0.1 * s + 0.15 * max(0, cos(p + 0.4)), 0, 0],
-      UpperLeg_R: [0.05 - 0.22 * s, 0, 0.02],
-      LowerLeg_R: [-(0.06 + 0.15 * max(0, -cos(p + 0.4))), 0, 0],
-      Foot_R: [-0.25 + 0.05 * s, 0.15, 0],
-      UpperArm_R: [0.25 + 0.3 * sin(p - 0.6), 0, 0.06 + 0.04 * s],
-      LowerArm_R: [0.25 + 0.15 * sin(p - 1.2), 0, 0],
-      Hand_R: [0.15 * sin(p - 1.6), 0, 0],
-      UpperArm_L: [0.15 - 0.3 * sin(p - 0.6), 0, -0.06 + 0.04 * s],
-      LowerArm_L: [0.25 - 0.15 * sin(p - 1.2), 0, 0],
-      Hand_L: [-0.15 * sin(p - 1.6), 0, 0],
-    },
+/**
+ * Walk and Run: a person's gait (zombies/gait: legs solved so a planted foot never skids, the hips bobbing
+ * twice a cycle, the pelvis dropping and turning, the chest against it, arms against the legs) with the
+ * zombie on top — leaning in, the head down and to one side, the arms hanging forward and swinging half as
+ * much, a limp on the right leg (a shorter step, the toe scuffing in swing) — and the jaw working.
+ */
+function gait(g: GaitSpec, b: GaitBuild, jaw: number): (t: number) => Pose {
+  return (t) => {
+    const u = t / g.cycle;
+    const p = gaitPose(g, u, b);
+    p.r.Jaw = [-jaw - 0.05 * sin(TAU * 2 * u), 0, 0.02 * sin(TAU * u)];
+    return p;
   };
 }
+/**
+ * A zombie's own stride, × its legs' natural one: a crowd doesn't walk in time (zombies take one of these,
+ * render/ZombieModels). The step is longer and lands further ahead; the cycle is timed by distance anyway.
+ */
+export const STRIDES = [0.9, 1, 1.1] as const;
 
-/** Run: a lurching, headlong lope, leaning in, arms out in front, jaw snapping. Still limping. */
-function run(t: number): Pose {
-  const p = (TAU * t) / 0.85;
-  const s = sin(p);
-  return {
-    hips: [0.03 * s, -0.05 + 0.04 * cos(2 * p), 0],
-    r: {
-      Hips: [0, 0.12 * s, 0.08 * s],
-      Spine: [-0.12, -0.1 * s, -0.04 * s],
-      Chest: [-0.15 + 0.04 * cos(2 * p), -0.12 * s, 0.06 * s],
-      Neck: [0.2 + 0.05 * sin(2 * p), 0, -0.06 * s],
-      Head: [0.1, 0.06 * s, 0.08 * sin(p + 0.8)],
-      Jaw: [-0.2 - 0.08 * sin(2 * p), 0, 0],
-      UpperLeg_L: [0.15 + 0.6 * s, 0, 0],
-      LowerLeg_L: [-(0.25 + 0.85 * max(0, cos(p + 0.3))), 0, 0],
-      Foot_L: [0.2 * s, 0, 0],
-      UpperLeg_R: [0.12 - 0.42 * s, 0, 0.02],
-      LowerLeg_R: [-(0.2 + 0.5 * max(0, -cos(p + 0.3))), 0, 0],
-      Foot_R: [-0.15 - 0.15 * s, 0.12, 0],
-      UpperArm_R: [1.0 + 0.25 * s, 0, 0.1],
-      LowerArm_R: [0.3 + 0.1 * sin(p + 1), 0, 0],
-      Hand_R: [-0.2, 0, 0],
-      UpperArm_L: [0.9 - 0.25 * s, 0, -0.1],
-      LowerArm_L: [0.3 - 0.1 * sin(p + 1), 0, 0],
-      Hand_L: [-0.2, 0, 0],
-    },
-  };
+/** Walk or Run solved for a build's legs, at stride `v` (STRIDES). */
+function gaitClip(name: 'Walk' | 'Run', b: GaitBuild, v: number): AnimationClip {
+  const g0 = name === 'Walk' ? WALK : RUN;
+  const g = { ...g0, stride: g0.stride * v, reach: g0.reach * v };
+  return bake(name, g.cycle, gait(g, b, name === 'Walk' ? 0.06 : 0.2));
+}
+
+/** Ground covered per cycle of Walk and Run (m) by a build whose leg (hip joint to ankle) is `leg` m long. */
+export function strideOf(clip: 'Walk' | 'Run', leg: number): number {
+  return (clip === 'Walk' ? WALK : RUN).stride * leg;
 }
 
 /** Attack: reaches out (both arms, one a beat behind), lunges, grabs at 0.55 s and pulls in, biting. */
@@ -244,20 +221,31 @@ function death(t: number): Pose {
   };
 }
 
-let clips: Record<ClipName, AnimationClip> | null = null;
+const clips = new Map<string, Record<ClipName, AnimationClip>>();
 
-/** The shared clips (built once). */
-export function zombieClips(): Record<ClipName, AnimationClip> {
-  clips ??= {
-    Idle: bake('Idle', 3, idle),
-    Walk: bake('Walk', 1.4, walk),
-    Run: bake('Run', 0.85, run),
-    Attack: bake('Attack', 1.1, attack),
-    HitReaction: bake('HitReaction', 0.55, hitReaction),
-    Death: bake('Death', 1.7, death),
-  };
-  return clips;
+/**
+ * The clips (built once each): shared by every type but Walk and Run, solved for a build's legs (`dims`;
+ * none: the average build) at a stride of STRIDES.
+ */
+export function zombieClips(dims?: SkeletonDims, stride = 1): Record<ClipName, AnimationClip> {
+  const b = dims ? gaitBuild(dims) : REF_BUILD;
+  const key = `${Object.values(b).map((x) => x.toFixed(4))}:${stride}`;
+  let c = clips.get(key);
+  if (!c) {
+    base ??= {
+      Idle: bake('Idle', 3, idle),
+      Walk: gaitClip('Walk', REF_BUILD, 1),
+      Run: gaitClip('Run', REF_BUILD, 1),
+      Attack: bake('Attack', 1.1, attack),
+      HitReaction: bake('HitReaction', 0.55, hitReaction),
+      Death: bake('Death', 1.7, death),
+    };
+    c = { ...base, Walk: gaitClip('Walk', b, stride), Run: gaitClip('Run', b, stride) };
+    clips.set(key, c);
+  }
+  return c;
 }
+let base: Record<ClipName, AnimationClip> | null = null;
 
 /** When the grab of Attack lands (s at speed 1): the game's bite comes then. */
 export const ATTACK_HIT = 0.55;
@@ -286,9 +274,10 @@ export class ZombieAnimator {
   readonly actions: Record<ClipName, AnimationAction>;
   current: ClipName | null = null;
 
-  constructor(root: Object3D, readonly speed = 1) {
+  /** `dims`: the build the clips are fitted to (its legs), `stride`: the zombie's own (STRIDES). */
+  constructor(root: Object3D, readonly speed = 1, dims?: SkeletonDims, stride = 1) {
     this.mixer = new AnimationMixer(root);
-    const c = zombieClips();
+    const c = zombieClips(dims, stride);
     this.actions = Object.fromEntries(
       CLIP_NAMES.map((n) => {
         const a = this.mixer.clipAction(c[n]);

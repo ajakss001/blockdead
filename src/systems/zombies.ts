@@ -49,6 +49,7 @@ export interface Zombie {
   timer: number;
   /** Seconds the player has been out of sight while following. */
   unseen: number;
+  /** Ground walked: 2π per PHASE_M metres (the footfall sounds; the models time their steps by it). */
   phase: number;
   gait: number;
   look: number;
@@ -160,6 +161,8 @@ export const ZOMBIE_TUNING = {
 };
 
 const T = ZOMBIE_TUNING;
+/** Metres of ground per 2π of `Zombie.phase` (a footfall sound every half). */
+export const PHASE_M = 1.1;
 const _d = new Vector3();
 const _p = new Vector3();
 const _hit = new Vector3();
@@ -606,7 +609,7 @@ export class ZombieSim {
       z.pos.z += Math.cos(z.yaw) * z.speed * dt;
       this.world.resolveCircle(z.pos, T.radius, T.height);
       const before = z.phase;
-      z.phase += (_p.distanceTo(z.pos) / 1.1) * Math.PI * 2;
+      z.phase += (_p.distanceTo(z.pos) / PHASE_M) * Math.PI * 2;
       // A shuffle at every footfall (two per stride).
       if (dist < 15 && Math.floor(before / Math.PI) !== Math.floor(z.phase / Math.PI)) this.sounds.push({ z, kind: 'step' });
     }

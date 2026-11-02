@@ -15,12 +15,12 @@ import {
 } from 'three';
 import type { QualityLevel } from '../core/types';
 import { bodyParts, type BodyShape, PART, type PartPose, type Ragdoll } from '../physics/ragdoll';
-import type { Zombie, ZombieState } from '../systems/zombies';
-import { ZombieAnimator } from '../zombies/animations';
+import { PHASE_M, type Zombie, type ZombieState } from '../systems/zombies';
+import { STRIDES, strideOf, ZombieAnimator } from '../zombies/animations';
 import { BAKE_FPS, type Baked, bakeType, SKIN_FLOATS } from '../zombies/bake';
 import { type BuiltZombie, buildZombie, setZombieOutline, zombieBatchMaterial, zombieGeometryView, type ZombieType } from '../zombies/buildZombie';
-import { BONES, type BoneName, PARENT, boneIndex, createBones, ragdollShape, restWorld } from '../zombies/skeleton';
-import { lurch, Twitch } from '../zombies/twitch';
+import { BONES, type BoneName, PARENT, boneIndex, createBones, ragdollShape, restLocals, restWorld } from '../zombies/skeleton';
+import { Twitch } from '../zombies/twitch';
 import { ZOMBIE_TYPES } from '../zombies/types';
 
 /**
@@ -29,8 +29,12 @@ import { ZOMBIE_TYPES } from '../zombies/types';
  * near ones (with the outline), one for the far ones (without) — at most 2 × the types in view, whatever
  * the crowd.
  *
+ * Walk and Run are timed by the ground covered, not the clock: the step cycle moves on by distance / stride,
+ * the stride from the type's leg length and the zombie's own (STRIDES, ±10%: its clips are made for it), its
+ * cycle offset by its own share, so a planted foot doesn't skid at any speed and a crowd doesn't step in time.
+ *
  * Near (DETAIL: 14 / 22 / 32 m, the nearest 3 / 6 / 10): a real mixer each — Idle / Walk / Run blended by
- * speed (walk and run timed by the simulation's step phase, warped into an uneven lurch), Attack when it
+ * speed, Attack when it
  * lunges (the grab lands with the bite), HitReaction when staggered, and twitches of the head and hands on
  * top (zombies/twitch). No outline (the grim look); it stays a switch. Far: the type's baked loops (zombies/bake.ts) by speed, copied, no
  * mixer; past FAR_STEP m at half the frame rate. Out of the camera's view or past the fog: not drawn.
@@ -151,6 +155,8 @@ interface Batch {
 /** A near zombie's own skeleton and mixer (pooled per type). */
 interface Rig {
   type: ZombieType;
+  /** Its stride (index into STRIDES). */
+  v: number;
   root: Group;
   bones: ReturnType<typeof createBones>;
   anim: ZombieAnimator;
@@ -180,6 +186,14 @@ const _up = new Vector3(0, 1, 0);
 const _one = new Vector3(1, 1, 1);
 const _rot = new Matrix4().makeRotationY(Math.PI);
 const _ident = new Matrix4();
+
+/** A stable 0..1 per zombie id (salt: which of its numbers). */
+const hash = (id: number, salt: number) => {
+  const s = Math.sin(id * 12.9898 + salt * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+};
+/** A zombie's own stride (index into STRIDES). */
+const strideIx = (id: number) => Math.floor(hash(id, 3.3) * STRIDES.length) % STRIDES.length;
 const _sphere = new Sphere();
 const _frustum = new Frustum();
 
@@ -192,6 +206,9 @@ export class ZombieModels {
   readonly detailed = new Set<number>();
   private detail = DETAIL.low;
   private time = 0;
+  /** Each walking zombie's step cycle (0..1) and the ground phase it was last advanced to. */
+  private readonly steps = new Map<number, { c: number; phase: number }>();
+  private readonly legs = new Map<string, number>();
 
   constructor(level: QualityLevel) {
     this.group.name = 'zombie-models';
@@ -274,6 +291,34 @@ export class ZombieModels {
       (d2 < r2 ? b.near : b.far).push(_ident).set(c.skin);
     }
     for (const b of this.batches.values()) b.near.end(), b.far.end();
+    // Forget the steps of zombies gone.
+    if (this.steps.size > list.length + 64) {
+      const live = new Set(list.map((z) => z.id));
+      for (const id of this.steps.keys()) if (!live.has(id)) this.steps.delete(id);
+    }
+  }
+
+  /**
+   * Where a zombie is in its Walk / Run cycle (0..1, `run` 0..1 the share of running): moved on by the
+   * ground covered since last time over the stride of its legs (and its own, STRIDES), so a planted foot stays put.
+   */
+  private cycle(z: Zombie, type: ZombieType, run: number): number {
+    let s = this.steps.get(z.id);
+    if (!s) {
+      s = { c: hash(z.id, 7.1), phase: z.phase };
+      this.steps.set(z.id, s);
+    }
+    let leg = this.legs.get(type.id);
+    if (leg === undefined) {
+      const d = buildZombie(type).dims;
+      leg = d.hipJointY - d.ankleY;
+      this.legs.set(type.id, leg);
+    }
+    leg *= STRIDES[strideIx(z.id)];
+    const stride = strideOf('Walk', leg) + (strideOf('Run', leg) - strideOf('Walk', leg)) * run;
+    s.c = (((s.c + ((z.phase - s.phase) / (Math.PI * 2)) * (PHASE_M / stride)) % 1) + 1) % 1;
+    s.phase = z.phase;
+    return s.c;
   }
 
   /** Where a zombie stands (its model faces −Z: turned by π). */
@@ -286,8 +331,9 @@ export class ZombieModels {
   /** The baked loop for a zombie's speed now (by its step phase when walking or running). */
   private bakedFrame(baked: Baked, type: ZombieType, z: Zombie, half: boolean): Float32Array {
     const idle = z.speed < 0.15;
-    const clip = idle ? baked.clips.Idle : z.speed < 0.9 ? baked.clips.Walk : baked.clips.Run;
-    const cyc = idle ? (this.time * type.animSpeed) / (clip.frames / BAKE_FPS) + (z.id % 17) / 17 : lurch((((z.phase / (Math.PI * 2)) % 1) + 1) % 1, z.id);
+    const running = z.speed >= 0.9;
+    const clip = idle ? baked.clips.Idle[0] : (running ? baked.clips.Run : baked.clips.Walk)[strideIx(z.id)];
+    const cyc = idle ? (this.time * type.animSpeed) / (clip.frames / BAKE_FPS) + (z.id % 17) / 17 : this.cycle(z, type, running ? 1 : 0);
     let f = Math.floor((((cyc % 1) + 1) % 1) * clip.frames) % clip.frames;
     if (half) f -= f & 1;
     return clip.data.subarray(f * SKIN_FLOATS, (f + 1) * SKIN_FLOATS);
@@ -296,18 +342,20 @@ export class ZombieModels {
   private rig(z: Zombie, type: ZombieType): Rig {
     let r = this.rigs.find((x) => x.id === z.id);
     if (r) return r;
-    r = this.rigs.find((x) => x.id < 0 && x.type === type);
+    const v = strideIx(z.id);
+    r = this.rigs.find((x) => x.id < 0 && x.type === type && x.v === v);
     if (!r) {
-      const bones = createBones(buildZombie(type).dims);
+      const { dims } = buildZombie(type);
+      const bones = createBones(dims);
       const root = new Group();
       root.add(bones[0]);
-      const anim = new ZombieAnimator(root, type.animSpeed);
+      const anim = new ZombieAnimator(root, type.animSpeed, dims, STRIDES[v]);
       for (const n of ['Idle', 'Walk', 'Run'] as const) anim.actions[n].play();
       anim.actions.Walk.timeScale = 0;
       anim.actions.Run.timeScale = 0;
       // The grab of the attack (0.55 s, ATTACK_HIT) lands with the simulation's bite (windup 0.55 s).
       anim.actions.Attack.timeScale = 1;
-      r = { type, root, bones, anim, twitch: new Twitch(this.rigs.length + 1), id: -1, last: null };
+      r = { type, v, root, bones, anim, twitch: new Twitch(this.rigs.length + 1, restLocals(dims).map((l) => l.rot)), id: -1, last: null };
       this.rigs.push(r);
     }
     r.id = z.id;
@@ -319,8 +367,7 @@ export class ZombieModels {
     const a = r.anim.actions;
     const move = Math.min(1, z.speed / 0.25);
     const run = Math.min(1, Math.max(0, (z.speed - 0.8) / 0.4));
-    const step = (((z.phase / (Math.PI * 2)) % 1) + 1) % 1;
-    const cyc = ((lurch(step, z.id) % 1) + 1) % 1;
+    const cyc = this.cycle(z, ZOMBIE_TYPES[z.kind], run);
     a.Walk.time = cyc * a.Walk.getClip().duration;
     a.Run.time = cyc * a.Run.getClip().duration;
     a.Idle.setEffectiveWeight(1 - move);
@@ -330,6 +377,9 @@ export class ZombieModels {
     if ((s === 'attack' && r.last !== 'attack') || (s === 'bang' && !a.Attack.isRunning())) a.Attack.reset().setEffectiveWeight(1).play();
     if (s === 'stagger' && r.last !== 'stagger') a.HitReaction.reset().setEffectiveWeight(1).play();
     r.last = s;
+    // The clip's pose first (the twitches of last frame taken off: the mixer leaves a bone whose clip value
+    // didn't change as it is), then this frame's twitches on it — nothing piles up, paused or not.
+    r.twitch.reset(r.bones);
     r.anim.update(dt);
     r.twitch.apply(r.bones, dt);
     r.root.updateMatrixWorld(true);

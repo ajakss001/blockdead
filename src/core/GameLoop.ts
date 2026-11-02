@@ -8,10 +8,12 @@ export interface LoopCallbacks {
   fixedUpdate(dt: number): void;
   /**
    * Called once per presented frame. alpha ∈ [0,1) is the interpolation factor between
-   * the last two fixed steps; frameDt is real seconds since the previous frame.
+   * the last two fixed steps; frameDt is real seconds since the previous frame (≤ MAX_FRAME_DT);
+   * gameDt is the world's time this frame — frameDt, or 0 while paused: everything of the world
+   * that moves per frame (zombie mixers and twitches, particles, the dead) moves by gameDt.
    * Camera look must be applied here, not in fixedUpdate, to avoid input lag.
    */
-  render(alpha: number, frameDt: number): void;
+  render(alpha: number, frameDt: number, gameDt: number): void;
 }
 
 const HARD_REASONS: ReadonlySet<PauseReason> = new Set<PauseReason>(['hidden', 'ad', 'orientation', 'context']);
@@ -19,6 +21,12 @@ const MAX_STEPS_PER_FRAME = 5;
 /** rAF timestamps jitter; accept frames that arrive slightly early. */
 const CAP_TOLERANCE_MS = 1.0;
 const STALL_MS = 250;
+/**
+ * The most a frame steps what moves per frame (s): a stall, a slow device, the first frame back from a
+ * hidden tab or a lost pointer lock — none makes a jump. (Fixed steps take real time up to 0.25 s, at most
+ * MAX_STEPS_PER_FRAME of them.)
+ */
+export const MAX_FRAME_DT = 0.05;
 
 export class GameLoop {
   readonly fixedDt = 1 / 60;
@@ -105,10 +113,14 @@ export class GameLoop {
     const cpuStart = performance.now();
     const frameMs = now - this.lastPresented;
     this.lastPresented = now;
-    const frameDt = Math.min(frameMs / 1000, 0.25);
+    const realDt = Math.min(Math.max(0, frameMs) / 1000, 0.25);
+    const frameDt = Math.min(realDt, MAX_FRAME_DT);
+    // The one check of the pause: no fixed steps, and no world time for the frame.
+    const paused = this.paused;
+    const gameDt = paused ? 0 : frameDt;
 
-    if (!this.paused) {
-      this.accumulator += frameDt;
+    if (!paused) {
+      this.accumulator += realDt;
       let steps = 0;
       while (this.accumulator >= this.fixedDt && steps < MAX_STEPS_PER_FRAME) {
         this.callbacks.fixedUpdate(this.fixedDt);
@@ -119,7 +131,7 @@ export class GameLoop {
       if (steps === MAX_STEPS_PER_FRAME) this.accumulator = 0;
     }
 
-    this.callbacks.render(this.accumulator / this.fixedDt, frameDt);
+    this.callbacks.render(this.accumulator / this.fixedDt, frameDt, gameDt);
     // Stalls (throttled off-screen iframe, debugger, tab switch) say nothing about our
     // rendering cost; recording them would make QualityManager downgrade for no reason.
     if (frameMs < STALL_MS) this.profiler.record(frameMs, performance.now() - cpuStart);
