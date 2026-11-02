@@ -1,5 +1,7 @@
 import { type BufferGeometry, CylinderGeometry, Group, type Material, Mesh } from 'three';
 import { characterMaterial } from '../render/look/materials';
+import { FLASHLIGHT } from '../items/config';
+import { flashlightHeldMatrix, flashlightMesh } from '../items/flashlight';
 import { heldMatrix, weaponMesh } from '../weapons/buildWeapon';
 import { WEAPON_IDS, WEAPONS, type WeaponId, weaponDamage } from '../weapons/config';
 
@@ -198,12 +200,12 @@ const FIST: KeySet = {
   ],
 };
 
-/** Flashlight in the left hand: raised (on) or lowered out of view (off). */
+/** Flashlight in the left hand, low on the left (lowered out of view while it comes back from a two-handed grip). */
 const TORCH: KeySet = {
   anchor: 'main',
-  idle: key([-0.145, -0.169, -0.348], [0.546, -0.075, -0.834], [-0.395, 0.855, -0.335], [0.452, 0.357, -0.528]),
-  sprint: key([-0.193, -0.274, -0.586], [0.287, 0.51, -0.811], [-0.782, -0.365, -0.506], [0.38, -0.011, -0.381]),
-  lowered: key([-0.145, -0.569, -0.198], [0.546, -0.594, -0.59], [-0.395, 0.438, -0.807], [0.452, 0.357, -0.528]),
+  idle: key([-0.203, -0.181, -0.357], [0.547, -0.003, -0.837], [-0.512, 0.79, -0.337], [0.408, -0.29, -0.245]),
+  sprint: key([-0.263, -0.25, -0.653], [0.443, -0.294, -0.847], [0.166, 0.955, -0.245], [0.158, -0.183, 0.45]),
+  lowered: key([-0.203, -0.581, -0.207], [0.547, -0.541, -0.639], [-0.512, 0.387, -0.767], [0.408, -0.29, -0.245]),
 };
 
 const DEG = Math.PI / 180;
@@ -227,7 +229,7 @@ export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
   axe: { twoHanded: true, main: { along: 0.52, roll: AXE_R, slide: 0.2 }, off: { along: 0.06, roll: AXE_L }, keys: AXE, head: [0, 0.72, -0.075], windup: 16 / 60, strike: 9 / 60, follow: 6 / 60, recover: 21 / 60, noise: 0.5, ...stats('fireAxe') },
   bat: { twoHanded: true, main: { along: 0.16, roll: ROLL_R }, off: { along: 0.06, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, 0], windup: 0.28, strike: 0.12, recover: 0.36, noise: 0.45, damage: [20, 30], reach: 1.8 },
   crowbar: { twoHanded: true, main: { along: 0.36, roll: ROLL_R, slide: 0.18 }, off: { along: 0.05, roll: ROLL_L }, keys: TWO_HANDED, head: [0, 0.72, -0.05], windup: 0.3, strike: 0.12, recover: 0.38, noise: 0.5, ...stats('crowbar') },
-  torch: { twoHanded: false, main: { along: 0.06, roll: 0 }, keys: TORCH, head: [0, 0.197, 0], windup: 0, strike: 0, recover: 0, noise: 0, damage: [0, 0], reach: 1 },
+  torch: { twoHanded: false, main: { along: FLASHLIGHT.grip, roll: 0 }, keys: TORCH, head: [0, FLASHLIGHT.length, 0], windup: 0, strike: 0, recover: 0, noise: 0, damage: [0, 0], reach: 1 },
 };
 
 /** Bare fists: an item without a model; the fist's grip axis is its handle. */
@@ -242,6 +244,13 @@ export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
     const m = weaponMesh(wid);
     m.applyMatrix4(heldMatrix(wid));
     g.add(m);
+    return g;
+  }
+  // The flashlight (items/flashlight): one mesh, the lens its own material.
+  if (id === 'torch') {
+    const { mesh } = flashlightMesh();
+    mesh.applyMatrix4(flashlightHeldMatrix());
+    g.add(mesh);
     return g;
   }
   const add = (geo: BufferGeometry, mat: Material, x = 0, y = 0, z = 0) => {
@@ -260,11 +269,6 @@ export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
       // Grip tape.
       add(shaft(0.019, 0.019, 0.2, 8), characterMaterial('cuff', 0x1c1c1e), 0, 0.02, 0);
       break;
-    case 'torch': {
-      add(shaft(0.018, 0.018, 0.15, 8), characterMaterial('torch', 0x33363a));
-      add(shaft(0.022, 0.028, 0.045, 8), characterMaterial('torch', 0x33363a), 0, 0.15, 0);
-      break;
-    }
   }
   return g;
 }

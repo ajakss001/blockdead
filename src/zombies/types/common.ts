@@ -136,8 +136,11 @@ export class Body {
     this.bigHand = new Matrix4().makeScale(hand, hand, hand);
   }
 
+  /** Shoes and boots: narrower and shorter than drawn (soles stay on the ground). */
+  static readonly foot = new Matrix4().makeScale(0.86, 1, 0.92);
+
   add(bone: BoneName, color: number, geo: Geo, outline = true, glow = 0, paint?: Paint): void {
-    const g = bone === 'Head' || bone === 'Jaw' ? this.k.frame(geo, this.big) : bone.startsWith('Hand') ? this.k.frame(geo, this.bigHand) : geo;
+    const g = bone === 'Head' || bone === 'Jaw' ? this.k.frame(geo, this.big) : bone.startsWith('Hand') ? this.k.frame(geo, this.bigHand) : bone.startsWith('Foot') ? this.k.frame(geo, Body.foot) : geo;
     this.out.push({ bone, color, geo: g, outline, glow, paint });
   }
 
@@ -218,16 +221,16 @@ export class Body {
     const col = g ?? this.skin;
     const th = g ? 1.35 : 1;
     if (g) this.add(lo, g, k.barrel(r * 1.5, r * 1.5, 0.09, 0.85, [0, -d.foreArm + 0.02, 0], [0, 0, 0], 8));
-    this.add(hb, col, k.box(0.032 * th, 0.1, 0.085 * (g ? 1.12 : 1), [0, -0.055, 0]));
+    this.add(hb, col, k.box(0.026 * th, 0.1, 0.078 * (g ? 1.12 : 1), [0, -0.055, 0]));
     [-0.028, 0, 0.028].forEach((z, i) => {
       const f = i === 2 ? 0.88 : 1;
       const k0: V3 = [0.002 * s, -0.105, z];
       const k1: V3 = [-0.018 * s, -0.105 - 0.07 * f, z * 1.1];
       const k2: V3 = [-0.04 * s, -0.105 - 0.12 * f, z * 1.15];
-      this.add(hb, col, k.rod(k0, k1, 0.011 * th, 0.009 * th, 5));
-      this.add(hb, col, k.rod(k1, k2, 0.009 * th, 0.006 * th, 5));
+      this.add(hb, col, k.rod(k0, k1, 0.0085 * th, 0.007 * th, 5));
+      this.add(hb, col, k.rod(k1, k2, 0.007 * th, 0.0045 * th, 5));
     });
-    this.add(hb, col, k.rod([-0.012 * s, -0.03, -0.04], [-0.03 * s, -0.085, -0.066], 0.011 * th, 0.008 * th, 5));
+    this.add(hb, col, k.rod([-0.012 * s, -0.03, -0.04], [-0.03 * s, -0.085, -0.066], 0.0085 * th, 0.006 * th, 5));
   }
 
   legs(o: LegOpts): void {

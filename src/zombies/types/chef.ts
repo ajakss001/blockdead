@@ -17,11 +17,11 @@ const STEEL = 0x9aa0a6;
 export const CHEF: ZombieType = {
   id: 'chef',
   name: 'Повар',
-  proportions: { height: 1.75, shoulders: 1.05, arms: 0.98, girth: 1.6, stoop: 0.35, neck: 0.75, head: 1.28, legs: 0.86, jawOpen: 0.1 },
+  proportions: { height: 1.75, shoulders: 1.05, arms: 0.98, girth: 1.6, stoop: 0.35, neck: 0.75, head: 0.86, legs: 0.86, jawOpen: 0.1 },
   missing: [],
   ...kindNumbers('chef'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.15);
+    const b = new Body(d, k, undefined, 0.95);
     const jacket = splotch([shade(STAIN, 1.2), shade(JACKET, 0.88)], 10, 0.14);
     const stain = splotch([STAIN, shade(STAIN, 0.85)], 11, 0.3);
     const t = b.torso({ top: JACKET, topPaint: jacket, seat: 0x8e918e, belly: 1 });

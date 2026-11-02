@@ -17,11 +17,11 @@ const HAIR = 0x3a3a32;
 export const COURIER: ZombieType = {
   id: 'courier',
   name: 'Курьер',
-  proportions: { height: 1.78, shoulders: 0.95, arms: 1.03, girth: 0.92, stoop: 0.75, neck: 1.1, head: 1.28, jawOpen: 0.15 },
+  proportions: { height: 1.78, shoulders: 0.95, arms: 1.03, girth: 0.92, stoop: 0.75, neck: 1.1, head: 0.88, jawOpen: 0.15 },
   missing: [],
   ...kindNumbers('courier'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.15);
+    const b = new Body(d, k, undefined, 0.95);
     const dirt = splotch([DIRT, shade(DIRT, 0.8)], 10, 0.2);
     const w = b.chestW + 0.022;
     const t = b.torso({ top: YELLOW, topPaint: dirt, seat: JEANS, w, dz: b.chestDz + 0.022 });

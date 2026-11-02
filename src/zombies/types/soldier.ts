@@ -20,11 +20,11 @@ const BLACK = 0x2b2b2b;
 export const SOLDIER: ZombieType = {
   id: 'soldier',
   name: 'Военный',
-  proportions: { height: 1.9, shoulders: 1.15, arms: 1.05, girth: 1.15, stoop: 0.15, neck: 0.85, head: 1.25, jawOpen: 0.03 },
+  proportions: { height: 1.9, shoulders: 1.15, arms: 1.05, girth: 1.15, stoop: 0.15, neck: 0.85, head: 0.94, jawOpen: 0.03 },
   missing: [],
   ...kindNumbers('soldier'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.2);
+    const b = new Body(d, k, undefined, 0.95);
     const camo = splotch([CAMO_DARK, CAMO_LIGHT], 15, 0.6);
     const t = b.torso({ top: CAMO, topPaint: camo, seat: CAMO, seatPaint: camo });
     // Plate carrier: front and back plates over the chest and belly, pouches, a patch, a belt.

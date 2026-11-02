@@ -1,12 +1,11 @@
 import {
   AmbientLight,
   type BufferGeometry,
-  CylinderGeometry,
   DirectionalLight,
   Group,
   type Material,
   Mesh,
-  MeshBasicMaterial,
+  type MeshStandardMaterial,
   PerspectiveCamera,
   PointLight,
   SphereGeometry,
@@ -14,6 +13,8 @@ import {
   Vector3,
 } from 'three';
 import { clamp, damp } from '../core/math';
+import { FLASHLIGHT } from '../items/config';
+import { setLensGlow } from '../items/flashlight';
 import { limbForward } from '../render/lowpoly';
 import { characterMaterial } from '../render/look/materials';
 import { type ArmPose, FOREARM, HAND_OFFSET, HandsRig, hitTime, type ItemState, swingTime, UPPER } from './armRig';
@@ -31,9 +32,14 @@ export interface ViewmodelFrame {
   speed: number;
   sprinting: boolean;
   flashlightOn: boolean;
+  /** How bright the flashlight shines now, 0..1 (battery, flicker): the lens glow and the bounce. */
+  light?: number;
 }
 
 const _axisY = new Vector3(0, 1, 0);
+/** The beam's main direction (eye space): ahead, a touch down. */
+const _fwd = new Vector3(0, -0.08, -1).normalize();
+const _hand = new Vector3();
 
 /**
  * First-person arms, drawn in a second pass with their own camera and FOV after clearing depth:
@@ -61,7 +67,13 @@ export class Viewmodel {
   /** Upper arms (shoulder → elbow); [right, left]. */
   private readonly uppers: Mesh[] = [];
   private readonly hands: Mesh[] = [];
-  private readonly lens: MeshBasicMaterial;
+  private readonly lens: MeshStandardMaterial;
+  /** The flashlight in its held frame (the lens at FLASHLIGHT.length on +Y). */
+  private readonly torchModel: Group;
+  /** Thumb on the button: 1 → 0. */
+  private clickT = 0;
+  /** Where the left hand rests, slowly following it: a swing throws the hand (and the beam) away from it. */
+  private readonly restL = new Vector3(-0.2, -0.3, -0.4);
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
   private readonly bounce = new PointLight(0xfffaed, 0, 1.5, 2);
@@ -118,10 +130,9 @@ export class Viewmodel {
 
     // Flashlight in the left fist, lens forward.
     this.torch = this.inFist(buildHeldModel('torch', this.geometries), HELD.torch, -1);
-    this.lens = this.mat(new MeshBasicMaterial({ color: 0x3a3a34 })) as MeshBasicMaterial;
-    const lens = new Mesh(this.geo(new CylinderGeometry(0.026, 0.026, 0.004, 8)), this.lens);
-    lens.position.y = 0.197;
-    (this.torch.children[0] as Group).add(lens);
+    this.torchModel = this.torch.children[0] as Group;
+    this.lens = ((this.torchModel.children[0] as Mesh).material as Material[])[1] as MeshStandardMaterial;
+    this.materials.push(this.lens);
     this.handL.add(this.torch);
 
     this.root.add(this.armR, this.armL, ...this.uppers);
@@ -148,11 +159,12 @@ export class Viewmodel {
   }
 
   /** Day / night for the arms (they are drawn in their own scene). */
+  /** The arms' own light follows the world's (style/stage): a grey overcast day, a dark night. */
   setDaylight(k: number): void {
-    this.ambient.color.setRGB(0.02 + 0.68 * k, 0.02 + 0.7 * k, 0.06 + 0.68 * k);
-    this.ambient.intensity = 0.15 + 0.75 * k;
-    this.moon.color.setRGB(0.35 + 0.65 * k, 0.42 + 0.53 * k, 0.56 + 0.32 * k);
-    this.moon.intensity = 0.12 + 0.6 * k;
+    this.ambient.color.setRGB(0.02 + 0.4 * k, 0.02 + 0.43 * k, 0.06 + 0.42 * k);
+    this.ambient.intensity = 0.15 + 0.6 * k;
+    this.moon.color.setRGB(0.35 + 0.37 * k, 0.42 + 0.32 * k, 0.56 + 0.19 * k);
+    this.moon.intensity = 0.12 + 0.42 * k;
   }
 
   setAspect(aspect: number): void {
@@ -214,6 +226,31 @@ export class Viewmodel {
     return this.config(this.item).noise;
   }
 
+  /** The thumb clicks the flashlight's button: the hand gives a little. */
+  click(): void {
+    this.clickT = 1;
+  }
+
+  /**
+   * Where the flashlight shines from and where to, viewmodel-camera space (= the eye's): from the lens
+   * along the flashlight, pulled mostly forward so the beam stays useful. Both hands on a weapon: from
+   * the left hand on the handle, thrown about as the hand swings away from where it rests.
+   */
+  lightFrame(pos: Vector3, dir: Vector3): void {
+    if (this.torch.visible) {
+      this.torchModel.updateWorldMatrix(true, false);
+      pos.set(0, FLASHLIGHT.length, 0);
+      this.torchModel.localToWorld(pos);
+      dir.set(0, 1, 0).transformDirection(this.torchModel.matrixWorld);
+      dir.multiplyScalar(0.15).add(_fwd).normalize();
+      return;
+    }
+    this.handL.getWorldPosition(pos);
+    dir.subVectors(pos, this.restL).multiplyScalar(2.2);
+    dir.z = 0;
+    dir.add(_fwd).normalize();
+  }
+
   /** The blow met a zombie or a wall: the arms jolt back. */
   recoil(): void {
     this.kick = 1;
@@ -223,7 +260,9 @@ export class Viewmodel {
     this.time += dt;
     this.kick = Math.max(0, this.kick - dt * 7);
     this.sprintT = damp(this.sprintT, f.sprinting ? 1 : 0, 10, dt);
-    this.leftUp = damp(this.leftUp, f.flashlightOn ? 1 : 0, 10, dt);
+    // The flashlight is always in the left hand (raised from below when it comes back from a two-handed grip).
+    this.leftUp = this.headlamp ? 0 : damp(this.leftUp, 1, 7, dt);
+    this.clickT = Math.max(0, this.clickT - dt * 6);
 
     // Weapon switch: lower, swap at the bottom, raise.
     this.rightDown = damp(this.rightDown, this.pendingItem ? 1 : 0, 12, dt);
@@ -235,11 +274,11 @@ export class Viewmodel {
     }
     const twoHanded = this.headlamp;
     this.torch.visible = !twoHanded;
-    this.lens.color.setHex(f.flashlightOn ? 0xfff2c4 : 0x3a3a34);
-    // The light comes from the left hand, or from the forehead when both hands are on a weapon.
-    if (twoHanded) this.bounce.position.set(0.05, 0.22, -0.05);
-    else this.bounce.position.set(-0.12, -0.12, -0.35);
-    this.bounce.intensity = f.flashlightOn ? (twoHanded ? 0.16 : 0.08) : 0;
+    const light = f.light ?? (f.flashlightOn ? 1 : 0);
+    setLensGlow(this.lens, light);
+    // The light spills on the hands from the left fist (on the handle when both hands are on a weapon).
+    this.bounce.position.set(twoHanded ? 0 : -0.12, -0.12, -0.35);
+    this.bounce.intensity = (twoHanded ? 0.1 : 0.08) * light;
 
     // Arms pump in step with the legs while sprinting (the left one in counter-phase).
     const pump = Math.sin(f.stepPhase) * this.sprintT;
@@ -258,6 +297,12 @@ export class Viewmodel {
     if (model) model.position.y = -this.rig.mainAlong;
     this.applyArm(this.armR, this.handR, this.uppers[0], this.rig.right.pose);
     this.applyArm(this.armL, this.handL, this.uppers[1], this.rig.left.pose);
+    // The thumb presses the button: the fist (and the flashlight in it) dips and tilts a hair.
+    if (this.clickT > 0) {
+      const k = Math.sin(this.clickT * Math.PI);
+      this.armL.position.y -= 0.006 * k;
+      this.armL.rotateX(-0.05 * k);
+    }
 
     // Sway: arms lag behind camera rotation; bob follows the step phase; idle breathing.
     const inv = 1 / Math.max(dt, 1e-3);
@@ -270,6 +315,10 @@ export class Viewmodel {
     const kick = this.kick * this.kick;
     this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
     this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
+    this.root.updateMatrixWorld(true);
+    this.handL.getWorldPosition(_hand);
+    this.restL.x = damp(this.restL.x, _hand.x, 3, dt);
+    this.restL.y = damp(this.restL.y, _hand.y, 3, dt);
   }
 
   /** Shared grunge materials are owned by look/materials; only the lens is ours. */
@@ -329,8 +378,4 @@ export class Viewmodel {
     return g;
   }
 
-  private mat(m: Material): Material {
-    this.materials.push(m);
-    return m;
-  }
 }

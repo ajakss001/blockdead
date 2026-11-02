@@ -29,7 +29,7 @@ export const LOUD_LOOPS: readonly LoopKind[] = ['siren', 'speaker', 'bell', 'mus
 export type Gait = 'walk' | 'run' | 'crouch';
 export type HitMaterial = 'wood' | 'metal' | 'concrete' | 'glass' | 'soft';
 export type ContainerSound = 'woodDoor' | 'drawer' | 'locker' | 'fridge' | 'trunk' | 'bag' | 'box' | 'trash' | 'crate' | 'shelf';
-export type ItemSound = 'pick' | 'move' | 'cloth' | 'weapon' | 'eat' | 'drink' | 'bandage' | 'invOpen' | 'invClose' | 'drag' | 'drop';
+export type ItemSound = 'click' | 'pick' | 'move' | 'cloth' | 'weapon' | 'eat' | 'drink' | 'bandage' | 'invOpen' | 'invClose' | 'drag' | 'drop';
 export type SwingKind = 'heavy' | 'blade' | 'fist';
 /** What a blow on a body sounds like: a club, a metal tool, an axe, a blade's point, a fist. */
 export type FleshBlow = 'blunt' | 'metal' | 'chop' | 'stab' | 'fist';
@@ -1016,6 +1016,12 @@ class Sound {
     if (!v) return;
     const [out, t] = v;
     switch (kind) {
+      case 'click':
+        // The flashlight's rubber button: a soft tick and the spring under it.
+        this.noiseHit(out, t, { type: 'bandpass', f: 3200, q: 2, dur: 0.018, peak: 0.22 });
+        this.tone(out, t + 0.004, { f: 1650, dur: 0.025, peak: 0.04 });
+        this.noiseHit(out, t + 0.05, { type: 'bandpass', f: 2400, q: 2, dur: 0.015, peak: 0.1 });
+        break;
       case 'pick':
         this.noiseHit(out, t, { type: 'lowpass', f: 900, dur: 0.06, peak: 0.25 });
         this.noiseHit(out, t + 0.03, { type: 'bandpass', f: 2200, q: 1, dur: 0.08, peak: 0.06 });

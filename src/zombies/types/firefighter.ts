@@ -20,11 +20,11 @@ const BOOT = 0x4e4a2e;
 export const FIREFIGHTER: ZombieType = {
   id: 'firefighter',
   name: 'Пожарный',
-  proportions: { height: 1.9, shoulders: 1.15, arms: 1.0, girth: 1.35, stoop: 0.25, neck: 0.6, head: 1.25, jawOpen: 0.12 },
+  proportions: { height: 1.9, shoulders: 1.15, arms: 1.0, girth: 1.35, stoop: 0.25, neck: 0.6, head: 0.94, jawOpen: 0.12 },
   missing: [],
   ...kindNumbers('firefighter'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.1);
+    const b = new Body(d, k, undefined, 0.95);
     const soot = splotch([SOOT, shade(TAN, 0.85)], 9, 0.22);
     const w = b.chestW + 0.03;
     const t = b.torso({ top: TAN, topPaint: soot, seat: TAN, seatPaint: soot, w, dz: b.chestDz + 0.03 });

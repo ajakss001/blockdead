@@ -210,7 +210,7 @@ const TARGETS: Record<string, Partial<Record<KeyName, [XY, XY, XY]>>> = {
   knife: { sprint: [[0.15, -0.88], null, [-0.08, -0.45]], strike: [[-0.02, -0.62], null, [-0.22, -0.3]], recover: [[0.08, -0.85], null, [-0.05, -0.45]] },
   hammer: { sprint: [[0.15, -0.88], null, [-0.1, -0.4]], strike: [[-0.02, -0.62], null, [-0.22, -0.28]], recover: [[0.08, -0.85], null, [-0.05, -0.4]] },
   fists: { sprint: [[0.1, -0.85], null, null], windup: [[0.3, -0.85], null, null], recover: [[0.14, -0.8], null, null] },
-  torch: { idle: [[-0.25, -0.85], null, [-0.16, -0.55]], sprint: [[-0.2, -0.88], null, [-0.03, -0.62]] },
+  torch: { idle: [[-0.55, -0.82], null, [-0.38, -0.5]], sprint: [[-0.45, -0.9], null, [-0.22, -0.62]] },
 };
 for (const set of Object.values(TARGETS)) for (const t of Object.values(set)) if (t && !t[1] && t[0]) t[1] = null;
 

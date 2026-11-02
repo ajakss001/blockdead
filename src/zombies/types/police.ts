@@ -17,11 +17,11 @@ const STEEL = 0xb8bec4;
 export const POLICE: ZombieType = {
   id: 'police',
   name: 'Полицейский',
-  proportions: { height: 1.75, shoulders: 1.02, arms: 1.0, girth: 1.25, stoop: 0.5, neck: 0.9, head: 1.25, jawOpen: 0.03 },
+  proportions: { height: 1.75, shoulders: 1.02, arms: 1.0, girth: 1.25, stoop: 0.5, neck: 0.9, head: 0.86, jawOpen: 0.03 },
   missing: [],
   ...kindNumbers('police'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.15);
+    const b = new Body(d, k, undefined, 0.95);
     const cloth = splotch([GRIME, shade(NAVY, 0.8)], 10, 0.12);
     const t = b.torso({ top: NAVY, topPaint: cloth, seat: NAVY, belly: 0.75 });
     // Shirt: pockets, a badge on the left, sunglasses hooked on the right pocket, epaulettes, a collar.

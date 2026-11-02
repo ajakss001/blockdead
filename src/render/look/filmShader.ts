@@ -3,6 +3,8 @@ import { Vector2 } from 'three';
 /**
  * Final full-screen pass, all-in-one so phones pay for exactly one extra pass:
  * cold horror grade → soft highlight roll-off → linear→sRGB → film grain → vignette → dither.
+ * `uGrade` 0 (low quality, CLAUDE.md «Визуальный стиль»: there only the fog and the palette make the look)
+ * skips the grade, the grain and the vignette; the fear tunnel and dying stay (they are play, not look).
  * Grain is per-screen-pixel and changes every frame: it breaks up clean low-poly gradients and ties
  * the image together like old 16 mm stock. Dither removes banding in the near-black range.
  */
@@ -15,7 +17,9 @@ export const FilmShader = {
     uVignette: { value: 0.75 },
     /** Anxiety 0..1 (already pulsed with the heartbeat): the edges close in. */
     uDread: { value: 0 },
-    uDesaturate: { value: 0.28 },
+    uDesaturate: { value: 0.42 },
+    /** 1: the cold grade, grain and vignette (medium / high); 0: none of them (low). */
+    uGrade: { value: 1 },
     /** Dying: the colour drains, the edges darken, then black (0..1 each). */
     uDeath: { value: 0 },
     uFade: { value: 0 },
@@ -35,6 +39,7 @@ export const FilmShader = {
     uniform float uVignette;
     uniform float uDread;
     uniform float uDesaturate;
+    uniform float uGrade;
     uniform float uDeath;
     uniform float uFade;
     uniform vec2 uResolution;
@@ -54,11 +59,12 @@ export const FilmShader = {
     void main() {
       vec3 c = texture2D(tDiffuse, vUv).rgb;
 
-      // Cold grade in linear space: drain color, push shadows towards blue-black.
+      // Cold grade in linear space: drain color, lean it to a cold grey-green, lift the blacks a hair
+      // (no pure black), crush nothing.
       float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      c = mix(c, vec3(L), mix(uDesaturate, 0.95, uDeath));
-      c *= vec3(0.96, 0.98, 1.06);
-      c += vec3(0.0006, 0.0009, 0.0022);
+      c = mix(c, vec3(L), mix(uDesaturate * uGrade, 0.95, uDeath));
+      c *= mix(vec3(1.0), vec3(0.95, 1.0, 0.98), uGrade);
+      c += vec3(0.0009, 0.0011, 0.0012) * uGrade;
       // Soft roll-off so the flashlight hotspot doesn't clip to flat white.
       c = c / (1.0 + c * 0.55);
 
@@ -67,11 +73,11 @@ export const FilmShader = {
       // Film grain, a touch stronger in the shadows where old film stock was noisiest.
       float lum = dot(s, vec3(0.333));
       float n = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * vec2(113.0, 71.0)) - 0.5;
-      s += n * uGrain * (1.15 - 0.6 * smoothstep(0.1, 0.7, lum));
+      s += n * uGrain * uGrade * (1.15 - 0.6 * smoothstep(0.1, 0.7, lum));
 
       vec2 uv = vUv - 0.5;
       uv.x *= uResolution.x / uResolution.y;
-      s *= 1.0 - dot(uv, uv) * (uVignette + uDeath * 1.6) * 0.6;
+      s *= 1.0 - dot(uv, uv) * (uVignette * uGrade + uDeath * 1.6) * 0.6;
       // Fear narrows the view: a dark tunnel that tightens with anxiety.
       float r = length(uv);
       float tunnel = smoothstep(0.8 - uDread * 0.5, 1.05, r);

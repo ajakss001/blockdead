@@ -18,26 +18,35 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { absoluteClip, CLIP_NAMES, type ClipName, ZombieAnimator, zombieClips } from '../zombies/animations';
 import { createZombie, setZombieOutline, type ZombieInstance, type ZombieType } from '../zombies/buildZombie';
+import { look } from '../style/look';
+import { grim } from '../style/palette';
 import { createBones } from '../zombies/skeleton';
 import { ZOMBIE_TYPES } from '../zombies/types';
+import { applyStage, onLook, setLook } from './viewerStage';
 
 /**
  * tools/zombie-viewer.html (dev server): orbit camera, every procedural zombie type, every shared clip,
  * triangles and draw calls, GLB export. URL: ?type=worker&anim=Walk&view=front|side|back|34&t=0.4
- * (t freezes the clip at that time) &outline=0 &shot=name (posts a frame to /__shot → .shots/name.jpg).
+ * (t freezes the clip at that time) &outline=1 &look=toy (the old look, see viewerStage) &shot=name (posts a frame to /__shot → .shots/name.jpg).
  */
 const q = new URLSearchParams(location.search);
 const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
 document.body.appendChild(renderer.domElement);
 const scene = new Scene();
-scene.background = new Color(0xe4e4e2);
-scene.add(new HemisphereLight(0xffffff, 0x8a8a80, 1.6));
-const sun = new DirectionalLight(0xffffff, 1.8);
+const hemi = new HemisphereLight();
+const sun = new DirectionalLight();
 sun.position.set(-2, 4, -3);
-scene.add(sun);
-const ground = new Mesh(new CircleGeometry(1.2, 32).rotateX(-Math.PI / 2), new MeshLambertMaterial({ color: 0xcfcfcb }));
+scene.add(hemi, sun);
+const groundMat = new MeshLambertMaterial();
+const ground = new Mesh(new CircleGeometry(1.2, 32).rotateX(-Math.PI / 2), groundMat);
 scene.add(ground);
+/** The game's light and fog («после») or the old bright studio («до»). */
+function stage(): void {
+  applyStage({ scene, hemi, sun, toy: { bg: 0xe4e4e2, hemi: [0xffffff, 0x8a8a80, 1.6], sun: [0xffffff, 1.8] } });
+  groundMat.color = new Color(look.grim ? grim(0x5a574c) : 0xcfcfcb);
+}
+stage();
 const camera = new PerspectiveCamera(28, 1, 0.05, 50);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.95, 0);
@@ -93,9 +102,16 @@ for (const v of Object.keys(VIEWS)) {
   views.appendChild(b);
 }
 const outline = document.getElementById('outline') as HTMLInputElement;
-outline.checked = q.get('outline') !== '0';
+outline.checked = q.get('outline') === '1';
 outline.onchange = () => setZombieOutline(outline.checked);
 setZombieOutline(outline.checked);
+// «до/после»: the old look had the outline on.
+onLook(() => {
+  stage();
+  outline.checked = !look.grim;
+  setZombieOutline(outline.checked);
+  load(ZOMBIE_TYPES[typeSel.value]);
+});
 (document.getElementById('showref') as HTMLInputElement).onchange = (e) => (ref.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none');
 document.getElementById('export')!.onclick = () => exportGlb();
 const stats = document.getElementById('stats')!;
@@ -192,4 +208,4 @@ function pick(id: string): [number, number] {
   load(ZOMBIE_TYPES[id]);
   return [zombie!.built.triangles, zombie!.built.outlineTriangles];
 }
-Object.assign(window, { __viewer: { play, setView, shot, pick, scene, renderer, camera, controls } });
+Object.assign(window, { __viewer: { play, setView, shot, pick, setLook, scene, renderer, camera, controls } });

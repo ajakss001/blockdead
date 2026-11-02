@@ -20,6 +20,7 @@ import { ZombieAnimator } from '../zombies/animations';
 import { BAKE_FPS, type Baked, bakeType, SKIN_FLOATS } from '../zombies/bake';
 import { type BuiltZombie, buildZombie, setZombieOutline, zombieBatchMaterial, zombieGeometryView, type ZombieType } from '../zombies/buildZombie';
 import { BONES, type BoneName, PARENT, boneIndex, createBones, ragdollShape, restWorld } from '../zombies/skeleton';
+import { lurch, Twitch } from '../zombies/twitch';
 import { ZOMBIE_TYPES } from '../zombies/types';
 
 /**
@@ -29,8 +30,9 @@ import { ZOMBIE_TYPES } from '../zombies/types';
  * the crowd.
  *
  * Near (DETAIL: 14 / 22 / 32 m, the nearest 3 / 6 / 10): a real mixer each — Idle / Walk / Run blended by
- * speed (walk and run timed by the simulation's step phase), Attack when it lunges (the grab lands with the
- * bite), HitReaction when staggered. Far: the type's baked loops (zombies/bake.ts) by speed, copied, no
+ * speed (walk and run timed by the simulation's step phase, warped into an uneven lurch), Attack when it
+ * lunges (the grab lands with the bite), HitReaction when staggered, and twitches of the head and hands on
+ * top (zombies/twitch). No outline (the grim look); it stays a switch. Far: the type's baked loops (zombies/bake.ts) by speed, copied, no
  * mixer; past FAR_STEP m at half the frame rate. Out of the camera's view or past the fog: not drawn.
  *
  * Death is the ragdoll's: it starts from the zombie's own pose (its mixer's or its baked frame), and the
@@ -40,8 +42,8 @@ import { ZOMBIE_TYPES } from '../zombies/types';
 
 const DETAIL: Record<QualityLevel, { near: number; count: number; outline: boolean; corpses: number }> = {
   low: { near: 14, count: 3, outline: false, corpses: 24 },
-  medium: { near: 22, count: 6, outline: true, corpses: 32 },
-  high: { near: 32, count: 10, outline: true, corpses: 48 },
+  medium: { near: 22, count: 6, outline: false, corpses: 32 },
+  high: { near: 32, count: 10, outline: false, corpses: 48 },
 };
 /** Far zombies past this (m) step their baked loop at half the rate. */
 const FAR_STEP = 24;
@@ -152,6 +154,7 @@ interface Rig {
   root: Group;
   bones: ReturnType<typeof createBones>;
   anim: ZombieAnimator;
+  twitch: Twitch;
   id: number;
   last: ZombieState | null;
 }
@@ -284,7 +287,7 @@ export class ZombieModels {
   private bakedFrame(baked: Baked, type: ZombieType, z: Zombie, half: boolean): Float32Array {
     const idle = z.speed < 0.15;
     const clip = idle ? baked.clips.Idle : z.speed < 0.9 ? baked.clips.Walk : baked.clips.Run;
-    const cyc = idle ? (this.time * type.animSpeed) / (clip.frames / BAKE_FPS) + (z.id % 17) / 17 : z.phase / (Math.PI * 2);
+    const cyc = idle ? (this.time * type.animSpeed) / (clip.frames / BAKE_FPS) + (z.id % 17) / 17 : lurch((((z.phase / (Math.PI * 2)) % 1) + 1) % 1, z.id);
     let f = Math.floor((((cyc % 1) + 1) % 1) * clip.frames) % clip.frames;
     if (half) f -= f & 1;
     return clip.data.subarray(f * SKIN_FLOATS, (f + 1) * SKIN_FLOATS);
@@ -304,7 +307,7 @@ export class ZombieModels {
       anim.actions.Run.timeScale = 0;
       // The grab of the attack (0.55 s, ATTACK_HIT) lands with the simulation's bite (windup 0.55 s).
       anim.actions.Attack.timeScale = 1;
-      r = { type, root, bones, anim, id: -1, last: null };
+      r = { type, root, bones, anim, twitch: new Twitch(this.rigs.length + 1), id: -1, last: null };
       this.rigs.push(r);
     }
     r.id = z.id;
@@ -316,7 +319,8 @@ export class ZombieModels {
     const a = r.anim.actions;
     const move = Math.min(1, z.speed / 0.25);
     const run = Math.min(1, Math.max(0, (z.speed - 0.8) / 0.4));
-    const cyc = (((z.phase / (Math.PI * 2)) % 1) + 1) % 1;
+    const step = (((z.phase / (Math.PI * 2)) % 1) + 1) % 1;
+    const cyc = ((lurch(step, z.id) % 1) + 1) % 1;
     a.Walk.time = cyc * a.Walk.getClip().duration;
     a.Run.time = cyc * a.Run.getClip().duration;
     a.Idle.setEffectiveWeight(1 - move);
@@ -327,6 +331,7 @@ export class ZombieModels {
     if (s === 'stagger' && r.last !== 'stagger') a.HitReaction.reset().setEffectiveWeight(1).play();
     r.last = s;
     r.anim.update(dt);
+    r.twitch.apply(r.bones, dt);
     r.root.updateMatrixWorld(true);
   }
 

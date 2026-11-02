@@ -18,11 +18,11 @@ const BOOT = 0x5a503a;
 export const BUILDER: ZombieType = {
   id: 'builder',
   name: 'Строитель',
-  proportions: { height: 1.85, shoulders: 1.12, arms: 1.05, girth: 1.2, stoop: 0.35, neck: 0.9, head: 1.25, jawOpen: 0.08 },
+  proportions: { height: 1.85, shoulders: 1.12, arms: 1.05, girth: 1.2, stoop: 0.35, neck: 0.9, head: 0.91, jawOpen: 0.08 },
   missing: [],
   ...kindNumbers('builder'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.25);
+    const b = new Body(d, k, undefined, 0.95);
     const plaid = check(SHIRT_A, SHIRT_B, 0.045);
     const t = b.torso({ top: SHIRT_A, topPaint: plaid, seat: JEANS });
     // The vest: open at the front, two silver bands round the body, braces over the shoulders.

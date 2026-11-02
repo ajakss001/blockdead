@@ -53,6 +53,11 @@ export class PostFX {
     }
   }
 
+  /** The cold grade, grain and vignette on (medium / high) or off (low: the fog and the palette alone). */
+  setGrade(on: boolean): void {
+    this.filmPass.uniforms.uGrade.value = on ? 1 : 0;
+  }
+
   /** 0..1 anxiety vignette (see FilmShader.uDread). */
   setDread(amount: number): void {
     this.filmPass.uniforms.uDread.value = Math.min(1, Math.max(0, amount));

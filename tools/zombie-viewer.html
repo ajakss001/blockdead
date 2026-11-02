@@ -10,7 +10,7 @@
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #e4e4e2;
+        background: #5e6366;
         font: 13px system-ui, sans-serif;
       }
       #ui {
@@ -44,10 +44,12 @@
         z-index: 10;
       }
       #tabs .on,
-      #weaponUi .on {
+      #weaponUi .on,
+      #itemUi .on {
         background: #2b2b2b;
         color: #fff;
       }
+      #itemUi,
       #weaponUi {
         position: fixed;
         top: 8px;
@@ -61,9 +63,20 @@
         gap: 6px;
         max-width: 240px;
       }
+      #istats,
       #wstats {
         font-family: ui-monospace, monospace;
         white-space: pre;
+      }
+      #look {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 10;
+      }
+      #look .on {
+        background: #2b2b2b;
+        color: #fff;
       }
       #ref {
         z-index: 9;
@@ -81,12 +94,13 @@
       <label>Тип <select id="type"></select></label>
       <div id="anims"></div>
       <div id="views"></div>
-      <label><input type="checkbox" id="outline" checked /> обводка</label>
+      <label><input type="checkbox" id="outline" /> обводка</label>
       <label><input type="checkbox" id="showref" /> референс</label>
       <button id="export">Экспорт GLB</button>
       <div id="stats"></div>
     </div>
-    <div id="tabs"><button data-tab="zombies" class="on">Зомби</button><button data-tab="weapons">Оружие</button></div>
+    <div id="tabs"><button data-tab="zombies" class="on">Зомби</button><button data-tab="weapons">Оружие</button><button data-tab="items">Предметы</button></div>
+    <div id="look"><button data-look="toy">до</button><button data-look="grim">после</button></div>
     <div id="weaponUi">
       <div id="wlist"></div>
       <div id="wanims"></div>
@@ -94,8 +108,15 @@
       <label><input type="checkbox" id="wref" /> референс</label>
       <div id="wstats"></div>
     </div>
+    <div id="itemUi">
+      <label><input type="checkbox" id="ion" checked /> включён</label>
+      <label>заряд <input type="range" id="icharge" min="0" max="100" value="100" /> <span id="icharge-v">100%</span></label>
+      <label><input type="checkbox" id="iref" /> референс</label>
+      <div id="istats"></div>
+    </div>
     <img id="ref" src="/refs/zombie_worker.jpg" alt="" />
     <script type="module" src="/src/debug/zombieViewer.ts"></script>
     <script type="module" src="/src/debug/weaponViewer.ts"></script>
+    <script type="module" src="/src/debug/itemViewer.ts"></script>
   </body>
 </html>

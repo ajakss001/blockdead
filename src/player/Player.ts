@@ -1,4 +1,6 @@
-import { type Mesh, Object3D, type PerspectiveCamera, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
+import { Color, type Mesh, Object3D, type PerspectiveCamera, Quaternion, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
+import { FLASHLIGHT } from '../items/config';
+import { beamMask } from '../items/flashlight';
 import { type HitMaterial, sfx, type SwingKind } from '../audio/Sound';
 import { SURFACE_LIST, type Surface } from '../render/look/surfaces';
 import { clamp, damp, lerp } from '../core/math';
@@ -10,25 +12,12 @@ import { BodyModel } from './BodyModel';
 import { type GroundFn, PlayerController, SPEED_WALK } from './PlayerController';
 import { Viewmodel, type ViewmodelFrame } from './Viewmodel';
 
-/**
- * Flashlight. Intensity is in candela (three ≥ r155 physical lights): with decay 2 the legacy
- * "intensity 2" would be invisible past a couple of meters; ~30 cd gives the same look.
- */
-const FLASHLIGHT = {
-  color: 0xfffaed,
-  intensity: 30,
-  distance: 28,
-  angle: 0.45,
-  penumbra: 0.35,
-  decay: 2,
-} as const;
-
-/**
- * Where the light sits relative to the eyes: in the left hand (below-left, so shadows fall visibly
- * behind objects), or as a headlamp just above the eyes when both hands hold a weapon.
- */
-const HAND_LIGHT = { pos: new Vector3(-0.22, -0.28, 0.05), aim: new Vector3(-0.04, -0.12, -6) };
-const HEAD_LIGHT = { pos: new Vector3(0.02, 0.09, -0.04), aim: new Vector3(0, -0.4, -6) };
+/** Flashlight colours: fresh, and as the battery dies (dimmer and yellower). */
+const LIGHT_COLOR = new Color(FLASHLIGHT.light.color);
+const WEAK_COLOR = new Color(FLASHLIGHT.light.weakColor);
+const _lp = new Vector3();
+const _ld = new Vector3();
+const _q = new Quaternion();
 
 /** What a swing sounds like hitting each world surface. */
 const MATERIAL: Partial<Record<Surface, HitMaterial>> = {
@@ -51,8 +40,8 @@ const _ray = new Raycaster();
 /** How far the eyes move forward when looking straight down (neck flexion), m. */
 const NECK_LEAN = 0.14;
 
-/** Full battery lasts this many seconds of light. */
-const BATTERY_LIFE = 480;
+/** Full battery lasts this many seconds of light (items/config). */
+const BATTERY_LIFE = FLASHLIGHT.battery.life;
 
 /**
  * Player = controller (simulation) + camera rig + own body + viewmodel arms + flashlight.
@@ -79,9 +68,15 @@ export class Player {
     sprinting: false,
     flashlightOn: false,
   };
+  /** Low battery: seconds to the next drop-out, and what is left of the current one. */
   private flickerT = 0;
+  private dropT = 0;
+  /** A dead battery still gives a weak flash when pressed: seconds left of it. */
+  private flashT = 0;
   private readonly lightTarget: Object3D;
-  private headlamp = false;
+  /** The beam's direction in the world: it trails the camera a little (the light is in a hand). */
+  private readonly beam = new Vector3();
+  private beamSet = false;
   /** Camera dip after a landing, m (springs back). */
   private landDip = 0;
   /** Camera jolt when a blow lands (rad). */
@@ -107,7 +102,6 @@ export class Player {
     this.hitKick = Math.max(this.hitKick, -0.05 * strength);
     this.landDip = Math.max(this.landDip, 0.04 * strength);
   }
-  private flickerNext = 12;
   private readonly unsubs: (() => void)[] = [];
 
   constructor(
@@ -122,18 +116,20 @@ export class Player {
     this.controller = new PlayerController(spawn, yaw);
     scene.add(this.body.root);
 
-    // Rigidly attached to the camera, but held in the left hand (below-left of the eyes):
+    // On the camera, but from the lens of the flashlight in the left hand (Viewmodel.lightFrame):
     // a light exactly at the eye hides every shadow directly behind the object it falls on.
-    const f = FLASHLIGHT;
+    // An uneven beam: the cookie (hot spot, dark ring, faint halo, the crack's streaks).
+    const f = FLASHLIGHT.light;
     this.flashlight = new SpotLight(f.color, 0, f.distance, f.angle, f.penumbra, f.decay);
-    this.flashlight.position.copy(HAND_LIGHT.pos);
+    this.flashlight.map = beamMask();
+    this.flashlight.position.set(-0.2, -0.25, -0.3);
     const target = new Object3D();
-    target.position.copy(HAND_LIGHT.aim);
+    target.position.set(-0.2, -0.5, -6);
     this.flashlight.target = target;
     this.lightTarget = target;
-    // castShadow stays constant (toggling it recompiles shaders); an unlit flashlight simply
-    // stops re-rendering its shadow map via shadow.autoUpdate.
-    this.flashlight.castShadow = true;
+    // Shadows on high quality only (set by applyQuality; switching recompiles shaders, so only then);
+    // an unlit flashlight stops re-rendering its shadow map via shadow.autoUpdate.
+    this.flashlight.castShadow = false;
     this.flashlight.shadow.autoUpdate = false;
     this.flashlight.shadow.bias = -0.0006;
     this.flashlight.shadow.normalBias = 0.03;
@@ -245,15 +241,7 @@ export class Player {
     this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
 
     this.body.update(x, y, z, c.yaw, phase, c.speed, crouchT);
-    this.updateFlicker(frameDt);
-    // Both hands on a weapon: the flashlight is strapped to the forehead (same battery).
-    const head = this.viewmodel.headlamp;
-    if (head !== this.headlamp) {
-      this.headlamp = head;
-      const l = head ? HEAD_LIGHT : HAND_LIGHT;
-      this.flashlight.position.copy(l.pos);
-      this.lightTarget.position.copy(l.aim);
-    }
+    const light = this.lightLevel(frameDt);
 
     const f = this.frame;
     f.lookX = this.look.x;
@@ -262,7 +250,9 @@ export class Player {
     f.speed = c.speed;
     f.sprinting = c.sprinting;
     f.flashlightOn = this.flashlightOn;
+    f.light = light;
     this.viewmodel.update(frameDt, f);
+    this.aimLight(frameDt, light);
   }
 
   dispose(): void {
@@ -286,35 +276,82 @@ export class Player {
     this.battery = Math.min(1, this.battery + amount);
   }
 
+  /** F: the thumb clicks the button. A dead battery gives only a weak flash. */
   private setFlashlight(on: boolean): void {
+    sfx.item('click');
+    this.viewmodel.click();
     if (on && this.battery <= 0) {
+      this.flashT = 0.12;
       this.ctx.hud.toast('Нужны батарейки');
       return;
     }
     this.flashlightOn = on;
-    this.flashlight.intensity = on ? FLASHLIGHT.intensity : 0;
-    this.flashlight.shadow.autoUpdate = on;
-    this.flashlight.shadow.needsUpdate = on;
+    this.dropT = 0;
+    this.flickerT = 1;
+    const shadow = this.flashlight.castShadow && on;
+    this.flashlight.shadow.autoUpdate = shadow;
+    this.flashlight.shadow.needsUpdate = shadow;
   }
 
-  /** Cheap batteries: every 10–40 s the beam stutters for a fraction of a second. */
-  private updateFlicker(dt: number): void {
-    if (!this.flashlightOn) return;
-    this.flickerT += dt;
-    if (this.flickerT < this.flickerNext) return;
-    const burst = this.flickerT - this.flickerNext;
-    if (burst < 0.35) {
-      this.flashlight.intensity = FLASHLIGHT.intensity * (Math.random() < 0.5 ? 0.15 : 0.7);
-    } else {
-      this.flashlight.intensity = FLASHLIGHT.intensity;
-      this.flickerT = 0;
-      // A dying battery flickers far more often.
-      this.flickerNext = this.battery < 0.15 ? 1.5 + Math.random() * 3 : 10 + Math.random() * 30;
+  /**
+   * How bright the flashlight is now, 0..1: full above 30% charge; below, dimmer (and yellower, see
+   * aimLight); below 15% it flickers and drops out for 0.1–0.5 s now and then.
+   */
+  private lightLevel(dt: number): number {
+    if (this.flashT > 0) {
+      this.flashT -= dt;
+      return this.flashT > 0 ? 0.1 : 0;
     }
+    if (!this.flashlightOn) return 0;
+    const b = this.battery;
+    const B = FLASHLIGHT.battery;
+    let k = b >= B.dim ? 1 : 0.3 + (0.7 * b) / B.dim;
+    if (b < B.flicker) {
+      this.flickerT -= dt;
+      if (this.dropT > 0) {
+        this.dropT -= dt;
+        k *= 0.04;
+      } else if (this.flickerT <= 0) {
+        this.dropT = 0.1 + Math.random() * 0.4;
+        // The emptier, the more often.
+        this.flickerT = 0.5 + Math.random() * (0.6 + (6 * b) / B.flicker);
+      } else {
+        k *= 0.82 + 0.18 * Math.random();
+      }
+    }
+    return k;
+  }
+
+  /**
+   * The beam from the flashlight in the hand: from its lens, along it (Viewmodel.lightFrame), trailing
+   * the camera's turns a little; brightness and colour by the battery.
+   */
+  private aimLight(dt: number, level: number): void {
+    const L = this.flashlight;
+    L.intensity = FLASHLIGHT.light.intensity * level;
+    const weak = this.battery < FLASHLIGHT.battery.dim ? 1 - this.battery / FLASHLIGHT.battery.dim : 0;
+    L.color.copy(LIGHT_COLOR).lerp(WEAK_COLOR, weak);
+    this.viewmodel.lightFrame(_lp, _ld);
+    L.position.copy(_lp);
+    this.camera.updateMatrixWorld();
+    this.camera.getWorldQuaternion(_q);
+    _ld.applyQuaternion(_q);
+    if (!this.beamSet) {
+      this.beam.copy(_ld);
+      this.beamSet = true;
+    } else this.beam.lerp(_ld, 1 - Math.exp(-12 * dt)).normalize();
+    this.lightTarget.position.copy(this.beam).applyQuaternion(_q.invert()).multiplyScalar(6).add(_lp);
   }
 
 
   private applyQuality(preset: QualityPreset): void {
+    // Shadows from the flashlight on high quality only.
+    const shadows = preset.level === 'high' && preset.shadowMapSize > 0;
+    if (this.flashlight.castShadow !== shadows) {
+      this.flashlight.castShadow = shadows;
+      this.flashlight.shadow.autoUpdate = shadows && this.flashlightOn;
+      this.flashlight.shadow.needsUpdate = shadows;
+    }
     const size = Math.max(preset.shadowMapSize, 1);
     const shadow = this.flashlight.shadow;
     if (shadow.camera.far !== preset.shadowDistance) {

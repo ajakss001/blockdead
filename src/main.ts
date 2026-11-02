@@ -57,6 +57,9 @@ async function boot(): Promise<void> {
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);
+  // The grade, grain and vignette cost nothing extra (one pass either way) but stay off on low.
+  postfx.setGrade(level !== 'low');
+  events.on('quality:changed', (e) => postfx.setGrade(e.level !== 'low'));
   const hud = new Hud(uiEl);
 
   // ?scene=bench — the stage 0 rendering benchmark.

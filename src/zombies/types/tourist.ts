@@ -18,11 +18,11 @@ const BURN = 0xb07a70;
 export const TOURIST: ZombieType = {
   id: 'tourist',
   name: 'Турист',
-  proportions: { height: 1.72, shoulders: 0.98, arms: 1.0, girth: 1.08, stoop: 0.5, neck: 0.95, head: 1.28, jawOpen: 0.14 },
+  proportions: { height: 1.72, shoulders: 0.98, arms: 1.0, girth: 1.08, stoop: 0.5, neck: 0.95, head: 0.85, jawOpen: 0.14 },
   missing: [],
   ...kindNumbers('tourist'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.15);
+    const b = new Body(d, k, undefined, 0.95);
     const shirt = print(PALM, FLOWER, 13, 0.55);
     const t = b.torso({ top: VEST, seat: SHORTS, belly: 0.4 });
     // The open shirt over the vest: a print, a collar, the hem loose over the shorts.

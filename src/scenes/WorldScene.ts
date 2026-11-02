@@ -1,5 +1,4 @@
 import {
-  AmbientLight,
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
@@ -7,6 +6,7 @@ import {
   DirectionalLight,
   Fog,
   Group,
+  HemisphereLight,
   LineBasicMaterial,
   LineSegments,
   Mesh,
@@ -80,25 +80,12 @@ import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
 import { type ContainerRef, searchBox } from '../systems/Containers';
 import type { TwinRecord } from '../systems/SaveGame';
+import { GrimFog } from '../render/GrimFog';
+import { DAY, NIGHT } from '../style/stage';
 
-/**
- * Night setup. Ambient sits at the floor; a weak cold moon keeps silhouettes and roof lines
- * readable against the sky on a phone screen — everything else is flashlight.
- */
-const NIGHT = {
-  sky: 0x0a0d14,
-  fogNear: 3,
-  ambient: { color: 0x050510, intensity: 0.15 },
-  moon: { color: 0x5a6c90, intensity: 0.35 },
-} as const;
-
-/** Overcast late-autumn day: grey sky, soft cool light, no hard sun. */
-const DAY = {
-  sky: 0x8d969f,
-  fogNear: 12,
-  ambient: { color: 0xc4c8d0, intensity: 1.05 },
-  sun: { color: 0xfff2e0, intensity: 1.35 },
-} as const;
+// Day and night light (style/stage, CLAUDE.md «Визуальный стиль»): an overcast cold day — a grey sky
+// hemisphere over dark earth, a weak cold sun, grey exponential fog; at night a floor of light, a weak cold
+// moon for silhouettes and roof lines — everything else is the flashlight.
 
 const DEFAULT_SEED = 1993;
 const _dayColor = new Color();
@@ -226,7 +213,7 @@ export class WorldScene implements IScene {
   private saveT = 0;
   private moodleT = 0;
   private readonly clock = new Clock();
-  private ambient!: AmbientLight;
+  private ambient!: HemisphereLight;
   private moon!: DirectionalLight;
   private lightKey = -1;
   /** Ambient light from the hour (a lightning flash adds to it); fog's reach as a share of the preset's. */
@@ -296,8 +283,8 @@ export class WorldScene implements IScene {
   init(ctx: GameContext): void {
     this.ctx = ctx;
     this.scene.background = new Color(NIGHT.sky);
-    this.scene.fog = new Fog(NIGHT.sky, NIGHT.fogNear, ctx.quality.preset.fogFar);
-    this.ambient = new AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity);
+    this.scene.fog = new GrimFog(NIGHT.sky, NIGHT.fogNear, ctx.quality.preset.fogFar);
+    this.ambient = new HemisphereLight(NIGHT.hemi.sky, NIGHT.hemi.ground, NIGHT.hemi.intensity);
     this.scene.add(this.ambient);
     const moon = new DirectionalLight(NIGHT.moon.color, NIGHT.moon.intensity);
     moon.position.set(-30, 40, -10);
@@ -801,8 +788,9 @@ export class WorldScene implements IScene {
     const fog = this.scene.fog as Fog;
     fog.color.copy(sky);
     fog.near = NIGHT.fogNear + (DAY.fogNear - NIGHT.fogNear) * k;
-    this.ambient.color.set(NIGHT.ambient.color).lerp(_dayColor.set(DAY.ambient.color), k);
-    this.ambientBase = NIGHT.ambient.intensity + (DAY.ambient.intensity - NIGHT.ambient.intensity) * k;
+    this.ambient.color.set(NIGHT.hemi.sky).lerp(_dayColor.set(DAY.hemi.sky), k);
+    this.ambient.groundColor.set(NIGHT.hemi.ground).lerp(_dayColor.set(DAY.hemi.ground), k);
+    this.ambientBase = NIGHT.hemi.intensity + (DAY.hemi.intensity - NIGHT.hemi.intensity) * k;
     this.moon.color.set(NIGHT.moon.color).lerp(_dayColor.set(DAY.sun.color), k);
     this.moon.intensity = NIGHT.moon.intensity + (DAY.sun.intensity - NIGHT.moon.intensity) * k;
     this.moon.position.set(-30 + 10 * k, 40 + 30 * k, -10 + 20 * k);

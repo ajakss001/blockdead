@@ -1,28 +1,48 @@
-import { Group, type Mesh, Vector3 } from 'three';
+import { Group, Mesh, Vector3 } from 'three';
+import type { ItemId } from '../data/items';
 import type { ContainerType } from '../data/loot';
-import { buildWeapon, weaponHighlightMaterial, weaponMaterial, weaponMesh } from './buildWeapon';
+import { batteriesGeometry, batteriesHighlightMaterial, flashlightMaterial } from '../items/flashlight';
+import { weaponHighlightMaterial, weaponMaterial, weaponMesh } from './buildWeapon';
 import { WEAPONS, type WeaponId } from './config';
+
+/** What can lie about: the four weapons, and packs of batteries for the flashlight. */
+export type GroundKind = WeaponId | 'batteries';
+
+/** The inventory item a thing lying about is. */
+export function groundItem(kind: GroundKind): ItemId {
+  return kind === 'batteries' ? 'batteries' : WEAPONS[kind].item;
+}
+
+/** Length along the model's −Z and where its origin is from the back end (as WeaponConfig). */
+function sizeOf(kind: GroundKind): { length: number; grip: number } {
+  return kind === 'batteries' ? { length: 0.052, grip: 0.036 } : WEAPONS[kind];
+}
 
 /** A weapon lying on the floor: on its side, picked up with E. */
 export interface GroundWeapon {
   /** Unique: the container it lies by (or a debug id ≥ 3e9). */
   key: number;
-  weapon: WeaponId;
+  weapon: GroundKind;
   mesh: Mesh;
   /** The middle of the weapon, world. */
   at: Vector3;
 }
 
 /** Which containers may have a weapon lying beside them, how likely, and which ones. */
-const NEAR: Partial<Record<ContainerType, { chance: number; weapons: WeaponId[] }>> = {
+const NEAR: Partial<Record<ContainerType, { chance: number; weapons: GroundKind[] }>> = {
   garage: { chance: 0.3, weapons: ['hammer', 'crowbar', 'hammer'] },
-  crate: { chance: 0.12, weapons: ['crowbar', 'hammer'] },
+  crate: { chance: 0.14, weapons: ['crowbar', 'hammer', 'batteries'] },
   plantStore: { chance: 0.25, weapons: ['crowbar', 'hammer'] },
   labTools: { chance: 0.2, weapons: ['hammer', 'crowbar'] },
   trunk: { chance: 0.025, weapons: ['crowbar', 'fireAxe'] },
-  reception: { chance: 0.25, weapons: ['fireAxe', 'crowbar'] },
+  reception: { chance: 0.3, weapons: ['fireAxe', 'crowbar', 'batteries'] },
   bodyFire: { chance: 0.5, weapons: ['fireAxe'] },
-  bodyMilitary: { chance: 0.35, weapons: ['tacticalKnife'] },
+  bodyMilitary: { chance: 0.45, weapons: ['tacticalKnife', 'batteries'] },
+  bodyPolice: { chance: 0.3, weapons: ['batteries'] },
+  bodyZombie: { chance: 0.06, weapons: ['batteries'] },
+  shopCounter: { chance: 0.12, weapons: ['batteries'] },
+  gasCounter: { chance: 0.2, weapons: ['batteries'] },
+  desk: { chance: 0.04, weapons: ['batteries'] },
   armory: { chance: 0.4, weapons: ['tacticalKnife', 'crowbar'] },
   cafe: { chance: 0.12, weapons: ['tacticalKnife'] },
   canteen: { chance: 0.15, weapons: ['tacticalKnife'] },
@@ -92,7 +112,7 @@ export class GroundWeapons {
   }
 
   /** Lay a weapon at a point (debug, tests): `yaw` turns it about the vertical. */
-  drop(weapon: WeaponId, x: number, y: number, z: number, yaw = 0): GroundWeapon {
+  drop(weapon: GroundKind, x: number, y: number, z: number, yaw = 0): GroundWeapon {
     const w = this.make(3e9 + this.loose.length, weapon, x, y, z, yaw);
     this.loose.push(w);
     return w;
@@ -116,9 +136,13 @@ export class GroundWeapons {
   /** The one under the crosshair gets the light outline (null: none). */
   setFocus(w: GroundWeapon | null): void {
     if (w === this.focused) return;
-    if (this.focused) this.focused.mesh.material = weaponMaterial();
+    const lit = (g: GroundWeapon, on: boolean) => {
+      if (g.weapon === 'batteries') g.mesh.material = on ? batteriesHighlightMaterial() : flashlightMaterial();
+      else g.mesh.material = on ? weaponHighlightMaterial() : weaponMaterial();
+    };
+    if (this.focused) lit(this.focused, false);
     this.focused = w;
-    if (w) w.mesh.material = weaponHighlightMaterial();
+    if (w) lit(w, true);
   }
 
   /** Picked up: gone for good. */
@@ -157,13 +181,13 @@ export class GroundWeapons {
   }
 
   /** Beside the container's search zone, on the floor where nothing stands; null if there is no room. */
-  private placeBy(s: GroundSpot, weapon: WeaponId): GroundWeapon | null {
+  private placeBy(s: GroundSpot, weapon: GroundKind): GroundWeapon | null {
     const b = s.box;
     const cx = b ? b[0] : s.x;
     const cz = b ? b[2] : s.z;
     const y = s.y ?? 0;
     const r = b ? Math.max(b[3], b[5]) + 0.35 : 0.7;
-    const half = WEAPONS[weapon].length / 2;
+    const half = sizeOf(weapon).length / 2;
     const a0 = hash(this.seed, s.id, 3) * Math.PI * 2;
     for (let k = 0; k < 8; k++) {
       const a = a0 + (k * Math.PI) / 4;
@@ -180,11 +204,11 @@ export class GroundWeapons {
     return null;
   }
 
-  private make(key: number, weapon: WeaponId, x: number, y: number, z: number, yaw: number): GroundWeapon {
-    const mesh = weaponMesh(weapon);
-    const box = buildWeapon(weapon).geometry.boundingBox!;
-    const grip = WEAPONS[weapon].grip;
-    const mid = grip - WEAPONS[weapon].length / 2;
+  private make(key: number, weapon: GroundKind, x: number, y: number, z: number, yaw: number): GroundWeapon {
+    const mesh = weapon === 'batteries' ? new Mesh(batteriesGeometry(), flashlightMaterial()) : weaponMesh(weapon);
+    const box = mesh.geometry.boundingBox!;
+    const { grip, length } = sizeOf(weapon);
+    const mid = grip - length / 2;
     // On its side: rolled a quarter turn about its length (the blade, +Y, to the side), the middle of
     // its length at (x, z), resting on its widest side.
     mesh.rotation.set(0, yaw, Math.PI / 2, 'YXZ');
@@ -199,7 +223,7 @@ export class GroundWeapons {
 
 /** Distance along a ray to a capsule round the weapon's length (radius r), or −1. */
 function rayCapsule(o: Vector3, d: Vector3, w: GroundWeapon, r: number): number {
-  const half = WEAPONS[w.weapon].length / 2;
+  const half = sizeOf(w.weapon).length / 2;
   const yaw = w.mesh.rotation.y;
   const ax = -Math.sin(yaw);
   const az = -Math.cos(yaw);

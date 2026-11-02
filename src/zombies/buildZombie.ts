@@ -11,6 +11,7 @@ import {
   Euler,
   Matrix3,
   Matrix4,
+  MeshLambertMaterial,
   MeshToonMaterial,
   NearestFilter,
   Quaternion,
@@ -24,15 +25,22 @@ import {
 } from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BONES, type BoneName, boneIndex, createBones, type Proportions, restWorld, type SkeletonDims, skeletonDims } from './skeleton';
+import { DIRT, EYES, grim, MAX_GLOW, rgb, SKIN, SOOT } from '../style/palette';
+import { glslColor, look, NOISE_GLSL, noise3, smoothstep, stainGlsl } from '../style/look';
 
 /**
  * Procedural zombies: a type (types/*.ts) lists its parts — low-poly primitives in the frame of the bone
  * that carries them — and this merges them into ONE SkinnedMesh, every vertex 100% on its bone (rigid
- * skinning): one draw call per zombie. Colours per vertex, one shared toon material for every zombie.
+ * skinning): one draw call per zombie. Colours per vertex, one shared material for every zombie.
+ *
+ * The grim look (CLAUDE.md «Визуальный стиль», `look.grim`): every colour through `grim`, the skin the
+ * palette's, the eyes milky and barely lit; grime baked into the vertex colours (noise, dark joints and
+ * folds, dust from the ground up, dark rings round the eyes, hollow cheeks); stains, patches and tears on
+ * the clothes in the shader; Lambert shading. The toy look (the viewer's «до») keeps the old toon colours.
  *
  * The black outline is an inverted hull in the same geometry (and so the same draw call): a copy of the
  * outlined parts with smoothed normals and reversed winding, pushed out along the normal in the vertex
- * shader. Its triangles come after the body's: switching it off on weak devices just shortens the draw range.
+ * shader. Its triangles come after the body's: off (the default) it just shortens the draw range.
  *
  * Missing limbs (`missing: ['arm_L']`) build no geometry; the bones stay, so every clip still plays.
  */
@@ -166,8 +174,10 @@ const cache = new Map<string, BuiltZombie>();
 
 /** Shared geometry of a type (built once). */
 export function buildZombie(type: ZombieType): BuiltZombie {
-  const hit = cache.get(type.id);
+  const key = look.grim ? type.id : `${type.id}:toy`;
+  const hit = cache.get(key);
   if (hit) return hit;
+  const grimLook = look.grim;
   const dims = skeletonDims(type.proportions);
   const rest = restWorld(dims);
   const parts = type.parts(dims, kit).filter((p) => {
@@ -182,7 +192,9 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   const pat0: number[] = [];
   const pat1: number[] = [];
   const pat2: number[] = [];
+  const cloth: number[] = [];
   const skin: number[] = [];
+  const grime = grimLook ? grimer(type, dims, rest) : null;
   const body: number[] = [];
   const hull: number[] = [];
   const nm = new Matrix3();
@@ -191,8 +203,12 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   const add = (p: PartSpec, outline: boolean) => {
     const g = p.geo;
     const pt = outline ? undefined : p.paint;
-    const ca = new Color(pt?.a ?? 0);
-    const cb = new Color(pt?.b ?? 0);
+    const isSkin = grimLook && !outline && skinLike(p.color);
+    const glowing = (p.glow ?? 0) > 0;
+    const tone = (hex: number) => (grimLook ? grim(hex) : hex);
+    const ca = new Color(tone(pt?.a ?? 0));
+    const cb = new Color(tone(pt?.b ?? 0));
+    const isCloth = grimLook && !outline && !isSkin && !glowing && p.outline !== false;
     const P = g.getAttribute('position');
     const N = g.getAttribute('normal');
     const bi = boneIndex(p.bone);
@@ -200,21 +216,30 @@ export function buildZombie(type: ZombieType): BuiltZombie {
     nm.getNormalMatrix(m);
     const base = pos.length / 3;
     const smooth = outline ? smoothNormals(g) : null;
-    if (outline) c.setRGB(0, 0, 0);
-    else c.setHex(p.color);
+    const own = new Color();
+    if (outline) own.setRGB(0, 0, 0);
+    else if (!grimLook) own.setHex(p.color);
+    else own.setHex(glowing ? EYES : isSkin ? skinTone(p.color) : grim(p.color));
+    const local = new Vector3();
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i);
-      pat0.push(v.x, v.y, v.z, pt ? PATTERN_KIND[pt.kind] : 0);
-      pat1.push(ca.r, ca.g, ca.b, pt?.scale ?? 0);
-      pat2.push(cb.r, cb.g, cb.b, pt?.share ?? 0);
+      local.copy(v);
       v.applyMatrix4(m);
+      // Grime: darker in the joints and folds, dust from the ground up, rings round the eyes.
+      // Cloth a shade darker still (worn, never clean): a white shirt ends up about #8E8C82.
+      const f = (grime && !outline && !glowing ? grime(v, local, p.bone, isSkin) : 1) * (isCloth ? 0.9 : 1);
+      c.copy(own).multiplyScalar(f);
+      pat0.push(local.x, local.y, local.z, pt ? PATTERN_KIND[pt.kind] : 0);
+      pat1.push(ca.r * f, ca.g * f, ca.b * f, pt?.scale ?? 0);
+      pat2.push(cb.r * f, cb.g * f, cb.b * f, pt?.share ?? 0);
+      cloth.push(isCloth ? 1 : 0);
       pos.push(v.x, v.y, v.z);
       if (smooth) v.fromArray(smooth, i * 3);
       else v.fromBufferAttribute(N, i);
       v.applyMatrix3(nm).normalize();
       nor.push(v.x, v.y, v.z);
       col.push(c.r, c.g, c.b);
-      glow.push(outline ? 0 : (p.glow ?? 0));
+      glow.push(outline ? 0 : grimLook ? Math.min(MAX_GLOW, p.glow ?? 0) : (p.glow ?? 0));
       line.push(outline ? 1 : 0);
       skin.push(bi, 0, 0, 0);
     }
@@ -237,6 +262,7 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   geometry.setAttribute('aPat0', new BufferAttribute(new Float32Array(pat0), 4));
   geometry.setAttribute('aPat1', new BufferAttribute(new Float32Array(pat1), 4));
   geometry.setAttribute('aPat2', new BufferAttribute(new Float32Array(pat2), 4));
+  geometry.setAttribute('aCloth', new BufferAttribute(new Float32Array(cloth), 1));
   geometry.setAttribute('skinIndex', new Uint16BufferAttribute(skin, 4));
   geometry.setAttribute('skinWeight', new BufferAttribute(new Float32Array(skin.length).map((_, i) => (i % 4 === 0 ? 1 : 0)), 4));
   const all = body.concat(hull);
@@ -252,8 +278,54 @@ export function buildZombie(type: ZombieType): BuiltZombie {
     inverses: rest.map((m) => m.clone().invert()),
   };
   setOutline(built, outlineOn);
-  cache.set(type.id, built);
+  cache.set(key, built);
   return built;
+}
+
+/** The zombie skin family (the greenish greys of the old skins and their shades). */
+function skinLike(hex: number): boolean {
+  const [r, g, b] = rgb(hex);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const s = max === min ? 0 : (max - min) / (l > 0.5 ? 2 - max - min : max + min);
+  return g >= r && g >= b && s > 0.03 && s < 0.2 && l > 0.36 && l < 0.66;
+}
+
+/** A skin shade as the palette's skin, as much darker or lighter as it was against the old skin. */
+function skinTone(hex: number): number {
+  const [r, g, b] = rgb(hex);
+  const k = (r + g + b) / 3 / 0.57;
+  const [sr, sg, sb] = rgb(SKIN);
+  return new Color().setRGB(sr * k, sg * k, sb * k, 'srgb').getHex('srgb');
+}
+
+/** Joints where cloth folds and dirt gathers (their bones' origins). */
+const FOLDS: BoneName[] = ['Neck', 'UpperArm_L', 'UpperArm_R', 'LowerArm_L', 'LowerArm_R', 'Hand_L', 'Hand_R', 'UpperLeg_L', 'UpperLeg_R', 'LowerLeg_L', 'LowerLeg_R', 'Foot_L', 'Foot_R'];
+
+/**
+ * The grime of a type: a brightness factor for a vertex at `v` (model frame, rest pose; `local` in its
+ * bone's frame) — noise ±10%, darker within 9 cm of a joint, darker towards the ground (dust and mud up to
+ * the knees, the shoes darkest); on the skin, dark rings round the eyes and hollow cheeks.
+ */
+function grimer(type: ZombieType, dims: SkeletonDims, rest: Matrix4[]): (v: Vector3, local: Vector3, bone: BoneName, skin: boolean) => number {
+  const height = dims.p.height;
+  const h = type.proportions.head ?? 1;
+  const joints = FOLDS.map((b) => new Vector3().setFromMatrixPosition(rest[boneIndex(b)]));
+  const eyes = [-1, 1].map((s) => new Vector3(0.04 * s * h, 0.085 * h, -0.104 * h));
+  const cheeks = [-1, 1].map((s) => new Vector3(0.062 * s * h, 0.035 * h, -0.085 * h));
+  return (v, local, bone, skin) => {
+    let f = 0.9 + 0.2 * noise3(v.x * 8 + 11.3, v.y * 8, v.z * 8 + 3.7);
+    let d = Infinity;
+    for (const j of joints) d = Math.min(d, j.distanceTo(v));
+    f *= 0.8 + 0.2 * smoothstep(0.025, 0.09, d);
+    f *= 0.68 + 0.32 * smoothstep(0.03, 0.42 * height * 0.55, v.y);
+    if (skin && bone === 'Head') {
+      for (const e of eyes) f *= 0.55 + 0.45 * smoothstep(0.016 * h, 0.05 * h, e.distanceTo(local));
+      for (const c of cheeks) f *= 0.74 + 0.26 * smoothstep(0.012 * h, 0.045 * h, c.distanceTo(local));
+    }
+    return f;
+  };
 }
 
 /** Normals averaged over vertices at the same spot: the hull pushed out along them has no cracks. */
@@ -276,7 +348,7 @@ function smoothNormals(g: BufferGeometry): Float32Array {
 
 // ── Outline and the shared material ──────────────────────────────────────────────────────────────────
 
-let outlineOn = true;
+let outlineOn = false;
 const outlineWidth = { value: 0.011 };
 
 function setOutline(b: BuiltZombie, on: boolean): void {
@@ -295,15 +367,7 @@ export function zombieOutline(): boolean {
 }
 
 /** The patterns (see `Pattern`): kind in vPat0.w, the bone-frame position in vPat0.xyz, a/scale, b/share. */
-const PATTERN_GLSL = /* glsl */ `
-float zHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
-float zNoise(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(zHash(i), zHash(i + vec3(1, 0, 0)), f.x), mix(zHash(i + vec3(0, 1, 0)), zHash(i + vec3(1, 1, 0)), f.x), f.y),
-             mix(mix(zHash(i + vec3(0, 0, 1)), zHash(i + vec3(1, 0, 1)), f.x), mix(zHash(i + vec3(0, 1, 1)), zHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-}
+const PATTERN_GLSL = /* glsl */ `${NOISE_GLSL}
 vec3 zPattern(vec3 base) {
   vec3 p = vPat0.xyz * vPat1.w;
   float kind = vPat0.w;
@@ -328,7 +392,7 @@ vec3 zPattern(vec3 base) {
 }
 `;
 
-let material: MeshToonMaterial | null = null;
+const materials: { grim?: MeshLambertMaterial; toy?: MeshToonMaterial } = {};
 let ramp: DataTexture | null = null;
 
 function toonRamp(): DataTexture {
@@ -340,11 +404,35 @@ function toonRamp(): DataTexture {
 }
 
 /**
- * The toon shader of the zombies: vertex colours, patterns, self-lit eyes, the hull pushed out along the raw
- * normal (before skinning: the push turns with the bone). Batched: an instanced mesh skinned from a texture —
- * per instance (row) the 18 skin matrices (bone × inverse rest), 4 texels (columns) each.
+ * Clothes in the grim look: square patches a shade off, dark tears (holes), and on everything but the eyes
+ * stains of dirt, soot and oil — by the bone-frame position, so they stay put on the part.
  */
-function toonCompile(sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string }, batched: boolean): void {
+const GRIM_GLSL = /* glsl */ `
+if (vCloth > 0.5) {
+  vec3 zc = floor(vPat0.xyz * 8.0);
+  vec3 zf = abs(fract(vPat0.xyz * 8.0) - 0.5);
+  if (zHash(zc + 7.7) < 0.05 && max(zf.x, max(zf.y, zf.z)) < 0.44) diffuseColor.rgb *= vec3(0.78, 0.83, 0.76) + 0.25 * zHash(zc + 1.9);
+  // Soot and wear streaked down the cloth (stretched along the bone), never round blots.
+  vec3 zs = vPat0.xyz * vec3(24.0, 7.0, 24.0);
+  float zt = zNoise(zs + 11.0) * 0.65 + zNoise(zs * 2.6) * 0.35;
+  diffuseColor.rgb = mix(diffuseColor.rgb, ${glslColor(SOOT)}, smoothstep(0.7, 0.86, zt) * 0.55);
+  // Faded unevenly (washed-out patches on big plain areas: a coat, a vest, a box), uneven in brightness,
+  // a film of dust over it.
+  float zl = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(zl) * vec3(0.97, 1.0, 0.95), 0.2 + 0.4 * zNoise(vPat0.xyz * 4.0 + 5.0));
+  diffuseColor.rgb *= 0.82 + 0.26 * zNoise(vPat0.xyz * 9.0 + 2.0);
+  diffuseColor.rgb = mix(diffuseColor.rgb, ${glslColor(DIRT)}, smoothstep(0.45, 0.8, zNoise(vPat0.xyz * 6.0 + 17.0)) * 0.3);
+  ${stainGlsl('vPat0.xyz', 'diffuseColor.rgb', 1.3)}
+} else if (vGlow < 0.001) ${stainGlsl('vPat0.xyz', 'diffuseColor.rgb')}
+`;
+
+/**
+ * The shader of the zombies: vertex colours, patterns, self-lit eyes, the hull pushed out along the raw
+ * normal (before skinning: the push turns with the bone); the grim look adds patches, tears and stains.
+ * Batched: an instanced mesh skinned from a texture — per instance (row) the 18 skin matrices (bone ×
+ * inverse rest), 4 texels (columns) each.
+ */
+function toonCompile(sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string }, batched: boolean, grimLook = look.grim): void {
   sh.uniforms.uOutline = outlineWidth;
   const skin = batched
     ? {
@@ -362,36 +450,45 @@ function toonCompile(sh: { uniforms: Record<string, { value: unknown }>; vertexS
   sh.vertexShader = sh.vertexShader
     .replace(
       '#include <common>',
-      `#include <common>\nattribute float aGlow;\nattribute float aOutline;\nattribute vec4 aPat0;\nattribute vec4 aPat1;\nattribute vec4 aPat2;\nuniform float uOutline;\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;${skin.decl}`,
+      `#include <common>\nattribute float aGlow;\nattribute float aOutline;\nattribute float aCloth;\nattribute vec4 aPat0;\nattribute vec4 aPat1;\nattribute vec4 aPat2;\nuniform float uOutline;\nvarying float vGlow;\nvarying float vCloth;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;${skin.decl}`,
     )
     .replace('#include <beginnormal_vertex>', skin.normal)
-    .replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;\nvPat0 = aPat0;\nvPat1 = aPat1;\nvPat2 = aPat2;${skin.vertex}`);
+    .replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normal * (uOutline * aOutline);\nvGlow = aGlow;\nvCloth = aCloth;\nvPat0 = aPat0;\nvPat1 = aPat1;\nvPat2 = aPat2;${skin.vertex}`);
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', `#include <common>\nvarying float vGlow;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;\n${PATTERN_GLSL}`)
-    .replace('#include <color_fragment>', '#include <color_fragment>\nif (vPat0.w > 0.5) diffuseColor.rgb = zPattern(diffuseColor.rgb);')
+    .replace('#include <common>', `#include <common>\nvarying float vGlow;\nvarying float vCloth;\nvarying vec4 vPat0;\nvarying vec4 vPat1;\nvarying vec4 vPat2;\n${PATTERN_GLSL}`)
+    .replace('#include <color_fragment>', `#include <color_fragment>\nif (vPat0.w > 0.5) diffuseColor.rgb = zPattern(diffuseColor.rgb);${grimLook ? GRIM_GLSL : ''}`)
     .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow;');
 }
 
-/** The one toon material of a SkinnedMesh zombie (the viewer, GLB export). */
-export function zombieMaterial(): MeshToonMaterial {
-  if (material) return material;
-  const mat = new MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
-  mat.name = 'zombie-toon';
-  mat.onBeforeCompile = (sh) => toonCompile(sh, false);
-  mat.customProgramCacheKey = () => 'zombie-toon';
-  material = mat;
+/** A new material in the current look: Lambert (grim) or the old toon (toy). */
+function lookMaterial(): MeshLambertMaterial | MeshToonMaterial {
+  return look.grim ? new MeshLambertMaterial({ vertexColors: true }) : new MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
+}
+
+/** The one material of a SkinnedMesh zombie in the current look (the viewer, GLB export). */
+export function zombieMaterial(): MeshLambertMaterial | MeshToonMaterial {
+  const which = look.grim ? 'grim' : 'toy';
+  const hit = materials[which];
+  if (hit) return hit;
+  const mat = lookMaterial();
+  const grimLook = look.grim;
+  mat.name = `zombie-${which}`;
+  mat.onBeforeCompile = (sh) => toonCompile(sh, false, grimLook);
+  mat.customProgramCacheKey = () => `zombie-${which}`;
+  (materials as Record<string, unknown>)[which] = mat;
   return mat;
 }
 
-/** The toon material of an instanced batch skinned from `skin` (render/ZombieModels): one per batch. */
-export function zombieBatchMaterial(skin: DataTexture): MeshToonMaterial {
-  const mat = new MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
-  mat.name = 'zombie-toon-batch';
+/** The material of an instanced batch skinned from `skin` (render/ZombieModels): one per batch. */
+export function zombieBatchMaterial(skin: DataTexture): MeshLambertMaterial | MeshToonMaterial {
+  const mat = lookMaterial();
+  const grimLook = look.grim;
+  mat.name = 'zombie-batch';
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uSkin = { value: skin };
-    toonCompile(sh, true);
+    toonCompile(sh, true, grimLook);
   };
-  mat.customProgramCacheKey = () => 'zombie-toon-batch';
+  mat.customProgramCacheKey = () => `zombie-batch-${grimLook}`;
   return mat;
 }
 

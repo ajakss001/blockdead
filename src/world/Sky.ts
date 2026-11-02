@@ -390,9 +390,9 @@ void main() {
   float b = texture2D(uTex, uv * 0.47 - uWind.zx * uTime * 1.6).r;
   float dens = smoothstep(0.42, 0.78, a * 0.7 + b * 0.3) * smoothstep(-0.02, 0.22, up);
   float moon = max(dot(d, uMoon), 0.0);
-  // Night: dark clouds, rims lit by the moon where they are thin; day: light grey.
+  // Night: dark clouds, rims lit by the moon where they are thin; day: a shade off the grey sky.
   vec3 night = vec3(0.045, 0.05, 0.065) + vec3(0.09, 0.1, 0.13) * pow(moon, 6.0) * (1.2 - dens);
-  vec3 day = vec3(0.78, 0.8, 0.82) - vec3(0.25) * dens;
+  vec3 day = uSky * (1.3 - 0.4 * dens);
   vec3 cloud = mix(night, day, uDay);
   // The moon's glow through thin cloud.
   vec3 sky = uSky + vec3(0.05, 0.06, 0.08) * pow(moon, 60.0) * (1.0 - dens * 0.8);

@@ -17,11 +17,11 @@ const PHONES = 0x2a2a2a;
 export const JOGGER: ZombieType = {
   id: 'jogger',
   name: 'Бегун',
-  proportions: { height: 1.8, shoulders: 0.9, arms: 1.0, girth: 0.72, stoop: 0.2, neck: 1.0, head: 1.28, legs: 1.08, jawOpen: 0.2 },
+  proportions: { height: 1.8, shoulders: 0.9, arms: 1.0, girth: 0.72, stoop: 0.2, neck: 1.0, head: 0.89, legs: 1.08, jawOpen: 0.2 },
   missing: [],
   ...kindNumbers('jogger'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.15);
+    const b = new Body(d, k, undefined, 0.95);
     const jacket = splotch([GRIME, shade(TEAL, 0.8)], 10, 0.2);
     const t = b.torso({ top: VEST, seat: SHORTS });
     // The open jacket over the vest, its chevrons front and back, the zip edges, a collar.

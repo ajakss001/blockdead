@@ -11,8 +11,11 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { look } from '../style/look';
+import { grim } from '../style/palette';
 import { buildWeapon, weaponMesh } from '../weapons/buildWeapon';
 import { WEAPON_IDS, WEAPONS, type WeaponId } from '../weapons/config';
+import { applyStage, onLook, setLook } from './viewerStage';
 
 /**
  * The "Оружие" tab of tools/zombie-viewer.html: the four procedural weapons (weapons/buildWeapon) — turn
@@ -30,18 +33,24 @@ const refImg = document.getElementById('ref') as HTMLImageElement;
 
 const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
-renderer.setClearColor(0xe4e4e2);
 Object.assign(renderer.domElement.style, { position: 'fixed', inset: '0', zIndex: '5', display: 'none' });
 document.body.append(renderer.domElement);
 
 const scene = new Scene();
-scene.add(new HemisphereLight(0xffffff, 0x8a8478, 1.6));
-const sun = new DirectionalLight(0xffffff, 1.8);
+const hemi = new HemisphereLight();
+const sun = new DirectionalLight();
 sun.position.set(1.5, 3, 2);
-scene.add(sun);
-const grid = new GridHelper(2, 20, 0xb8b8b4, 0xcfcfcb);
-grid.position.y = -0.3;
-scene.add(grid);
+scene.add(hemi, sun);
+let grid: GridHelper | null = null;
+/** The game's light and fog («после») or the old bright studio («до»). */
+function stage(): void {
+  applyStage({ scene, hemi, sun, renderer, toy: { bg: 0xe4e4e2, hemi: [0xffffff, 0x8a8478, 1.6], sun: [0xffffff, 1.8] } });
+  if (grid) scene.remove(grid);
+  grid = look.grim ? new GridHelper(2, 20, grim(0x77756c), grim(0x66645c)) : new GridHelper(2, 20, 0xb8b8b4, 0xcfcfcb);
+  grid.position.y = -0.3;
+  scene.add(grid);
+}
+stage();
 const camera = new PerspectiveCamera(35, 1, 0.01, 20);
 
 /** Turned by the mouse; the anim moves `rig` inside it. */
@@ -231,23 +240,28 @@ function setTab(tab: string): void {
   active = tab === 'weapons';
   renderer.domElement.style.display = active ? 'block' : 'none';
   panel.style.display = active ? 'flex' : 'none';
-  zombieUi.style.display = active ? 'none' : 'flex';
+  zombieUi.style.display = tab === 'zombies' ? 'flex' : 'none';
   if (!active) refImg.style.display = 'none';
-  for (const b of tabs.querySelectorAll<HTMLButtonElement>('button')) b.classList.toggle('on', b.dataset.tab === tab);
+  for (const b of tabs.querySelectorAll<HTMLButtonElement>('button[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab);
   if (active) {
     fit();
     renderer.render(scene, camera);
     stats();
   }
 }
-for (const b of tabs.querySelectorAll<HTMLButtonElement>('button')) b.onclick = () => setTab(b.dataset.tab!);
+for (const b of tabs.querySelectorAll<HTMLButtonElement>('button[data-tab]')) b.addEventListener('click', () => setTab(b.dataset.tab!));
 show('fireAxe');
+onLook(() => {
+  stage();
+  show(current);
+});
 if (new URLSearchParams(location.search).get('tab') === 'weapons') setTab('weapons');
 
 /** Scripts: pick a weapon / an anim, shoot the canvas to .shots (dev server). */
 (window as unknown as { __wv: object }).__wv = {
   show,
   setTab,
+  setLook,
   view(y: number, p: number) {
     yaw = y;
     pitch = p;

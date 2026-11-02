@@ -25,11 +25,11 @@ const print = flowers(PETAL, HEART, 13, 0.55);
 export const GRANDMA: ZombieType = {
   id: 'grandma',
   name: 'Бабушка',
-  proportions: { height: 1.5, shoulders: 0.85, arms: 1.0, girth: 0.9, stoop: 1.05, neck: 1.0, head: 1.4, legs: 0.85, jawOpen: 0.12 },
+  proportions: { height: 1.5, shoulders: 0.85, arms: 1.0, girth: 0.9, stoop: 1.05, neck: 1.0, head: 0.8, legs: 0.85, jawOpen: 0.12 },
   missing: [],
   ...kindNumbers('grandma'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.2);
+    const b = new Body(d, k, undefined, 0.95);
     const t = b.torso({ top: ROBE, topPaint: print, seat: ROBE, seatPaint: print, bust: true });
     // The housecoat's skirt to below the knee, torn; collar, buttons, a patch.
     b.skirt('Hips', ROBE, { y0: 0.06, y1: d.kneeY - d.hipsY - 0.07, rx: t.hipRx + 0.03, rz: t.hipRz + 0.035, flare: 1.32, jag: true, paint: print });

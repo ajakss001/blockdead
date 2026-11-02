@@ -36,12 +36,13 @@ type V3 = [number, number, number];
 
 function parts(d: SkeletonDims, k: Kit): PartSpec[] {
   const out: PartSpec[] = [];
-  // The head is drawn big (a cartoon head): everything on the head and jaw scales about the skull's base.
+  // The head size (about 1/7.5 of the height): everything on the head and jaw scales about the skull's base.
   const big = new Matrix4().makeScale(d.p.head ?? 1, d.p.head ?? 1, d.p.head ?? 1);
-  // A big bony hand, as drawn.
-  const bigHand = new Matrix4().makeScale(1.3, 1.25, 1.3);
+  // A long bony hand.
+  const bigHand = new Matrix4().makeScale(1.02, 1.12, 1.0);
+  const foot = new Matrix4().makeScale(0.86, 1, 0.92);
   const add = (bone: BoneName, color: number, geo: PartSpec['geo'], outline = true, glow = 0) =>
-    out.push({ bone, color, geo: bone === 'Head' || bone === 'Jaw' ? k.frame(geo, big) : bone === 'Hand_R' ? k.frame(geo, bigHand) : geo, outline, glow });
+    out.push({ bone, color, geo: bone === 'Head' || bone === 'Jaw' ? k.frame(geo, big) : bone === 'Hand_R' ? k.frame(geo, bigHand) : bone.startsWith('Foot') ? k.frame(geo, foot) : geo, outline, glow });
   const tau = Math.PI * 2;
 
   // ── Hips: the overalls' seat, two back pockets ──
@@ -219,7 +220,7 @@ function parts(d: SkeletonDims, k: Kit): PartSpec[] {
 export const WORKER: ZombieType = {
   id: 'worker',
   name: 'Однорукий рабочий',
-  proportions: { height: 1.86, shoulders: 0.92, arms: 1.2, girth: 0.78, stoop: 1, neck: 1.6, head: 1.3, jawOpen: 0.32, jawSide: 0.1 },
+  proportions: { height: 1.86, shoulders: 0.92, arms: 1.2, girth: 0.78, stoop: 1, neck: 1.6, head: 0.92, jawOpen: 0.32, jawSide: 0.1 },
   missing: ['arm_L'],
   walk: 0.5,
   run: 1.1,

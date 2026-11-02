@@ -19,11 +19,11 @@ const CLOG = 0xe8e8e4;
 export const MEDIC: ZombieType = {
   id: 'medic',
   name: 'Медик',
-  proportions: { height: 1.68, shoulders: 0.82, arms: 1.05, girth: 0.72, stoop: 0.4, neck: 0.9, head: 1.3, jawOpen: 0.06 },
+  proportions: { height: 1.68, shoulders: 0.82, arms: 1.05, girth: 0.72, stoop: 0.4, neck: 0.9, head: 0.83, jawOpen: 0.06 },
   missing: [],
   ...kindNumbers('medic'),
   parts(d, k) {
-    const b = new Body(d, k, SKIN, 1.25);
+    const b = new Body(d, k, SKIN, 0.95);
     const coat = splotch([GRIME, shade(GRIME, 1.15)], 11, 0.22);
     const t = b.torso({ top: SCRUBS, seat: SCRUBS, bust: true });
     b.add('Chest', SKIN, k.cone(0.03, 0.07, [0, t.h - 0.06, -t.dz - 0.002], [Math.PI, 0, 0], 3), false);

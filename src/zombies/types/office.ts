@@ -18,11 +18,11 @@ const LENS = 0xcfd8d6;
 export const OFFICE: ZombieType = {
   id: 'office',
   name: 'Офисный работник',
-  proportions: { height: 1.75, shoulders: 0.84, arms: 1.05, girth: 0.78, stoop: 0.45, neck: 1.15, head: 1.3, jawOpen: 0.22, jawSide: 0.05 },
+  proportions: { height: 1.75, shoulders: 0.84, arms: 1.05, girth: 0.78, stoop: 0.45, neck: 1.15, head: 0.86, jawOpen: 0.22, jawSide: 0.05 },
   missing: [],
   ...kindNumbers('office'),
   parts(d, k) {
-    const b = new Body(d, k, undefined, 1.2);
+    const b = new Body(d, k, undefined, 0.95);
     const shirt = splotch([GRIME, shade(GRIME, 1.15)], 10, 0.22);
     const t = b.torso({ top: SHIRT, topPaint: shirt, seat: PANTS });
     // Shirt: collar, buttons, pocket, the tail out over the belt on one side; the belt.

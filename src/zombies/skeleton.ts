@@ -68,7 +68,7 @@ export interface Proportions {
   stoop: number;
   /** Neck length (a long neck juts further forward when stooped). */
   neck: number;
-  /** Head size (a cartoon head is drawn bigger: 1.3). */
+  /** Head size: the skull scale (≈ height / 2.03 for a head of 1/7.5 of the height). */
   head?: number;
   /** Leg length (short-legged 0.85 … long-legged 1.1); the body above makes up the height. */
   legs?: number;

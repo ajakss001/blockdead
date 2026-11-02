@@ -4,8 +4,7 @@ import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
 import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
-import type { GroundWeapon, GroundWeapons } from '../weapons/GroundWeapons';
-import { WEAPONS } from '../weapons/config';
+import { type GroundWeapon, type GroundWeapons, groundItem } from '../weapons/GroundWeapons';
 
 /**
  * Locks on POI doors. A key (or an access card) opens it; or a code — every note that holds a part of
@@ -194,7 +193,7 @@ export class Interaction {
     if (lying) {
       this.focus = null;
       this.setTargeting(true);
-      this.ctx.hud.setPrompt(`${key}Подобрать: ${WEAPONS[lying.weapon].name}`);
+      this.ctx.hud.setPrompt(`${key}Подобрать: ${ITEMS[groundItem(lying.weapon)].name}`);
       return;
     }
     const ref = this.target();
@@ -396,8 +395,8 @@ export class Interaction {
   /** Into the empty hand, else into the bag (if it is not too heavy). */
   private pickUp(w: GroundWeapon): void {
     const inv = this.inventory;
-    const item = WEAPONS[w.weapon].item;
-    if (!inv.hand) {
+    const item = groundItem(w.weapon);
+    if (!inv.hand && ITEMS[item].equip) {
       inv.hand = item;
       inv.handWear = 0;
       inv.version++;
