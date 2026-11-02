@@ -3,6 +3,8 @@ import {
   BackSide,
   BoxGeometry,
   type BufferGeometry,
+  CanvasTexture,
+  CircleGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -12,12 +14,15 @@ import {
   LinearFilter,
   Mesh,
   MeshBasicMaterial,
+  Object3D,
   type PerspectiveCamera,
+  Quaternion,
   RedFormat,
   RepeatWrapping,
   type Scene,
   ShaderMaterial,
   SphereGeometry,
+  SpotLight,
   UnsignedByteType,
   Vector3,
 } from 'three';
@@ -55,6 +60,27 @@ interface Flight {
 
 const _p = new Vector3();
 const _d = new Vector3();
+const _ray = new Vector3();
+const _q = new Quaternion();
+const _qb = new Quaternion();
+/** Half-angle of the searchlight's cone (the beam mesh: radius 9 at 60 m). */
+const BEAM_HALF = Math.atan(9 / 60);
+
+/** A soft round pool of light, brighter in the middle, a ragged edge. */
+function poolTexture(): CanvasTexture {
+  const S = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.75)');
+  grad.addColorStop(0.85, 'rgba(255,255,255,0.2)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, S, S);
+  return new CanvasTexture(c);
+}
 
 export class Sky {
   private readonly dome: Mesh;
@@ -65,6 +91,16 @@ export class Sky {
   private readonly beam: Mesh;
   private readonly rotor: Mesh;
   private flight: Flight | null = null;
+  /**
+   * Where the searchlight meets the ground: a real spot light from the helicopter's true position (medium and
+   * high quality) or a soft glow disc on the ground (low: no extra light in the shaders).
+   */
+  private readonly spot: SpotLight;
+  private readonly spotTarget = new Object3D();
+  private readonly pool: Mesh;
+  private realSpot = false;
+  /** Ground height under a point (the world sets it). */
+  groundAt: (x: number, z: number) => number = () => 0;
   private next = (FIRST_MIN[0] + Math.random() * (FIRST_MIN[1] - FIRST_MIN[0])) * 60;
   private time = 0;
   private sound: { gain: GainNode; rate: AudioParam[] } | null = null;
@@ -104,6 +140,29 @@ export class Sky {
     this.beam = this.heli.getObjectByName('beam') as Mesh;
     this.plane.visible = this.heli.visible = false;
     scene.add(this.plane, this.heli);
+
+    this.spot = new SpotLight(0xc8d4dc, 0, 0, BEAM_HALF * 1.15, 0.55, 0);
+    this.spot.castShadow = false;
+    this.spot.target = this.spotTarget;
+    this.pool = new Mesh(
+      new CircleGeometry(1, 24).rotateX(-Math.PI / 2),
+      new MeshBasicMaterial({ map: poolTexture(), color: 0xc8d4dc, transparent: true, blending: AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
+    );
+    this.pool.name = 'sky:searchlightPool';
+    this.pool.visible = false;
+    this.pool.renderOrder = 2;
+    scene.add(this.pool, this.spotTarget);
+    this.scene = scene;
+  }
+
+  private readonly scene: Scene;
+
+  /** A real spot light on the ground (medium/high) or only the glow disc (low). Changing it rebuilds shaders once. */
+  set searchlightLight(on: boolean) {
+    if (on === this.realSpot) return;
+    this.realSpot = on;
+    if (on) this.scene.add(this.spot);
+    else this.scene.remove(this.spot);
   }
 
   /** Daylight 0..1 (the game is always at night for now; stage 5 drives this). */
@@ -136,6 +195,7 @@ export class Sky {
     const k = f.t / f.dur;
     if (k >= 1) {
       this.end();
+      this.groundSpot(null, camera);
       return;
     }
     // Real position on the route, and the projection onto the sky sphere.
@@ -160,6 +220,7 @@ export class Sky {
     if (f.kind === 'heli') {
       this.rotor.rotation.y += dt * 38;
       this.beam.rotation.set(0.35 + Math.sin(this.time * 0.6 + f.seed) * 0.3, 0, Math.sin(this.time * 0.4) * 0.4);
+      this.groundSpot(_p, camera);
     }
     // Sound: loudness from the real distance, a little doppler from the closing speed.
     if (this.sound && sfx.ac) {
@@ -172,11 +233,53 @@ export class Sky {
     }
   }
 
+  /**
+   * The searchlight on the ground: the beam's direction from the helicopter's true position (not the drawn copy
+   * inside the sky), down to the ground; a pool of light there that sweeps with the beam. Fades in the day.
+   */
+  private groundSpot(at: Vector3 | null, camera: PerspectiveCamera): void {
+    const night = 1 - (this.domeMat.uniforms.uDay.value as number);
+    let on = false;
+    if (at && night > 0.05) {
+      _q.setFromEuler(this.heli.rotation);
+      _qb.setFromEuler(this.beam.rotation);
+      _ray.set(0, -1, 0).applyQuaternion(_q.multiply(_qb));
+      if (_ray.y < -0.25) {
+        // Flat ground at the camera's level first, then the real height there (once more for slopes).
+        let gy = camera.position.y - 1.6;
+        let t = (at.y - gy) / -_ray.y;
+        for (let i = 0; i < 2; i++) {
+          gy = this.groundAt(at.x + _ray.x * t, at.z + _ray.z * t);
+          t = (at.y - gy) / -_ray.y;
+        }
+        const hx = at.x + _ray.x * t;
+        const hz = at.z + _ray.z * t;
+        // Only near enough to be seen (inside the far plane).
+        if (Math.hypot(hx - camera.position.x, hz - camera.position.z) < camera.far * 0.9) {
+          on = true;
+          const r = Math.tan(BEAM_HALF) * t;
+          // A slow shimmer as the rotor chops the light.
+          const flick = 0.9 + 0.1 * Math.sin(this.time * 31);
+          if (this.realSpot) {
+            this.spot.position.copy(at);
+            this.spotTarget.position.set(hx, gy, hz);
+            this.spot.intensity = 3.2 * night * flick;
+          }
+          this.pool.position.set(hx, gy + 0.06, hz);
+          this.pool.scale.set(r, 1, r);
+          (this.pool.material as MeshBasicMaterial).opacity = (this.realSpot ? 0.18 : 0.55) * night * flick;
+        }
+      }
+    }
+    this.pool.visible = on;
+    if (!on) this.spot.intensity = 0;
+  }
+
   /** Start a flyover now (dev: `__game.scene.sky.start()`). */
-  start(center: Vector3): void {
-    const kind: Flight['kind'] = Math.random() < 0.5 ? 'plane' : 'heli';
+  start(center: Vector3, want?: Flight['kind']): void {
+    const kind: Flight['kind'] = want ?? (Math.random() < 0.5 ? 'plane' : 'heli');
     const a = Math.random() * Math.PI * 2;
-    const off = (Math.random() - 0.5) * (kind === 'plane' ? 600 : 160);
+    const off = (Math.random() - 0.5) * (kind === 'plane' ? 600 : 90);
     const half = kind === 'plane' ? 2200 : 700;
     const alt = kind === 'plane' ? 280 + Math.random() * 120 : 70 + Math.random() * 40;
     const dx = Math.cos(a);

@@ -291,6 +291,7 @@ export class WorldScene implements IScene {
     this.scene.add(moon);
     this.moon = moon;
     this.sky = new Sky(this.scene, NIGHT.sky, moon.position);
+    this.sky.groundAt = (x, z) => layout.walkHeightAt(x, z);
 
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
     const layout = new WorldLayout(seed);
@@ -1261,6 +1262,7 @@ export class WorldScene implements IScene {
     this.interiors.maxLoaded = preset.interiors;
     this.life.clothEnabled = preset.lifeCloth;
     this.life.roomLights = preset.roomLights;
+    this.sky.searchlightLight = preset.roomLights > 0;
     this.life.fireLights = preset.fireLights;
     this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
     this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
