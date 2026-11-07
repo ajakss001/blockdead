@@ -520,6 +520,11 @@ body {
 .inv__card-info { font-size: 11px; color: #8f8878; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inv__actions { display: flex; gap: 6px; }
 .inv__stats { font-size: 12px; color: #8f8878; }
+.inv__skills { display: flex; flex-wrap: wrap; gap: 6px 10px; justify-content: center; margin: 6px 0 2px; }
+.inv__skill { position: relative; display: flex; gap: 4px; align-items: baseline; font-size: 11px; color: #8f8878; padding-bottom: 3px; }
+.inv__skill b { color: #c9c2b2; font-size: 12px; }
+.inv__skill--none { opacity: .45; }
+.inv__skill-bar { position: absolute; left: 0; bottom: 0; height: 2px; background: #7c7566; }
 .inv__hint { margin-left: auto; font-size: 11px; color: #5e5a50; }
 .inv__btn {
   min-height: 36px;
@@ -617,6 +622,8 @@ body {
 }
 .editor__class.on { border-color: #c8b47a; background: rgba(70, 62, 44, 0.45); }
 .editor__class-name { font-weight: 600; color: #e4dcc8; font-size: 14px; }
+.editor__class-skills { margin-top: 6px; font-size: 12px; color: #a39c8a; }
+.editor__legacy { font-size: 12px; color: #a39c8a; text-align: center; max-width: 240px; }
 .editor__class-about { margin-top: 2px; font-size: 12px; color: #8f8878; }
 .editor__class-lists { display: flex; gap: 14px; margin-top: 4px; }
 .editor__pros, .editor__cons { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.35; }

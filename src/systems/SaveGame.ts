@@ -5,6 +5,7 @@ import type { Appearance } from '../player/appearance';
 import type { InventoryData } from './Inventory';
 import type { IPlatform } from '../platform/IPlatform';
 import type { SurvivalState } from './Survival';
+import type { MetaData, SkillXp } from './Skills';
 
 const VERSION = 1;
 
@@ -37,6 +38,11 @@ export interface SaveV1 {
   /** Labs whose generator the player started (block "i,j"). */
   powered?: string[];
   boards?: [string, number, number][];
+  /** This survivor's experience per skill and their kills. */
+  skills?: SkillXp;
+  kills?: number;
+  /** What outlives the survivors of this world: the legacy of skills, deaths, the longest life, kills. */
+  meta?: MetaData;
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

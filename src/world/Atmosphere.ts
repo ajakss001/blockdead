@@ -182,6 +182,38 @@ export class Atmosphere {
     return this.street.hazard(x, y, z);
   }
 
+  /** The city's power and water (systems/Utilities): fridges, TVs, phones; taps and broken hydrants. */
+  setUtilities(power: boolean, water: boolean): void {
+    if (power === this.power && water === this.water) return;
+    this.power = power;
+    this.water = water;
+    this.dirty = true;
+  }
+
+  private power = true;
+  private water = true;
+
+  /** The kitchen tap in reach in front of the eye (within 1.5 m, roughly where you look), or null. */
+  tapNear(eye: Vector3, dir: Vector3): { x: number; y: number; z: number } | null {
+    if (this.dirty) this.rebuild();
+    let best: { x: number; y: number; z: number } | null = null;
+    let bd = 1.5;
+    for (const t of this.tapSpots) {
+      const dx = t.x - eye.x;
+      const dy = t.y - eye.y;
+      const dz = t.z - eye.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d < bd && (dx * dir.x + dy * dir.y + dz * dir.z) / Math.max(d, 1e-3) > 0.6) {
+        bd = d;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /** Every tap here, running or dry (the dripping ones are `taps`). */
+  private tapSpots: { x: number; y: number; z: number }[] = [];
+
   /** A blow landed on the world at (x, y, z) (a car's alarm may go off). */
   strikeAt(x: number, y: number, z: number): void {
     this.street.strikeAt(x, y, z);
@@ -415,6 +447,7 @@ export class Atmosphere {
     const oldLeaks = this.leaks;
     this.leaks = [];
     this.taps = [];
+    this.tapSpots = [];
     const oldPhones = this.phones;
     this.phones = [];
     this.loopSpots = [];
@@ -486,6 +519,7 @@ export class Atmosphere {
             loop('hiss', x, y, z);
             break;
           case LIFE.hydrant: {
+            if (!this.water) break;
             hydrants.push(x, y, z);
             const gy = this.groundY(x, z);
             pools.push(x + 0.4, gy, z + 0.2, 2.2 + seed, 1);
@@ -500,16 +534,18 @@ export class Atmosphere {
             break;
           }
           case LIFE.tap:
-            this.taps.push({ x, y, z, next: Math.random() * 3 });
+            this.tapSpots.push({ x, y, z });
+            if (this.water && spots[i + 9] !== 1) this.taps.push({ x, y, z, next: Math.random() * 3 });
             break;
           case LIFE.phone:
+            if (!this.power) break;
             this.phones.push(oldPhones.find((p) => p.x === x && p.y === y && p.z === z) ?? { x, y, z, next: 20 + seed * 90, rings: 0 });
             break;
           case LIFE.tv:
-            loop('tv', x, y, z);
+            if (this.power) loop('tv', x, y, z);
             break;
           case LIFE.fridge:
-            loop('fridge', x, y, z);
+            if (this.power) loop('fridge', x, y, z);
             break;
           case LIFE.flies:
             loop('flies', x, y, z);

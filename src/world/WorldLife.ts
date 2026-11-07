@@ -210,6 +210,18 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     return false;
   }
 
+  /**
+   * The city's power (systems/Utilities): off = only generator and candle light (mode 0) stays lit — the
+   * tubes in windows, rooms and corridors and the TVs go dark.
+   */
+  set power(on: boolean) {
+    if (on === this.powerOn) return;
+    this.powerOn = on;
+    this.dirty = true;
+  }
+
+  private powerOn = true;
+
   /** Curtains and paper (quality preset): off = no draw call and no paper simulation. */
   set clothEnabled(on: boolean) {
     this.clothOn = on;
@@ -417,6 +429,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
         const h = spots[i + 7];
         const seed = spots[i + 8];
         const tag = spots[i + 9];
+        // No power: electric light is out (generator and candle light, mode 0, burns on).
+        if (!this.powerOn && (((kind === LIFE.window || kind === LIFE.room) && seed > 0.5) || kind === LIFE.lamp || kind === LIFE.tv)) continue;
         if (kind === LIFE.window && g < GLOW_CAP) {
           if (inside.has(tag)) continue;
           // All windows of one room share the flicker phase (seed from the room's tag).

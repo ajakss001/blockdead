@@ -1,4 +1,5 @@
 import { CLASSES, type ClassId, classDef, OUTFIT_TINTS, STARTER_OUTFITS } from '../data/classes';
+import { classSkillText } from '../systems/Skills';
 import type { ItemId, WearSlot } from '../data/items';
 import {
   type Appearance,
@@ -11,7 +12,12 @@ import {
   HAIR_LABEL,
   HAIR_STYLES,
   HEIGHT_RANGE,
+  baseLook,
   randomAppearance,
+  REF_CLOTHES,
+  SEX_LABEL,
+  SEXES,
+  type Sex,
   SKIN_TONES,
 } from '../player/appearance';
 import type { Worn } from '../systems/Inventory';
@@ -36,7 +42,10 @@ export function choiceWorn(c: CharacterChoice): Worn {
 }
 
 export function choiceTint(c: CharacterChoice): Partial<Record<WearSlot, number>> {
-  return c.outfit === 'uniform' ? {} : { torso: c.tint };
+  if (c.outfit === 'uniform') return {};
+  // Everyday clothes: the reference sheet's jeans and sneakers for the base.
+  const ref = REF_CLOTHES[c.appearance.sex];
+  return c.outfit === 'casual' ? { torso: c.tint, legs: ref.jeans, feet: ref.shoes } : { torso: c.tint };
 }
 
 /**
@@ -52,9 +61,14 @@ export class CharacterEditor {
   private tab: Tab = 'look';
   private choice: CharacterChoice;
 
-  constructor(private readonly parent: HTMLElement) {
-    const look = randomAppearance();
-    this.choice = { appearance: look, classId: 'unemployed', outfit: 'casual', tint: OUTFIT_TINTS[0] };
+  /** `legacy`: what the dead survivors of this world leave the new one ("Топоры 2 · Обыск 1"). */
+  constructor(
+    private readonly parent: HTMLElement,
+    private readonly legacy = '',
+  ) {
+    // The male base as on the reference sheet, in its everyday clothes.
+    const look = baseLook('male');
+    this.choice = { appearance: look, classId: 'unemployed', outfit: 'casual', tint: REF_CLOTHES.male.tee };
     this.root.className = 'editor';
   }
 
@@ -71,6 +85,7 @@ export class CharacterEditor {
       name.value = this.choice.appearance.name;
       name.addEventListener('input', () => (this.choice.appearance.name = name.value));
       left.append(div('editor__title', 'Новый выживший'), figure, name);
+      if (this.legacy) left.append(div('editor__legacy', `Наследие погибших: ${this.legacy}`));
 
       const right = div('editor__right');
       this.tabs.className = 'editor__tabs';
@@ -135,6 +150,13 @@ export class CharacterEditor {
 
   private renderLook(): void {
     const a = this.choice.appearance;
+    // The base (man / woman): its reference look; the name and the rest can be changed after.
+    this.chips('База', SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
+      const sex = v as Sex;
+      if (sex === a.sex) return;
+      if (this.choice.tint === REF_CLOTHES[a.sex].tee) this.choice.tint = REF_CLOTHES[sex].tee;
+      this.choice.appearance = baseLook(sex, a.name.trim() || undefined);
+    });
     this.chips('Телосложение', BUILDS.map((b) => [b, BUILD_LABEL[b]]), a.build, (v) => (a.build = v as Appearance['build']));
     // Height slider.
     const row = div('editor__row');
@@ -156,7 +178,7 @@ export class CharacterEditor {
     this.chips('Лицо', Array.from({ length: FACES }, (_, i) => [String(i), String(i + 1)]), String(a.face), (v) => (a.face = Number(v)));
     this.chips('Причёска', HAIR_STYLES.map((h) => [h, HAIR_LABEL[h]]), a.hair, (v) => (a.hair = v as Appearance['hair']));
     this.swatches('Цвет волос', HAIR_COLORS, a.hairColor, (v) => (a.hairColor = v));
-    this.chips('Борода', BEARDS.map((b) => [b, BEARD_LABEL[b]]), a.beard, (v) => (a.beard = v as Appearance['beard']));
+    if (a.sex === 'male') this.chips('Борода', BEARDS.map((b) => [b, BEARD_LABEL[b]]), a.beard, (v) => (a.beard = v as Appearance['beard']));
   }
 
   private renderClass(): void {
@@ -172,6 +194,8 @@ export class CharacterEditor {
       for (const p of c.cons) cons.append(li(p));
       lists.append(pros, cons);
       card.append(lists);
+      const skills = classSkillText(c.id);
+      if (skills) card.append(div('editor__class-skills', `Навыки: ${skills}`));
       card.addEventListener('click', () => {
         this.choice.classId = c.id;
         this.renderBody();

@@ -72,6 +72,8 @@ export interface PartSpec {
   outline?: boolean;
   /** A pattern drawn over the colour (camouflage, grime, a check, a print): see `Pattern`. */
   paint?: Pattern;
+  /** Skin (living types mark it: their warm skin is not told by colour); zombies: by colour. */
+  skin?: boolean;
 }
 
 /**
@@ -99,6 +101,11 @@ export interface ZombieType {
   run: number;
   animSpeed: number;
   hp: number;
+  /**
+   * A living person (the player's figure, src/zombies/types/survivor.ts): the skin is theirs (marked parts,
+   * muted warm through grim, not the palette's dead SKIN), tired rings round the eyes, no hollow cheeks.
+   */
+  living?: boolean;
   parts(d: SkeletonDims, kit: Kit): PartSpec[];
 }
 
@@ -203,7 +210,7 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   const add = (p: PartSpec, outline: boolean) => {
     const g = p.geo;
     const pt = outline ? undefined : p.paint;
-    const isSkin = grimLook && !outline && skinLike(p.color);
+    const isSkin = grimLook && !outline && (p.skin ?? (!type.living && skinLike(p.color)));
     const glowing = (p.glow ?? 0) > 0;
     const tone = (hex: number) => (grimLook ? grim(hex) : hex);
     const ca = new Color(tone(pt?.a ?? 0));
@@ -219,7 +226,7 @@ export function buildZombie(type: ZombieType): BuiltZombie {
     const own = new Color();
     if (outline) own.setRGB(0, 0, 0);
     else if (!grimLook) own.setHex(p.color);
-    else own.setHex(glowing ? EYES : isSkin ? skinTone(p.color) : grim(p.color));
+    else own.setHex(glowing ? EYES : isSkin ? (type.living ? livingSkin(p.color) : skinTone(p.color)) : grim(p.color));
     const local = new Vector3();
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i);
@@ -282,6 +289,16 @@ export function buildZombie(type: ZombieType): BuiltZombie {
   return built;
 }
 
+/** Forget a type's geometry (a figure rebuilt with other looks or clothes): frees its buffers. */
+export function dropZombie(type: ZombieType): void {
+  for (const key of [type.id, `${type.id}:toy`]) {
+    const b = cache.get(key);
+    if (!b) continue;
+    b.geometry.dispose();
+    cache.delete(key);
+  }
+}
+
 /** The zombie skin family (the greenish greys of the old skins and their shades). */
 function skinLike(hex: number): boolean {
   const [r, g, b] = rgb(hex);
@@ -300,6 +317,15 @@ function skinTone(hex: number): number {
   return new Color().setRGB(sr * k, sg * k, sb * k, 'srgb').getHex('srgb');
 }
 
+const lighter = (hex: number, f: number) => {
+  const c = (s: number) => Math.min(255, Math.round(((hex >> s) & 255) * f));
+  return (c(16) << 16) | (c(8) << 8) | c(0);
+};
+/** A living skin: its own warm tone, muted and a little darker (a third of the grim rule). */
+export function livingSkin(hex: number): number {
+  return grim(lighter(hex, 1.18), 0.6);
+}
+
 /** Joints where cloth folds and dirt gathers (their bones' origins). */
 const FOLDS: BoneName[] = ['Neck', 'UpperArm_L', 'UpperArm_R', 'LowerArm_L', 'LowerArm_R', 'Hand_L', 'Hand_R', 'UpperLeg_L', 'UpperLeg_R', 'LowerLeg_L', 'LowerLeg_R', 'Foot_L', 'Foot_R'];
 
@@ -314,6 +340,8 @@ function grimer(type: ZombieType, dims: SkeletonDims, rest: Matrix4[]): (v: Vect
   const joints = FOLDS.map((b) => new Vector3().setFromMatrixPosition(rest[boneIndex(b)]));
   const eyes = [-1, 1].map((s) => new Vector3(0.04 * s * h, 0.085 * h, -0.104 * h));
   const cheeks = [-1, 1].map((s) => new Vector3(0.062 * s * h, 0.035 * h, -0.085 * h));
+  const living = type.living === true;
+  const under = [-1, 1].map((s) => new Vector3(0.035 * s * h, 0.075 * h, -0.082 * h));
   return (v, local, bone, skin) => {
     let f = 0.9 + 0.2 * noise3(v.x * 8 + 11.3, v.y * 8, v.z * 8 + 3.7);
     let d = Infinity;
@@ -321,8 +349,12 @@ function grimer(type: ZombieType, dims: SkeletonDims, rest: Matrix4[]): (v: Vect
     f *= 0.8 + 0.2 * smoothstep(0.025, 0.09, d);
     f *= 0.68 + 0.32 * smoothstep(0.03, 0.42 * height * 0.55, v.y);
     if (skin && bone === 'Head') {
-      for (const e of eyes) f *= 0.55 + 0.45 * smoothstep(0.016 * h, 0.05 * h, e.distanceTo(local));
-      for (const c of cheeks) f *= 0.74 + 0.26 * smoothstep(0.012 * h, 0.045 * h, c.distanceTo(local));
+      // The dead: deep sockets, hollow cheeks. The living: tired dark circles under the eyes.
+      if (living) for (const e of under) f *= 0.8 + 0.2 * smoothstep(0.008 * h, 0.03 * h, e.distanceTo(local));
+      else {
+        for (const e of eyes) f *= 0.55 + 0.45 * smoothstep(0.016 * h, 0.05 * h, e.distanceTo(local));
+        for (const c of cheeks) f *= 0.74 + 0.26 * smoothstep(0.012 * h, 0.045 * h, c.distanceTo(local));
+      }
     }
     return f;
   };

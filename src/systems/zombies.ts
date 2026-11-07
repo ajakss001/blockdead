@@ -228,6 +228,29 @@ export class ZombieSim {
     }
   }
 
+  /** Living zombies of the crowd (not twins): the quality limit counts these. */
+  get alive(): number {
+    return this.list.reduce((n, z) => n + (z.state !== 'dead' && !z.twin ? 1 : 0), 0);
+  }
+
+  /**
+   * A zombie of a horde coming out at (x, z) — where the ground is free and outdoors — walking to (tx, tz):
+   * looking (it heard something) or just drifting. False if it can't stand there.
+   */
+  spawnSpill(x: number, z: number, tx: number, tz: number, drawn: boolean): boolean {
+    if (this.world.indoors?.(x, z)) return false;
+    _hit.set(x, this.world.groundY(x, z, 0), z);
+    this.world.resolveCircle(_hit, T.radius, T.height);
+    if (Math.hypot(_hit.x - x, _hit.z - z) > 0.01) return false;
+    const zb = this.spawnAt(x, z, drawn ? 'investigate' : 'wander');
+    zb.target.set(tx, this.world.groundY(tx, tz, 0), tz);
+    if (drawn) {
+      this.enter(zb, 'investigate', 30);
+      zb.awareness = 0.3;
+    }
+    return true;
+  }
+
   threat(player: Vector3): number {
     let t = 0;
     for (const z of this.list) {
@@ -673,8 +696,7 @@ export class ZombieSim {
       }
     }
     this.spawnTimer -= dt;
-    const alive = this.list.reduce((n, z) => n + (z.state !== 'dead' && !z.twin ? 1 : 0), 0);
-    if (alive >= this.target || this.spawnTimer > 0) return;
+    if (this.alive >= this.target || this.spawnTimer > 0) return;
     this.spawnTimer = 0.25;
     const r = this.rnd;
     for (let tries = 0; tries < 6; tries++) {

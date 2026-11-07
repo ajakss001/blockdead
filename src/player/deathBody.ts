@@ -1,14 +1,15 @@
 import { Vector3 } from 'three';
-import { FIGURE_SHAPE, PART, Ragdoll, type StaticBox, standingPoses } from '../physics/ragdoll';
+import { type BodyShape, FIGURE_SHAPE, PART, Ragdoll, type StaticBox, standingPoses } from '../physics/ragdoll';
 
 /**
  * The player's body as it dies: standing where they stood, facing where they looked (yaw: the camera's,
  * looking along −Z turned by it), moving as they moved — thrown away from the zombie that killed them,
  * a little sideways and on the chest or the head at random, so no two falls are alike. No killer (a fall,
- * hunger, the infection): it just gives way.
+ * hunger, the infection): it just gives way. `shape`: the body's build (the survivor model's, from its
+ * skeleton; the old figure's by default).
  */
-export function playerRagdoll(feet: Vector3, yaw: number, scale: number, velocity: Vector3, killer: Vector3 | null, boxes: StaticBox[], rnd = Math.random): Ragdoll {
-  const parts = standingPoses(FIGURE_SHAPE, feet, yaw + Math.PI, scale);
+export function playerRagdoll(feet: Vector3, yaw: number, scale: number, velocity: Vector3, killer: Vector3 | null, boxes: StaticBox[], rnd = Math.random, shape: BodyShape = FIGURE_SHAPE): Ragdoll {
+  const parts = standingPoses(shape, feet, yaw + Math.PI, scale);
   const dir = new Vector3();
   if (killer) dir.set(feet.x - killer.x, 0, feet.z - killer.z);
   if (dir.lengthSq() < 1e-6) dir.set(Math.sin(yaw), 0, Math.cos(yaw));
@@ -20,7 +21,7 @@ export function playerRagdoll(feet: Vector3, yaw: number, scale: number, velocit
   return new Ragdoll({
     parts,
     scale,
-    shape: FIGURE_SHAPE,
+    shape,
     velocity,
     impulse: { part, at, dir, strength: killer ? 55 + rnd() * 30 : 10 + rnd() * 15 },
     floorY: feet.y,

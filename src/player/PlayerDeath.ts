@@ -1,6 +1,7 @@
-import { Box3, type BufferGeometry, Group, Matrix4, type Object3D, Quaternion, type Scene, Vector3 } from 'three';
+import { type Bone, Box3, type BufferGeometry, Group, Matrix4, type Object3D, Quaternion, type Scene, Vector3 } from 'three';
 import type { WearSlot } from '../data/items';
-import { bodyParts, FIGURE_SHAPE, PART, type PartPose, type Ragdoll, type StaticBox } from '../physics/ragdoll';
+import { bodyParts, PART, type PartPose, type Ragdoll, type StaticBox } from '../physics/ragdoll';
+import { BONES, type BoneName, boneIndex, PARENT, ragdollShape, restWorld } from '../zombies/skeleton';
 import { playerRagdoll } from './deathBody';
 import type { Worn } from '../systems/Inventory';
 import type { Appearance } from './appearance';
@@ -28,19 +29,38 @@ export interface DeathStart {
   around: DeathSurroundings;
 }
 
-const FIG_TO_BODY = new Matrix4().makeRotationY(Math.PI);
+/** Which ragdoll body moves a bone (the ragdoll faces +Z, the model −Z: its left is the ragdoll's "R"). */
+const DRIVEN: Partial<Record<BoneName, number>> = {
+  Hips: PART.pelvis,
+  Chest: PART.chest,
+  Neck: PART.head,
+  UpperArm_L: PART.upperArmR,
+  LowerArm_L: PART.foreArmR,
+  UpperArm_R: PART.upperArmL,
+  LowerArm_R: PART.foreArmL,
+  UpperLeg_L: PART.thighR,
+  LowerLeg_L: PART.shinR,
+  UpperLeg_R: PART.thighL,
+  LowerLeg_R: PART.shinL,
+};
+const PART_BONE = new Map(Object.entries(DRIVEN).map(([b, p]) => [p, boneIndex(b as BoneName)]));
+const TURN = new Matrix4().makeRotationY(Math.PI);
 
 /**
- * The player's death: the first-person arms are gone; the whole survivor (the inventory figure, in what
- * they wore) becomes a ragdoll — the same physics as the zombies' — knocked away from what killed them,
- * the weapon falling free. The camera (DeathCamera) leaves the head and rises over the body.
+ * The player's death: the first-person arms are gone; the whole survivor (the inventory figure — the same
+ * skinned model, in what they wore) becomes a ragdoll — the same physics as the zombies', built to its
+ * skeleton — its bones driven by the ragdoll's bodies as a zombie corpse's are, knocked away from what
+ * killed them, the weapon falling free. The camera (DeathCamera) leaves the head and rises over the body.
  */
 export class PlayerDeath {
   readonly ragdoll: Ragdoll;
   readonly camera: DeathCamera;
   readonly group = new Group();
   private readonly figure = new CharacterFigure();
-  private readonly pieces: { obj: Object3D; part: number; offset: Matrix4 }[] = [];
+  private readonly bones: Bone[];
+  /** Per bone: its offset from its ragdoll body (driven) or from its parent bone (the rest). */
+  private readonly rel: Matrix4[];
+  private readonly world: Matrix4[];
   private weapon: { obj: Object3D; pose: PartPose; centre: Vector3 } | null = null;
   private readonly geos: BufferGeometry[] = [];
 
@@ -51,36 +71,25 @@ export class PlayerDeath {
     const fig = this.figure;
     fig.setAppearance(s.look);
     fig.setOutfit(s.worn, null, s.dirt, s.tint);
-    const pieces = fig.ragdollPieces();
-    fig.root.position.set(0, 0, 0);
-    fig.root.rotation.set(0, 0, 0);
-    fig.root.updateMatrixWorld(true);
+    const body = fig.skinned;
+    body.mesh.removeFromParent();
+    body.mesh.frustumCulled = false;
+    this.group.add(body.mesh);
+    this.bones = body.bones;
     const k = s.look.height / 176;
-    const parts = bodyParts(FIGURE_SHAPE);
-    // Each piece rides one part: its offset from that part's rest frame (figure turned to face +Z).
-    for (const { obj, part } of pieces) {
-      const rest = FIG_TO_BODY.clone().multiply(obj.matrixWorld);
-      const x = _v.setFromMatrixPosition(rest).x;
-      const L = x < 0;
-      const idx =
-        part === 'pelvis' ? PART.pelvis
-        : part === 'chest' ? PART.chest
-        : part === 'head' ? PART.head
-        : part === 'upperArm' ? (L ? PART.upperArmL : PART.upperArmR)
-        : part === 'foreArm' ? (L ? PART.foreArmL : PART.foreArmR)
-        : part === 'thigh' ? (L ? PART.thighL : PART.thighR)
-        : L ? PART.shinL : PART.shinR;
-      const c = parts[idx].c;
-      const offset = new Matrix4().makeTranslation(-c[0] * k, -c[1] * k, -c[2] * k).multiply(rest);
-      this.pieces.push({ obj, part: idx, offset });
-    }
-    for (const p of this.pieces) {
-      p.obj.removeFromParent();
-      p.obj.matrixAutoUpdate = false;
-      this.group.add(p.obj);
-    }
+    // Each driven bone's key: the bone's unstooped rest seen from its body's rest frame (P0⁻¹·M0·B′).
+    const shape = ragdollShape(body.dims);
+    const straight = restWorld(body.dims, false);
+    const keys = bodyParts(shape).map((d, p) => new Matrix4().makeTranslation(-d.c[0], -d.c[1], -d.c[2]).multiply(TURN).multiply(straight[PART_BONE.get(p)!]));
+    this.rel = BONES.map((n, i) => {
+      const p = DRIVEN[n];
+      if (p !== undefined) return keys[p];
+      return straight[boneIndex(PARENT[n]!)].clone().invert().multiply(straight[i]);
+    });
+    this.world = BONES.map(() => new Matrix4());
+    for (const b of this.bones) b.matrixAutoUpdate = true;
     // Where it stood, facing where it looked; knocked away from the killer, never the same fall twice.
-    this.ragdoll = playerRagdoll(s.feet, s.yaw, k, s.velocity, s.killer, s.boxes);
+    this.ragdoll = playerRagdoll(s.feet, s.yaw, 1, s.velocity, s.killer, s.boxes, Math.random, shape);
     const poses = this.ragdoll.poses;
     const q = new Quaternion().setFromAxisAngle(UP, s.yaw + Math.PI);
     // The weapon slips out of the hand.
@@ -114,12 +123,17 @@ export class PlayerDeath {
     this.camera.update(dt, this.focus(_f));
   }
 
-  /** The pieces where their bodies are (the ragdoll is stepped by the scene's Ragdolls). */
+  /** The bones where their bodies are (the ragdoll is stepped by the scene's Ragdolls). */
   place(): void {
-    for (const p of this.pieces) {
-      this.ragdoll.matrix(p.part, p.obj.matrix).multiply(p.offset);
-      p.obj.matrixWorldNeedsUpdate = true;
-    }
+    const w = this.world;
+    BONES.forEach((n, i) => {
+      const p = DRIVEN[n];
+      if (p !== undefined) this.ragdoll.matrix(p, w[i]).multiply(this.rel[i]);
+      else w[i].multiplyMatrices(w[boneIndex(PARENT[n]!)], this.rel[i]);
+      // Back into the bone's own frame (the root's parent, the mesh, stays at the origin).
+      const local = i === 0 ? _m.copy(w[i]) : _m.copy(w[boneIndex(PARENT[n]!)]).invert().multiply(w[i]);
+      local.decompose(this.bones[i].position, this.bones[i].quaternion, _s);
+    });
     if (this.weapon) {
       const w = this.weapon;
       w.obj.matrix.compose(w.pose.p, w.pose.q, _s.set(1, 1, 1)).multiply(_m.makeTranslation(-w.centre.x, -w.centre.y, -w.centre.z));
@@ -135,7 +149,6 @@ export class PlayerDeath {
 }
 
 const UP = new Vector3(0, 1, 0);
-const _v = new Vector3();
 const _f = new Vector3();
 const _s = new Vector3();
 const _m = new Matrix4();

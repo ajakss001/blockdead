@@ -27,7 +27,8 @@ import { buildZombie, createZombie, setZombieOutline, type ZombieInstance, type 
 import { look } from '../style/look';
 import { grim } from '../style/palette';
 import { boneIndex, createBones } from '../zombies/skeleton';
-import { ZOMBIE_TYPES } from '../zombies/types';
+import { ZOMBIE_TYPES as GAME_TYPES } from '../zombies/types';
+import { refSurvivor, survivorType } from '../zombies/types/survivor';
 import { applyStage, onLook, setLook } from './viewerStage';
 
 /**
@@ -38,6 +39,10 @@ import { applyStage, onLook, setLook } from './viewerStage';
  * times the steps by the ground covered, and heel and toe leave marks where they touch: a planted foot
  * leaves a dot, a skidding one a streak (the biggest skid is shown); «0.25x» slows it down.
  */
+/** The zombie types and the living survivors (the player's figure, the reference bases). */
+const ZOMBIE_TYPES: Record<string, ZombieType> = { ...GAME_TYPES, liveM: survivorType(refSurvivor('male'), 'liveM'), liveF: survivorType(refSurvivor('female'), 'liveF') };
+ZOMBIE_TYPES.liveM.name = 'Выживший (игрок)';
+ZOMBIE_TYPES.liveF.name = 'Выжившая (игрок)';
 const q = new URLSearchParams(location.search);
 const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));

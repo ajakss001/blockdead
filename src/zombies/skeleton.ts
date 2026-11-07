@@ -72,6 +72,8 @@ export interface Proportions {
   head?: number;
   /** Leg length (short-legged 0.85 … long-legged 1.1); the body above makes up the height. */
   legs?: number;
+  /** Pelvis width (a woman's wider: 1.1), the hip joints with it. */
+  hips?: number;
   /** The jaw at rest: hanging open (rad) and off to one side (+ to the character's right, rad). */
   jawOpen?: number;
   jawSide?: number;
@@ -125,7 +127,7 @@ export function skeletonDims(p: Proportions): SkeletonDims {
     neckY,
     headY: neckY + neckLen,
     hipJointY: hipJ,
-    hipX: 0.092 * g,
+    hipX: 0.092 * g * (p.hips ?? 1),
     kneeY: 0.085 * k + (0.5 - 0.085) * k * L,
     ankleY: 0.085 * k,
     upperArm: 0.3 * k * p.arms,

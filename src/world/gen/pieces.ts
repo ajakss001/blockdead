@@ -450,6 +450,8 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   // A leak dripping in the living room, the kitchen tap, a phone now and then, flies in an abandoned house.
   if (spotHash(x0, z0, 81) < 0.35) b.life(LIFE.drip, x0 + 1.6 + spotHash(x0, z0, 82) * Math.max(0.1, xp - x0 - 2), h - 0.05, z0 + d * (0.35 + spotHash(x0, z0, 83) * 0.3), 0, 0, 0, h - 0.09, spotHash(x0, z0, 84));
   const sinkX = (xp + 0.4 + x1 - WALL_T - 1.05) / 2;
+  // Every sink can be drunk from while the city has water (tag 1: quiet); some drip.
+  b.life(LIFE.tap, sinkX, 1.0, z0 + WALL_T + 0.3, 0, 1, 0, 0, 0, 1);
   if (spotHash(x0, z0, 85) < 0.4) b.life(LIFE.tap, sinkX, 1.0, z0 + WALL_T + 0.3, 0, 1, 0, 0, spotHash(x0, z0, 86));
   if (spotHash(x0, z0, 87) < 0.06) b.life(LIFE.phone, x0 + WALL_T + 1.05, 0.5, z0 + d * 0.3 + 1.0, 0, 0, 0, 0, spotHash(x0, z0, 88));
   if ((messy || fled) && spotHash(x0, z0, 89) < 0.3) b.life(LIFE.flies, sinkX, 1.1, z0 + WALL_T + 0.6, 0, 0, 0, 0, spotHash(x0, z0, 90));

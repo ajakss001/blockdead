@@ -86,9 +86,13 @@ const CLASS: Record<string, ModelKind> = {
   unemployed: 'courier',
 };
 
-export function twinKind(worn: Partial<Record<string, string | null | undefined>>, classId?: string): ModelKind {
+/**
+ * The twin of a dead survivor: a uniform makes them its kind; in a T-shirt (the everyday clothes) they rise as
+ * the survivor model itself — the man or the woman (`sex`; old saves without it: by the shirt as before).
+ */
+export function twinKind(worn: Partial<Record<string, string | null | undefined>>, classId?: string, sex?: 'male' | 'female'): ModelKind {
   const on = new Set(Object.values(worn));
-  for (const [item, kind] of WORN) if (on.has(item)) return kind;
+  for (const [item, kind] of WORN) if (on.has(item)) return item === 'tshirt' && sex ? (sex === 'female' ? 'survivorF' : 'survivorM') : kind;
   return (classId && CLASS[classId]) || 'courier';
 }
 

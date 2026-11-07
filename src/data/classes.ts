@@ -190,11 +190,12 @@ export function classMods(id: ClassId | string | undefined): ClassMods {
  * Starting outfits offered in the editor besides the class uniform; `tint` recolors the top.
  */
 export const STARTER_OUTFITS: readonly { id: string; name: string; worn: Partial<Record<WearSlot, ItemId>> }[] = [
-  { id: 'casual', name: 'Повседневная', worn: { torso: 'hoodie', legs: 'jeans', feet: 'sneakers' } },
+  // The reference sheets' clothes: a T-shirt, jeans, sneakers (their colours: CharacterEditor.choiceTint).
+  { id: 'casual', name: 'Повседневная', worn: { torso: 'tshirt', legs: 'jeans', feet: 'sneakers' } },
   { id: 'warm', name: 'Тёплая', worn: { head: 'beanie', torso: 'workJacket', hands: 'workGloves', legs: 'cargoPants', feet: 'boots', back: 'hikingBackpack' } },
   { id: 'light', name: 'Лёгкая', worn: { torso: 'tshirt', legs: 'jeans', feet: 'sneakers', back: 'sportsBag' } },
   { id: 'leather', name: 'Кожанка', worn: { head: 'cap', torso: 'leatherJacket', legs: 'jeans', feet: 'boots' } },
 ];
 
 /** Colors offered for the top of a starting outfit. */
-export const OUTFIT_TINTS = [0x3d4a5c, 0x4a5a3a, 0x5c3a34, 0x5a5a5e, 0x2a2a2e, 0x7a6a4a] as const;
+export const OUTFIT_TINTS = [0xdcddd8, 0xe2e2de, 0x3d4a5c, 0x4a5a3a, 0x5c3a34, 0x5a5a5e, 0x2a2a2e, 0x7a6a4a] as const;

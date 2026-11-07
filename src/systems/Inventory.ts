@@ -197,10 +197,11 @@ export class Inventory {
   }
 
   /** A blow of the weapon in hand landed: it wears by one of its blows. True when it just broke (gone from the hand). */
-  wearHand(): boolean {
+  /** One blow's wear of the weapon in hand (`rate`: the skill makes it less). True if it broke. */
+  wearHand(rate = 1): boolean {
     const n = this.hand ? ITEMS[this.hand].durability : undefined;
     if (!n) return false;
-    this.handWear = Math.min(1, this.handWear + 1 / n);
+    this.handWear = Math.min(1, this.handWear + rate / n);
     if (this.handWear < 1 - 1e-6) return false;
     this.hand = null;
     this.handWear = 0;

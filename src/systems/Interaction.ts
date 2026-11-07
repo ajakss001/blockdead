@@ -1,4 +1,5 @@
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
+import { XP } from './Skills';
 import { type ItemId, ITEMS, NOTE_VARS } from '../data/items';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
@@ -85,6 +86,12 @@ export class Interaction {
   /** Class: search time multipliers (all containers, car trunks). */
   searchMul = 1;
   carMul = 1;
+  /** Class and carpentry: boarding and prying time multiplier. */
+  boardMul = 1;
+  /** A kitchen tap in front (the scene finds it): is there one, does it run, drink from it. */
+  tap: { near(): boolean; running(): boolean; drink(): void } | null = null;
+  /** Experience for what was done here (the scene gives it to the skills). */
+  onSkill: ((id: 'search' | 'carpentry', xp: number) => void) | null = null;
 
   constructor(
     private readonly ctx: GameContext,
@@ -131,6 +138,7 @@ export class Interaction {
         hud.showAction(`Обыск: ${this.containers.name(this.searchRef!)}`, this.searchT / this.searchTime);
         if (this.searchT >= this.searchTime) {
           const ref = this.searchRef!;
+          this.onSkill?.('search', ref.type === 'trunk' ? XP.trunk : XP.search);
           this.searchT = -1;
           this.ctx.events.emit('ui:busy', { busy: false });
           this.searchRef = null;
@@ -157,7 +165,12 @@ export class Interaction {
         this.toggleDoor(door);
         return;
       }
-      if (!ref) hud.toast('Здесь нечего обыскивать', 900);
+      if (!ref && this.tap?.near()) {
+        if (this.tap.running()) {
+          this.tap.drink();
+          hud.toast('Вы напились из-под крана', 1200);
+        } else hud.toast('Кран сухой: воду отключили', 1400);
+      } else if (!ref) hud.toast('Здесь нечего обыскивать', 900);
       else if (ref.type === 'generator') this.startGenerator(ref);
       else if (this.containers.isOpened(ref)) {
         sfx.containerOpen(CONTAINER_SOUND[ref.type] ?? 'shelf', spot(ref));
@@ -210,7 +223,7 @@ export class Interaction {
       return;
     }
     if (!ref) {
-      this.ctx.hud.setPrompt(null);
+      this.ctx.hud.setPrompt(this.tap?.near() ? (this.tap.running() ? `${key}Попить из крана` : 'Кран сухой') : null);
       return;
     }
     if (ref.type === 'generator') {
@@ -344,7 +357,7 @@ export class Interaction {
       stop('Прервано');
       return true;
     }
-    const time = this.boardPry ? PRY_TIME : NAIL_TIME;
+    const time = (this.boardPry ? PRY_TIME : NAIL_TIME) * this.boardMul;
     this.boardT += dt;
     hud.showAction(this.boardPry ? 'Отдираю доску' : 'Заколачиваю дверь', this.boardT / time);
     // Hammer blows: loud.
@@ -357,13 +370,17 @@ export class Interaction {
     }
     if (this.boardT >= time) {
       if (this.boardPry) {
-        if (this.doors.removePlank(door)) this.inventory.add('planks', 1);
+        if (this.doors.removePlank(door)) {
+          this.inventory.add('planks', 1);
+          this.onSkill?.('carpentry', XP.pry);
+        }
         stop(null);
       } else if (this.canNail(door)) {
         const c = this.player.controller.position;
         this.inventory.remove('planks', 1);
         this.inventory.remove('nails', NAILS_PER_PLANK);
         this.doors.addPlank(door, c.x, c.z);
+        this.onSkill?.('carpentry', XP.nail);
         stop(null);
         hud.toast(`Доска прибита: ${this.doors.planksOn(door)}/${MAX_PLANKS}`, 1100);
       } else stop('Нечем заколотить');

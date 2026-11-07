@@ -3,7 +3,7 @@
  * the far crowd's colours, what their bodies hold. Speed and health are factors on the one-armed worker
  * (1.1 m/s following, 100 HP). The models themselves: src/zombies/types/*.ts.
  */
-export const MODEL_KINDS = ['worker', 'medic', 'soldier', 'police', 'firefighter', 'office', 'grandma', 'jogger', 'chef', 'courier', 'builder', 'tourist'] as const;
+export const MODEL_KINDS = ['worker', 'medic', 'soldier', 'police', 'firefighter', 'office', 'grandma', 'jogger', 'chef', 'courier', 'builder', 'tourist', 'survivorM', 'survivorF'] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];
 
 export type BodyLoot = 'bodyZombie' | 'bodyMilitary' | 'bodyPolice' | 'bodyMedic' | 'bodyFire';
@@ -35,6 +35,9 @@ export const ZOMBIE_STATS: Record<ModelKind, KindStats> = {
   courier: { speed: 1.4, hp: 0.8, height: 1.78, headFwd: 0.15, colors: [0x8c9a84, 0xe8c82e, 0x4a6a96], loot: 'bodyZombie' },
   builder: { speed: 0.9, hp: 1.5, height: 1.85, headFwd: 0.08, colors: [0x8c9a84, 0xf07a1e, 0x4e6a8e], loot: 'bodyZombie' },
   tourist: { speed: 1, hp: 1, height: 1.72, headFwd: 0.12, colors: [0x8c9a84, 0xe6dab0, 0xb5a66a], loot: 'bodyZombie' },
+  // A dead player risen (types/survivor.ts): their tee and jeans.
+  survivorM: { speed: 1.1, hp: 1, height: 1.78, headFwd: 0.1, colors: [0x8c9a84, 0xdcddd8, 0x8a8e88], loot: 'bodyZombie' },
+  survivorF: { speed: 1.15, hp: 0.9, height: 1.66, female: true, headFwd: 0.08, colors: [0x8c9a84, 0xe2e2de, 0x9ca286], loot: 'bodyZombie' },
 };
 
 export const isModelKind = (k: string): k is ModelKind => k in ZOMBIE_STATS;

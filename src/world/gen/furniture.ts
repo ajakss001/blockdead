@@ -1,7 +1,7 @@
 import { type BufferGeometry, Euler, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import type { ContainerType } from '../../data/loot';
 import type { Surface } from '../../render/look/surfaces';
-import { spotHash } from './lifeKinds';
+import { LIFE, spotHash } from './lifeKinds';
 import { PAL, pick, type Rand } from './palette';
 import type { Builder } from './pieces';
 
@@ -442,6 +442,8 @@ export function kitchenRun(p: Place, rand: Rand, len: number, messy = false, rad
   const kx = -len / 2 + 0.5;
   p.box(0x5a5e60, kx, 0.87, 0.3, 0.5, 0.035, 0.4, 'metal');
   p.box(METAL, kx, 0.9, 0.08, 0.03, 0.25, 0.03, 'metal');
+  // The tap (drinkable while the city has water; tag 1: quiet, a dripping one is added on its own).
+  p.life(LIFE.tap, kx, 1.0, 0.12, 0, 0, 0, 1);
   p.box(cab, 0, 1.45, 0.17, len, 0.65, 0.34);
   if (messy || rand() < 0.3) {
     // A wall cabinet hangs open, emptied.

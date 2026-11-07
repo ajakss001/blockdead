@@ -1,4 +1,5 @@
 import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
+import { type Skills, SKILLS, XP } from '../systems/Skills';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
@@ -14,6 +15,7 @@ import { itemIcon } from './pixelart';
 export interface InventoryHost {
   inventory: Inventory;
   survival: Survival;
+  skills: Skills;
   containers: Containers;
   player: Player;
   /** Keep the first-person body in sync with what is held and worn. */
@@ -266,6 +268,22 @@ export class InventoryPanel {
     return cell;
   }
 
+  /** The survivor's skills: level and progress to the next (all eight, the untrained dim). */
+  private skillRow(): HTMLElement {
+    const sk = this.host.skills;
+    const row = el('div', 'inv__skills');
+    for (const s of SKILLS) {
+      const l = sk.level(s.id);
+      const cell = el('div', `inv__skill${l ? '' : ' inv__skill--none'}`);
+      cell.title = `${s.name}: ${s.per} за уровень`;
+      const bar = el('i', 'inv__skill-bar');
+      bar.style.width = `${Math.round(sk.progress(s.id) * 100)}%`;
+      cell.append(el('span', '', s.name), el('b', '', String(l)), bar);
+      row.append(cell);
+    }
+    return row;
+  }
+
   /** Item card: what is selected and what can be done with it; otherwise the survivor's condition. */
   private card(): HTMLElement {
     const card = el('div', 'inv__card');
@@ -284,6 +302,7 @@ export class InventoryPanel {
         .filter(Boolean)
         .join('   ·   ');
       card.append(el('div', 'inv__stats', line));
+      card.append(this.skillRow());
       card.append(el('div', 'inv__hint', this.ctx.input.mode === 'kbm' ? 'Клик — выбрать, двойной клик — действие, перетаскивание — переложить' : 'Тап — выбрать, двойной тап — действие, перетащи пальцем — переложить'));
       return card;
     }
@@ -443,6 +462,7 @@ export class InventoryPanel {
       this.ctx.hud.toast('Фонарь заряжен');
     } else {
       this.ctx.hud.toast(survival.consume(def));
+      if (def.kind === 'medical') this.host.skills.add('firstAid', XP.heal);
     }
     this.render();
   }

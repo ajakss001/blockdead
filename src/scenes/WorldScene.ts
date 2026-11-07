@@ -25,8 +25,11 @@ import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from
 import type { Worn } from '../systems/Inventory';
 import type { GameContext } from '../GameContext';
 import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
+import { Hordes } from '../systems/Hordes';
+import { gridSchedule, type GridSchedule, TAP_DRINK } from '../systems/Utilities';
+import { describeXp, emptyMeta, type MetaData, SKILLS, Skills, weaponSkill, XP } from '../systems/Skills';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
-import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../player/appearance';
+import { type Appearance, DEFAULT_APPEARANCE, handScale, sanitizeAppearance } from '../player/appearance';
 import { outfitFrom } from '../player/outfit';
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
@@ -265,6 +268,17 @@ export class WorldScene implements IScene {
   /** Who the survivor is: looks and former job (class). */
   private look: Appearance = { ...DEFAULT_APPEARANCE };
   private classId: ClassId = DEFAULT_CLASS;
+  /** What the survivor learnt by doing; and what outlives them (the legacy, deaths, kills). */
+  private readonly skills = new Skills();
+  private meta: MetaData = emptyMeta();
+  /** When the city's power and water go (by the seed), and whether they are on now (null: not set yet). */
+  private grid!: GridSchedule;
+  private gridState: { power: boolean; water: boolean } | null = null;
+  /** The groups out on the map that come to noise (`?hordes=0`: none). */
+  private readonly hordes = new Hordes(Date.now() & 0xffff);
+  private readonly hordesOn = new URLSearchParams(location.search).get('hordes') !== '0';
+  /** The player's noise reaches the groups at most this often, s. */
+  private hordeEar = 0;
   /** No save was found: a new game asks for a character first. */
   private isNewGame = true;
   private readonly particles = new Particles();
@@ -370,6 +384,7 @@ export class WorldScene implements IScene {
       {
         inventory: this.inventory,
         survival: this.survival,
+        skills: this.skills,
         containers: this.containers,
         player: this.player,
         syncBody,
@@ -379,6 +394,20 @@ export class WorldScene implements IScene {
     );
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
     this.interaction.ground = this.ground;
+    this.interaction.onSkill = (id, xp) => this.skills.add(id, xp);
+    this.grid = gridSchedule(seed);
+    this.interaction.tap = {
+      near: () => !!this.atmo.tapNear(this.camera.getWorldPosition(_so), this.camera.getWorldDirection(_sd)),
+      running: () => this.gridState?.water ?? true,
+      drink: () => {
+        this.survival.thirst = Math.max(0, this.survival.thirst - TAP_DRINK);
+        sfx.item('drink');
+      },
+    };
+    this.skills.onLevel = (s, l) => {
+      this.ctx.hud.toast(`Навык «${s.name}»: уровень ${l}`, 2200);
+      this.applyMods();
+    };
     // Search by the crosshair: a ray from the eye into the search zones, walls and objects in front stop it.
     this.interaction.aim = {
       eye: (out) => this.camera.getWorldPosition(out),
@@ -417,7 +446,10 @@ export class WorldScene implements IScene {
         return !!b && Math.round(c.y / FLOOR_H) < b.floors - 1;
       },
       this.world,
-      (x, y, z, r) => this.zombies.noiseAt(x, y, z, r),
+      (x, y, z, r) => {
+        this.zombies.noiseAt(x, y, z, r);
+        this.hordes.hear(x, z, r);
+      },
     );
     // A blow to a wall: steel strikes sparks, the knife (and a fist) only a little dust; the weapon wears.
     this.player.onStrikeWorld = (x, y, z, item) => {
@@ -466,6 +498,11 @@ export class WorldScene implements IScene {
       const s = this.survival;
       return `время ${this.clock.label}  ${this.indoors ? 'внутри' : 'снаружи'}  воздух ${this.air.toFixed(1)}°  ощущается ${this.felt.toFixed(1)}°  тело ${s.bodyTemp.toFixed(2)}°  тревога ${Math.round(s.anxiety * 100)}%`;
     });
+    ctx.debug.set('hordes', () => {
+      const c = this.player.controller.position;
+      const near = this.hordes.list.reduce((m, h) => Math.min(m, Math.hypot(h.x - c.x, h.z - c.z)), Infinity);
+      return `орды ${this.hordes.list.length} (${this.hordes.total} зомби), ближайшая ${Math.round(near)} м · свет ${this.gridState?.power ? 'есть' : 'нет'} вода ${this.gridState?.water ? 'есть' : 'нет'}`;
+    });
     ctx.debug.set('zombies', () => `зомби ${this.zombies.list.length}/${this.zombies.target}  видят ${this.zombies.seeing}  идут за мной ${this.zombies.chasing}  шум ${this.player.controller.noise.toFixed(2)}`);
     ctx.debug.set('survival', () => {
       const v = this.survival;
@@ -480,7 +517,7 @@ export class WorldScene implements IScene {
     this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
     const outfit = outfitFrom(this.inventory.worn, this.look.skin, this.inventory.wornDirt, this.inventory.wornTint);
     this.player.body.setOutfit(outfit);
-    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso, outfit.gloves, outfit.dirt.hands);
+    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso, outfit.gloves, outfit.dirt.hands, handScale(this.look));
     this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
@@ -501,12 +538,14 @@ export class WorldScene implements IScene {
       for (const b of this.bodies) this.containers.addLoose(b, []);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
+      this.meta = { ...emptyMeta(), ...save.meta };
     }
     if (save && !save.dead) {
       this.isNewGame = false;
       // Saves before the editor: the default survivor and class, no editor.
       this.look = sanitizeAppearance(save.character?.appearance);
       this.classId = classDef(save.character?.classId).id;
+      this.skills.restore(save.skills, this.classId, save.kills);
       this.applyClass();
       c.position.set(save.player.x, save.player.y ?? 0, save.player.z);
       c.prevPosition.copy(c.position);
@@ -619,6 +658,7 @@ export class WorldScene implements IScene {
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
+    this.updateHordes(dt);
     this.pois?.update(dt, c.position.x, c.position.z);
     // Nearest first: in a crowd the sound groups fill up with the zombies that matter.
     const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
@@ -685,6 +725,7 @@ export class WorldScene implements IScene {
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
     if (!this.dead) this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
+    this.updateGrid();
     // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
     this.climateT -= dt;
     if (this.climateT <= 0) {
@@ -701,6 +742,10 @@ export class WorldScene implements IScene {
     if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
     // Dark = night without a light of your own (rooms by day get light through the windows).
     const dark = !this.player.lightOn && this.clock.isNight;
+    if (!this.dead && c.speed > 0.3) {
+      if (c.sprinting) this.skills.add('fitness', XP.sprint * dt);
+      else if (c.crouched && this.zombies.threat(c.position) > 0.05) this.skills.add('sneak', XP.sneak * dt);
+    }
     this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat: this.zombies.threat(c.position) });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
@@ -859,12 +904,16 @@ export class WorldScene implements IScene {
       boards: this.doors.serializeBoards(),
       unlocked: this.doors.serializeUnlocked(),
       powered: [...this.powered],
+      skills: this.skills.serialize(),
+      kills: this.skills.kills,
+      meta: this.meta,
     });
   }
 
   /** New game: the character editor over the paused world (?editor=0 skips it with the default survivor). */
   async createCharacter(): Promise<void> {
     if (!this.isNewGame || new URLSearchParams(location.search).get('editor') === '0') {
+      if (this.isNewGame) this.skills.start(this.classId, this.meta.legacy);
       this.applyClass();
       this.giveTestLoadout();
       return;
@@ -872,7 +921,7 @@ export class WorldScene implements IScene {
     // The editor covers everything; afterwards the usual start screen (PC: click to play) shows.
     this.ctx.loop.pause('editor');
     this.creating = true;
-    const choice = await new CharacterEditor(document.getElementById('ui')!).open();
+    const choice = await new CharacterEditor(document.getElementById('ui')!, describeXp(this.meta.legacy)).open();
     this.applyChoice(choice);
     this.giveTestLoadout();
     this.creating = false;
@@ -899,6 +948,7 @@ export class WorldScene implements IScene {
     const cls = classDef(choice.classId);
     const worn = choiceWorn(choice);
     this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
+    this.skills.start(this.classId, this.meta.legacy);
     this.applyClass();
     this.syncBody();
   }
@@ -916,9 +966,11 @@ export class WorldScene implements IScene {
     if (!res) return false;
     const wall = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, res.dist);
     if (wall >= 0 && wall < res.dist - 0.1) return false;
-    const strength = classMods(this.classId).strength;
+    const strength = classMods(this.classId).strength * this.skills.damage(item);
     const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
     const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point);
+    this.skills.add(weaponSkill(item), XP.hit + (killed ? XP.kill : 0));
+    if (killed) this.skills.kills++;
     sfx.strike(STRIKE_SOUND[item] ?? 'blunt', res.point, res.head, killed);
     this.particles.burst(res.point, res.head ? 14 : 10);
     this.weaponBlow();
@@ -928,7 +980,7 @@ export class WorldScene implements IScene {
   /** A blow of the weapon in hand landed: it wears, and at the end of its blows it breaks. */
   private weaponBlow(): void {
     const id = this.inventory.hand;
-    if (!id || !this.inventory.wearHand()) return;
+    if (!id || !this.inventory.wearHand(this.skills.wear(id))) return;
     this.ctx.hud.toast(`Сломалось: ${ITEMS[id].name}`, 1800);
     sfx.item('move');
     this.syncBody();
@@ -1067,8 +1119,15 @@ export class WorldScene implements IScene {
       const id = inv.worn[slot];
       if (id) items.push({ id, count: 1, dirt: inv.wornDirt[slot], ...(inv.wornTint[slot] !== undefined ? { tint: inv.wornTint[slot] } : {}) });
     }
+    const life = Math.max(0, this.clock.minutes - this.bornAt);
+    this.meta = {
+      legacy: this.skills.bequeath(this.meta.legacy),
+      deaths: this.meta.deaths + 1,
+      bestLife: Math.max(this.meta.bestLife, life),
+      kills: this.meta.kills + this.skills.kills,
+    };
     const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items, kind: twinKind(inv.worn, this.classId) });
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items, kind: twinKind(inv.worn, this.classId, this.look.sex) });
     this.save();
   }
 
@@ -1213,7 +1272,7 @@ export class WorldScene implements IScene {
     const el = document.createElement('div');
     el.className = 'death-screen';
     el.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#000;color:#d8d2c4;font:16px/1.4 system-ui,sans-serif;text-align:center';
-    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вы прожили ${days} ${word}</div><div style="opacity:.85">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.6">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>`;
+    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вы прожили ${days} ${word}</div><div style="opacity:.85">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.6">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>${this.lifeSummary()}`;
     const btn = document.createElement('button');
     btn.className = 'death-screen__new';
     btn.textContent = 'Новый персонаж';
@@ -1230,15 +1289,68 @@ export class WorldScene implements IScene {
     (document.getElementById('ui') ?? document.body).append(el);
   }
 
+  /**
+   * The hordes: loud things the player does (running, hammering, a fight — the noise past 0.6) carry to
+   * them; near ones spill into the crowd, up to half again the quality's zombie count.
+   */
+  private updateHordes(dt: number): void {
+    if (!this.hordesOn || this.dead) return;
+    const c = this.player.controller;
+    this.hordeEar -= dt;
+    if (c.noise > 0.6 && this.hordeEar <= 0) {
+      this.hordeEar = 2;
+      this.hordes.hear(c.position.x, c.position.z, c.noise * 30);
+    }
+    const room = Math.ceil(this.zombies.target * 1.5) - this.zombies.alive;
+    this.hordes.update(dt, c.position.x, c.position.z, room, (x, z, tx, tz, drawn) => this.zombies.spawnSpill(x, z, tx, tz, drawn));
+  }
+
+  /** The power, then the water, go out across the city at their minute (said once, as it happens). */
+  private updateGrid(): void {
+    const power = this.clock.minutes < this.grid.powerOff;
+    const water = this.clock.minutes < this.grid.waterOff;
+    const was = this.gridState;
+    if (was && was.power === power && was.water === water) return;
+    this.gridState = { power, water };
+    this.life.power = power;
+    this.atmo.setUtilities(power, water);
+    if (!was) return;
+    if (was.power && !power) {
+      this.ctx.hud.toast('Свет погас во всём городе', 3500);
+      sfx.item('move');
+    }
+    if (was.water && !water) this.ctx.hud.toast('Из кранов больше не течёт вода', 3500);
+  }
+
+  /** The death screen's lines: kills, what was learnt, what the next survivor inherits, the world's records. */
+  private lifeSummary(): string {
+    const learnt = SKILLS.filter((s) => this.skills.level(s.id) > 0).map((s) => `${s.name} ${this.skills.level(s.id)}`).join(' · ');
+    const legacy = describeXp(this.meta.legacy);
+    const best = Math.floor(this.meta.bestLife / 1440);
+    const line = (t: string, o = 0.75) => `<div style="opacity:${o};max-width:520px">${t}</div>`;
+    return (
+      line(`Убито зомби: ${this.skills.kills}`) +
+      (learnt ? line(`Навыки: ${learnt}`) : '') +
+      line(legacy ? `Следующий выживший унаследует: ${legacy}` : 'Наследия пока нет: навыки растут от дела', 0.9) +
+      line(`Погибших в этом мире: ${this.meta.deaths} · лучшая жизнь: ${best} дн. · всего убито: ${this.meta.kills}`, 0.5)
+    );
+  }
+
   /** Class modifiers into the systems that use them. */
   private applyClass(): void {
-    const m = classMods(this.classId);
+    this.inventory.capacity = BACKPACK_CAPACITY + classMods(this.classId).carry;
+    this.applyMods();
+    this.panel.setAppearance(this.look);
+  }
+
+  /** The class's multipliers with the skills on top, into the systems (again on every level). */
+  private applyMods(): void {
+    const m = this.skills.apply(classMods(this.classId));
     this.survival.mods = m;
-    this.inventory.capacity = BACKPACK_CAPACITY + m.carry;
     this.interaction.searchMul = m.searchSpeed;
     this.interaction.carMul = m.carSearch;
+    this.interaction.boardMul = 1 / m.barricade;
     this.player.controller.noiseMul = m.stealth;
-    this.panel.setAppearance(this.look);
   }
 
   dispose(): void {

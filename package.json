@@ -19,7 +19,8 @@
     "test:bigpoi": "node tools/vite-run.mjs src/debug/bigPoiTest.ts",
     "test:poi": "node tools/vite-run.mjs src/debug/poiTest.ts",
     "test:e2e": "node tools/e2e.mjs",
-    "test:scenes": "node tools/vite-run.mjs src/debug/scenarioTest.ts"
+    "test:scenes": "node tools/vite-run.mjs src/debug/scenarioTest.ts",
+    "test:hordes": "node tools/vite-run.mjs src/debug/hordeTest.ts"
   },
   "dependencies": {
     "cannon-es": "^0.20.0",
