@@ -1,14 +1,17 @@
 import './domStub';
 import { Viewmodel } from '../player/Viewmodel';
 import { allAnimations, failures, type FrameRow, ITEMS, table } from './animCheck';
+import { loadCharactersNode } from './nodeCharacters';
 
 /**
  * npm run test:anim — every animation of every weapon, frame by frame on the real viewmodel; fails on
  * wrist / forearm limits, jumps over 15° per frame, gaps over 1 cm, weapon head or hands out of the frame.
  * `-- --table axe` prints the swing table of one item.
  */
-export function main(args: string[]): number {
+export async function main(args: string[]): Promise<number> {
+  await loadCharactersNode();
   const vm = new Viewmodel();
+  vm.setBody('male', 1);
   vm.setAspect(16 / 9);
   const want = args.includes('--table') ? args[args.indexOf('--table') + 1] : null;
   let failed = 0;

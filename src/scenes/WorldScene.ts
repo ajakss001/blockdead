@@ -34,8 +34,7 @@ import { MapPanel } from '../ui/MapPanel';
 import { gridSchedule, type GridSchedule, TAP_DRINK } from '../systems/Utilities';
 import { describeXp, emptyMeta, type MetaData, SKILLS, Skills, weaponSkill, XP } from '../systems/Skills';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
-import { type Appearance, DEFAULT_APPEARANCE, handScale, sanitizeAppearance } from '../player/appearance';
-import { outfitFrom } from '../player/outfit';
+import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../player/appearance';
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
 import type { RightItem } from '../player/Viewmodel';
@@ -556,9 +555,7 @@ export class WorldScene implements IScene {
   private syncBody(): void {
     const hand = this.inventory.hand;
     this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
-    const outfit = outfitFrom(this.inventory.worn, this.look.skin, this.inventory.wornDirt, this.inventory.wornTint);
-    this.player.body.setOutfit(outfit);
-    this.player.viewmodel.setSleeves(outfit.sleeves, outfit.skin, outfit.dirt.torso, outfit.gloves, outfit.dirt.hands, handScale(this.look));
+    this.player.setLook(this.look, this.classId);
     this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
@@ -1153,6 +1150,7 @@ export class WorldScene implements IScene {
     const inv = this.inventory;
     this.death = new PlayerDeath(this.scene, {
       look: this.look,
+      classId: this.classId,
       worn: inv.worn,
       dirt: inv.wornDirt,
       tint: inv.wornTint,
@@ -1180,8 +1178,8 @@ export class WorldScene implements IScene {
       bestLife: Math.max(this.meta.bestLife, life),
       kills: this.meta.kills + this.skills.kills,
     };
-    const outfit = outfitFrom(inv.worn, this.look.skin, inv.wornDirt, inv.wornTint);
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [outfit.top ?? 0x8a8478, outfit.pants ?? 0x5a5448, this.look.skin], items, kind: twinKind(inv.worn, this.classId, this.look.sex) });
+    const color = (slot: WearSlot) => { const id = inv.worn[slot]; return id ? (inv.wornTint[slot] ?? ITEMS[id].wear?.color ?? null) : null; };
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex) });
     this.save();
   }
 
@@ -1622,7 +1620,7 @@ export class WorldScene implements IScene {
     this.inventory.capacity = BACKPACK_CAPACITY + this.mods().carry;
     this.skills.learnMul = traitLearn(this.traits);
     this.applyMods();
-    this.panel.setAppearance(this.look);
+    this.panel.setAppearance(this.look, this.classId);
   }
 
   /** The class's multipliers with the skills on top, into the systems (again on every level). */

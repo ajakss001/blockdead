@@ -1,4 +1,4 @@
-import { type Group, type Mesh, Quaternion, Vector3 } from 'three';
+import { type Group, Quaternion, Vector3 } from 'three';
 import { FOREARM_ROLL, hitTime, swingTime, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
 import { GRIP_X, GRIP_Z } from '../player/hand';
 import { FISTS, HELD, type HeldConfig } from '../player/held';
@@ -86,7 +86,6 @@ interface VmInternals {
   handL: Group;
   held: Map<RightItem, Group>;
   torch: Group;
-  cuffs: Mesh[];
   attackT: number;
   item: RightItem;
 }
@@ -158,11 +157,8 @@ class Sampler {
     hand.getWorldQuaternion(_qa);
     socketObj.getWorldQuaternion(_qb).multiply(_qc.setFromAxisAngle(_b.set(0, 1, 0), socket.roll));
     const socketTurn = item === 'fists' && k === 0 ? 0 : quatAngle(_qa, _qb);
-    // The end of the cuff (its −Z tip) against the wrist (hand origin).
-    const cuff = v.cuffs[k];
-    const cuffEnd = new Vector3(0, 0, -0.03).applyMatrix4(cuff.matrixWorld);
-    const wrist = new Vector3().setFromMatrixPosition(hand.matrixWorld);
-    const sleeveGap = cuffEnd.distanceTo(wrist);
+    // The model's hand bone against the end of its forearm bone (the sleeve).
+    const sleeveGap = vm.arms.cuff[k].distanceTo(vm.arms.wrist[k]);
     const dWrist = this.first ? 0 : quatAngle(hand.quaternion, this.prevWrist[k]);
     const dRoll = this.first ? 0 : Math.abs(pose.roll - this.prevRoll[k]) * DEG;
     const dSwivel = this.first ? 0 : Math.abs(pose.swivel - this.prevSwivel[k]) * DEG;

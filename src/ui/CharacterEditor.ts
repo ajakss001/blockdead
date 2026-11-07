@@ -2,25 +2,7 @@ import { CLASSES, type ClassId, classDef, OUTFIT_TINTS, STARTER_OUTFITS } from '
 import { classSkillText } from '../systems/Skills';
 import { TRAITS, type TraitId, traitDef, traitPointsLeft } from '../data/traits';
 import type { ItemId, WearSlot } from '../data/items';
-import {
-  type Appearance,
-  BEARD_LABEL,
-  BEARDS,
-  BUILD_LABEL,
-  BUILDS,
-  FACES,
-  HAIR_COLORS,
-  HAIR_LABEL,
-  HAIR_STYLES,
-  HEIGHT_RANGE,
-  baseLook,
-  randomAppearance,
-  REF_CLOTHES,
-  SEX_LABEL,
-  SEXES,
-  type Sex,
-  SKIN_TONES,
-} from '../player/appearance';
+import { type Appearance, HEIGHT_RANGE, baseLook, randomAppearance, REF_CLOTHES, SEX_LABEL, SEXES, type Sex } from '../player/appearance';
 import type { Worn } from '../systems/Inventory';
 import { CharacterPreview } from './CharacterPreview';
 
@@ -51,7 +33,7 @@ export function choiceTint(c: CharacterChoice): Partial<Record<WearSlot, number>
 }
 
 /**
- * New game: who the survivor is. Looks (name, build, height, skin, face, hair, beard), the class
+ * New game: who the survivor is. Looks (name, man or woman, height), the class
  * (former job) and the starting clothes, with the 3D figure updating live. Phone-first: big touch
  * targets, one scrolling column of options next to the figure.
  */
@@ -142,7 +124,7 @@ export class CharacterEditor {
 
   private refreshFigure(): void {
     const c = this.choice;
-    this.preview.setAppearance(c.appearance);
+    this.preview.setAppearance(c.appearance, c.classId);
     this.preview.setOutfit(choiceWorn(c), classDef(c.classId).hand as ItemId | null, undefined, choiceTint(c));
   }
 
@@ -192,14 +174,13 @@ export class CharacterEditor {
 
   private renderLook(): void {
     const a = this.choice.appearance;
-    // The base (man / woman): its reference look; the name and the rest can be changed after.
-    this.chips('База', SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
+    // A man or a woman (the model); the name and the height after.
+    this.chips('Персонаж', SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
       const sex = v as Sex;
       if (sex === a.sex) return;
       if (this.choice.tint === REF_CLOTHES[a.sex].tee) this.choice.tint = REF_CLOTHES[sex].tee;
       this.choice.appearance = baseLook(sex, a.name.trim() || undefined);
     });
-    this.chips('Телосложение', BUILDS.map((b) => [b, BUILD_LABEL[b]]), a.build, (v) => (a.build = v as Appearance['build']));
     // Height slider.
     const row = div('editor__row');
     const label = div('editor__label', `Рост: ${a.height} см`);
@@ -216,11 +197,6 @@ export class CharacterEditor {
     });
     row.append(label, range);
     this.body.append(row);
-    this.swatches('Кожа', SKIN_TONES, a.skin, (v) => (a.skin = v));
-    this.chips('Лицо', Array.from({ length: FACES }, (_, i) => [String(i), String(i + 1)]), String(a.face), (v) => (a.face = Number(v)));
-    this.chips('Причёска', HAIR_STYLES.map((h) => [h, HAIR_LABEL[h]]), a.hair, (v) => (a.hair = v as Appearance['hair']));
-    this.swatches('Цвет волос', HAIR_COLORS, a.hairColor, (v) => (a.hairColor = v));
-    if (a.sex === 'male') this.chips('Борода', BEARDS.map((b) => [b, BEARD_LABEL[b]]), a.beard, (v) => (a.beard = v as Appearance['beard']));
   }
 
   private renderClass(): void {

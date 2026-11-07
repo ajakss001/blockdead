@@ -8,7 +8,9 @@ import type { GameContext } from '../GameContext';
 import type { LookDelta } from '../input/InputManager';
 import type { QualityPreset } from '../render/QualityPresets';
 import type { CollisionWorld } from '../world/CollisionWorld';
+import type { Appearance } from './appearance';
 import { BodyModel } from './BodyModel';
+import { bodyFor, figureScale } from './CharacterFigure';
 import { type GroundFn, PlayerController, SPEED_WALK } from './PlayerController';
 import { Viewmodel, type ViewmodelFrame } from './Viewmodel';
 
@@ -34,11 +36,10 @@ const MATERIAL: Partial<Record<Surface, HitMaterial>> = {
   rubber: 'soft',
 };
 const _o = new Vector3();
+const _eye = new Vector3();
 const _d = new Vector3();
 const _ray = new Raycaster();
 
-/** How far the eyes move forward when looking straight down (neck flexion), m. */
-const NECK_LEAN = 0.14;
 
 /** Full battery lasts this many seconds of light (items/config). */
 const BATTERY_LIFE = FLASHLIGHT.battery.life;
@@ -88,6 +89,13 @@ export class Player {
 
   /** Dead: the scene's death camera has the view; no arms, no body, no input. */
   private dead = false;
+
+  /** The body for the survivor's look and class (a man, a woman, the SWAT officer). */
+  setLook(look: Appearance, classId?: string): void {
+    const body = bodyFor(look, classId);
+    this.body.setBody(body, figureScale(look, body));
+    this.viewmodel.setBody(body, figureScale(look, body));
+  }
 
   /** The survivor died: hide the first-person arms, weapon and legs (the ragdoll figure takes over). */
   startDeath(): void {
@@ -221,26 +229,33 @@ export class Player {
     const phase = lerp(c.prevStepPhase, c.stepPhase, alpha);
     const crouchT = lerp(c.prevCrouchT, c.crouchT, alpha);
 
-    // Head bob: one vertical dip per step, one lateral sway per stride.
     const amp = clamp(c.speed / SPEED_WALK, 0, 1.6);
-    const bobY = (Math.cos(phase * 2) - 1) * 0.5 * 0.045 * amp;
-    const bobX = Math.sin(phase) * 0.02 * amp;
     const cos = Math.cos(c.yaw);
     const sin = Math.sin(c.yaw);
-    // Looking down bends the neck: the head (eyes) moves forward over the belly, so you see your
-    // legs and feet, not the top of your own stomach.
-    let lean = clamp((-c.pitch - 0.6) / 0.8, 0, 1) * NECK_LEAN;
-    // …but never into a wall: only as far as there is room in front of the face.
-    if (lean > 0) {
-      const room = this.world.rayHit(x, y + c.eyeHeight(alpha), z, -sin, 0, -cos, NECK_LEAN + 0.2);
-      if (room >= 0) lean = Math.min(lean, Math.max(0, room - 0.18));
+    // The body first: the camera sits in its head bone (the gait moves the head; looking down bends the
+    // back, which brings the eyes forward over the belly).
+    this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
+    const eye = this.body.eyePosition(_eye, frameDt);
+    // Crouching and standing up follow the controller's eye height (the collision's), the head's sway on top.
+    const baseY = y + c.eyeHeight(alpha);
+    eye.y = baseY + clamp(eye.y - (y + this.body.standEye(crouchT)), -0.12, 0.12);
+    // …never into a wall: the eyes only as far forward of the body's centre as there is room.
+    let ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
+    if (ahead > 0.02) {
+      const room = this.world.rayHit(x, baseY, z, -sin, 0, -cos, ahead + 0.2);
+      if (room >= 0) {
+        const fit = Math.max(0, room - 0.18);
+        if (fit < ahead) {
+          eye.x += sin * (ahead - fit);
+          eye.z += cos * (ahead - fit);
+          ahead = fit;
+        }
+      }
     }
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
-    this.camera.position.set(x + cos * bobX - sin * lean, y + c.eyeHeight(alpha) + bobY - lean * 0.35 - this.landDip, z - sin * bobX - cos * lean);
+    this.camera.position.set(eye.x, eye.y - this.landDip, eye.z);
     this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
-
-    this.body.update(x, y, z, c.yaw, phase, c.speed, crouchT);
     const light = this.lightLevel(frameDt);
 
     const f = this.frame;

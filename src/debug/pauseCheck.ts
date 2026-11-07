@@ -5,8 +5,8 @@ import { GameLoop, MAX_FRAME_DT } from '../core/GameLoop';
 import type { Profiler } from '../core/Profiler';
 import { ZombieModels } from '../render/ZombieModels';
 import { PHASE_M, type ZombieWorld, ZombieSim } from '../systems/zombies';
-import { type BoneName, boneIndex } from '../zombies/skeleton';
 import { limitTurn } from '../zombies/twitch';
+import { ZOMBIE_TYPES } from '../zombies/types';
 
 /**
  * Pause and long frames (part of npm run test:zombies): the loop gives the world no time while paused and
@@ -15,12 +15,12 @@ import { limitTurn } from '../zombies/twitch';
  */
 
 /** Joints watched: a bone's turn in its parent's (or the chest's) frame. */
-const JOINTS: [BoneName, BoneName][] = [
-  ['Head', 'Chest'],
-  ['UpperArm_L', 'Chest'],
-  ['UpperArm_R', 'Chest'],
-  ['Hand_L', 'LowerArm_L'],
-  ['Hand_R', 'LowerArm_R'],
+const JOINTS: [string, string][] = [
+  ['Head', 'Spine2'],
+  ['LeftArm', 'Spine2'],
+  ['RightArm', 'Spine2'],
+  ['LeftHand', 'LeftForeArm'],
+  ['RightHand', 'RightForeArm'],
 ];
 const _a = new Matrix4();
 const _p = new Vector3();
@@ -101,7 +101,8 @@ export function pauseChecks(check: (ok: boolean, what: string) => void): void {
   const turns = () =>
     list.flatMap((z) => {
       const w = models.bones(z)!;
-      return JOINTS.map(([b, p]) => new Quaternion().setFromRotationMatrix(_a.copy(w[boneIndex(p)]).invert().multiply(w[boneIndex(b)])).normalize());
+      const ix = models.rigOf(z)!.index;
+      return JOINTS.map(([b, p]) => new Quaternion().setFromRotationMatrix(_a.copy(w[ix.get(p)!]).invert().multiply(w[ix.get(b)!])).normalize());
     });
   const frame = (dt: number, world: number) => {
     list.forEach((z, i) => {
@@ -112,7 +113,7 @@ export function pauseChecks(check: (ok: boolean, what: string) => void): void {
   };
   /**
    * Frames of `dt` (the world moving by `world` s each): the largest turn of any joint in a frame, and from
-   * the start; `settle`: the least of the frames' largest turns from the start over the last 4 s (between
+   * the start; `settle`: the least of the frames' largest turns from the start over the last 10 s (the idle clip is 4.3 s) (between
    * twitches the pose is back where it was — unless turns pile up).
    */
   const span = (n: number, dt: number, world: number) => {
@@ -130,7 +131,7 @@ export function pauseChecks(check: (ok: boolean, what: string) => void): void {
         d = Math.max(d, angle(q, t0[i]));
       });
       drift = Math.max(drift, d);
-      if (f >= n - 240) settle = Math.min(settle, d);
+      if (f >= n - 600) settle = Math.min(settle, d);
       last = t;
     }
     return { jump, drift, settle };
@@ -169,5 +170,5 @@ export function pauseChecks(check: (ok: boolean, what: string) => void): void {
   // Placement sanity: the zombies are where the world put them.
   const w = models.bones(list[0])!;
   w[0].decompose(_p, new Quaternion(), _s);
-  check(Math.abs(_s.x - 1) < 1e-3 && Number.isFinite(_p.x), 'bones finite, unscaled');
+  check(Math.abs(_s.x - ZOMBIE_TYPES[list[0].kind].scale) < 1e-3 && Number.isFinite(_p.x), 'bones finite, scaled to its kind');
 }

@@ -23,8 +23,8 @@ export class CharacterPreview {
   private renderer: WebGLRenderer | null = null;
   private readonly scene = new Scene();
   private readonly camera = new PerspectiveCamera(28, 0.5, 0.1, 30);
-  /** The figure faces −Z; start turned three-quarters towards the camera. */
-  private yaw = Math.PI - 0.45;
+  /** The figure faces +Z (the camera); start turned three-quarters. */
+  private yaw = -0.45;
   private spin = 0;
   private dragX: number | null = null;
   private active = false;
@@ -72,8 +72,8 @@ export class CharacterPreview {
     this.dirty = true;
   }
 
-  setAppearance(a: Appearance): void {
-    this.figure.setAppearance(a);
+  setAppearance(a: Appearance, classId?: string): void {
+    this.figure.setAppearance(a, classId ?? null);
     this.height = a.height / 100;
     this.dirty = true;
   }

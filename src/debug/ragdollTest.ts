@@ -5,11 +5,11 @@ import { DeathCamera, deathSurroundings } from '../player/DeathCamera';
 import { FISTS, HELD } from '../player/held';
 import { zombieRagdoll } from '../render/zombieBody';
 import { ZombieModels } from '../render/ZombieModels';
-import { BONES, PARENT, restLocals, skeletonDims } from '../zombies/skeleton';
 import { ZOMBIE_TYPES } from '../zombies/types';
 import type { ModelKind } from '../zombies/stats';
 import { type PlayerSense, type ZombieWorld, ZombieSim } from '../systems/zombies';
 import { CollisionWorld } from '../world/CollisionWorld';
+import { loadCharactersNode } from './nodeCharacters';
 
 /**
  * npm run test:ragdoll — the dead: zombie ragdolls (never a bind pose, asleep within 3 s and frozen after,
@@ -96,7 +96,8 @@ const flat: ZombieWorld = {
 };
 const sense = (x: number, z: number): PlayerSense => ({ pos: new Vector3(x, 0, z), eye: 1.6, noise: 1, crouched: false, lit: 0, daylight: 1 });
 
-export function main(args: string[] = []): number {
+export async function main(args: string[] = []): Promise<number> {
+  await loadCharactersNode();
   const RUNS = Number(args[0]) || 3;
   const fails: string[] = [];
   const check = (ok: boolean, what: string) => {
@@ -212,12 +213,11 @@ export function main(args: string[] = []): number {
 
   // --- Modelled zombies (the one-armed worker, the small grandma, the bulky firefighter, the fat chef): the
   // ragdoll starts from the model's own pose, then drives its bones. ---
-  for (const type of ['worker', 'grandma', 'firefighter', 'chef'].map((id) => ZOMBIE_TYPES[id])) {
+  for (const type of ['worker', 'grandma', 'firefighter', 'chef'].map((id) => ZOMBIE_TYPES[id as ModelKind])) {
     const flat: ZombieWorld = { groundY: () => 0, resolveCircle: () => {}, rayHit: () => -1 };
     const sim = new ZombieSim(flat, 0);
     const models = new ZombieModels('high');
     const eye = new Vector3(0, 0, 0);
-    const rest = restLocals(skeletonDims(type.proportions));
     let jump = 0;
     let gap = 0;
     let under = 0;
@@ -251,12 +251,12 @@ export function main(args: string[] = []): number {
       models.update([], eye, 1 / 60);
       if (rd.asleep) asleep++;
       // Every joint where its parent bone says it is (no limb torn off the body), nothing under the floor.
-      BONES.forEach((n, i) => {
-        const p = PARENT[n];
+      const rig = models.rigOf(zb)!;
+      rig.parents.forEach((p, i) => {
         const at = new Vector3().setFromMatrixPosition(dead[i]);
         under = Math.min(under, at.y);
-        if (!p) return;
-        const want = rest[i].pos.clone().applyMatrix4(dead[BONES.indexOf(p)]);
+        if (p < 0) return;
+        const want = rig.restPos[i].clone().applyMatrix4(dead[p]);
         gap = Math.max(gap, want.distanceTo(at));
       });
       hips = Math.max(hips, new Vector3().setFromMatrixPosition(dead[0]).y);

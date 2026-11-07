@@ -52,7 +52,7 @@ export function glslColor(hex: number): string {
 }
 
 /**
- * Stains by position (dirt, soot, oil), never red: GLSL using `zNoise`/`zHash` (zombies/buildZombie) or the
+ * Stains by position (dirt, soot, oil), never red: GLSL using `zNoise`/`zHash` (characters/material) or the
  * same functions, on `p` (a position in the part's own frame, m) — `amount` the share of the surface.
  */
 export function stainGlsl(p: string, rgb: string, amount = 1): string {

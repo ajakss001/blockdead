@@ -112,8 +112,8 @@ export class InventoryPanel {
   }
 
   /** Looks of the survivor (from the character editor / save) for the 3D figure. */
-  setAppearance(a: Appearance): void {
-    this.preview.setAppearance(a);
+  setAppearance(a: Appearance, classId?: string): void {
+    this.preview.setAppearance(a, classId);
   }
 
   toggle(): void {

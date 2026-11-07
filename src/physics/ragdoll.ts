@@ -150,8 +150,10 @@ export class Ragdoll {
   private readonly anchor: PartPose[] = Array.from({ length: PARTS }, () => ({ p: new Vector3(), q: new Quaternion() }));
   /** Extra bodies stepped with it (a dropped weapon): body and the pose to write to. */
   readonly extras: { body: Body; pose: PartPose }[] = [];
+  readonly floorY: number;
 
   constructor(init: RagdollInit) {
+    this.floorY = init.floorY;
     const k = init.scale;
     const shape = init.shape ?? ZOMBIE_SHAPE;
     const parts = bodyParts(shape);

@@ -1,5 +1,4 @@
 import { type Bone, Euler, Quaternion, Vector3 } from 'three';
-import { type BoneName, boneIndex } from './skeleton';
 
 /**
  * What makes a zombie move like a dead thing (CLAUDE.md «Визуальный стиль»), on top of its gait (the limp
@@ -15,22 +14,21 @@ import { type BoneName, boneIndex } from './skeleton';
  * (LIMITS, about the bone's rest pose: twist about the bone, then the swing; quaternions only).
  */
 
-const HEAD = boneIndex('Head');
-const NECK = boneIndex('Neck');
-const HANDS = [boneIndex('Hand_L'), boneIndex('Hand_R')];
-const SHOULDERS = [boneIndex('UpperArm_L'), boneIndex('UpperArm_R')];
 const deg = Math.PI / 180;
 
 /** Turn limits about the rest pose (rad): twist about the bone's own axis (Y), bend forward/back (X), sideways (Z). */
-const LIMITS: Partial<Record<BoneName, [twist: number, bend: number, side: number]>> = {
-  Head: [70 * deg, 40 * deg, 20 * deg],
-  Neck: [45 * deg, 30 * deg, 20 * deg],
-  UpperArm_L: [60 * deg, 150 * deg, 90 * deg],
-  UpperArm_R: [60 * deg, 150 * deg, 90 * deg],
-  Hand_L: [80 * deg, 70 * deg, 30 * deg],
-  Hand_R: [80 * deg, 70 * deg, 30 * deg],
-};
-const LIMIT_BY_INDEX = new Map(Object.entries(LIMITS).map(([b, l]) => [boneIndex(b as BoneName), l]));
+/** The bones a twitch moves (indices into the rig's bones). */
+export interface TwitchBones {
+  head: number;
+  neck: number;
+  hands: [number, number];
+  shoulders: [number, number];
+}
+type Limit = [twist: number, bend: number, side: number];
+const LIMIT_HEAD: Limit = [70 * deg, 40 * deg, 20 * deg];
+const LIMIT_NECK: Limit = [45 * deg, 30 * deg, 20 * deg];
+const LIMIT_ARM: Limit = [60 * deg, 150 * deg, 90 * deg];
+const LIMIT_HAND: Limit = [80 * deg, 70 * deg, 30 * deg];
 
 const _q = new Quaternion();
 const _d = new Quaternion();
@@ -96,10 +94,16 @@ export class Twitch {
   private readonly offset = new Map<number, Quaternion>();
 
   /** `rest`: the type's rest turns (BONES order) the limits are measured from; none: identity. */
+  private readonly limits = new Map<number, Limit>();
+
   constructor(
     seed: number,
-    private readonly rest: readonly Quaternion[] = [],
+    private readonly rest: readonly Quaternion[],
+    private readonly b: TwitchBones,
   ) {
+    this.limits.set(b.head, LIMIT_HEAD).set(b.neck, LIMIT_NECK);
+    for (const i of b.shoulders) this.limits.set(i, LIMIT_ARM);
+    for (const i of b.hands) this.limits.set(i, LIMIT_HAND);
     this.state = (seed * 2654435761) >>> 0 || 1;
     this.next = 0.5 + this.rnd() * 3;
     this.nextHand = 0.5 + this.rnd() * 3;
@@ -133,17 +137,18 @@ export class Twitch {
       // Every 2–4 s: the head (or neck) jerks aside, or a shoulder hitches up and forward.
       this.next = this.time + 2 + this.rnd() * 2;
       const w = this.rnd();
-      if (w < 0.6) this.jerks.push({ bone: w < 0.45 ? HEAD : NECK, to: [r() * 0.28, r() * 0.42, r() * 0.34], t: 0 });
+      if (w < 0.6) this.jerks.push({ bone: w < 0.45 ? this.b.head : this.b.neck, to: [r() * 0.28, r() * 0.42, r() * 0.34], t: 0 });
       else {
         const s = this.rnd() < 0.5 ? 0 : 1;
-        this.jerks.push({ bone: SHOULDERS[s], to: [0.15 + 0.15 * this.rnd(), r() * 0.1, (s ? 1 : -1) * (0.12 + 0.12 * this.rnd())], t: 0 });
+        this.jerks.push({ bone: this.b.shoulders[s], to: [0.15 + 0.15 * this.rnd(), r() * 0.1, (s ? 1 : -1) * (0.12 + 0.12 * this.rnd())], t: 0 });
       }
     }
     if (this.time >= this.nextHand) {
       this.nextHand = this.time + 1.5 + this.rnd() * 2.5;
-      this.jerks.push({ bone: HANDS[this.rnd() < 0.5 ? 0 : 1], to: [r() * 0.6, r() * 0.25, r() * 0.5], t: 0 });
+      this.jerks.push({ bone: this.b.hands[this.rnd() < 0.5 ? 0 : 1], to: [r() * 0.6, r() * 0.25, r() * 0.5], t: 0 });
     }
-    for (const o of this.offset.values()) o.identity();
+    // Only the bones twitching now (a finished jerk leaves its bone to the clip, unclamped).
+    this.offset.clear();
     for (let i = this.jerks.length - 1; i >= 0; i--) {
       const j = this.jerks[i];
       j.t += step;
@@ -156,7 +161,7 @@ export class Twitch {
     }
     // A fine tremor of the head.
     const s = this.time * 23;
-    this.add(HEAD, Math.sin(s) * 0.012, Math.sin(s * 1.37 + 1) * 0.015, Math.sin(s * 0.83 + 2) * 0.01);
+    this.add(this.b.head, Math.sin(s) * 0.012, Math.sin(s * 1.37 + 1) * 0.015, Math.sin(s * 0.83 + 2) * 0.01);
     // The clip's pose × the offset, from scratch; kept in the joint's range.
     for (const [i, o] of this.offset) {
       const q = bones[i].quaternion;
@@ -164,7 +169,7 @@ export class Twitch {
       if (!b) this.base.set(i, (b = new Quaternion()));
       b.copy(q);
       q.multiply(o);
-      const lim = LIMIT_BY_INDEX.get(i);
+      const lim = this.limits.get(i);
       if (lim) limitTurn(q, this.rest[i] ?? _IDENT, lim);
     }
   }

@@ -1,0 +1,39 @@
+{
+ "bodies": {
+  "male": {
+   "leg": 0.8851,
+   "height": 1.8,
+   "tris": 10440,
+   "lod1": 3000,
+   "lod1Error": 0.0024
+  },
+  "female": {
+   "leg": 0.9021,
+   "height": 1.7,
+   "tris": 10290,
+   "lod1": 2985,
+   "lod1Error": 0.0031
+  },
+  "swat": {
+   "leg": 0.892,
+   "height": 1.8,
+   "tris": 9997,
+   "lod1": 2984,
+   "lod1Error": 0.0046
+  }
+ },
+ "clips": {
+  "idle": 8.333,
+  "walking": 1.233,
+  "walking_female": 0.967,
+  "running": 0.7,
+  "crouched_walking": 1.033,
+  "jump": 2.6,
+  "zombie_idle": 4.333,
+  "zombie_walk": 4.033,
+  "zombie_running": 0.8,
+  "zombie_attack": 4.633,
+  "zombie_attack_2": 2.633,
+  "zombie_scream": 2.8
+ }
+}

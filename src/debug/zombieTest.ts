@@ -7,10 +7,10 @@ import type { GameEvents } from '../core/events';
 import { PlayerController } from '../player/PlayerController';
 import { Survival } from '../systems/Survival';
 import { ITEMS } from '../data/items';
-import { CLIP_NAMES, ZombieAnimator, zombieClips } from '../zombies/animations';
-import { buildZombie, createZombie } from '../zombies/buildZombie';
-import { BONES } from '../zombies/skeleton';
-import { WORKER, ZOMBIE_TYPES } from '../zombies/types';
+import { bodyAsset } from '../characters/assets';
+import { CharacterRig } from '../characters/rig';
+import { ZOMBIE_TYPES } from '../zombies/types';
+import { loadCharactersNode } from './nodeCharacters';
 import { isModelKind, MODEL_KINDS, ZOMBIE_STATS } from '../zombies/stats';
 import { WorldLayout } from '../world/gen/layout';
 import { nearestPoi, siteToWorld } from '../world/gen/poi';
@@ -49,7 +49,8 @@ function run(sim: ZombieSim, p: PlayerSense, seconds: number): void {
   for (let i = 0; i < seconds * 60; i++) sim.update(1 / 60, p);
 }
 
-export function main(): number {
+export async function main(): Promise<number> {
+  await loadCharactersNode();
   const fails: string[] = [];
   const check = (ok: boolean, what: string) => {
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
@@ -331,74 +332,43 @@ export function main(): number {
       kinds.set(k, (kinds.get(k) ?? 0) + 1);
     }
     const most = Math.max(...kinds.values());
-    check(kinds.size >= 9 && [...kinds.keys()].every((k) => ZOMBIE_TYPES[k]) && most < 80, `no world to ask: every zombie a model, ${kinds.size} kinds in 400 (most common ${most})`);
+    check(kinds.size >= 9 && [...kinds.keys()].every((k) => ZOMBIE_TYPES[k as keyof typeof ZOMBIE_TYPES]) && most < 80, `no world to ask: every zombie a model, ${kinds.size} kinds in 400 (most common ${most})`);
   }
-  // 20. The procedural model (src/zombies): budget, one skeleton for all, rigid skinning, the missing arm.
-  {
-    const b = buildZombie(WORKER);
-    const inst = createZombie(WORKER);
-    check(b.triangles <= 3000, `worker: ${b.triangles} triangles (+${b.outlineTriangles} outline) within 3000`);
-    check(inst.bones.map((x) => x.name).join() === BONES.join() && inst.mesh.skeleton.bones.length === 18, 'the shared skeleton: 18 named bones');
-    const si = b.geometry.getAttribute('skinIndex');
-    const sw = b.geometry.getAttribute('skinWeight');
-    let rigid = true;
-    let left = 0;
-    const armL = ['UpperArm_L', 'LowerArm_L', 'Hand_L'].map((x) => BONES.indexOf(x as (typeof BONES)[number]));
-    for (let i = 0; i < si.count; i++) {
-      if (sw.getX(i) !== 1 || sw.getY(i) + sw.getZ(i) + sw.getW(i) !== 0) rigid = false;
-      if (armL.includes(si.getX(i))) left++;
-    }
-    check(rigid, 'every vertex 100% on one bone');
-    check(left === 0, `no left arm: ${left} vertices on its bones (the bones stay)`);
-    const clips = zombieClips();
-    const names = new Set<string>(BONES);
-    const bad = Object.values(clips).flatMap((c) => c.tracks.filter((t) => !names.has(t.name.split('.')[0])).map((t) => t.name));
-    check(CLIP_NAMES.every((n) => clips[n]?.duration > 0) && bad.length === 0, `shared clips ${CLIP_NAMES.join(', ')} by bone name (${bad.length} unknown tracks)`);
-    // Every clip plays on the one-armed model without breaking a bone (no NaN, the body stays near its spot).
-    const anim = new ZombieAnimator(inst.mesh, WORKER.animSpeed);
-    let broken = 0;
-    for (const n of CLIP_NAMES) {
-      anim.mixer.stopAllAction();
-      anim.actions[n].reset().play();
-      for (let f = 0; f < 60; f++) {
-        anim.update(1 / 30);
-        inst.mesh.updateMatrixWorld(true);
-        const hand = new Vector3().setFromMatrixPosition(inst.bones[BONES.indexOf('Hand_R')].matrixWorld);
-        if (!Number.isFinite(hand.x) || hand.length() > 2.6) broken++;
-      }
-    }
-    check(broken === 0, `every clip plays on the one-armed worker (${broken} broken frames)`);
-  }
-  // 21. Every modelled type: a type file for each kind, the budget, rigid skinning, every clip plays; their
-  // numbers in the simulation; the kind by place.
+  // 20. The character models (src/characters): LOD1 within budget, Mixamo bone names, every zombie clip
+  // plays on both bodies; a model for every kind, on the body of its sex.
   {
     const missing = MODEL_KINDS.filter((k) => !ZOMBIE_TYPES[k]);
     check(missing.length === 0, `a model for each of the ${MODEL_KINDS.length} kinds${missing.length ? ` (missing ${missing.join()})` : ''}`);
     const tris: string[] = [];
     let over = 0;
-    let loose = 0;
     let broken = 0;
-    for (const t of Object.values(ZOMBIE_TYPES)) {
-      const b = buildZombie(t);
-      tris.push(`${t.id} ${b.triangles}`);
-      if (b.triangles > 3000) over++;
-      const sw = b.geometry.getAttribute('skinWeight');
-      for (let i = 0; i < sw.count; i++) if (sw.getX(i) !== 1) loose++;
-      const inst = createZombie(t);
-      const anim = new ZombieAnimator(inst.mesh, t.animSpeed);
-      for (const n of CLIP_NAMES) {
-        anim.mixer.stopAllAction();
-        anim.actions[n].reset().play();
+    let named = true;
+    for (const id of ['male', 'female'] as const) {
+      const body = bodyAsset(id);
+      const n = (body.lod1.geometry.index!.count / 3) | 0;
+      tris.push(`${id} ${n}`);
+      if (n > 3100) over++;
+      if (!body.lod1.names.every((x) => !x.includes(':')) || !body.lod1.index.has('Hips') || !body.lod1.index.has('RightHand')) named = false;
+      const rig = new CharacterRig(id, 1, { zombie: true });
+      const head = rig.bone('Head');
+      for (const c of ['zombie_idle', 'zombie_walk', 'zombie_running', 'zombie_attack', 'zombie_attack_2', 'zombie_scream'] as const) {
+        rig.mixer.stopAllAction();
+        const act = rig.action(c);
+        act.reset().play();
         for (let f = 0; f < 40; f++) {
-          anim.update(1 / 30);
-          inst.mesh.updateMatrixWorld(true);
-          const head = new Vector3().setFromMatrixPosition(inst.bones[BONES.indexOf('Head')].matrixWorld);
-          if (!Number.isFinite(head.x) || head.length() > 2.6) broken++;
+          rig.mixer.update(1 / 30);
+          rig.root.updateMatrixWorld(true);
+          const h = new Vector3().setFromMatrixPosition(head.matrixWorld);
+          if (!Number.isFinite(h.x) || h.length() > 2.6 || h.y < 0.4) broken++;
         }
       }
+      rig.dispose();
     }
-    check(over === 0, `every type within 3000 triangles: ${tris.join(', ')}`);
-    check(loose === 0 && broken === 0, `every type rigid (${loose} loose vertices) and every clip plays (${broken} broken frames)`);
+    check(over === 0, `zombie LOD1 within ~3000 triangles: ${tris.join(', ')}`);
+    check(named, 'bones by their Mixamo names (Hips, RightHand…)');
+    check(broken === 0, `every zombie clip plays on both bodies (${broken} broken frames)`);
+    const wrong = MODEL_KINDS.filter((k) => ZOMBIE_TYPES[k].body !== (ZOMBIE_STATS[k].female ? 'female' : 'male'));
+    check(wrong.length === 0, `women on the female body, men on the male${wrong.length ? ` (wrong: ${wrong.join()})` : ''}`);
     const sim = new ZombieSim(world, 0);
     const sol = sim.spawnAt(0, 0, 'idle', 'soldier');
     const gran = sim.spawnAt(2, 0, 'idle', 'grandma');

@@ -1,11 +1,18 @@
 import {
+  type AnimationAction,
+  AnimationMixer,
+  type Bone,
+  BufferGeometry,
   type Camera,
+  Color,
   DataTexture,
   DynamicDrawUsage,
   FloatType,
   Frustum,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
+  LoopOnce,
   Matrix4,
   NearestFilter,
   Quaternion,
@@ -13,114 +20,193 @@ import {
   Sphere,
   Vector3,
 } from 'three';
+import { type BodyId, bodyAsset, clipFor, type ClipId, type RigAsset } from '../characters/assets';
+import { characterMaterial } from '../characters/material';
+import { createBones, RagdollPose, ragdollStart } from '../characters/rig';
 import type { QualityLevel } from '../core/types';
-import { bodyParts, type BodyShape, PART, type PartPose, type Ragdoll } from '../physics/ragdoll';
+import type { BodyShape, PartPose, Ragdoll } from '../physics/ragdoll';
+import { grim } from '../style/palette';
 import { PHASE_M, type Zombie, type ZombieState } from '../systems/zombies';
-import { STRIDES, strideOf, ZombieAnimator } from '../zombies/animations';
-import { BAKE_FPS, type Baked, bakeType, SKIN_FLOATS } from '../zombies/bake';
-import { type BuiltZombie, buildZombie, setZombieOutline, zombieBatchMaterial, zombieGeometryView, type ZombieType } from '../zombies/buildZombie';
-import { BONES, type BoneName, PARENT, boneIndex, createBones, ragdollShape, restLocals, restWorld } from '../zombies/skeleton';
+import { ZOMBIE_STATS } from '../zombies/stats';
 import { Twitch } from '../zombies/twitch';
-import { ZOMBIE_TYPES } from '../zombies/types';
+import { ZOMBIE_TYPES, type ZombieType } from '../zombies/types';
 
 /**
- * Every zombie is one of the procedural models (src/zombies), drawn up to the fog's edge. Per type two
- * instanced meshes skinned from a texture (a row of 18 skin matrices per instance): one draw call for the
- * near ones (with the outline), one for the far ones (without) — at most 2 × the types in view, whatever
- * the crowd.
+ * Every zombie is one of the character models at LOD1 (~3k triangles, 22 bones): per body (man, woman) one
+ * instanced mesh skinned from a texture (a row of 22 bone matrices per instance), the kind's clothes as
+ * per-instance tints — two draw calls whatever the crowd.
  *
- * Walk and Run are timed by the ground covered, not the clock: the step cycle moves on by distance / stride,
- * the stride from the type's leg length and the zombie's own (STRIDES, ±10%: its clips are made for it), its
- * cycle offset by its own share, so a planted foot doesn't skid at any speed and a crowd doesn't step in time.
+ * Walk and Run are timed by the ground covered, not the clock: the step cycle moves on by distance / stride
+ * (the clip's own stride, measured off its planted foot, × the kind's scale × the zombie's own ±10%), its
+ * cycle offset by its own share, so a planted foot doesn't skid and a crowd doesn't step in time.
  *
- * Near (DETAIL: 14 / 22 / 32 m, the nearest 3 / 6 / 10): a real mixer each — Idle / Walk / Run blended by
- * speed, Attack when it
- * lunges (the grab lands with the bite), HitReaction when staggered, and twitches of the head and hands on
- * top (zombies/twitch). No outline (the grim look); it stays a switch. Far: the type's baked loops (zombies/bake.ts) by speed, copied, no
- * mixer; past FAR_STEP m at half the frame rate. Out of the camera's view or past the fog: not drawn.
+ * Near (DETAIL): a real mixer each — zombie_idle / zombie_walk / zombie_running blended by speed, an attack
+ * when it lunges (the grab lands with the bite), the scream when staggered, twitches of the head and hands
+ * on top (zombies/twitch). Far: the body's baked loops by speed, copied, no mixer; past FAR_STEP m at half
+ * the frame rate. Out of the camera's view or past the fog: not drawn.
  *
- * Death is the ragdoll's: it starts from the zombie's own pose (its mixer's or its baked frame), and the
- * corpse is the same model with its bones driven by the ragdoll's bodies, in the same batches (the oldest
- * leave past the limit; the scene is told).
+ * Death is the ragdoll's: it starts from the zombie's own pose, and the corpse is the same model with its
+ * bones driven by the ragdoll's bodies (characters/rig RagdollPose), in the same batches.
  */
 
-const DETAIL: Record<QualityLevel, { near: number; count: number; outline: boolean; corpses: number }> = {
-  low: { near: 14, count: 3, outline: false, corpses: 24 },
-  medium: { near: 22, count: 6, outline: false, corpses: 32 },
-  high: { near: 32, count: 10, outline: false, corpses: 48 },
+const DETAIL: Record<QualityLevel, { near: number; count: number; corpses: number }> = {
+  low: { near: 14, count: 3, corpses: 24 },
+  medium: { near: 22, count: 6, corpses: 32 },
+  high: { near: 32, count: 10, corpses: 48 },
 };
-/** Far zombies past this (m) step their baked loop at half the rate. */
 const FAR_STEP = 24;
+const BAKE_FPS = 20;
+/** The zombie's own stride against its clip's (±10%). */
+const STRIDES = [0.9, 1, 1.1] as const;
+/** The sim's windup: the grab of an attack lands this long after it starts. */
+const ATTACK_HIT = 0.55;
+type Gait = 'zombie_idle' | 'zombie_walk' | 'zombie_running';
+const GAITS: Gait[] = ['zombie_idle', 'zombie_walk', 'zombie_running'];
 
-/** Which ragdoll body moves a bone (the ragdoll faces +Z, the model −Z: its left is the ragdoll's "R"). */
-const DRIVEN: Partial<Record<BoneName, number>> = {
-  Hips: PART.pelvis,
-  Chest: PART.chest,
-  Neck: PART.head,
-  UpperArm_L: PART.upperArmR,
-  LowerArm_L: PART.foreArmR,
-  UpperArm_R: PART.upperArmL,
-  LowerArm_R: PART.foreArmL,
-  UpperLeg_L: PART.thighR,
-  LowerLeg_L: PART.shinR,
-  UpperLeg_R: PART.thighL,
-  LowerLeg_R: PART.shinL,
-};
-const PART_BONE = new Map(Object.entries(DRIVEN).map(([b, p]) => [p, boneIndex(b as BoneName)]));
-const NB = BONES.length;
+/** What is known of a body for the crowd: its rig, baked loops, strides, its attacks' grab time. */
+interface Kit {
+  body: BodyId;
+  rig: RigAsset;
+  nb: number;
+  floats: number;
+  baked: Record<Gait, { frames: number; data: Float32Array }>;
+  stride: Record<Gait, number>;
+  hit: Record<'zombie_attack' | 'zombie_attack_2', number>;
+  /** One arm gone (the one-armed worker): the left arm's bones. */
+  arm: number[];
+  shoulder: number;
+}
 
-/** One instanced mesh of a type and its skin texture (a row per instance). */
+const kits = new Map<BodyId, Kit>();
+
+function kit(body: BodyId): Kit {
+  let k = kits.get(body);
+  if (k) return k;
+  const rig = bodyAsset(body).lod1;
+  const nb = rig.names.length;
+  const floats = nb * 16;
+  const root = new Group();
+  const bones = createBones(rig);
+  root.add(bones[0]);
+  const mixer = new AnimationMixer(root);
+  const m = new Matrix4();
+  const toe = [rig.index.get('LeftToeBase')!, rig.index.get('RightToeBase')!];
+  const hand = rig.index.get('RightHand')!;
+  const sample = (name: ClipId, t: number) => {
+    mixer.stopAllAction();
+    const a = mixer.clipAction(clipFor(body, 1, name));
+    a.reset().play();
+    a.time = t;
+    mixer.update(0);
+    root.updateMatrixWorld(true);
+  };
+  const baked = {} as Kit['baked'];
+  const stride = {} as Kit['stride'];
+  for (const g of GAITS) {
+    const dur = clipFor(body, 1, g).duration;
+    const frames = Math.max(2, Math.round(dur * BAKE_FPS));
+    const data = new Float32Array(frames * floats);
+    const feet: { y: number; z: number }[][] = [[], []];
+    for (let f = 0; f < frames; f++) {
+      sample(g, (f / frames) * dur);
+      bones.forEach((b, i) => m.multiplyMatrices(b.matrixWorld, rig.inverses[i]).toArray(data, f * floats + i * 16));
+      toe.forEach((ti, s) => feet[s].push({ y: bones[ti].matrixWorld.elements[13], z: bones[ti].matrixWorld.elements[14] }));
+    }
+    baked[g] = { frames, data };
+    // The stride: the planted foot slides back at the walking speed (the clip is in place).
+    const speeds: number[] = [];
+    for (let f = 0; f < frames; f++) {
+      const s = feet[0][f].y < feet[1][f].y ? 0 : 1;
+      const minY = Math.min(...feet[s].map((p) => p.y));
+      if (feet[s][f].y > minY + 0.02) continue;
+      const n = (f + 1) % frames;
+      speeds.push(((feet[s][f].z - feet[s][n].z) * frames) / dur);
+    }
+    speeds.sort((a, b) => a - b);
+    const v = speeds.length ? speeds[speeds.length >> 1] : 0;
+    stride[g] = g === 'zombie_idle' ? 1 : Math.max(g === 'zombie_walk' ? 0.5 : 1, v * dur);
+  }
+  // When the grab lands: the right hand at its fastest in the first two seconds.
+  const hit = {} as Kit['hit'];
+  for (const a of ['zombie_attack', 'zombie_attack_2'] as const) {
+    let best = 0.5;
+    let top = 0;
+    const prev = new Vector3();
+    const cur = new Vector3();
+    for (let i = 0; i <= 40; i++) {
+      const t = (i / 40) * Math.min(2, clipFor(body, 1, a).duration);
+      sample(a, t);
+      cur.setFromMatrixPosition(bones[hand].matrixWorld);
+      if (i > 0 && cur.distanceTo(prev) > top) (top = cur.distanceTo(prev)), (best = t);
+      prev.copy(cur);
+    }
+    hit[a] = best;
+  }
+  mixer.stopAllAction();
+  mixer.uncacheRoot(root);
+  const arm = ['LeftArm', 'LeftForeArm', 'LeftHand'].map((n) => rig.index.get(n)!);
+  k = { body, rig, nb, floats, baked, stride, hit, arm, shoulder: rig.index.get('LeftArm')! };
+  kits.set(body, k);
+  return k;
+}
+
+/** One instanced mesh of a body and its skin texture (a row per instance). */
 class Layer {
   mesh!: InstancedMesh;
   tex!: DataTexture;
   data!: Float32Array;
+  tints!: Float32Array;
+  tints2!: Float32Array;
   cap = 0;
   count = 0;
 
   constructor(
-    private readonly built: BuiltZombie,
+    private readonly k: Kit,
     private readonly group: Group,
-    private outline: boolean,
     cap: number,
   ) {
-    [this.mesh, this.tex, this.data] = this.make(cap);
+    this.make(cap);
   }
 
-  private make(cap: number): [InstancedMesh, DataTexture, Float32Array] {
+  private make(cap: number): void {
+    const old = this.mesh ? { mesh: this.mesh, tex: this.tex, data: this.data, t: this.tints, t2: this.tints2 } : null;
     this.cap = cap;
-    const data = new Float32Array(cap * SKIN_FLOATS);
-    const tex = new DataTexture(data, NB * 4, cap, RGBAFormat, FloatType);
-    tex.minFilter = tex.magFilter = NearestFilter;
-    tex.needsUpdate = true;
-    const mesh = new InstancedMesh(zombieGeometryView(this.built, this.outline), zombieBatchMaterial(tex), cap);
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    mesh.name = `zombies-${this.built.type.id}${this.outline ? '-near' : ''}`;
-    mesh.frustumCulled = false;
-    mesh.count = 0;
-    mesh.visible = false;
-    this.group.add(mesh);
-    return [mesh, tex, data];
+    this.data = new Float32Array(cap * this.k.floats);
+    this.tints = new Float32Array(cap * 3);
+    this.tints2 = new Float32Array(cap * 3);
+    this.tex = new DataTexture(this.data, this.k.nb * 4, cap, RGBAFormat, FloatType);
+    this.tex.minFilter = this.tex.magFilter = NearestFilter;
+    this.tex.needsUpdate = true;
+    const src = this.k.rig.geometry;
+    const g = new BufferGeometry();
+    for (const [name, a] of Object.entries(src.attributes)) g.setAttribute(name, a);
+    g.setIndex(src.index);
+    g.setAttribute('aTint', new InstancedBufferAttribute(this.tints, 3).setUsage(DynamicDrawUsage));
+    g.setAttribute('aTint2', new InstancedBufferAttribute(this.tints2, 3).setUsage(DynamicDrawUsage));
+    g.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
+    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex }), cap);
+    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    this.mesh.name = `zombies-${this.k.body}`;
+    this.mesh.frustumCulled = false;
+    this.mesh.count = 0;
+    this.mesh.visible = false;
+    this.group.add(this.mesh);
+    if (old) {
+      this.data.set(old.data);
+      this.tints.set(old.t);
+      this.tints2.set(old.t2);
+      (this.mesh.instanceMatrix.array as Float32Array).set(old.mesh.instanceMatrix.array as Float32Array);
+      this.release(old.mesh, old.tex);
+    }
   }
 
-  setOutline(on: boolean): void {
-    if (on === this.outline) return;
-    this.outline = on;
-    this.mesh.geometry.setDrawRange(0, (on ? this.built.triangles + this.built.outlineTriangles : this.built.triangles) * 3);
-  }
-
-  /** The next instance at `m`: its skin row to fill. */
-  push(m: Matrix4): Float32Array {
-    if (this.count >= this.cap) this.grow();
+  /** The next instance at `m` in the kind's clothes: its skin row to fill. */
+  push(m: Matrix4, tint: Color, tint2: Color): Float32Array {
+    if (this.count >= this.cap) this.make(this.cap * 2);
     this.mesh.setMatrixAt(this.count, m);
-    return this.data.subarray(this.count * SKIN_FLOATS, ++this.count * SKIN_FLOATS);
-  }
-
-  private grow(): void {
-    const old = { mesh: this.mesh, tex: this.tex, data: this.data };
-    [this.mesh, this.tex, this.data] = this.make(this.cap * 2);
-    this.data.set(old.data);
-    (this.mesh.instanceMatrix.array as Float32Array).set(old.mesh.instanceMatrix.array as Float32Array);
-    this.release(old.mesh, old.tex);
+    tint.toArray(this.tints, this.count * 3);
+    tint2.toArray(this.tints2, this.count * 3);
+    return this.data.subarray(this.count * this.k.floats, ++this.count * this.k.floats);
   }
 
   end(): void {
@@ -130,6 +216,12 @@ class Layer {
     this.mesh.instanceMatrix.clearUpdateRanges();
     this.mesh.instanceMatrix.addUpdateRange(0, this.count * 16);
     this.mesh.instanceMatrix.needsUpdate = true;
+    for (const n of ['aTint', 'aTint2']) {
+      const a = this.mesh.geometry.getAttribute(n) as InstancedBufferAttribute;
+      a.clearUpdateRanges();
+      a.addUpdateRange(0, this.count * 3);
+      a.needsUpdate = true;
+    }
     this.tex.needsUpdate = true;
   }
 
@@ -145,21 +237,18 @@ class Layer {
   }
 }
 
-interface Batch {
-  built: BuiltZombie;
-  baked: Baked;
-  near: Layer;
-  far: Layer;
-}
-
-/** A near zombie's own skeleton and mixer (pooled per type). */
+/** A near zombie's own skeleton and mixer (pooled per body). */
 interface Rig {
-  type: ZombieType;
-  /** Its stride (index into STRIDES). */
-  v: number;
+  k: Kit;
   root: Group;
-  bones: ReturnType<typeof createBones>;
-  anim: ZombieAnimator;
+  bones: Bone[];
+  mixer: AnimationMixer;
+  gait: Record<Gait, AnimationAction>;
+  attack: AnimationAction;
+  attackHit: number;
+  scream: AnimationAction;
+  /** Seconds left of the scream (staggered). */
+  screamLeft: number;
   twitch: Twitch;
   id: number;
   last: ZombieState | null;
@@ -168,11 +257,7 @@ interface Rig {
 interface Corpse {
   id: number;
   type: ZombieType;
-  rd: Ragdoll;
-  /** Per bone: the fixed offset from its ragdoll body (driven) or its local transform frozen at death. */
-  rel: Matrix4[];
-  /** The bones' world matrices now, and the skin row they make. */
-  world: Matrix4[];
+  pose: RagdollPose;
   skin: Float32Array;
   done: boolean;
 }
@@ -183,32 +268,40 @@ const _q = new Quaternion();
 const _v = new Vector3();
 const _s = new Vector3();
 const _up = new Vector3(0, 1, 0);
-const _one = new Vector3(1, 1, 1);
-const _rot = new Matrix4().makeRotationY(Math.PI);
 const _ident = new Matrix4();
 
-/** A stable 0..1 per zombie id (salt: which of its numbers). */
 const hash = (id: number, salt: number) => {
   const s = Math.sin(id * 12.9898 + salt * 78.233) * 43758.5453;
   return s - Math.floor(s);
 };
-/** A zombie's own stride (index into STRIDES). */
 const strideIx = (id: number) => Math.floor(hash(id, 3.3) * STRIDES.length) % STRIDES.length;
 const _sphere = new Sphere();
 const _frustum = new Frustum();
 
+/** The kinds' clothes as linear tints (through grim), a little different per zombie. */
+const tintCache = new Map<number, Color>();
+function tintOf(hex: number): Color {
+  let c = tintCache.get(hex);
+  if (!c) tintCache.set(hex, (c = new Color().setHex(grim(hex))));
+  return c;
+}
+const _t1 = new Color();
+const _t2 = new Color();
+function tints(z: { id: number }, type: ZombieType): [Color, Color] {
+  const f = 0.85 + 0.3 * hash(z.id, 5.5);
+  return [_t1.copy(tintOf(type.tint)).multiplyScalar(f), _t2.copy(tintOf(type.tint2)).multiplyScalar(0.9 + 0.2 * hash(z.id, 6.1))];
+}
+
 export class ZombieModels {
   readonly group = new Group();
-  private readonly batches = new Map<string, Batch>();
+  private readonly layers = new Map<BodyId, Layer>();
   private readonly rigs: Rig[] = [];
   private readonly corpses: Corpse[] = [];
   /** Ids posed by a mixer this frame (the near ones). */
   readonly detailed = new Set<number>();
   private detail = DETAIL.low;
   private time = 0;
-  /** Each walking zombie's step cycle (0..1) and the ground phase it was last advanced to. */
   private readonly steps = new Map<number, { c: number; phase: number }>();
-  private readonly legs = new Map<string, number>();
 
   constructor(level: QualityLevel) {
     this.group.name = 'zombie-models';
@@ -217,31 +310,24 @@ export class ZombieModels {
 
   configure(level: QualityLevel): void {
     this.detail = DETAIL[level];
-    setZombieOutline(this.detail.outline);
-    for (const b of this.batches.values()) b.near.setOutline(this.detail.outline);
   }
 
   /** Instances drawn this frame (living and dead). */
   get drawn(): number {
     let n = 0;
-    for (const b of this.batches.values()) n += b.near.count + b.far.count;
+    for (const l of this.layers.values()) n += l.count;
     return n;
   }
 
-  private batch(type: ZombieType): Batch {
-    let b = this.batches.get(type.id);
-    if (!b) {
-      const built = buildZombie(type);
-      b = { built, baked: bakeType(type), near: new Layer(built, this.group, this.detail.outline, 4), far: new Layer(built, this.group, false, 8) };
-      this.batches.set(type.id, b);
+  private layer(body: BodyId): Layer {
+    let l = this.layers.get(body);
+    if (!l) {
+      l = new Layer(kit(body), this.group, 8);
+      this.layers.set(body, l);
     }
-    return b;
+    return l;
   }
 
-  /**
-   * Draw the zombies — the living in `list` and the corpses: the nearest with their mixers, the rest from
-   * the baked loops, up to `far` m from the eye and inside the camera's view.
-   */
   update(list: readonly Zombie[], eye: Vector3, dt: number, camera?: Camera, far = 200): void {
     this.time += dt;
     if (camera) {
@@ -249,8 +335,7 @@ export class ZombieModels {
       _frustum.setFromProjectionMatrix(_m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     }
     const seen = (p: Vector3, r: number) => !camera || _frustum.intersectsSphere(_sphere.set(p, r));
-    for (const b of this.batches.values()) b.near.count = b.far.count = 0;
-    // The nearest few get a mixer.
+    for (const l of this.layers.values()) l.count = 0;
     const near: { z: Zombie; d: number }[] = [];
     const r2 = this.detail.near * this.detail.near;
     for (const z of list) {
@@ -269,93 +354,101 @@ export class ZombieModels {
       if (z.state === 'dead' || !type) continue;
       const d2 = (z.pos.x - eye.x) ** 2 + (z.pos.z - eye.z) ** 2;
       if (d2 > far2) continue;
-      const b = this.batch(type);
+      const l = this.layer(type.body);
       _v.set(z.pos.x, z.pos.y + 0.9, z.pos.z);
       const inView = seen(_v, 1.3);
+      const [t1, t2] = tints(z, type);
       if (this.detailed.has(z.id)) {
-        // Posed even when out of view: it turns into view mid-step and its death starts from this pose.
         const rig = this.rig(z, type);
-        this.pose(rig, z, dt);
-        if (inView) this.writeRig(rig, b.near.push(this.placement(z, _m)));
+        this.pose(rig, z, type, dt);
+        if (inView) this.writeRig(rig, type, l.push(this.placement(z, type, _m), t1, t2));
       } else if (inView) {
-        b.far.push(this.placement(z, _m)).set(this.bakedFrame(b.baked, type, z, d2 > FAR_STEP * FAR_STEP));
+        const row = l.push(this.placement(z, type, _m), t1, t2);
+        row.set(this.bakedFrame(kit(type.body), type, z, d2 > FAR_STEP * FAR_STEP));
+        if (ZOMBIE_STATS[type.id].oneArm) this.dropArm(kit(type.body), row, row);
       }
     }
-    // Corpses (still falling ones follow their ragdolls).
     for (const c of this.corpses) {
       if (!c.done) this.writeCorpse(c);
-      _v.setFromMatrixPosition(c.world[0]);
+      _v.setFromMatrixPosition(c.pose.world[0]);
       const d2 = (_v.x - eye.x) ** 2 + (_v.z - eye.z) ** 2;
       if (d2 > far2 || !seen(_v, 1.4)) continue;
-      const b = this.batch(c.type);
-      (d2 < r2 ? b.near : b.far).push(_ident).set(c.skin);
+      const [t1, t2] = tints(c, c.type);
+      this.layer(c.type.body).push(_ident, t1, t2).set(c.skin);
     }
-    for (const b of this.batches.values()) b.near.end(), b.far.end();
-    // Forget the steps of zombies gone.
+    for (const l of this.layers.values()) l.end();
     if (this.steps.size > list.length + 64) {
       const live = new Set(list.map((z) => z.id));
       for (const id of this.steps.keys()) if (!live.has(id)) this.steps.delete(id);
     }
   }
 
-  /**
-   * Where a zombie is in its Walk / Run cycle (0..1, `run` 0..1 the share of running): moved on by the
-   * ground covered since last time over the stride of its legs (and its own, STRIDES), so a planted foot stays put.
-   */
+  /** Where a zombie is in its Walk / Run cycle (0..1): moved on by the ground covered over its stride. */
   private cycle(z: Zombie, type: ZombieType, run: number): number {
     let s = this.steps.get(z.id);
     if (!s) {
       s = { c: hash(z.id, 7.1), phase: z.phase };
       this.steps.set(z.id, s);
     }
-    let leg = this.legs.get(type.id);
-    if (leg === undefined) {
-      const d = buildZombie(type).dims;
-      leg = d.hipJointY - d.ankleY;
-      this.legs.set(type.id, leg);
-    }
-    leg *= STRIDES[strideIx(z.id)];
-    const stride = strideOf('Walk', leg) + (strideOf('Run', leg) - strideOf('Walk', leg)) * run;
+    const k = kit(type.body);
+    const stride = (k.stride.zombie_walk + (k.stride.zombie_running - k.stride.zombie_walk) * run) * type.scale * STRIDES[strideIx(z.id)];
     s.c = (((s.c + ((z.phase - s.phase) / (Math.PI * 2)) * (PHASE_M / stride)) % 1) + 1) % 1;
     s.phase = z.phase;
     return s.c;
   }
 
-  /** Where a zombie stands (its model faces −Z: turned by π). */
-  private placement(z: Zombie, out: Matrix4): Matrix4 {
+  /** Where a zombie stands: the model faces +Z, turned by its yaw, scaled to its kind. */
+  private placement(z: Zombie, type: ZombieType, out: Matrix4): Matrix4 {
     _v.copy(z.pos);
     if (z.shake > 0) (_v.x += (Math.random() - 0.5) * 0.24 * z.shake), (_v.z += (Math.random() - 0.5) * 0.24 * z.shake);
-    return out.compose(_v, _q.setFromAxisAngle(_up, z.yaw + Math.PI), _one);
+    return out.compose(_v, _q.setFromAxisAngle(_up, z.yaw), _s.setScalar(type.scale));
   }
 
-  /** The baked loop for a zombie's speed now (by its step phase when walking or running). */
-  private bakedFrame(baked: Baked, type: ZombieType, z: Zombie, half: boolean): Float32Array {
+  private bakedFrame(k: Kit, type: ZombieType, z: Zombie, half: boolean): Float32Array {
     const idle = z.speed < 0.15;
     const running = z.speed >= 0.9;
-    const clip = idle ? baked.clips.Idle[0] : (running ? baked.clips.Run : baked.clips.Walk)[strideIx(z.id)];
+    const g: Gait = idle ? 'zombie_idle' : running ? 'zombie_running' : 'zombie_walk';
+    const clip = k.baked[g];
     const cyc = idle ? (this.time * type.animSpeed) / (clip.frames / BAKE_FPS) + (z.id % 17) / 17 : this.cycle(z, type, running ? 1 : 0);
     let f = Math.floor((((cyc % 1) + 1) % 1) * clip.frames) % clip.frames;
     if (half) f -= f & 1;
-    return clip.data.subarray(f * SKIN_FLOATS, (f + 1) * SKIN_FLOATS);
+    return clip.data.subarray(f * k.floats, (f + 1) * k.floats);
+  }
+
+  /** The one-armed: the left arm's bones folded into its shoulder joint (no geometry shows). */
+  private dropArm(k: Kit, row: Float32Array, src: Float32Array): void {
+    // Shoulder joint now = skin(shoulder) applied to its bind position.
+    const bind = k.rig.bind[k.shoulder];
+    _m.fromArray(src, k.shoulder * 16).multiply(bind);
+    _m2.makeScale(0, 0, 0).setPosition(_v.setFromMatrixPosition(_m));
+    for (const i of k.arm) _m2.toArray(row, i * 16);
   }
 
   private rig(z: Zombie, type: ZombieType): Rig {
     let r = this.rigs.find((x) => x.id === z.id);
     if (r) return r;
-    const v = strideIx(z.id);
-    r = this.rigs.find((x) => x.id < 0 && x.type === type && x.v === v);
+    const k = kit(type.body);
+    r = this.rigs.find((x) => x.id < 0 && x.k === k);
     if (!r) {
-      const { dims } = buildZombie(type);
-      const bones = createBones(dims);
+      const bones = createBones(k.rig);
       const root = new Group();
       root.add(bones[0]);
-      const anim = new ZombieAnimator(root, type.animSpeed, dims, STRIDES[v]);
-      for (const n of ['Idle', 'Walk', 'Run'] as const) anim.actions[n].play();
-      anim.actions.Walk.timeScale = 0;
-      anim.actions.Run.timeScale = 0;
-      // The grab of the attack (0.55 s, ATTACK_HIT) lands with the simulation's bite (windup 0.55 s).
-      anim.actions.Attack.timeScale = 1;
-      r = { type, v, root, bones, anim, twitch: new Twitch(this.rigs.length + 1, restLocals(dims).map((l) => l.rot)), id: -1, last: null };
+      const mixer = new AnimationMixer(root);
+      const act = (n: ClipId) => mixer.clipAction(clipFor(k.body, 1, n));
+      const gait = { zombie_idle: act('zombie_idle'), zombie_walk: act('zombie_walk'), zombie_running: act('zombie_running') };
+      for (const a of Object.values(gait)) a.play();
+      gait.zombie_walk.timeScale = gait.zombie_running.timeScale = 0;
+      const which = this.rigs.length % 2 ? 'zombie_attack_2' : 'zombie_attack';
+      const attack = act(which).setLoop(LoopOnce, 1);
+      const scream = act('zombie_scream').setLoop(LoopOnce, 1);
+      const idx = (n: string) => k.rig.index.get(n)!;
+      const twitch = new Twitch(this.rigs.length + 1, k.rig.restRot, {
+        head: idx('Head'),
+        neck: idx('Neck'),
+        hands: [idx('LeftHand'), idx('RightHand')],
+        shoulders: [idx('LeftArm'), idx('RightArm')],
+      });
+      r = { k, root, bones, mixer, gait, attack, attackHit: k.hit[which], scream, screamLeft: 0, twitch, id: -1, last: null };
       this.rigs.push(r);
     }
     r.id = z.id;
@@ -363,87 +456,79 @@ export class ZombieModels {
     return r;
   }
 
-  private pose(r: Rig, z: Zombie, dt: number): void {
-    const a = r.anim.actions;
+  private pose(r: Rig, z: Zombie, type: ZombieType, dt: number): void {
+    const a = r.gait;
     const move = Math.min(1, z.speed / 0.25);
     const run = Math.min(1, Math.max(0, (z.speed - 0.8) / 0.4));
-    const cyc = this.cycle(z, ZOMBIE_TYPES[z.kind], run);
-    a.Walk.time = cyc * a.Walk.getClip().duration;
-    a.Run.time = cyc * a.Run.getClip().duration;
-    a.Idle.setEffectiveWeight(1 - move);
-    a.Walk.setEffectiveWeight(move * (1 - run));
-    a.Run.setEffectiveWeight(move * run);
+    const cyc = this.cycle(z, type, run);
+    a.zombie_walk.time = cyc * a.zombie_walk.getClip().duration;
+    a.zombie_running.time = cyc * a.zombie_running.getClip().duration;
+    a.zombie_idle.timeScale = type.animSpeed;
+    let over = 0;
     const s = z.state;
-    if ((s === 'attack' && r.last !== 'attack') || (s === 'bang' && !a.Attack.isRunning())) a.Attack.reset().setEffectiveWeight(1).play();
-    if (s === 'stagger' && r.last !== 'stagger') a.HitReaction.reset().setEffectiveWeight(1).play();
+    if ((s === 'attack' && r.last !== 'attack') || (s === 'bang' && !r.attack.isRunning())) {
+      r.attack.reset().play();
+      r.attack.time = Math.max(0, r.attackHit - ATTACK_HIT);
+    }
+    if (r.attack.isRunning()) {
+      const left = r.attack.time - r.attackHit;
+      over = Math.min(1, (r.attack.time - Math.max(0, r.attackHit - ATTACK_HIT)) / 0.12) * (left > 0.45 ? Math.max(0, 1 - (left - 0.45) / 0.3) : 1);
+      if (left > 0.75) r.attack.stop();
+    }
+    if (s === 'stagger' && r.last !== 'stagger') {
+      r.scream.reset().play();
+      r.scream.time = 0.2;
+      r.screamLeft = 0.9;
+    }
+    let scream = 0;
+    if (r.screamLeft > 0) {
+      r.screamLeft -= dt;
+      scream = Math.min(1, r.screamLeft / 0.25, (0.9 - r.screamLeft) / 0.1 + 0.2);
+      if (r.screamLeft <= 0) r.scream.stop();
+    }
+    r.attack.setEffectiveWeight(over);
+    r.scream.setEffectiveWeight(scream);
+    const rest = Math.max(0, 1 - over - scream);
+    a.zombie_idle.setEffectiveWeight((1 - move) * rest);
+    a.zombie_walk.setEffectiveWeight(move * (1 - run) * rest);
+    a.zombie_running.setEffectiveWeight(move * run * rest);
     r.last = s;
-    // The clip's pose first (the twitches of last frame taken off: the mixer leaves a bone whose clip value
-    // didn't change as it is), then this frame's twitches on it — nothing piles up, paused or not.
     r.twitch.reset(r.bones);
-    r.anim.update(dt);
+    r.mixer.update(dt);
     r.twitch.apply(r.bones, dt);
     r.root.updateMatrixWorld(true);
   }
 
-  private writeRig(r: Rig, out: Float32Array): void {
-    const inv = buildZombie(r.type).inverses;
+  private writeRig(r: Rig, type: ZombieType, out: Float32Array): void {
+    const inv = r.k.rig.inverses;
     r.bones.forEach((b, i) => _m2.multiplyMatrices(b.matrixWorld, inv[i]).toArray(out, i * 16));
+    if (ZOMBIE_STATS[type.id].oneArm) this.dropArm(r.k, out, out);
   }
 
   /** A zombie's bones now (world): its mixer's if near, else its baked frame's. */
   private boneWorld(z: Zombie, type: ZombieType): Matrix4[] {
-    const place = this.placement(z, new Matrix4());
+    const k = kit(type.body);
+    const place = this.placement(z, type, new Matrix4());
     const rig = this.rigs.find((x) => x.id === z.id);
     if (rig) return rig.bones.map((b) => place.clone().multiply(b.matrixWorld));
-    const skin = this.bakedFrame(this.batch(type).baked, type, z, false);
-    return buildZombie(type).rest.map((rest, i) => place.clone().multiply(_m2.fromArray(skin, i * 16)).multiply(rest));
+    const skin = this.bakedFrame(k, type, z, false);
+    return k.rig.bind.map((bind, i) => place.clone().multiply(_m2.fromArray(skin, i * 16)).multiply(bind));
   }
 
-  /**
-   * A zombie dies: where each ragdoll body starts (from its own bones as drawn) and the build the ragdoll
-   * needs (the model is built at its own height: no scale).
-   */
-  deathStart(z: Zombie): { parts: PartPose[]; shape: BodyShape } | null {
+  /** A zombie dies: where each ragdoll body starts (from its bones as drawn), the build, its scale. */
+  deathStart(z: Zombie): { parts: PartPose[]; shape: BodyShape; scale: number } | null {
     const type = ZOMBIE_TYPES[z.kind];
     if (!type) return null;
-    const world = this.boneWorld(z, type);
-    const { shape, keys } = this.keys(buildZombie(type));
-    const parts = keys.map((k, p) => {
-      _m.copy(world[PART_BONE.get(p)!]).multiply(k.inv);
-      _m.decompose(_v, _q, _s);
-      return { p: _v.clone(), q: _q.clone() };
-    });
-    return { parts, shape };
+    const k = kit(type.body);
+    return { ...ragdollStart(type.body, 1, k.rig, this.boneWorld(z, type)), scale: type.scale };
   }
 
-  /** Per ragdoll body: P0⁻¹·M0·B′ (its rest frame from the bone's unstooped rest) and its inverse. */
-  private keys(built: BuiltZombie): { shape: BodyShape; keys: { k: Matrix4; inv: Matrix4 }[] } {
-    const shape = ragdollShape(built.dims);
-    const straight = restWorld(built.dims, false);
-    const keys = bodyParts(shape).map((d, p) => {
-      const b = PART_BONE.get(p)!;
-      const k = new Matrix4().makeTranslation(-d.c[0], -d.c[1], -d.c[2]).multiply(_rot).multiply(straight[b]);
-      return { k, inv: k.clone().invert() };
-    });
-    return { shape, keys };
-  }
-
-  /**
-   * The dead zombie stays as its model, its bones driven by the ragdoll. Over the limit the oldest corpse
-   * goes: its id is returned so the scene can let its ragdoll and loot go.
-   */
   addCorpse(z: Zombie, rd: Ragdoll): { ok: boolean; evicted: number | null } {
     const type = ZOMBIE_TYPES[z.kind];
     if (!type) return { ok: false, evicted: null };
     const evicted = this.corpses.length >= this.detail.corpses ? this.corpses.shift()!.id : null;
-    const world = this.boneWorld(z, type);
-    const { keys } = this.keys(buildZombie(type));
-    const rel = BONES.map((n, i) => {
-      const p = DRIVEN[n];
-      if (p !== undefined) return keys[p].k.clone();
-      return world[boneIndex(PARENT[n]!)].clone().invert().multiply(world[i]);
-    });
-    const c: Corpse = { id: z.id, type, rd, rel, world, skin: new Float32Array(SKIN_FLOATS), done: false };
+    const k = kit(type.body);
+    const c: Corpse = { id: z.id, type, pose: new RagdollPose(type.body, 1, k.rig, this.boneWorld(z, type), rd, type.scale), skin: new Float32Array(k.floats), done: false };
     this.corpses.push(c);
     this.writeCorpse(c);
     return { ok: true, evicted };
@@ -460,27 +545,29 @@ export class ZombieModels {
 
   /** The bones' world matrices: a corpse's by id, or a living zombie's as drawn (tests). */
   bones(z: Zombie | number): Matrix4[] | null {
-    if (typeof z === 'number') return this.corpses.find((c) => c.id === z)?.world ?? null;
+    if (typeof z === 'number') return this.corpses.find((c) => c.id === z)?.pose.world ?? null;
     const type = ZOMBIE_TYPES[z.kind];
     return type ? this.boneWorld(z, type) : null;
   }
 
+  /** The rig of the corpses' and zombies' bones (names, parents: tests). */
+  rigOf(z: Zombie): RigAsset | null {
+    const type = ZOMBIE_TYPES[z.kind];
+    return type ? kit(type.body).rig : null;
+  }
+
   private writeCorpse(c: Corpse): void {
-    const inv = buildZombie(c.type).inverses;
-    BONES.forEach((n, i) => {
-      const p = DRIVEN[n];
-      const w = c.world[i];
-      if (p !== undefined) c.rd.matrix(p, w).multiply(c.rel[i]);
-      else w.multiplyMatrices(c.world[boneIndex(PARENT[n]!)], c.rel[i]);
-      _m2.multiplyMatrices(w, inv[i]).toArray(c.skin, i * 16);
-    });
-    if (c.rd.asleep) c.done = true;
+    const k = kit(c.type.body);
+    const world = c.pose.update();
+    world.forEach((w, i) => _m2.multiplyMatrices(w, k.rig.inverses[i]).toArray(c.skin, i * 16));
+    if (ZOMBIE_STATS[c.type.id].oneArm) this.dropArm(k, c.skin, c.skin);
+    if (c.pose.rd.asleep) c.done = true;
   }
 
   dispose(): void {
-    for (const r of this.rigs) r.anim.mixer.stopAllAction();
-    for (const b of this.batches.values()) b.near.dispose(), b.far.dispose();
-    this.batches.clear();
+    for (const r of this.rigs) r.mixer.stopAllAction();
+    for (const l of this.layers.values()) l.dispose();
+    this.layers.clear();
     this.group.clear();
   }
 }

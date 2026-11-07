@@ -4,23 +4,21 @@ import {
   DirectionalLight,
   Group,
   type Material,
-  Mesh,
+  type Mesh,
   type MeshStandardMaterial,
   PerspectiveCamera,
   PointLight,
-  SphereGeometry,
   Scene,
   Vector3,
 } from 'three';
 import { clamp, damp } from '../core/math';
 import { FLASHLIGHT } from '../items/config';
 import { setLensGlow } from '../items/flashlight';
-import { limbForward } from '../render/lowpoly';
-import { characterMaterial } from '../render/look/materials';
-import { type ArmPose, FOREARM, HAND_OFFSET, HandsRig, hitTime, type ItemState, swingTime, UPPER } from './armRig';
-import { GRIP_X, GRIP_Z, handGeometry } from './hand';
+import type { BodyId } from '../characters/assets';
+import { type ArmPose, HAND_OFFSET, HandsRig, hitTime, type ItemState, swingTime } from './armRig';
+import { FpArms } from './fpArms';
+import { GRIP_X, GRIP_Z } from './hand';
 import { buildHeldModel, FISTS, HELD, type HeldConfig, type HeldId } from './held';
-import { cuffColor, SKIN } from './outfit';
 import { SPEED_WALK } from './PlayerController';
 
 export type RightItem = 'fists' | Exclude<HeldId, 'torch'>;
@@ -48,6 +46,7 @@ const _hand = new Vector3();
  * Every item is posed by its key poses and both arms are solved to it (`armRig`): the item is a child of
  * the right hand (grip_main); the left hand holds the off socket of a two-handed weapon — the flashlight
  * then moves to the head (`headlamp`) — or the flashlight, itself an item posed the same way.
+ * The arms drawn are the character model's own (fpArms), skinned to the solve's frames.
  */
 export class Viewmodel {
   readonly scene = new Scene();
@@ -62,11 +61,10 @@ export class Viewmodel {
   private readonly handL = new Group();
   private readonly held = new Map<RightItem, Group>();
   private readonly torch: Group;
-  private readonly sleeves: Mesh[] = [];
-  private readonly cuffs: Mesh[] = [];
-  /** Upper arms (shoulder → elbow); [right, left]. */
-  private readonly uppers: Mesh[] = [];
-  private readonly hands: Mesh[] = [];
+  /** Upper arms' frames (shoulder, −Z to the elbow); [right, left]. */
+  private readonly uppers: Group[] = [];
+  /** The model's arms on the frames. */
+  readonly arms = new FpArms();
   private readonly lens: MeshStandardMaterial;
   /** The flashlight in its held frame (the lens at FLASHLIGHT.length on +Y). */
   private readonly torchModel: Group;
@@ -115,10 +113,8 @@ export class Viewmodel {
     this.scene.add(moon, this.bounce);
     this.bounce.position.set(-0.12, -0.12, -0.35);
 
-    const skin = characterMaterial('skin', SKIN);
-    this.buildArm(this.armR, this.handR, 1, skin);
-    this.buildArm(this.armL, this.handL, -1, skin);
-    this.setSleeves(0x3d4a5c);
+    this.buildArm(this.armR, this.handR);
+    this.buildArm(this.armL, this.handL);
 
     // Every item is a child of the right hand, at its main socket.
     for (const id of ['knife', 'hammer', 'axe', 'bat', 'crowbar'] as const) {
@@ -172,24 +168,9 @@ export class Viewmodel {
     this.camera.updateProjectionMatrix();
   }
 
-  /**
-   * Jacket sleeves in the worn color, or bare forearms (null: a T-shirt); gloves on the hands (null = bare);
-   * `hand`: the hand's size (a woman's lighter, appearance.handScale), about the wrist.
-   */
-  setSleeves(color: number | null, skinColor = SKIN, dirt = 0, gloves: number | null = null, gloveDirt = 0, hand = 1): void {
-    const skin = characterMaterial('skin', skinColor);
-    const sleeve = color === null ? skin : characterMaterial('jacket', color, false, 0, dirt);
-    const cuff = color === null ? skin : characterMaterial('cuff', cuffColor(color), false, 0, dirt);
-    for (const m of this.sleeves) m.material = sleeve;
-    for (const m of this.cuffs) {
-      m.material = cuff;
-      m.visible = color !== null;
-    }
-    const handMat = gloves === null ? skin : characterMaterial('cuff', gloves, false, 0, gloveDirt);
-    for (const m of this.hands) {
-      m.material = handMat;
-      m.scale.setScalar(hand);
-    }
+  /** The arms of the survivor's model (a man, a woman, the SWAT officer), `scale` their height's. */
+  setBody(body: BodyId, scale: number): void {
+    this.arms.setBody(body, scale, this.scene);
   }
 
   equip(item: RightItem): void {
@@ -322,6 +303,8 @@ export class Viewmodel {
     this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
     this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
+    this.arms.update(0, this.uppers[0], this.rig.right.pose.upperLen, this.armR, this.handR);
+    this.arms.update(1, this.uppers[1], this.rig.left.pose.upperLen, this.armL, this.handL);
     this.handL.getWorldPosition(_hand);
     this.restL.x = damp(this.restL.x, _hand.x, 3, dt);
     this.restL.y = damp(this.restL.y, _hand.y, 3, dt);
@@ -331,6 +314,7 @@ export class Viewmodel {
   dispose(): void {
     for (const g of this.geometries) g.dispose();
     for (const m of this.materials) m.dispose();
+    this.arms.dispose();
   }
 
   private config(item: RightItem): HeldConfig {
@@ -338,14 +322,13 @@ export class Viewmodel {
   }
 
   /** Solved arm → meshes: the forearm at the elbow, the hand at its tip (on the end of the sleeve), the upper arm. */
-  private applyArm(arm: Group, hand: Group, upper: Mesh, p: ArmPose): void {
+  private applyArm(arm: Group, hand: Group, upper: Group, p: ArmPose): void {
     arm.position.copy(p.elbow);
     arm.quaternion.copy(p.forearm);
     hand.position.set(0, 0, -HAND_OFFSET);
     hand.quaternion.copy(p.hand);
     upper.position.copy(p.shoulder);
     upper.quaternion.copy(p.upper);
-    upper.scale.set(1, 1, p.upperLen / UPPER);
   }
 
   /** Item model in a fist at its main socket: the socket point on the fist's grip axis, turned by the socket's roll. */
@@ -357,31 +340,12 @@ export class Viewmodel {
     return g;
   }
 
-  /** side: +1 right, -1 left. Root = elbow; forearm extends along -Z to the hand. */
-  private buildArm(arm: Group, hand: Group, side: number, skin: Material): void {
-    const sleeve = new Mesh(this.geo(limbForward(0.052, 0.043, FOREARM)), skin);
-    const cuffMesh = new Mesh(this.geo(limbForward(0.046, 0.046, 0.03)), skin);
-    cuffMesh.position.z = -FOREARM + 0.02;
-    // Upper arm, with a rounded elbow at its end.
-    const upper = new Mesh(this.geo(limbForward(0.064, 0.054, UPPER)), skin);
-    const joint = new Mesh(this.geo(new SphereGeometry(0.055, 8, 6)), skin);
-    joint.position.z = -UPPER;
-    upper.add(joint);
-    this.sleeves.push(joint);
-    arm.add(sleeve, cuffMesh);
-    this.sleeves.push(sleeve, upper);
-    this.uppers.push(upper);
-    this.cuffs.push(cuffMesh);
+  /** The frames of an arm: root = elbow (the forearm along −Z to the hand), the hand at its tip, the upper arm. */
+  private buildArm(arm: Group, hand: Group): void {
+    this.uppers.push(new Group());
     hand.position.z = -HAND_OFFSET;
-    const fist = new Mesh(this.geo(handGeometry(side)), skin);
-    hand.add(fist);
-    this.hands.push(fist);
     arm.add(hand);
   }
 
-  private geo<T extends BufferGeometry>(g: T): T {
-    this.geometries.push(g);
-    return g;
-  }
 
 }
