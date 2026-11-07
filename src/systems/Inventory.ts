@@ -24,8 +24,8 @@ export class Inventory {
   hand: ItemId | null = 'knife';
   /** How worn the weapon in hand is, 0..1 (it breaks at 1). */
   handWear = 0;
-  readonly worn: Worn = { head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
-  readonly wornDirt: Record<WearSlot, number> = { head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
+  readonly worn: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
+  readonly wornDirt: Record<WearSlot, number> = { outfit: 0, head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
   readonly wornTint: Partial<Record<WearSlot, number>> = {};
   /** Bumped on every change, so UI can redraw lazily. */
   version = 0;

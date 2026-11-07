@@ -1,5 +1,5 @@
 import { BoxGeometry, type BufferGeometry, CylinderGeometry, Group, Mesh, Quaternion, SphereGeometry, Vector3 } from 'three';
-import { type BodyId, bodyAsset, type ClipId } from '../characters/assets';
+import { type BodyId, bodyAsset, bodyNow, type ClipId, costumeBody, loadBody } from '../characters/assets';
 import { handFrame } from '../characters/hands';
 import { CharacterRig } from '../characters/rig';
 import { type ItemId, ITEMS, type WearSlot } from '../data/items';
@@ -8,11 +8,11 @@ import type { Worn } from '../systems/Inventory';
 import { type Appearance, DEFAULT_APPEARANCE } from './appearance';
 import { buildHeldModel, HELD, type HeldId } from './held';
 
-const NO_WORN: Worn = { head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
+const NO_WORN: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
 
-/** The model a survivor wears: the SWAT officer's for the SWAT class (either sex), else a man or a woman. */
-export function bodyFor(look: Pick<Appearance, 'sex'>, classId?: string | null): BodyId {
-  return classId === 'swat' ? 'swat' : look.sex === 'female' ? 'female' : 'male';
+/** The model a survivor wears: the costume in the outfit slot (men; women keep their base body), else a man or a woman. */
+export function bodyFor(look: Pick<Appearance, 'sex'>, outfit?: ItemId | null): BodyId {
+  return costumeBody(outfit ? ITEMS[outfit].wear?.costume : null, look.sex);
 }
 
 /** The figure's scale for a look's height (cm) on its body's model. */
@@ -21,7 +21,7 @@ export function figureScale(look: Pick<Appearance, 'height'>, body: BodyId): num
 }
 
 /**
- * The survivor as a whole — the character model (src/characters): a man, a woman or the SWAT officer,
+ * The survivor as a whole — the character model (src/characters): a man, a woman, or a man in a class costume,
  * scaled to the look's height, standing at ease (the first frame of `idle`). What is held rides in the
  * right hand (the RightHand socket, the fist closed on its grip), hats on Head, vests and bags on Spine2.
  * The inventory figure, the character editor and the body on death (PlayerDeath drives its bones from the
@@ -83,7 +83,10 @@ export class CharacterFigure {
     return this.body!;
   }
 
+  private disposed = false;
+
   dispose(): void {
+    this.disposed = true;
     for (const g of this.geometries) g.dispose();
     this.rig?.dispose();
   }
@@ -94,7 +97,10 @@ export class CharacterFigure {
   }
 
   private rebuild(): void {
-    const body = bodyFor(this.look, this.classId);
+    const want = bodyFor(this.look, this.worn.outfit);
+    const body = bodyNow(want);
+    // A costume not loaded yet: the base body until it is, then the costume.
+    if (body !== want) void loadBody(want).then(() => !this.disposed && bodyFor(this.look, this.worn.outfit) === want && this.rebuild());
     if (body !== this.body) {
       const old = this.rig;
       this.body = body;

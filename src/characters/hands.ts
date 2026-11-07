@@ -1,5 +1,5 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import type { RigAsset } from './assets';
+import { bodyAsset, type RigAsset } from './assets';
 
 /**
  * A Mixamo hand as the game holds things: the grip frame of player/hand.ts (wrist at the origin, the hand
@@ -27,8 +27,16 @@ const pos = (rig: RigAsset, n: string) => {
 
 export function handFrame(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   let c = cache.get(rig);
-  if (!c) cache.set(rig, (c = { L: build(rig, 'L'), R: build(rig, 'R') }));
+  if (!c) cache.set(rig, (c = { L: build(rig, 'L') ?? fingerless(rig, 'L'), R: build(rig, 'R') ?? fingerless(rig, 'R') }));
   return c[side];
+}
+
+/** A model rigged without finger bones (some costumes): the man's grip in the hand bone's frame, the hand left open. */
+function fingerless(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
+  const male = bodyAsset('male').lod0;
+  if (male === rig || !rig.index.has(side === 'R' ? 'RightHand' : 'LeftHand')) return null;
+  const m = handFrame(male, side);
+  return m ? { q: m.q.clone(), grip: m.grip.clone(), fist: new Map() } : null;
 }
 
 function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {

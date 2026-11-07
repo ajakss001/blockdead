@@ -4,22 +4,64 @@
    "leg": 0.8851,
    "height": 1.8,
    "tris": 10440,
-   "lod1": 3000,
-   "lod1Error": 0.0024
+   "lod1": 2999,
+   "lod1Error": 0.0032
   },
   "female": {
    "leg": 0.9021,
    "height": 1.7,
    "tris": 10290,
    "lod1": 2985,
-   "lod1Error": 0.0031
+   "lod1Error": 0.0057
   },
-  "swat": {
-   "leg": 0.892,
+  "swat_m": {
+   "leg": 0.7915,
    "height": 1.8,
-   "tris": 9997,
-   "lod1": 2984,
+   "tris": 9998,
+   "lod1": 3000,
+   "lod1Error": 0.0057
+  },
+  "military_m": {
+   "leg": 0.786,
+   "height": 1.8,
+   "tris": 10000,
+   "lod1": 2999,
+   "lod1Error": 0.0041
+  },
+  "police_m": {
+   "leg": 0.8289,
+   "height": 1.8,
+   "tris": 9999,
+   "lod1": 2996,
+   "lod1Error": 0.0041
+  },
+  "firefighter_m": {
+   "leg": 0.7966,
+   "height": 1.8,
+   "tris": 9999,
+   "lod1": 2997,
    "lod1Error": 0.0046
+  },
+  "doctor_m": {
+   "leg": 0.763,
+   "height": 1.8,
+   "tris": 9999,
+   "lod1": 2999,
+   "lod1Error": 0.0028
+  },
+  "mechanic_m": {
+   "leg": 0.8132,
+   "height": 1.8,
+   "tris": 9992,
+   "lod1": 3000,
+   "lod1Error": 0.004
+  },
+  "builder_m": {
+   "leg": 0.7561,
+   "height": 1.8,
+   "tris": 9999,
+   "lod1": 2996,
+   "lod1Error": 0.0034
   }
  },
  "clips": {

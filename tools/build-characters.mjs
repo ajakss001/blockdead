@@ -2,7 +2,8 @@
 /**
  * Character models: assets/incoming/characters (Mixamo FBX + Meshy texture) and assets/incoming/anim
  * (Mixamo clips without skin) → public/models/characters:
- *   <body>.glb       the player's model, ~10k triangles, every skinned bone (Ch35 → swat, simplified to ~10k)
+ *   <body>.glb       the player's model, ~10k triangles, every skinned bone; the costumes (outfit_<class>_male.fbx,
+ *                    texture embedded) → <class>_m
  *   <body>_lod1.glb  zombies and far figures: ~3k triangles, borders locked, fingers folded into the hands
  *   <body>_1024.webp, <body>_512.webp  the texture through the grim palette, alpha = skin mask
  *   anims.glb        every clip on one skeleton: rotations of the needed bones, the hips' height in leg lengths
@@ -32,7 +33,7 @@ await MeshoptSimplifier.ready;
 const BODIES = [
   { id: 'male', fbx: 'char_male.fbx', png: 'char_male_obj.png', height: 1.8, lod0: 0 },
   { id: 'female', fbx: 'char_female.fbx', png: 'char_female.png', height: 1.7, lod0: 0 },
-  { id: 'swat', fbx: 'Ch35.fbx', png: null, height: 1.8, lod0: 10000 },
+  ...['swat', 'military', 'police', 'firefighter', 'doctor', 'mechanic', 'builder'].map((c) => ({ id: `${c}_m`, fbx: `outfit_${c}_male.fbx`, png: null, height: 1.8, lod0: 10000 })),
 ];
 const LOD1_TRIS = 3000;
 const CLIPS = ['idle', 'walking', 'walking_female', 'running', 'crouched_walking', 'jump', 'zombie_idle', 'zombie_walk', 'zombie_running', 'zombie_attack', 'zombie_attack_2', 'zombie_scream'];
@@ -92,8 +93,11 @@ async function blobOf(tex) {
 
 // ── Geometry ───────────────────────────────────────────────────────────────────────────────────────
 /** Triangles down to `target` (indexed geometry): open borders locked, so no holes; weights untouched. */
-function simplify(index, pos, target) {
-  const [out, err] = MeshoptSimplifier.simplify(index, pos, 3, target * 3, 1, ['LockBorder', 'Permissive']);
+function simplify(index, pos, target, uv) {
+  // The UVs weigh in: a collapse across a texture seam or one that drags the texture is costly (no smeared shards).
+  const [out, err] = uv
+    ? MeshoptSimplifier.simplifyWithAttributes(index, pos, 3, new Float32Array(uv), 2, [1.5, 1.5], null, target * 3, 1, ['LockBorder', 'Permissive'])
+    : MeshoptSimplifier.simplify(index, pos, 3, target * 3, 1, ['LockBorder', 'Permissive']);
   return { index: out, err };
 }
 
@@ -232,12 +236,17 @@ for (const body of BODIES) {
   let geo = mesh.geometry.clone();
   geo.deleteAttribute('color');
   for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv', 'skinIndex', 'skinWeight'].includes(k)) geo.deleteAttribute(k);
-  // Ch35: three materials → one 2×2 atlas (quadrant per material).
+  // The texture: a PNG beside the model, or the one embedded in it (one material), or several → a 2×2 atlas.
   let rgba;
+  const mats = [].concat(mesh.material);
   if (body.png) {
     rgba = decodePng(readFileSync(join(IN, 'characters', body.png)));
+  } else if (mats.length === 1) {
+    const img = sharp(await blobOf(mats[0].map)).ensureAlpha();
+    const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+    rgba = { data, w: info.width, h: info.height };
+    geo.clearGroups();
   } else {
-    const mats = [].concat(mesh.material);
     const SIZE = 2048;
     const atlas = Buffer.alloc(SIZE * SIZE * 4, 255);
     const half = SIZE / 2;
@@ -267,13 +276,13 @@ for (const body of BODIES) {
   const nor = geo.attributes.normal.array;
   const uv = geo.attributes.uv.array;
   let index = geo.index.array;
-  if (body.lod0) index = simplify(new Uint32Array(index), new Float32Array(pos), body.lod0).index;
+  if (body.lod0) index = simplify(new Uint32Array(index), new Float32Array(pos), body.lod0, uv).index;
   const full = remapJoints(geo.attributes.skinIndex, geo.attributes.skinWeight, bones, new Map(bones.map((b, i) => [bare(b.name), i])));
   await save(writeSkinned(body.id, { name: body.id, pos, nor, uv, ji: full.ji, jw: full.jw, index, bones, scale }), `${body.id}.glb`);
   // LOD1: main bones only, 3k triangles.
   const main = MAIN.filter((n) => bones.some((b) => bare(b.name) === n));
   const lod1 = remapJoints(geo.attributes.skinIndex, geo.attributes.skinWeight, bones, new Map(main.map((n, i) => [n, i])));
-  const { index: i1, err } = simplify(new Uint32Array(index), new Float32Array(pos), LOD1_TRIS);
+  const { index: i1, err } = simplify(new Uint32Array(index), new Float32Array(pos), LOD1_TRIS, uv);
   const ordered = main.map((n) => bones.find((b) => bare(b.name) === n));
   await save(writeSkinned(`${body.id}_lod1`, { name: body.id, pos, nor, uv, ji: lod1.ji, jw: lod1.jw, index: i1, bones: ordered, scale, keepNames: main }), `${body.id}_lod1.glb`);
   const legBones = legOf(fbx) * scale;

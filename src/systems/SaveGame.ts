@@ -1,3 +1,4 @@
+import type { CostumeId } from '../characters/assets';
 import type { MapSave } from './MapMemory';
 import type { Placed } from './Base';
 import type { ItemId, ItemStack } from '../data/items';
@@ -61,6 +62,8 @@ export interface TwinRecord {
   items: ItemStack[];
   /** The model they get up as (by their clothes); old saves: from the class worn then, else a courier. */
   kind?: ModelKind;
+  /** The costume they wore (men; null: everyday clothes; old saves: by kind). */
+  costume?: CostumeId | null;
 }
 
 /**

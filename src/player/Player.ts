@@ -11,6 +11,8 @@ import type { CollisionWorld } from '../world/CollisionWorld';
 import type { Appearance } from './appearance';
 import { BodyModel } from './BodyModel';
 import { bodyFor, figureScale } from './CharacterFigure';
+import { bodyNow, type BodyId, loadBody } from '../characters/assets';
+import type { ItemId } from '../data/items';
 import { type GroundFn, PlayerController, SPEED_WALK } from './PlayerController';
 import { Viewmodel, type ViewmodelFrame } from './Viewmodel';
 
@@ -52,6 +54,7 @@ const BATTERY_LIFE = FLASHLIGHT.battery.life;
 export class Player {
   readonly controller: PlayerController;
   readonly body = new BodyModel();
+  private lookWant: BodyId | null = null;
   readonly viewmodel = new Viewmodel();
   readonly flashlight: SpotLight;
   flashlightOn = false;
@@ -90,9 +93,12 @@ export class Player {
   /** Dead: the scene's death camera has the view; no arms, no body, no input. */
   private dead = false;
 
-  /** The body for the survivor's look and class (a man, a woman, the SWAT officer). */
-  setLook(look: Appearance, classId?: string): void {
-    const body = bodyFor(look, classId);
+  /** The first-person body and arms: the look on its body (the costume in the outfit slot once it is loaded). */
+  setLook(look: Appearance, outfit: ItemId | null = null): void {
+    const want = bodyFor(look, outfit);
+    const body = bodyNow(want);
+    this.lookWant = want;
+    if (body !== want) void loadBody(want).then(() => this.lookWant === want && this.setLook(look, outfit));
     this.body.setBody(body, figureScale(look, body));
     this.viewmodel.setBody(body, figureScale(look, body));
   }

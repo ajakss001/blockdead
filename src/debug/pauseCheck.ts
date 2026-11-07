@@ -6,6 +6,7 @@ import type { Profiler } from '../core/Profiler';
 import { ZombieModels } from '../render/ZombieModels';
 import { PHASE_M, type ZombieWorld, ZombieSim } from '../systems/zombies';
 import { limitTurn } from '../zombies/twitch';
+import { BodyModel } from '../player/BodyModel';
 import { ZOMBIE_TYPES } from '../zombies/types';
 
 /**
@@ -138,11 +139,21 @@ export function pauseChecks(check: (ok: boolean, what: string) => void): void {
   };
   span(120, 1 / 60, 1 / 60);
   const walk = span(240, 1 / 60, 1 / 60);
-  // The renderer still ticking with the world stopped (how a menu used to pause): twitches play, no pile-up.
-  const menu = span(3600, 1 / 60, 0);
-  check(menu.settle < 3 && menu.drift < 70, `world stopped 60 s, frames ticking: twitches come and go (≤ ${menu.drift.toFixed(1)}°), the pose comes back (${menu.settle.toFixed(1)}°): no pile-up`);
-  const pause = span(600, 0, 0);
-  check(pause.drift < 0.01, `paused 10 s (dt 0): not a twitch (${pause.drift.toFixed(4)}°)`);
+  // Paused (menu, hidden tab, an ad): the scene gives the models the world's time, 0 — every bone holds.
+  const pause = span(300, 0, 0);
+  check(pause.drift < 1e-3, `paused 5 s: the zombies' bones unchanged (${pause.drift.toFixed(4)}°)`);
+  {
+    // The survivor's own body (first person) on the world's time too.
+    const body = new BodyModel();
+    body.setBody('male', 1);
+    for (let f = 0; f < 60; f++) body.update(0, 0, 0, 0, 1.4, 0, -0.3, false, 1 / 60);
+    const bones = body.bones;
+    const snap = () => bones.map((b) => b.quaternion.clone());
+    const before = snap();
+    for (let f = 0; f < 300; f++) body.update(0, 0, 0, 0, 1.4, 0, -0.3, false, 0);
+    const moved = snap().reduce((m, q, i) => Math.max(m, Math.abs(q.x - before[i].x), Math.abs(q.y - before[i].y), Math.abs(q.z - before[i].z), Math.abs(q.w - before[i].w)), 0);
+    check(moved === 0, `paused 5 s: the survivor's bones unchanged (largest change ${moved})`);
+  }
   const resume = span(120, 1 / 60, 1 / 60);
   check(resume.jump <= Math.max(15, walk.jump + 1), `resumed: goes on smoothly (most ${resume.jump.toFixed(1)}° a frame; walking ${walk.jump.toFixed(1)}°)`);
   const slow = span(120, MAX_FRAME_DT, 1 / 15);

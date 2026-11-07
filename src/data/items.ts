@@ -62,6 +62,14 @@ export type ItemId =
   | 'dressShoes'
   // Equipment slots (vest, gloves, back) and uniforms that use them.
   | 'swatShirt'
+  // Costumes (the outfit slot): a whole model of the character in the class's clothes.
+  | 'outfitSwat'
+  | 'outfitMilitary'
+  | 'outfitPolice'
+  | 'outfitFirefighter'
+  | 'outfitDoctor'
+  | 'outfitMechanic'
+  | 'outfitBuilder'
   | 'gorkaJacket'
   | 'gorkaPants'
   | 'policeVest'
@@ -103,11 +111,13 @@ export type ItemId =
   | 'emptyBottle'
   | 'dirtyWater';
 
+import type { CostumeId } from '../characters/assets';
+
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
 /** Body slots for clothing; the weapon goes to the hand. */
-export type WearSlot = 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back';
-export const WEAR_SLOTS: readonly WearSlot[] = ['head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back'];
+export type WearSlot = 'outfit' | 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back';
+export const WEAR_SLOTS: readonly WearSlot[] = ['outfit', 'head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back'];
 
 /** What a piece of clothing does. Every field is summed over the worn set. */
 export interface WearStats {
@@ -125,6 +135,10 @@ export const WEAR_STATS: readonly { key: keyof WearStats; label: string; format:
 
 export interface WearDef {
   slot: WearSlot;
+  /** Outfit only: the costume model it puts on (src/characters: the whole figure is that model). */
+  costume?: CostumeId;
+  /** How fast it gets dirty (1 = as any clothes; a field uniform hides it, white scrubs show everything). */
+  soil?: number;
   /** Main color on the body (sleeves, trousers, shoe upper, paper doll). */
   color: number;
   stats: WearStats;
@@ -221,6 +235,13 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   combatBoots: { name: 'Берцы', kind: 'clothing', weight: 1.5, stack: 1, wear: { slot: 'feet', color: 0x26231f, stats: { bite: 0.35, warmth: 5 }, shoe: 'boots' } },
   swatHelmet: { name: 'Шлем SWAT', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'head', color: 0x1c1e22, stats: { bite: 0.5, warmth: 2 } } },
   swatVest: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.5, stack: 1, wear: { slot: 'vest', color: 0x1e2226, stats: { bite: 0.5, warmth: 3 } } },
+  outfitSwat: { name: 'Форма SWAT', kind: 'clothing', weight: 3.2, stack: 1, note: 'Тактический комбинезон, наколенники, ботинки', wear: { slot: 'outfit', costume: 'swat', color: 0x262a30, soil: 0.8, stats: { bite: 0.35, warmth: 11 } } },
+  outfitMilitary: { name: 'Полевая форма армии США', kind: 'clothing', weight: 2.6, stack: 1, note: 'Камуфляж, берцы', wear: { slot: 'outfit', costume: 'military', color: 0x5b5a3e, soil: 0.6, stats: { bite: 0.3, warmth: 12 } } },
+  outfitPolice: { name: 'Полицейская форма', kind: 'clothing', weight: 1.8, stack: 1, note: 'Рубашка, брюки, ботинки', wear: { slot: 'outfit', costume: 'police', color: 0x2c3a5a, soil: 1, stats: { bite: 0.15, warmth: 7 } } },
+  outfitFirefighter: { name: 'Боёвка пожарного', kind: 'clothing', weight: 6, stack: 1, note: 'Тяжёлая, тёплая, держит укус', wear: { slot: 'outfit', costume: 'firefighter', color: 0x8a7038, soil: 0.7, stats: { bite: 0.55, warmth: 22 } } },
+  outfitDoctor: { name: 'Медицинская форма', kind: 'clothing', weight: 0.6, stack: 1, note: 'Почти не греет, грязь видна сразу', wear: { slot: 'outfit', costume: 'doctor', color: 0x5a8a86, soil: 1.6, stats: { bite: 0.04, warmth: 2 } } },
+  outfitMechanic: { name: 'Комбинезон механика', kind: 'clothing', weight: 1.6, stack: 1, note: 'Плотный, к грязи привычный', wear: { slot: 'outfit', costume: 'mechanic', color: 0x4a4a36, soil: 0.5, stats: { bite: 0.2, warmth: 9 } } },
+  outfitBuilder: { name: 'Рабочая форма строителя', kind: 'clothing', weight: 2.2, stack: 1, note: 'Сигнальный жилет, ботинки', wear: { slot: 'outfit', costume: 'builder', color: 0x5c5236, soil: 0.6, stats: { bite: 0.25, warmth: 10 } } },
   swatShirt: { name: 'Тактическая куртка', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'torso', color: 0x262a30, stats: { bite: 0.2, warmth: 6 } } },
   swatPants: { name: 'Тактические брюки', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'legs', color: 0x23262a, stats: { bite: 0.25, warmth: 5 } } },
   policeCap: { name: 'Полицейская фуражка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'head', color: 0x1f2533, stats: { bite: 0.02, warmth: 1 } } },

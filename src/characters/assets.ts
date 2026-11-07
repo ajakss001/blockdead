@@ -16,14 +16,32 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 /**
- * The character models (tools/build-characters.mjs → public/models/characters): a man, a woman and the SWAT
- * officer (Ch35), each as the player's model (~10k triangles, every skinned bone) and LOD1 (~3k, the main
- * 22 bones) for zombies and far figures; one texture per body (alpha: the skin mask); the Mixamo clips on
- * one skeleton (the hips' height in leg lengths). Loaded once at boot, then used synchronously.
+ * The character models (tools/build-characters.mjs → public/models/characters): a man and a woman in their
+ * everyday clothes, and the class costumes (a whole model each, the same skeleton and clips), each as the
+ * player's model (~10k triangles, every skinned bone) and LOD1 (~3k, the main 22 bones) for zombies and far
+ * figures; one texture per body (alpha: the skin mask); the Mixamo clips on one skeleton (the hips' height in
+ * leg lengths). The two base bodies and the clips load at boot; a costume when it is first worn or seen
+ * (`loadBody`) — until then whoever wears it is drawn in the base body.
  */
 
-export type BodyId = 'male' | 'female' | 'swat';
-export const BODY_IDS: readonly BodyId[] = ['male', 'female', 'swat'];
+export type BaseBody = 'male' | 'female';
+export type CostumeId = 'swat' | 'military' | 'police' | 'firefighter' | 'doctor' | 'mechanic' | 'builder';
+export const COSTUMES: readonly CostumeId[] = ['swat', 'military', 'police', 'firefighter', 'doctor', 'mechanic', 'builder'];
+/** A costume on a body: '<costume>_m' (the women's costumes are to come: '<costume>_f'). */
+export type CostumeBody = `${CostumeId}_m`;
+export type BodyId = BaseBody | CostumeBody;
+export const BASE_BODIES: readonly BaseBody[] = ['male', 'female'];
+export const BODY_IDS: readonly BodyId[] = [...BASE_BODIES, ...COSTUMES.map((c) => `${c}_m` as CostumeBody)];
+
+/** The body a costume puts on a man or a woman: none yet for women (their base body, the class's gear on top). */
+export function costumeBody(costume: CostumeId | null | undefined, sex: BaseBody): BodyId {
+  return costume && sex === 'male' ? `${costume}_m` : sex;
+}
+
+/** The base body under a costume (the sex), for clips and fallbacks. */
+export function baseOf(body: BodyId): BaseBody {
+  return body === 'female' || body.endsWith('_f') ? 'female' : 'male';
+}
 export type ClipId =
   | 'idle'
   | 'walking'
@@ -98,16 +116,21 @@ async function parse(loader: GLTFLoader, read: Read, file: string) {
   return loader.parseAsync(buf, '');
 }
 
-/** Loads every body and clip (`texSize` 512 on low, 1024 otherwise; 0: no textures, as in Node tests). */
-export function loadCharacters(texSize: 0 | 512 | 1024, read?: Read): Promise<void> {
-  ready ??= (async () => {
-    const base = `${import.meta.env?.BASE_URL ?? '/'}models/characters/`;
-    const get: Read = read ?? ((f) => fetch(base + f).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${f}: ${r.status}`)))));
+let source: { get: Read; base: string; texSize: 0 | 512 | 1024; meta: Record<string, { leg: number; height: number }> } | null = null;
+const pending = new Map<BodyId, Promise<BodyAsset | null>>();
+
+/** One body's two models and texture (null if the build has none of it). */
+function fetchBody(id: BodyId): Promise<BodyAsset | null> {
+  let p = pending.get(id);
+  if (p) return p;
+  p = (async () => {
+    const src = source;
+    if (!src || !src.meta[id]) return null;
+    const { get, base, texSize } = src;
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    const meta = JSON.parse(new TextDecoder().decode(await get('characters.json'))) as { bodies: Record<BodyId, { leg: number; height: number }> };
     const texLoader = new TextureLoader();
-    const tasks: Promise<void>[] = BODY_IDS.map(async (id) => {
+    {
       const [g0, g1, texture] = await Promise.all([
         parse(loader, get, `${id}.glb`),
         parse(loader, get, `${id}_lod1.glb`),
@@ -121,8 +144,45 @@ export function loadCharacters(texSize: 0 | 512 | 1024, read?: Read): Promise<vo
           : Promise.resolve(null),
       ]);
       const mesh = (g: { scene: { getObjectByProperty(k: string, v: unknown): unknown } }) => g.scene.getObjectByProperty('isSkinnedMesh', true) as SkinnedMesh;
-      bodies.set(id, { id, leg: meta.bodies[id].leg, height: meta.bodies[id].height, lod0: rigOf(mesh(g0)), lod1: rigOf(mesh(g1)), texture });
-    });
+      const asset: BodyAsset = { id, leg: src.meta[id].leg, height: src.meta[id].height, lod0: rigOf(mesh(g0)), lod1: rigOf(mesh(g1)), texture };
+      bodies.set(id, asset);
+      return asset;
+    }
+  })().catch((e) => {
+    console.warn('character', id, e);
+    return null;
+  });
+  pending.set(id, p);
+  return p;
+}
+
+/** Starts loading a costume (or any body); resolves when it can be used synchronously (null: none in the build). */
+export function loadBody(id: BodyId): Promise<BodyAsset | null> {
+  return fetchBody(id);
+}
+
+/** Loaded and usable now. */
+export function hasBody(id: BodyId): boolean {
+  return bodies.has(id);
+}
+
+/** The body to draw now: the wanted one if loaded (its loading started otherwise), else its base body. */
+export function bodyNow(id: BodyId): BodyId {
+  if (bodies.has(id)) return id;
+  void fetchBody(id);
+  return baseOf(id);
+}
+
+/** Loads the base bodies and the clips (`texSize` 512 on low, 1024 otherwise; 0: no textures, as in Node tests). */
+export function loadCharacters(texSize: 0 | 512 | 1024, read?: Read): Promise<void> {
+  ready ??= (async () => {
+    const base = `${import.meta.env?.BASE_URL ?? '/'}models/characters/`;
+    const get: Read = read ?? ((f) => fetch(base + f).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${f}: ${r.status}`)))));
+    const meta = JSON.parse(new TextDecoder().decode(await get('characters.json'))) as { bodies: Record<BodyId, { leg: number; height: number }> };
+    source = { get, base, texSize, meta: meta.bodies };
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    const tasks: Promise<unknown>[] = BASE_BODIES.map((id) => fetchBody(id));
     tasks.push(
       parse(loader, get, 'anims.glb').then((g) => {
         for (const c of g.animations) clips.set(c.name, c);
@@ -134,7 +194,7 @@ export function loadCharacters(texSize: 0 | 512 | 1024, read?: Read): Promise<vo
 }
 
 export function charactersReady(): boolean {
-  return bodies.size === BODY_IDS.length;
+  return BASE_BODIES.every((b) => bodies.has(b));
 }
 
 export function bodyAsset(id: BodyId): BodyAsset {

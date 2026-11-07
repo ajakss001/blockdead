@@ -1,6 +1,6 @@
 import { CircleGeometry, Color, DirectionalLight, HemisphereLight, Mesh, MeshLambertMaterial, PerspectiveCamera, Scene, Timer, Vector3, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { BODY_IDS, type BodyId, type ClipId, loadCharacters } from '../characters/assets';
+import { BODY_IDS, type BodyId, type ClipId, COSTUMES, loadBody, loadCharacters } from '../characters/assets';
 import { CharacterRig } from '../characters/rig';
 import { grim } from '../style/palette';
 import { look } from '../style/look';
@@ -36,12 +36,13 @@ function stage(scene: Scene): void {
 
 function figure(body: BodyId, kind: string | null): CharacterRig {
   const t = kind ? ZOMBIE_TYPES[kind as keyof typeof ZOMBIE_TYPES] : null;
-  const r = new CharacterRig(body, t ? 1 : 0, t ? { zombie: true, tint: [new Color().setHex(grim(t.tint)), new Color().setHex(grim(t.tint2))] } : {});
+  const r = new CharacterRig(body, t ? 1 : 0, t ? { zombie: true, tint: [new Color().setHex(grim(t.tint)), new Color().setHex(grim(t.tint2))], tintMix: body === 'male' || body === 'female' ? 0.6 : 0.18 } : {});
   if (t) r.root.scale.setScalar(t.scale);
   return r;
 }
 
 await loadCharacters(1024);
+await Promise.all(BODY_IDS.map((b) => loadBody(b)));
 const ui = document.getElementById('ui');
 const stats = document.getElementById('stats');
 
@@ -64,10 +65,15 @@ if (sheet) {
   const rows: { name: string; body: BodyId; kind: string | null; walk: ClipId }[] = [
     { name: 'Мужчина', body: 'male', kind: null, walk: 'walking' },
     { name: 'Женщина', body: 'female', kind: null, walk: 'walking_female' },
-    { name: 'SWAT (Ch35)', body: 'swat', kind: null, walk: 'walking' },
     { name: 'Зомби (м)', body: 'male', kind: 'police', walk: 'zombie_walk' },
     { name: 'Зомби (ж)', body: 'female', kind: 'medic', walk: 'zombie_walk' },
   ];
+  // ?sheet=costumes: the class costumes (front, side, back, face, hand, walk, run) and two as zombies.
+  if (q.get('sheet') === 'costumes') {
+    rows.length = 0;
+    for (const c of COSTUMES) rows.push({ name: c, body: `${c}_m`, kind: null, walk: 'walking' });
+    rows.push({ name: 'зомби: police', body: 'police_m', kind: 'police', walk: 'zombie_walk' }, { name: 'зомби: firefighter', body: 'firefighter_m', kind: 'firefighter', walk: 'zombie_walk' });
+  }
   const cols = 7;
   renderer.setSize(W * cols, H * rows.length);
   renderer.setScissorTest(true);

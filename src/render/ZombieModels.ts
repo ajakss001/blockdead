@@ -20,7 +20,7 @@ import {
   Sphere,
   Vector3,
 } from 'three';
-import { type BodyId, bodyAsset, clipFor, type ClipId, type RigAsset } from '../characters/assets';
+import { BASE_BODIES, type BaseBody, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, type RigAsset } from '../characters/assets';
 import { characterMaterial } from '../characters/material';
 import { createBones, RagdollPose, ragdollStart } from '../characters/rig';
 import type { QualityLevel } from '../core/types';
@@ -29,7 +29,26 @@ import { grim } from '../style/palette';
 import { PHASE_M, type Zombie, type ZombieState } from '../systems/zombies';
 import { ZOMBIE_STATS } from '../zombies/stats';
 import { Twitch } from '../zombies/twitch';
+import { zombieCostume } from '../zombies/costumes';
 import { ZOMBIE_TYPES, type ZombieType } from '../zombies/types';
+
+/** A kind as one zombie wears it: its costume's body once that is loaded (until then the base), scaled to the kind. */
+const dressed = new Map<string, ZombieType>();
+function dressOf(z: Zombie): ZombieType | undefined {
+  const type = ZOMBIE_TYPES[z.kind];
+  if (!type) return undefined;
+  const female = !!ZOMBIE_STATS[type.id].female;
+  const costume = zombieCostume(z.id, type.id, female, z.costume);
+  // The costumes are men's: a woman's kind in one (a medic as a doctor) is a man of the kind's height.
+  const sex: BaseBody = costume ? 'male' : type.body === 'female' ? 'female' : 'male';
+  const want = costumeBody(costume, sex);
+  const body = bodyNow(want) === want ? want : type.body;
+  if (body === type.body) return type;
+  const key = `${type.id}:${body}`;
+  let t = dressed.get(key);
+  if (!t) dressed.set(key, (t = { ...type, body, scale: ZOMBIE_STATS[type.id].height / bodyAsset(body).height }));
+  return t;
+}
 
 /**
  * Every zombie is one of the character models at LOD1 (~3k triangles, 22 bones): per body (man, woman) one
@@ -184,7 +203,9 @@ class Layer {
     g.setAttribute('aTint', new InstancedBufferAttribute(this.tints, 3).setUsage(DynamicDrawUsage));
     g.setAttribute('aTint2', new InstancedBufferAttribute(this.tints2, 3).setUsage(DynamicDrawUsage));
     g.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
-    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex }), cap);
+    // A costume keeps its own colours (only a little of the kind's tint); everyday clothes take the kind's.
+    const costume = !BASE_BODIES.includes(this.k.body as BaseBody);
+    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex, tintMix: costume ? 0.18 : 0.6 }), cap);
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.mesh.name = `zombies-${this.k.body}`;
     this.mesh.frustumCulled = false;
@@ -339,7 +360,7 @@ export class ZombieModels {
     const near: { z: Zombie; d: number }[] = [];
     const r2 = this.detail.near * this.detail.near;
     for (const z of list) {
-      if (z.state === 'dead' || !ZOMBIE_TYPES[z.kind]) continue;
+      if (z.state === 'dead' || !dressOf(z)) continue;
       const d = (z.pos.x - eye.x) ** 2 + (z.pos.z - eye.z) ** 2;
       if (d < r2 && Math.abs(z.pos.y - eye.y) < 12) near.push({ z, d });
     }
@@ -350,7 +371,7 @@ export class ZombieModels {
     for (const r of this.rigs) if (r.id >= 0 && !this.detailed.has(r.id)) r.id = -1;
     const far2 = far * far;
     for (const z of list) {
-      const type = ZOMBIE_TYPES[z.kind];
+      const type = dressOf(z);
       if (z.state === 'dead' || !type) continue;
       const d2 = (z.pos.x - eye.x) ** 2 + (z.pos.z - eye.z) ** 2;
       if (d2 > far2) continue;
@@ -425,9 +446,11 @@ export class ZombieModels {
   }
 
   private rig(z: Zombie, type: ZombieType): Rig {
-    let r = this.rigs.find((x) => x.id === z.id);
-    if (r) return r;
     const k = kit(type.body);
+    let r = this.rigs.find((x) => x.id === z.id);
+    if (r && r.k === k) return r;
+    // Its costume has just loaded: another body's rig.
+    if (r) r.id = -1;
     r = this.rigs.find((x) => x.id < 0 && x.k === k);
     if (!r) {
       const bones = createBones(k.rig);
@@ -517,14 +540,14 @@ export class ZombieModels {
 
   /** A zombie dies: where each ragdoll body starts (from its bones as drawn), the build, its scale. */
   deathStart(z: Zombie): { parts: PartPose[]; shape: BodyShape; scale: number } | null {
-    const type = ZOMBIE_TYPES[z.kind];
+    const type = dressOf(z);
     if (!type) return null;
     const k = kit(type.body);
     return { ...ragdollStart(type.body, 1, k.rig, this.boneWorld(z, type)), scale: type.scale };
   }
 
   addCorpse(z: Zombie, rd: Ragdoll): { ok: boolean; evicted: number | null } {
-    const type = ZOMBIE_TYPES[z.kind];
+    const type = dressOf(z);
     if (!type) return { ok: false, evicted: null };
     const evicted = this.corpses.length >= this.detail.corpses ? this.corpses.shift()!.id : null;
     const k = kit(type.body);
@@ -546,13 +569,13 @@ export class ZombieModels {
   /** The bones' world matrices: a corpse's by id, or a living zombie's as drawn (tests). */
   bones(z: Zombie | number): Matrix4[] | null {
     if (typeof z === 'number') return this.corpses.find((c) => c.id === z)?.pose.world ?? null;
-    const type = ZOMBIE_TYPES[z.kind];
+    const type = dressOf(z);
     return type ? this.boneWorld(z, type) : null;
   }
 
   /** The rig of the corpses' and zombies' bones (names, parents: tests). */
   rigOf(z: Zombie): RigAsset | null {
-    const type = ZOMBIE_TYPES[z.kind];
+    const type = dressOf(z);
     return type ? kit(type.body).rig : null;
   }
 

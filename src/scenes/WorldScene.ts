@@ -555,7 +555,7 @@ export class WorldScene implements IScene {
   private syncBody(): void {
     const hand = this.inventory.hand;
     this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
-    this.player.setLook(this.look, this.classId);
+    this.player.setLook(this.look, this.inventory.worn.outfit);
     this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
@@ -807,7 +807,8 @@ export class WorldScene implements IScene {
   /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
-    this.player.render(alpha, frameDt);
+    // The survivor's body, arms and light move by world time: frozen on pause like everything else.
+    this.player.render(alpha, gameDt);
     if (this.death) this.renderDeath(gameDt);
     // After the camera moved: the zombies in its view, up to the fog (paused: their mixers and twitches too).
     this.models.update(this.zombies.list, this.player.controller.position, gameDt, this.camera, (this.scene.fog as Fog).far + 2);
@@ -816,7 +817,7 @@ export class WorldScene implements IScene {
     this.interaction.render(frameDt);
     this.drawSearchZones(frameDt);
     this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y);
-    this.doors.update(frameDt);
+    this.doors.update(gameDt);
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
@@ -850,15 +851,15 @@ export class WorldScene implements IScene {
     (this.scene.fog as Fog).far = this.ctx.quality.preset.fogFar * this.fogK;
     this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, gameDt * 1.5);
     (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
-    this.landmarks.update(frameDt, this.camera.position, this.scene.fog as Fog);
-    this.noteT -= frameDt;
+    this.landmarks.update(gameDt, this.camera.position, this.scene.fog as Fog);
+    this.noteT -= gameDt;
     if (this.noteT <= 0) {
       // The lab notes quote the code of the lab nearby.
       this.noteT = 2;
       const site = nearestPoi(this.layout, 'lab', Math.floor(this.camera.position.x / CHUNK), Math.floor(this.camera.position.z / CHUNK), 12);
       if (site) labCode(this.layout.seed, site).split('-').forEach((d, k) => (NOTE_VARS[`lab${k + 1}`] = d));
     }
-    this.farSmoke.update(frameDt, this.camera.position, this.scene.fog as Fog, this.clock.daylight, this.life.windDirection, this.life.windGust);
+    this.farSmoke.update(gameDt, this.camera.position, this.scene.fog as Fog, this.clock.daylight, this.life.windDirection, this.life.windGust);
     const ws = 0.0005 + this.life.windGust * 0.001;
     this.sky.wind.set(Math.cos(wa) * ws, 0, Math.sin(wa) * ws);
     this.sky.update(frameDt, this.camera, this.ctx.loop.paused);
@@ -1112,6 +1113,7 @@ export class WorldScene implements IScene {
       if (this.twinZombies.has(t.id) || Math.hypot(t.x - p.x, t.z - p.z) > 70) continue;
       const z = this.zombies.spawnAt(t.x, t.z, 'idle', t.kind ?? twinKind({}, this.classId), t.y);
       z.twin = { id: t.id, x: t.x, y: t.y, z: t.z, colors: t.colors };
+      if (t.costume !== undefined) z.costume = t.costume;
       this.twinZombies.set(t.id, z);
     }
   }
@@ -1179,7 +1181,7 @@ export class WorldScene implements IScene {
       kills: this.meta.kills + this.skills.kills,
     };
     const color = (slot: WearSlot) => { const id = inv.worn[slot]; return id ? (inv.wornTint[slot] ?? ITEMS[id].wear?.color ?? null) : null; };
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex) });
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex), costume: this.look.sex === 'male' ? ((inv.worn.outfit && ITEMS[inv.worn.outfit].wear?.costume) ?? null) : null });
     this.save();
   }
 

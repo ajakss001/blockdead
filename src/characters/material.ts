@@ -20,6 +20,8 @@ export interface CharacterLook {
   skin?: DataTexture;
   /** A single zombie's clothes (linear): top, bottom (a batch has them per instance). */
   tint?: [Color, Color];
+  /** How much the clothes take the tint (0.6 everyday clothes; a costume keeps its colours). */
+  tintMix?: number;
 }
 
 function bounds(rig: RigAsset): { minY: number; height: number; hips: number } {
@@ -78,7 +80,7 @@ vTint2 = aTint2;`
       ? `
   float zl = dot(diffuseColor.rgb, ${LUM});
   vec3 zt = vBindPos.y > uHips ? vTint : vTint2;
-  vec3 zcloth = mix(diffuseColor.rgb, zl * zt / max(dot(zt, ${LUM}), 0.03), 0.6);
+  vec3 zcloth = mix(diffuseColor.rgb, zl * zt / max(dot(zt, ${LUM}), 0.03), ${(o.tintMix ?? 0.6).toFixed(3)});
   zcloth = mix(zcloth, vec3(dot(zcloth, ${LUM})) * vec3(0.97, 1.0, 0.95), 0.15 + 0.35 * zNoise(vBindPos * 4.0 + 5.0));
   ${stainGlsl('vBindPos', 'zcloth', 1.4)}
   vec3 zdead = ${glslColor(SKIN)} * clamp(zl / 0.17, 0.6, 1.2);
@@ -97,6 +99,6 @@ vTint2 = aTint2;`
 }`,
       );
   };
-  mat.customProgramCacheKey = () => `character-${zombie}-${batched}-${!!body.texture}`;
+  mat.customProgramCacheKey = () => `character-${zombie}-${batched}-${!!body.texture}-${o.tintMix ?? 0.6}`;
   return mat;
 }

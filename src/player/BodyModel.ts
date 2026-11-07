@@ -1,12 +1,12 @@
-import { type AnimationAction, Group, LoopOnce, Quaternion, Vector3 } from 'three';
-import type { BodyId, ClipId } from '../characters/assets';
+import { type AnimationAction, type Bone, BufferGeometry, Group, LoopOnce, Quaternion, Vector3 } from 'three';
+import { baseOf, bodyAsset, type BodyId, type ClipId } from '../characters/assets';
 import { CharacterRig, stand } from '../characters/rig';
 
 /**
  * The player's own body in first person: the same character model as in the inventory, feet where the
  * controller stands, facing the view. Its clips follow the speed and the state — idle, walking (the
- * woman's walk for her), running, crouched walking, the jump — blended. The head is folded away (its bone
- * scaled to nothing) and so are the arms (the first-person arms with the weapon are the viewmodel's);
+ * woman's walk for her), running, crouched walking, the jump — blended. Drawn without its head and arms
+ * (fpBodyGeometry; the first-person arms with the weapon are the viewmodel's);
  * the camera sits in the head bone, so looking down you see your own legs and body. Looking down bends
  * the spine and neck a little, which brings the head forward over the belly.
  */
@@ -21,11 +21,17 @@ type Gait = 'idle' | 'walk' | 'run' | 'crouch';
 export class BodyModel {
   readonly root = new Group();
   private rig: CharacterRig | null = null;
+
+  /** The model's bones (tests). */
+  get bones(): readonly Bone[] {
+    return this.rig?.bones ?? [];
+  }
   private body: BodyId | null = null;
   private scale = 1;
   private gaits: Record<Gait, AnimationAction> | null = null;
   private jump: AnimationAction | null = null;
   private airT = 0;
+  private posed = false;
   private readonly w: Record<Gait, number> = { idle: 1, walk: 0, run: 0, crouch: 0 };
   private readonly eye = new Vector3();
   private eyeSet = false;
@@ -38,13 +44,14 @@ export class BodyModel {
     this.root.scale.setScalar(scale);
     if (body === this.body) return;
     this.rig?.dispose();
+    this.posed = false;
     if (this.rig) this.root.remove(this.rig.root);
     this.body = body;
-    const r = new CharacterRig(body, 0);
+    const r = new CharacterRig(body, 0, {}, fpBodyGeometry(body));
     r.mesh.castShadow = true;
     this.root.add(r.root);
     this.rig = r;
-    const walk: ClipId = body === 'female' ? 'walking_female' : 'walking';
+    const walk: ClipId = baseOf(body) === 'female' ? 'walking_female' : 'walking';
     this.gaits = { idle: r.action('idle'), walk: r.action(walk), run: r.action('running'), crouch: r.action('crouched_walking') };
     for (const a of Object.values(this.gaits)) a.play();
     this.jump = r.action('jump').setLoop(LoopOnce, 1);
@@ -63,7 +70,7 @@ export class BodyModel {
     return (this.eyeY[0] + (this.eyeY[1] - this.eyeY[0]) * crouchT) * this.scale;
   }
 
-  /** Torso shown (always: the head and arms are folded away). */
+  /** Torso shown (the head and arms are not in its geometry). */
   set torsoVisible(v: boolean) {
     if (this.rig) this.rig.mesh.visible = v;
   }
@@ -77,6 +84,12 @@ export class BodyModel {
     if (!r || !this.gaits) return;
     this.root.position.set(x, y, z);
     this.root.rotation.set(0, yaw + Math.PI, 0);
+    // Paused (no world time): the pose stays exactly as it was.
+    if (dt <= 0 && this.posed) {
+      this.root.updateMatrixWorld(true);
+      return;
+    }
+    this.posed = true;
     const g = this.gaits;
     const move = Math.min(1, speed / 0.6);
     const run = Math.min(1, Math.max(0, (speed - SPEED_WALK) / (SPEED_RUN - SPEED_WALK)));
@@ -114,7 +127,6 @@ export class BodyModel {
     r.bone('Neck').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.3));
     // Air: the hips at the controller's height (the clip's own rise taken out).
     if (air) r.bone('Hips').position.y = this.hipsY();
-    for (const n of ['Head', 'LeftArm', 'RightArm']) r.bone(n).scale.setScalar(1e-3);
     this.root.updateMatrixWorld(true);
   }
 
@@ -144,6 +156,46 @@ export class BodyModel {
   dispose(): void {
     this.rig?.dispose();
   }
+}
+
+/**
+ * The body as the player sees it from inside: the model without its head and arms (the arms are
+ * player/fpArms, the head is where the eyes are). Whole triangles go — any corner on the head or the neck's top
+ * (≥ 30%) or on an arm (≥ 50%) — so nothing is folded away by squashing bones (that stretched the skin across
+ * the view). Shared per body.
+ */
+const fpGeos = new Map<BodyId, BufferGeometry>();
+function fpBodyGeometry(body: BodyId): BufferGeometry {
+  let g = fpGeos.get(body);
+  if (g) return g;
+  const rig = bodyAsset(body).lod0;
+  const src = rig.geometry;
+  const si = src.getAttribute('skinIndex');
+  const sw = src.getAttribute('skinWeight');
+  const isHead = rig.names.map((n) => n === 'Head' || n.startsWith('HeadTop') || n.includes('Eye'));
+  const isArm = rig.names.map((n) => /^(Left|Right)(Arm|ForeArm|Hand)/.test(n));
+  const n = si.count;
+  const head = new Float32Array(n);
+  const arm = new Float32Array(n);
+  for (let v = 0; v < n; v++)
+    for (let k = 0; k < 4; k++) {
+      const j = si.getComponent(v, k);
+      if (isHead[j]) head[v] += sw.getComponent(v, k);
+      if (isArm[j]) arm[v] += sw.getComponent(v, k);
+    }
+  const off = (v: number) => head[v] >= 0.3 || arm[v] >= 0.5;
+  const idx = src.index!;
+  const keep: number[] = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
+    if (!off(a) && !off(b) && !off(c)) keep.push(a, b, c);
+  }
+  g = new BufferGeometry();
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) g.setAttribute(name, src.getAttribute(name));
+  g.setIndex(keep);
+  g.boundingBox = src.boundingBox ?? (src.computeBoundingBox(), src.boundingBox);
+  fpGeos.set(body, g);
+  return g;
 }
 
 const _q = new Quaternion();

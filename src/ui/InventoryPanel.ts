@@ -32,6 +32,7 @@ type Place = { from: 'bag'; id: ItemId } | { from: 'box'; id: ItemId } | { from:
 type DropTarget = 'bag' | 'box' | `slot:${Slot}`;
 
 const SLOTS: { slot: Slot; label: string }[] = [
+  { slot: 'outfit', label: 'Костюм' },
   { slot: 'head', label: 'Голова' },
   { slot: 'torso', label: 'Торс' },
   { slot: 'vest', label: 'Жилет' },

@@ -1,4 +1,4 @@
-import { type AnimationAction, AnimationMixer, Bone, Group, Matrix4, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
+import { type AnimationAction, AnimationMixer, Bone, type BufferGeometry, Group, Matrix4, Quaternion, Skeleton, SkinnedMesh, Sphere, Vector3 } from 'three';
 import { type BodyShape, bodyParts, PART, type PartPose, type Ragdoll } from '../physics/ragdoll';
 import { type BodyId, bodyAsset, boneName, clipFor, type ClipId, type RigAsset } from './assets';
 import { type CharacterLook, characterMaterial } from './material';
@@ -36,11 +36,13 @@ export class CharacterRig {
     readonly body: BodyId,
     readonly lod: 0 | 1 = 0,
     look: CharacterLook = {},
+    /** A part of the body's geometry instead of all of it (the first-person body: no head, no arms). */
+    geometry?: BufferGeometry,
   ) {
     const asset = bodyAsset(body);
     this.rig = lod ? asset.lod1 : asset.lod0;
     this.bones = createBones(this.rig);
-    this.mesh = new SkinnedMesh(this.rig.geometry, characterMaterial(asset, this.rig, look));
+    this.mesh = new SkinnedMesh(geometry ?? this.rig.geometry, characterMaterial(asset, this.rig, look));
     this.mesh.name = `character-${body}`;
     this.mesh.add(this.bones[0]);
     this.mesh.bind(new Skeleton(this.bones, this.rig.inverses.map((m) => m.clone())), new Matrix4());

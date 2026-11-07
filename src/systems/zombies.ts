@@ -1,3 +1,4 @@
+import type { CostumeId } from '../characters/assets';
 import { Vector3 } from 'three';
 import { clamp } from '../core/math';
 import { mulberry32 } from '../core/random';
@@ -78,6 +79,8 @@ export interface Zombie {
   swing: number;
   door: unknown;
   twin?: TwinData;
+  /** The costume it wears, when the world says (a twin in the survivor's); undefined: by kind and place. */
+  costume?: CostumeId | null;
 }
 
 export interface ZombieWorld {
