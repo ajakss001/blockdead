@@ -1,3 +1,4 @@
+import type { MapSave } from './MapMemory';
 import type { ItemId, ItemStack } from '../data/items';
 import type { ModelKind } from '../zombies/stats';
 import type { ContainerRef } from './Containers';
@@ -18,7 +19,7 @@ export interface SaveV1 {
   stats: SurvivalState;
   inventory: InventoryData;
   /** Looks and class (older saves: none → default survivor, no editor). */
-  character?: { appearance: Partial<Appearance>; classId: string };
+  character?: { appearance: Partial<Appearance>; classId: string; traits?: string[] };
   /** In-game minutes since the first midnight (older saves: none → start of the night). */
   clock?: number;
   /** Touched containers only; untouched ones are re-rolled from the seed. */
@@ -43,6 +44,8 @@ export interface SaveV1 {
   kills?: number;
   /** What outlives the survivors of this world: the legacy of skills, deaths, the longest life, kills. */
   meta?: MetaData;
+  /** What the survivor has seen of the map, and their marks. */
+  map?: MapSave;
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

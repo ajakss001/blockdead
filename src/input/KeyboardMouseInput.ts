@@ -8,6 +8,7 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   KeyE: 'use',
   Tab: 'inventory',
   KeyI: 'inventory',
+  KeyM: 'map',
   Digit1: 'item1',
   Digit2: 'item2',
   Space: 'jump',

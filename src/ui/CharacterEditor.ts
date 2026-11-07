@@ -1,5 +1,6 @@
 import { CLASSES, type ClassId, classDef, OUTFIT_TINTS, STARTER_OUTFITS } from '../data/classes';
 import { classSkillText } from '../systems/Skills';
+import { TRAITS, type TraitId, traitDef, traitPointsLeft } from '../data/traits';
 import type { ItemId, WearSlot } from '../data/items';
 import {
   type Appearance,
@@ -30,9 +31,10 @@ export interface CharacterChoice {
   outfit: string;
   /** Color of the starting top (starter outfits only). */
   tint: number;
+  traits: TraitId[];
 }
 
-type Tab = 'look' | 'class' | 'outfit';
+type Tab = 'look' | 'class' | 'traits' | 'outfit';
 
 /** Worn set for a choice (uniform or starter outfit). */
 export function choiceWorn(c: CharacterChoice): Worn {
@@ -60,6 +62,7 @@ export class CharacterEditor {
   private readonly tabs = document.createElement('div');
   private tab: Tab = 'look';
   private choice: CharacterChoice;
+  private startBtn: HTMLButtonElement | null = null;
 
   /** `legacy`: what the dead survivors of this world leave the new one ("Топоры 2 · Обыск 1"). */
   constructor(
@@ -68,7 +71,7 @@ export class CharacterEditor {
   ) {
     // The male base as on the reference sheet, in its everyday clothes.
     const look = baseLook('male');
-    this.choice = { appearance: look, classId: 'unemployed', outfit: 'casual', tint: REF_CLOTHES.male.tee };
+    this.choice = { appearance: look, classId: 'unemployed', outfit: 'casual', tint: REF_CLOTHES.male.tee, traits: [] };
     this.root.className = 'editor';
   }
 
@@ -92,6 +95,7 @@ export class CharacterEditor {
       for (const [id, label] of [
         ['look', 'Внешность'],
         ['class', 'Класс'],
+        ['traits', 'Черты'],
         ['outfit', 'Одежда'],
       ] as [Tab, string][]) {
         const b = button(label, 'editor__tab');
@@ -110,11 +114,18 @@ export class CharacterEditor {
         this.choice.classId = CLASSES[Math.floor(Math.random() * CLASSES.length)].id;
         this.choice.outfit = Math.random() < 0.5 ? 'uniform' : STARTER_OUTFITS[Math.floor(Math.random() * STARTER_OUTFITS.length)].id;
         this.choice.tint = OUTFIT_TINTS[Math.floor(Math.random() * OUTFIT_TINTS.length)];
+        this.choice.traits = randomTraits(this.choice.classId);
         name.value = this.choice.appearance.name;
         this.renderBody();
       });
       const start = button('Начать', 'editor__btn');
+      this.startBtn = start;
       start.addEventListener('click', () => {
+        if (traitPointsLeft(this.choice.classId, this.choice.traits) < 0) {
+          this.tab = 'traits';
+          this.renderBody();
+          return;
+        }
         this.choice.appearance.name = name.value.trim() || 'Выживший';
         this.preview.dispose();
         this.root.remove();
@@ -143,9 +154,40 @@ export class CharacterEditor {
     this.body.replaceChildren();
     if (this.tab === 'look') this.renderLook();
     else if (this.tab === 'class') this.renderClass();
+    else if (this.tab === 'traits') this.renderTraits();
     else this.renderOutfit();
     this.body.scrollTop = keep;
     this.refreshFigure();
+    const left = traitPointsLeft(this.choice.classId, this.choice.traits);
+    if (this.startBtn) {
+      this.startBtn.classList.toggle('editor__btn--off', left < 0);
+      this.startBtn.textContent = left < 0 ? `Не хватает очков черт: ${-left}` : 'Начать';
+    }
+  }
+
+  /** Good traits cost points, bad ones give them; the class brings its own; opposites exclude each other. */
+  private renderTraits(): void {
+    const c = this.choice;
+    const left = traitPointsLeft(c.classId, c.traits);
+    const own = classDef(c.classId).mods.traitPoints ?? 0;
+    this.body.append(div(`editor__points${left < 0 ? ' editor__points--short' : ''}`, `Очки черт: ${left}${own ? ` (класс даёт ${own})` : ''}`));
+    this.body.append(div('editor__note', 'Хорошие черты стоят очков, плохие — дают их.'));
+    for (const good of [true, false]) {
+      const list = div('editor__traits');
+      for (const t of TRAITS.filter((x) => x.cost > 0 === good)) {
+        const on = c.traits.includes(t.id);
+        const blocked = !on && c.traits.some((o) => o === t.not || traitDef(o)?.not === t.id);
+        const b = button('', `editor__trait${good ? ' editor__trait--good' : ' editor__trait--bad'}${on ? ' on' : ''}${blocked ? ' off' : ''}`);
+        b.append(div('editor__trait-name', `${t.name}  ${t.cost > 0 ? '−' : '+'}${Math.abs(t.cost)}`), div('editor__trait-about', t.about));
+        b.disabled = blocked;
+        b.addEventListener('click', () => {
+          c.traits = on ? c.traits.filter((x) => x !== t.id) : [...c.traits, t.id];
+          this.renderBody();
+        });
+        list.append(b);
+      }
+      this.body.append(div('editor__label', good ? 'Хорошие' : 'Плохие'), list);
+    }
   }
 
   private renderLook(): void {
@@ -244,6 +286,18 @@ export class CharacterEditor {
     row.append(list);
     this.body.append(row);
   }
+}
+
+function randomTraits(classId: ClassId): TraitId[] {
+  const out: TraitId[] = [];
+  const free = (id: TraitId) => !out.includes(id) && !out.some((o) => o === traitDef(id)?.not || traitDef(o)?.not === id);
+  const pick = (good: boolean) => {
+    const pool = TRAITS.filter((t) => t.cost > 0 === good && free(t.id) && (!good || traitPointsLeft(classId, [...out, t.id]) >= 0));
+    if (pool.length) out.push(pool[Math.floor(Math.random() * pool.length)].id);
+  };
+  for (let n = Math.floor(Math.random() * 3); n > 0; n--) pick(false);
+  for (let n = 3; n > 0; n--) if (Math.random() < 0.7) pick(true);
+  return out;
 }
 
 function div(cls: string, text?: string): HTMLDivElement {

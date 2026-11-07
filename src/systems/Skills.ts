@@ -99,6 +99,8 @@ export function emptyMeta(): MetaData {
 export class Skills {
   private xp: SkillXp = {};
   private learn = 1;
+  /** Learning speed from the traits (Тугодум / Быстро учится). */
+  learnMul = 1;
   /** Zombies this survivor killed. */
   kills = 0;
   /** Level reached (for the toast). */
@@ -125,7 +127,7 @@ export class Skills {
 
   add(id: SkillId, amount: number): void {
     const before = this.xp[id] ?? 0;
-    const after = Math.min(xpFor(MAX_LEVEL), before + amount * this.learn);
+    const after = Math.min(xpFor(MAX_LEVEL), before + amount * this.learn * this.learnMul);
     if (after === before) return;
     this.xp[id] = after;
     const l = levelOf(after);

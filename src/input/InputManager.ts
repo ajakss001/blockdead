@@ -1,7 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 
-export type Action = 'attack' | 'sprint' | 'crouch' | 'flashlight' | 'use' | 'inventory' | 'item1' | 'item2' | 'weapon' | 'jump';
+export type Action = 'attack' | 'sprint' | 'crouch' | 'flashlight' | 'use' | 'inventory' | 'item1' | 'item2' | 'weapon' | 'jump' | 'map';
 export type InputMode = 'kbm' | 'touch';
 
 export interface LookDelta {

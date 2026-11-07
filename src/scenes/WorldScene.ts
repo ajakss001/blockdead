@@ -24,8 +24,11 @@ import { type SceneKind, sceneAt } from '../world/gen/chaos';
 import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
 import type { Worn } from '../systems/Inventory';
 import type { GameContext } from '../GameContext';
-import { type ClassId, classDef, classMods, DEFAULT_CLASS } from '../data/classes';
+import { type ClassId, classDef, classMods, type ClassMods, DEFAULT_CLASS } from '../data/classes';
+import { sanitizeTraits, type TraitId, traitLearn, withTraits } from '../data/traits';
 import { Hordes } from '../systems/Hordes';
+import { MAP_SEEN, MapMemory } from '../systems/MapMemory';
+import { MapPanel } from '../ui/MapPanel';
 import { gridSchedule, type GridSchedule, TAP_DRINK } from '../systems/Utilities';
 import { describeXp, emptyMeta, type MetaData, SKILLS, Skills, weaponSkill, XP } from '../systems/Skills';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
@@ -210,6 +213,10 @@ export class WorldScene implements IScene {
   private ground!: GroundWeapons;
   private interaction!: Interaction;
   private panel!: InventoryPanel;
+  /** The paper map and what this survivor has seen of the world. */
+  private readonly mapMemory = new MapMemory();
+  private mapPanel!: MapPanel;
+  private mapTimer = 0;
   private saves!: SaveGame;
   private interiors!: Interiors;
   private doors!: Doors;
@@ -268,6 +275,7 @@ export class WorldScene implements IScene {
   /** Who the survivor is: looks and former job (class). */
   private look: Appearance = { ...DEFAULT_APPEARANCE };
   private classId: ClassId = DEFAULT_CLASS;
+  private traits: TraitId[] = [];
   /** What the survivor learnt by doing; and what outlives them (the legacy, deaths, kills). */
   private readonly skills = new Skills();
   private meta: MetaData = emptyMeta();
@@ -389,6 +397,18 @@ export class WorldScene implements IScene {
         player: this.player,
         syncBody,
         onClose: () => this.save(),
+      },
+      document.getElementById('ui')!,
+    );
+    this.mapPanel = new MapPanel(
+      ctx,
+      {
+        layout: this.layout,
+        memory: this.mapMemory,
+        player: () => {
+          const pc = this.player.controller;
+          return { x: pc.position.x, z: pc.position.z, yaw: pc.yaw };
+        },
       },
       document.getElementById('ui')!,
     );
@@ -545,6 +565,8 @@ export class WorldScene implements IScene {
       // Saves before the editor: the default survivor and class, no editor.
       this.look = sanitizeAppearance(save.character?.appearance);
       this.classId = classDef(save.character?.classId).id;
+      this.traits = sanitizeTraits(save.character?.traits);
+      this.mapMemory.restore(save.map);
       this.skills.restore(save.skills, this.classId, save.kills);
       this.applyClass();
       c.position.set(save.player.x, save.player.y ?? 0, save.player.z);
@@ -659,6 +681,7 @@ export class WorldScene implements IScene {
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
     this.updateHordes(dt);
+    this.updateMap(dt);
     this.pois?.update(dt, c.position.x, c.position.z);
     // Nearest first: in a crowd the sound groups fill up with the zombies that matter.
     const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
@@ -896,7 +919,7 @@ export class WorldScene implements IScene {
       containers: this.containers.serialize(),
       ground: this.ground.serialize(),
       clock: this.clock.minutes,
-      character: { appearance: this.look, classId: this.classId },
+      character: { appearance: this.look, classId: this.classId, traits: this.traits },
       dead: this.dead || undefined,
       twins: this.twins,
       bodies: this.bodies,
@@ -907,6 +930,7 @@ export class WorldScene implements IScene {
       skills: this.skills.serialize(),
       kills: this.skills.kills,
       meta: this.meta,
+      map: this.mapMemory.serialize(),
     });
   }
 
@@ -945,6 +969,9 @@ export class WorldScene implements IScene {
   private applyChoice(choice: CharacterChoice): void {
     this.look = { ...choice.appearance };
     this.classId = choice.classId;
+    this.traits = [...choice.traits];
+    // A new survivor doesn't know the city: a blank map.
+    this.mapMemory.clear();
     const cls = classDef(choice.classId);
     const worn = choiceWorn(choice);
     this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
@@ -966,7 +993,7 @@ export class WorldScene implements IScene {
     if (!res) return false;
     const wall = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, res.dist);
     if (wall >= 0 && wall < res.dist - 0.1) return false;
-    const strength = classMods(this.classId).strength * this.skills.damage(item);
+    const strength = this.mods().strength * this.skills.damage(item);
     const dmg = blowDamage(cfg.damage, strength, res.head, Math.random());
     const killed = this.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point);
     this.skills.add(weaponSkill(item), XP.hit + (killed ? XP.kill : 0));
@@ -1289,6 +1316,19 @@ export class WorldScene implements IScene {
     (document.getElementById('ui') ?? document.body).append(el);
   }
 
+  /** The map opens round the survivor (wider with orientation); M / the button opens it. */
+  private updateMap(dt: number): void {
+    if (this.ctx.input.consumePressed('map') && !this.dead) {
+      this.mapPanel.open();
+      return;
+    }
+    this.mapTimer -= dt;
+    if (this.mapTimer > 0) return;
+    this.mapTimer = 0.5;
+    const pc = this.player.controller.position;
+    this.mapMemory.explore(pc.x, pc.z, MAP_SEEN * this.skills.apply(this.mods()).orientation);
+  }
+
   /**
    * The hordes: loud things the player does (running, hammering, a fight — the noise past 0.6) carry to
    * them; near ones spill into the crowd, up to half again the quality's zombie count.
@@ -1337,15 +1377,21 @@ export class WorldScene implements IScene {
   }
 
   /** Class modifiers into the systems that use them. */
+  /** The class with the traits on top (skills come on top of these in applyMods). */
+  private mods(): ClassMods {
+    return withTraits(classMods(this.classId), this.traits);
+  }
+
   private applyClass(): void {
-    this.inventory.capacity = BACKPACK_CAPACITY + classMods(this.classId).carry;
+    this.inventory.capacity = BACKPACK_CAPACITY + this.mods().carry;
+    this.skills.learnMul = traitLearn(this.traits);
     this.applyMods();
     this.panel.setAppearance(this.look);
   }
 
   /** The class's multipliers with the skills on top, into the systems (again on every level). */
   private applyMods(): void {
-    const m = this.skills.apply(classMods(this.classId));
+    const m = this.skills.apply(this.mods());
     this.survival.mods = m;
     this.interaction.searchMul = m.searchSpeed;
     this.interaction.carMul = m.carSearch;

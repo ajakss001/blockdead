@@ -53,6 +53,7 @@ export class TouchInput {
       (this.useButton = this.button('Обыск', 'use', 'tap', 'touch__btn--use')),
       this.button('Рюкзак', 'inventory', 'tap', 'touch__btn--bag'),
       this.button('Прыжок', 'jump', 'tap', 'touch__btn--jump'),
+      this.button('Карта', 'map', 'tap', 'touch__btn--map'),
       this.weaponButton(),
     );
     this.root.append(this.stick, buttons);
