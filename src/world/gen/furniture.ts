@@ -228,6 +228,7 @@ export function bed(p: Place, rand: Rand, width = 1.5, messy = false): void {
     p.box(fabric, 0, 0.46, L * 0.63, width + 0.02, 0.06, L * 0.7, 'rubber');
   }
   p.solid(0, L / 2, width, L, 0.6);
+  p.life(LIFE.bed, 0, 0.5, L / 2, 0, 0, 0);
 }
 
 export function nightstand(p: Place, rand: Rand, open = false): void {

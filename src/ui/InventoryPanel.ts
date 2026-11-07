@@ -1,5 +1,6 @@
 import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import { type Skills, SKILLS, XP } from '../systems/Skills';
+import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/Crafting';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
@@ -18,6 +19,8 @@ export interface InventoryHost {
   skills: Skills;
   containers: Containers;
   player: Player;
+  /** What crafting needs from the world (a fire near, where to put what is built). */
+  craft: CraftWorld;
   /** Keep the first-person body in sync with what is held and worn. */
   syncBody(): void;
   onClose(): void;
@@ -56,6 +59,8 @@ const level = (v: number) => (v >= 0.75 ? 3 : v >= 0.5 ? 2 : v >= 0.25 ? 1 : 0);
 export class InventoryPanel {
   isOpen = false;
   private container: ContainerRef | null = null;
+  /** The recipe list instead of the container pane. */
+  private crafting = false;
   private selected: Place | null = null;
   private readonly root = document.createElement('div');
   /** 3D figure in the worn clothes; renders only while the panel is open. */
@@ -168,16 +173,22 @@ export class InventoryPanel {
     bar.append(fill);
     const close = el('button', 'inv__close', '✕');
     close.addEventListener('click', () => this.close());
+    const craftBtn = el('button', `inv__btn inv__btn--small inv__craft-btn${this.crafting ? ' on' : ''}`, 'Крафт');
+    craftBtn.addEventListener('click', () => {
+      this.crafting = !this.crafting;
+      this.render();
+    });
     const credits = el('button', 'credits-link inv__credits', 'Авторы');
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), volumeControl('inv__volume'), credits, close);
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), credits, close);
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).
     const main = el('div', 'inv__main');
     const storage = el('div', 'inv__storage');
     storage.append(this.bagPane());
-    if (this.container) storage.append(this.boxPane(this.container));
+    if (this.crafting) storage.append(this.craftPane());
+    else if (this.container) storage.append(this.boxPane(this.container));
     main.append(this.equipment(), storage);
 
     this.root.replaceChildren(head, main, this.card());
@@ -220,6 +231,40 @@ export class InventoryPanel {
     for (const s of stacks) grid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
     for (let n = stacks.length; n < Math.max(BAG_MIN_CELLS, stacks.length + 4); n++) grid.append(el('div', 'cell cell--empty'));
     pane.append(grid);
+    return pane;
+  }
+
+  /** Every recipe: what it takes (what is in the bag), why not yet, a button. */
+  private craftPane(): HTMLElement {
+    const pane = el('div', 'inv__pane inv__pane--craft');
+    pane.append(el('div', 'inv__title', 'Крафт'));
+    const list = el('div', 'inv__recipes');
+    const w = this.host.craft;
+    for (const r of RECIPES) {
+      const why = blocker(r, w);
+      const row = el('div', `inv__recipe${why ? ' inv__recipe--no' : ''}`);
+      const text = el('div', 'inv__recipe-text');
+      text.append(el('div', 'inv__recipe-name', r.name), el('div', 'inv__recipe-about', r.about));
+      const needs = el('div', 'inv__recipe-needs');
+      for (const n of needsLine(r, this.host.inventory)) needs.append(el('span', n.ok ? 'ok' : 'no', n.text));
+      if (why && !why.startsWith('нет:')) needs.append(el('span', 'no', why));
+      text.append(needs);
+      const b = el('button', 'inv__btn inv__btn--small', 'Сделать') as HTMLButtonElement;
+      b.disabled = !!why;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const res = craft(r, w);
+        this.ctx.hud.toast(res.text, 1600);
+        sfx.item(r.place ? 'drop' : 'cloth');
+        this.host.syncBody();
+        // Something set down in the world: close, so it is seen.
+        if (r.place && res.ok) this.close();
+        else this.render();
+      });
+      row.append(text, b);
+      list.append(row);
+    }
+    pane.append(list);
     return pane;
   }
 
@@ -463,6 +508,7 @@ export class InventoryPanel {
     } else {
       this.ctx.hud.toast(survival.consume(def));
       if (def.kind === 'medical') this.host.skills.add('firstAid', XP.heal);
+      if (def.bottle) inventory.add('emptyBottle', 1);
     }
     this.render();
   }

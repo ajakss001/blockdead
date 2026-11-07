@@ -89,7 +89,8 @@ export class Interaction {
   /** Class and carpentry: boarding and prying time multiplier. */
   boardMul = 1;
   /** A kitchen tap in front (the scene finds it): is there one, does it run, drink from it. */
-  tap: { near(): boolean; running(): boolean; drink(): void } | null = null;
+  /** Something in front that isn't a container (a tap, a bed, what the survivor built): its prompt (`act`: E does it). */
+  spot: { here(): { text: string; act: boolean; run(): void } | null } | null = null;
   /** Experience for what was done here (the scene gives it to the skills). */
   onSkill: ((id: 'search' | 'carpentry', xp: number) => void) | null = null;
 
@@ -165,11 +166,10 @@ export class Interaction {
         this.toggleDoor(door);
         return;
       }
-      if (!ref && this.tap?.near()) {
-        if (this.tap.running()) {
-          this.tap.drink();
-          hud.toast('Вы напились из-под крана', 1200);
-        } else hud.toast('Кран сухой: воду отключили', 1400);
+      const s = ref ? null : this.spot?.here();
+      if (s) {
+        if (s.act) s.run();
+        else hud.toast(s.text, 1200);
       } else if (!ref) hud.toast('Здесь нечего обыскивать', 900);
       else if (ref.type === 'generator') this.startGenerator(ref);
       else if (this.containers.isOpened(ref)) {
@@ -223,7 +223,9 @@ export class Interaction {
       return;
     }
     if (!ref) {
-      this.ctx.hud.setPrompt(this.tap?.near() ? (this.tap.running() ? `${key}Попить из крана` : 'Кран сухой') : null);
+      const s = this.spot?.here();
+      if (s?.act) this.setTargeting(true);
+      this.ctx.hud.setPrompt(s ? `${s.act ? key : ''}${s.text}` : null);
       return;
     }
     if (ref.type === 'generator') {

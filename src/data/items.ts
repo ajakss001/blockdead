@@ -98,7 +98,10 @@ export type ItemId =
   | 'campNote1'
   | 'campNote2'
   | 'campNote3'
-  | 'campNote4';
+  | 'campNote4'
+  // Water at the base (stage 5.15): bottles to fill, rain water to boil.
+  | 'emptyBottle'
+  | 'dirtyWater';
 
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
 
@@ -160,6 +163,10 @@ export interface ItemDef {
   durability?: number;
   /** One line for the item card. */
   note?: string;
+  /** Drinking it leaves an empty bottle. */
+  bottle?: boolean;
+  /** Chance it upsets the stomach (unboiled water). */
+  sick?: number;
 }
 
 /** What you carry with no bag at all (pockets, hands), kg; bags (`back` slot) and vests add to it. */
@@ -172,7 +179,9 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   chocolate: { name: 'Шоколадка', kind: 'food', weight: 0.1, stack: 8, hunger: -0.1, fatigue: -0.08 },
   apple: { name: 'Яблоко (мягкое)', kind: 'food', weight: 0.2, stack: 6, hunger: -0.1, thirst: -0.05 },
   crackers: { name: 'Крекеры', kind: 'food', weight: 0.2, stack: 6, hunger: -0.15, thirst: 0.05 },
-  water: { name: 'Бутылка воды', kind: 'drink', weight: 1.0, stack: 4, thirst: -0.5 },
+  water: { name: 'Бутылка воды', kind: 'drink', weight: 1.0, stack: 4, thirst: -0.5, bottle: true },
+  emptyBottle: { name: 'Пустая бутылка', kind: 'tool', weight: 0.05, stack: 6, note: 'Набрать воды: из крана, пока она есть, или из сборника дождевой воды.' },
+  dirtyWater: { name: 'Дождевая вода', kind: 'drink', weight: 1.0, stack: 4, thirst: -0.45, bottle: true, sick: 0.35, note: 'Лучше вскипятить на костре: сырая может скрутить живот.' },
   soda: { name: 'Газировка', kind: 'drink', weight: 0.35, stack: 6, thirst: -0.25, fatigue: -0.04 },
   juice: { name: 'Сок в коробке', kind: 'drink', weight: 0.25, stack: 6, thirst: -0.2, hunger: -0.04 },
   bandage: { name: 'Бинт', kind: 'medical', weight: 0.05, stack: 10, dressesWound: true, health: 0.05 },

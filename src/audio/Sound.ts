@@ -131,6 +131,7 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
   canteen: 'drawer',
   vehicleCabin: 'trunk',
   campStash: 'crate',
+  stash: 'crate',
   suitcase: 'bag',
   bodyMilitary: 'bag',
   bodyPolice: 'bag',

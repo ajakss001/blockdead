@@ -774,3 +774,32 @@ body {
   cursor: pointer;
 }
 .map__btn--close { border-color: rgba(200, 154, 110, 0.5); }
+
+/* Inventory: crafting (the recipe list in place of the container). */
+.inv__craft-btn.on { border-color: #c8b47a; background: rgba(70, 62, 44, 0.55); }
+.inv__recipes { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; flex: 1; }
+.inv__recipe { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid rgba(160, 150, 130, 0.18); background: rgba(30, 28, 26, 0.5); }
+.inv__recipe--no { opacity: 0.6; }
+.inv__recipe-text { flex: 1; min-width: 0; }
+.inv__recipe-name { font-weight: 600; font-size: 13px; color: #d8cfb8; }
+.inv__recipe-about { font-size: 11px; color: #8f8878; }
+.inv__recipe-needs { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11px; margin-top: 2px; }
+.inv__recipe-needs .ok { color: #a9b88e; }
+.inv__recipe-needs .no { color: #c89a6e; }
+.inv__btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Asleep: the screen dark, the clock running. */
+.sleep {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 18vh;
+  background: rgba(6, 7, 7, 0.93);
+  color: #8f8878;
+  font: 500 15px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}

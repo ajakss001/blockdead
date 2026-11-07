@@ -224,6 +224,12 @@ export class Survival implements SurvivalState {
 
   /** Apply an item's effects. Returns a short result line for the HUD. */
   consume(def: ItemDef): string {
+    if (def.sick && Math.random() < def.sick) {
+      if (def.thirst) this.thirst = clamp(this.thirst + def.thirst * 0.6, 0, 1);
+      this.pain = clamp(this.pain + 0.3, 0, 1);
+      this.health = clamp(this.health - 0.06, 0, 1);
+      return 'Живот скрутило: вода была грязной';
+    }
     if (def.hunger) this.hunger = clamp(this.hunger + def.hunger, 0, 1);
     if (def.thirst) this.thirst = clamp(this.thirst + def.thirst, 0, 1);
     if (def.fatigue) this.fatigue = clamp(this.fatigue + def.fatigue, 0, 1);
@@ -248,6 +254,22 @@ export class Survival implements SurvivalState {
       return 'Заражение замедлено';
     }
     return def.name;
+  }
+
+  /**
+   * `minutes` of game time asleep (the scene fast-forwards the clock): tiredness goes (a bed in ~7 h, the
+   * floor only down to a third), hunger and thirst creep up slower than awake, dressed wounds heal, a fed
+   * body mends.
+   */
+  sleep(minutes: number, bed: boolean): void {
+    const floor = bed ? 0 : 0.3;
+    this.fatigue = Math.max(Math.min(this.fatigue, floor), this.fatigue - minutes / (bed ? 420 : 600));
+    this.hunger = clamp(this.hunger + 0.00052 * this.mods.hunger * minutes, 0, 1);
+    this.thirst = clamp(this.thirst + 0.00062 * this.mods.hunger * minutes, 0, 1);
+    for (const w of this.wounds) if (!w.bleeding) w.left -= minutes / 630;
+    this.wounds = this.wounds.filter((w) => w.left > 0);
+    if (this.hunger < 0.6 && this.thirst < 0.6 && !this.wounded) this.health = clamp(this.health + 0.0005 * minutes, 0, 1);
+    this.anxiety = clamp(this.anxiety - 0.001 * minutes, 0, 1);
   }
 
   /** HUD indicators, all as "how much is left". */

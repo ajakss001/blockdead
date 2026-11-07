@@ -58,6 +58,8 @@ export const LIFE = {
   jet: 28,
   /** Something still turning: tag 0 a radar dish, 1 a searchlight beam; w its size. */
   spin: 29,
+  /** A bed to sleep on: the middle of the mattress. */
+  bed: 30,
 } as const;
 
 /**

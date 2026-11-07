@@ -28,6 +28,8 @@ import { type ClassId, classDef, classMods, type ClassMods, DEFAULT_CLASS } from
 import { sanitizeTraits, type TraitId, traitLearn, withTraits } from '../data/traits';
 import { Hordes } from '../systems/Hordes';
 import { MAP_SEEN, MapMemory } from '../systems/MapMemory';
+import { Base, BASE, type Placed, type PlacedKind } from '../systems/Base';
+import { BaseProps } from '../world/BaseProps';
 import { MapPanel } from '../ui/MapPanel';
 import { gridSchedule, type GridSchedule, TAP_DRINK } from '../systems/Utilities';
 import { describeXp, emptyMeta, type MetaData, SKILLS, Skills, weaponSkill, XP } from '../systems/Skills';
@@ -160,6 +162,14 @@ const _sunDir = new Vector3();
 const _sunColor = new Color();
 /** The world-life key of the powered labs' emergency lights and sparks (no chunk has it). */
 const LAB_FX_KEY = 2 ** 40;
+function stashRef(p: Placed): ContainerRef {
+  return { id: BASE.stashIds + p.id, type: 'stash', x: p.x, z: p.z, y: p.y, zone: 'town', box: [p.x, p.y + 0.28, p.z, 0.5, 0.3, 0.32, p.yaw] };
+}
+
+/** The base's fires in the world's flames, glow and crackle (WorldLife / Atmosphere). */
+const BASE_FX_KEY = 2 ** 40 + 1;
+/** Asleep the clock runs this many game minutes per real second (a night in ~40 s). */
+const SLEEP_RATE = 12;
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
 const _zView = new Vector3();
 /** How each weapon's blow on a body sounds. */
@@ -217,6 +227,14 @@ export class WorldScene implements IScene {
   private readonly mapMemory = new MapMemory();
   private mapPanel!: MapPanel;
   private mapTimer = 0;
+  /** What was built: fires, rain collectors, chests, tripwires. */
+  private readonly base = new Base();
+  private readonly baseProps = new BaseProps(this.base);
+  private baseT = 0;
+  private baseClock = -1;
+  private baseFx = -1;
+  /** Asleep: in a bed or not, the overlay. */
+  private sleeping: { bed: boolean; el: HTMLDivElement } | null = null;
   private saves!: SaveGame;
   private interiors!: Interiors;
   private doors!: Doors;
@@ -368,6 +386,7 @@ export class WorldScene implements IScene {
     );
     this.containers.onChunk = (key, list) => (list ? this.ground.addChunk(key, list) : this.ground.removeChunk(key));
     this.scene.add(this.ground.group);
+    this.scene.add(this.baseProps.group);
     this.doors = new Doors(this.scene, this.world);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
     this.chunks.onChunkLoaded = (key, data) => {
@@ -395,6 +414,15 @@ export class WorldScene implements IScene {
         skills: this.skills,
         containers: this.containers,
         player: this.player,
+        craft: {
+          inventory: this.inventory,
+          nearFire: () => {
+            const p = this.player.controller.position;
+            return !!this.base.fireNear(p.x, p.y, p.z, 2.5);
+          },
+          place: (kind) => this.placeBuilt(kind),
+          onXp: (xp) => this.skills.add('carpentry', xp),
+        },
         syncBody,
         onClose: () => this.save(),
       },
@@ -416,14 +444,7 @@ export class WorldScene implements IScene {
     this.interaction.ground = this.ground;
     this.interaction.onSkill = (id, xp) => this.skills.add(id, xp);
     this.grid = gridSchedule(seed);
-    this.interaction.tap = {
-      near: () => !!this.atmo.tapNear(this.camera.getWorldPosition(_so), this.camera.getWorldDirection(_sd)),
-      running: () => this.gridState?.water ?? true,
-      drink: () => {
-        this.survival.thirst = Math.max(0, this.survival.thirst - TAP_DRINK);
-        sfx.item('drink');
-      },
-    };
+    this.interaction.spot = { here: () => this.spotHere() };
     this.skills.onLevel = (s, l) => {
       this.ctx.hud.toast(`Навык «${s.name}»: уровень ${l}`, 2200);
       this.applyMods();
@@ -556,6 +577,8 @@ export class WorldScene implements IScene {
       this.containers.restore(save.containers);
       this.ground.restore(save.ground);
       for (const b of this.bodies) this.containers.addLoose(b, []);
+      this.base.restore(save.base);
+      for (const p of this.base.list) if (p.kind === 'stash') this.containers.addLoose(stashRef(p), []);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
       this.meta = { ...emptyMeta(), ...save.meta };
@@ -682,6 +705,8 @@ export class WorldScene implements IScene {
     this.zombies.update(dt, _zs, _zView);
     this.updateHordes(dt);
     this.updateMap(dt);
+    this.updateSleep(dt);
+    this.updateBase(dt);
     this.pois?.update(dt, c.position.x, c.position.z);
     // Nearest first: in a crowd the sound groups fill up with the zombies that matter.
     const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
@@ -759,12 +784,12 @@ export class WorldScene implements IScene {
       // Echo: bare rooms ring, the canyon streets downtown a little, open ground hardly at all.
       sfx.setRoom(this.indoors ? 0.38 : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.2 : 0.06);
     }
-    this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting);
+    this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting) + this.base.warmth(c.position.x, c.position.y, c.position.z);
     // Clothes get dirty: faster running, crawling, rummaging through containers.
     soilClothes(this.inventory, dt, { moving: c.speed > 0.2, sprinting: c.sprinting, crouching: c.crouched && c.speed > 0.2, searching: this.player.busy, weather: 1 });
     if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
     // Dark = night without a light of your own (rooms by day get light through the windows).
-    const dark = !this.player.lightOn && this.clock.isNight;
+    const dark = !this.player.lightOn && this.clock.isNight && !this.base.fireNear(c.position.x, c.position.y, c.position.z, BASE.lightReach);
     if (!this.dead && c.speed > 0.3) {
       if (c.sprinting) this.skills.add('fitness', XP.sprint * dt);
       else if (c.crouched && this.zombies.threat(c.position) > 0.05) this.skills.add('sneak', XP.sneak * dt);
@@ -931,6 +956,7 @@ export class WorldScene implements IScene {
       kills: this.skills.kills,
       meta: this.meta,
       map: this.mapMemory.serialize(),
+      base: this.base.serialize(),
     });
   }
 
@@ -1044,6 +1070,7 @@ export class WorldScene implements IScene {
    * it is a scratch or a bite — a bleeding wound, and maybe the infection.
    */
   private bitten(damage: number, from: Vector3, many = 1): void {
+    if (this.sleeping) this.wake('Вас укусили во сне!');
     const r = Math.random();
     const part: BodyPart = r < 0.15 ? 'head' : r < 0.5 ? 'torso' : r < 0.8 ? 'arms' : 'legs';
     const outcome = this.survival.bitten(part, partArmor(this.inventory.worn, part));
@@ -1316,6 +1343,215 @@ export class WorldScene implements IScene {
     (document.getElementById('ui') ?? document.body).append(el);
   }
 
+  /**
+   * What is in front of the eye that isn't a container: the built things first, then a tap, then a bed.
+   * Its prompt, and what E does.
+   */
+  private spotHere(): { text: string; act: boolean; run(): void } | null {
+    const eye = this.camera.getWorldPosition(_so);
+    const dir = this.camera.getWorldDirection(_sd);
+    const inv = this.inventory;
+    const hud = this.ctx.hud;
+    // The built thing nearest the line of sight, within 2 m.
+    let built: Placed | null = null;
+    let bd = 2.2;
+    for (const p of this.base.list) {
+      if (p.kind === 'stash' || Math.abs(p.y - (eye.y - 1.5)) > 1.8) continue;
+      const dx = p.x - eye.x;
+      const dz = p.z - eye.z;
+      const d = Math.hypot(dx, dz);
+      if (d < bd && (dx * dir.x + dz * dir.z) / Math.max(d, 1e-3) > 0.55) {
+        bd = d;
+        built = p;
+      }
+    }
+    if (built) {
+      const p = built;
+      if (p.kind === 'fire') {
+        const kindle = inv.count('lighter') + inv.count('matches') > 0;
+        if (p.fuel > 0) {
+          const h = Math.max(1, Math.round(p.fuel / 60));
+          if (inv.count('planks') === 0) return { text: `Костёр горит ещё ~${h} ч`, act: false, run() {} };
+          return {
+            text: `Подбросить доску (горит ещё ~${h} ч)`,
+            act: true,
+            run: () => {
+              inv.remove('planks', 1);
+              p.fuel = Math.min(p.fuel + BASE.plank, 12 * 60);
+              sfx.item('drop');
+              hud.toast('Огонь разгорелся', 1000);
+            },
+          };
+        }
+        if (inv.count('planks') === 0 || !kindle) return { text: 'Потухший костёр: нужна доска и спички', act: false, run() {} };
+        return {
+          text: 'Разжечь костёр снова',
+          act: true,
+          run: () => {
+            inv.remove('planks', 1);
+            if (inv.count('lighter') === 0) inv.remove('matches', 1);
+            p.fuel = BASE.fire;
+            this.base.version++;
+            hud.toast('Костёр горит', 1000);
+          },
+        };
+      }
+      if (p.kind === 'barrel') {
+        const n = Math.floor(p.water);
+        if (n < 1) return { text: 'Сборник пуст — ждите дождя', act: false, run() {} };
+        if (inv.count('emptyBottle') > 0)
+          return {
+            text: `Набрать дождевой воды (${n})`,
+            act: true,
+            run: () => {
+              const k = Math.min(n, inv.count('emptyBottle'), inv.room('dirtyWater'));
+              if (k < 1) return hud.toast('Рюкзак переполнен', 1000);
+              inv.remove('emptyBottle', k);
+              inv.add('dirtyWater', k);
+              p.water -= k;
+              sfx.item('drink');
+              hud.toast(`Набрано бутылок: ${k}`, 1200);
+            },
+          };
+        return {
+          text: `Попить дождевой воды (${n})`,
+          act: true,
+          run: () => {
+            p.water -= 1;
+            sfx.item('drink');
+            hud.toast(this.survival.consume(ITEMS.dirtyWater), 1400);
+          },
+        };
+      }
+      if (p.kind === 'trap') {
+        if (p.armed) return { text: 'Растяжка натянута', act: false, run() {} };
+        return {
+          text: 'Натянуть растяжку снова',
+          act: true,
+          run: () => {
+            p.armed = true;
+            this.base.version++;
+            sfx.item('cloth');
+          },
+        };
+      }
+    }
+    if (this.atmo.tapNear(eye, dir)) {
+      if (!(this.gridState?.water ?? true)) return { text: 'Кран сухой', act: false, run() {} };
+      const bottles = inv.count('emptyBottle');
+      return {
+        text: bottles ? `Попить и набрать воды (${bottles})` : 'Попить из крана',
+        act: true,
+        run: () => {
+          this.survival.thirst = Math.max(0, this.survival.thirst - TAP_DRINK);
+          sfx.item('drink');
+          const k = Math.min(bottles, inv.room('water'));
+          if (k > 0) {
+            inv.remove('emptyBottle', k);
+            inv.add('water', k);
+          }
+          hud.toast(k > 0 ? `Вы напились и набрали бутылок: ${k}` : 'Вы напились из-под крана', 1300);
+        },
+      };
+    }
+    if (this.atmo.bedNear(eye, dir)) return { text: 'Лечь спать', act: true, run: () => this.sleep(true) };
+    return null;
+  }
+
+  /** Puts what was built down in front of the survivor; an error, or null. */
+  private placeBuilt(kind: PlacedKind): string | null {
+    const c = this.player.controller;
+    const fx = -Math.sin(c.yaw);
+    const fz = -Math.cos(c.yaw);
+    const x = c.position.x + fx * 1.2;
+    const z = c.position.z + fz * 1.2;
+    const y = c.position.y;
+    const roof = this.shelters.covers(x, z, y);
+    if (kind === 'fire' && roof) return 'Костёр в доме — задохнётесь. Разведите снаружи.';
+    if (kind === 'barrel' && roof) return 'Под крышей дождь не наберётся: поставьте снаружи.';
+    if (this.base.near(x, y, z, 0.9)) return 'Здесь уже что-то стоит';
+    // Free ground there and a clear line to it (with room for its size): not into a wall or a car.
+    _so.set(x, y, z);
+    this.world.resolveCircle(_so, 0.45, 1.2);
+    const reach = 1.2 + 0.55;
+    const low = this.world.rayHit(c.position.x, y + 0.4, c.position.z, fx, 0, fz, reach);
+    const mid = this.world.rayHit(c.position.x, y + 1.0, c.position.z, fx, 0, fz, reach);
+    if (Math.hypot(_so.x - x, _so.z - z) > 0.05 || (low >= 0 && low < reach) || (mid >= 0 && mid < reach)) return 'Не помещается: отойдите от стены';
+    const p = this.base.add(kind, x, y, z, Math.atan2(fx, fz));
+    if (kind === 'stash') this.containers.addLoose(stashRef(p), []);
+    this.save();
+    return null;
+  }
+
+  /** Fires burn, collectors fill, tripwires ring — by game time (asleep it runs fast); the fires into the world's flames. */
+  private updateBase(dt: number): void {
+    this.baseProps.update();
+    if (this.baseFx !== this.base.version) {
+      this.baseFx = this.base.version;
+      const fires = this.base.list.filter((p) => p.kind === 'fire' && p.fuel > 0);
+      const fx = new Float32Array(fires.length * 10);
+      fires.forEach((p, i) => fx.set([LIFE.fire, p.x, p.y + 0.05, p.z, 0, 1, 0.32, 0, (p.id * 0.37) % 1, 0], i * 10));
+      this.life.add(BASE_FX_KEY, fx);
+      this.atmo.add(BASE_FX_KEY, fx);
+    }
+    this.baseT -= dt;
+    if (this.baseT > 0) return;
+    this.baseT = 0.25;
+    if (this.baseClock < 0) this.baseClock = this.clock.minutes;
+    const minutes = this.clock.minutes - this.baseClock;
+    this.baseClock = this.clock.minutes;
+    if (this.base.list.length === 0) return;
+    const near = this.zombies.list.filter((z) => z.state !== 'dead').map((z) => ({ x: z.pos.x, z: z.pos.z }));
+    const p = this.player.controller.position;
+    this.base.update(minutes, this.weather.rain, (x, z) => !this.shelters.covers(x, z, 0), near, (t) => {
+      sfx.street('rattle', { x: t.x, y: t.y + 0.3, z: t.z });
+      this.zombies.noiseAt(t.x, t.y, t.z, BASE.trapNoise);
+      if (Math.hypot(t.x - p.x, t.z - p.z) < 70) this.ctx.hud.toast('Звякнули банки на растяжке', 1600);
+      if (this.sleeping) this.wake('Вас разбудил звон банок!');
+    });
+  }
+
+  /** Lie down: in a bed it restores fully; not with zombies about, nor too frightened, nor rested. */
+  private sleep(bed: boolean): void {
+    const s = this.survival;
+    const c = this.player.controller.position;
+    if (this.dead || this.sleeping) return;
+    if (this.zombies.threat(c) > 0.02) return this.ctx.hud.toast('Нельзя спать: рядом зомби', 1500);
+    if (s.anxiety > 0.65) return this.ctx.hud.toast('Слишком тревожно — не уснуть', 1500);
+    if (s.fatigue < 0.2) return this.ctx.hud.toast('Спать не хочется', 1200);
+    const el = document.createElement('div');
+    el.className = 'sleep';
+    document.getElementById('ui')!.append(el);
+    this.sleeping = { bed, el };
+    this.ctx.events.emit('ui:busy', { busy: true });
+    this.updateSleep(0);
+  }
+
+  private wake(why: string): void {
+    if (!this.sleeping) return;
+    this.sleeping.el.remove();
+    this.sleeping = null;
+    this.ctx.events.emit('ui:busy', { busy: false });
+    this.ctx.hud.toast(why, 2200);
+    this.save();
+  }
+
+  /** Asleep: the clock runs fast, the body rests; a zombie near, a move or a key wakes you. */
+  private updateSleep(dt: number): void {
+    const z = this.sleeping;
+    if (!z) return;
+    const input = this.ctx.input;
+    if (Math.abs(input.moveX) + Math.abs(input.moveY) > 0.3 || input.consumePressed('use') || input.consumePressed('attack') || input.consumePressed('jump')) return this.wake('Вы проснулись');
+    const m = SLEEP_RATE * dt;
+    this.clock.minutes += m;
+    this.survival.sleep(m, z.bed);
+    const c = this.player.controller.position;
+    if (this.zombies.threat(c) > 0.08) return this.wake('Шорох рядом — вы проснулись!');
+    if (this.survival.fatigue <= (z.bed ? 0.01 : 0.31)) return this.wake(z.bed ? 'Вы выспались' : 'Спать на полу — так себе: вы проснулись разбитым');
+    if (this.survival.hunger > 0.85 || this.survival.thirst > 0.85) return this.wake('Голод разбудил вас');
+    z.el.textContent = `Сон · ${this.clock.label}`;
+  }
+
   /** The map opens round the survivor (wider with orientation); M / the button opens it. */
   private updateMap(dt: number): void {
     if (this.ctx.input.consumePressed('map') && !this.dead) {
@@ -1401,6 +1637,7 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.models.dispose();
+    this.baseProps.dispose();
     this.particles.dispose();
     this.atmo.dispose();
     this.weather.dispose();

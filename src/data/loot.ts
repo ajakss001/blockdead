@@ -61,7 +61,9 @@ export type ContainerType =
   | 'canteen'
   | 'vehicleCabin'
   // Survivors' camps: the better stash.
-  | 'campStash';
+  | 'campStash'
+  // The survivor's own chest (Base): never rolled, keeps what is put in.
+  | 'stash';
 
 interface LootTable {
   name: string;
@@ -99,7 +101,8 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   shopCounter: { name: 'Прилавок', empty: 0.3, rolls: [1, 3], items: [['chocolate', 4], ['batteries', 3], ['lighter', 3], ['painkillers', 1], ['tape', 1], ['antibiotics', 0.4]] },
   crate: { name: 'Ящик', empty: 0.25, rolls: [1, 3], items: [['planks', 3], ['nails', 4], ['hammer', 1], ['rope', 2], ['tape', 2], ['water', 2], ['crowbar', 0.6], ['hardhat', 0.8], ['workJacket', 0.6], ['boots', 0.5]] },
   trunk: { name: 'Багажник', empty: 0.4, rolls: [1, 3], items: [['water', 3], ['crowbar', 1], ['rope', 2], ['tape', 2], ['batteries', 2], ['bandage', 1], ['junk', 3], ['axe', 0.4], ['workJacket', 0.5], ['boots', 0.4]] },
-  trash: { name: 'Мусорный бак', empty: 0.55, rolls: [1, 2], items: [['junk', 6], ['chips', 1], ['soda', 1], ['rag', 1]] },
+  trash: { name: 'Мусорный бак', empty: 0.55, rolls: [1, 2], items: [['junk', 6], ['chips', 1], ['soda', 1], ['rag', 1], ['emptyBottle', 2]] },
+  stash: { name: 'Сундук', empty: 1, rolls: [0, 0], items: [] },
   desk: { name: 'Стол', empty: 0.35, rolls: [1, 2], items: [['batteries', 3], ['chocolate', 3], ['painkillers', 2], ['tape', 2], ['lighter', 2], ['junk', 3]] },
   cabinet: { name: 'Шкаф для бумаг', empty: 0.5, rolls: [1, 2], items: [['junk', 4], ['tape', 2], ['bandage', 1], ['batteries', 1], ['rope', 1]] },
   nightstand: { name: 'Тумбочка', empty: 0.35, rolls: [1, 2], items: [['painkillers', 2], ['batteries', 2], ['lighter', 2], ['matches', 2], ['bandage', 1], ['chocolate', 1], ['junk', 3]] },

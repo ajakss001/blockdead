@@ -195,10 +195,19 @@ export class Atmosphere {
 
   /** The kitchen tap in reach in front of the eye (within 1.5 m, roughly where you look), or null. */
   tapNear(eye: Vector3, dir: Vector3): { x: number; y: number; z: number } | null {
+    return this.spotNear(this.tapSpots, eye, dir, 1.5);
+  }
+
+  /** A bed in reach in front of the eye (within 2.2 m), or null. */
+  bedNear(eye: Vector3, dir: Vector3): { x: number; y: number; z: number } | null {
+    return this.spotNear(this.bedSpots, eye, dir, 2.2);
+  }
+
+  private spotNear(list: readonly { x: number; y: number; z: number }[], eye: Vector3, dir: Vector3, reach: number): { x: number; y: number; z: number } | null {
     if (this.dirty) this.rebuild();
     let best: { x: number; y: number; z: number } | null = null;
-    let bd = 1.5;
-    for (const t of this.tapSpots) {
+    let bd = reach;
+    for (const t of list) {
       const dx = t.x - eye.x;
       const dy = t.y - eye.y;
       const dz = t.z - eye.z;
@@ -213,6 +222,7 @@ export class Atmosphere {
 
   /** Every tap here, running or dry (the dripping ones are `taps`). */
   private tapSpots: { x: number; y: number; z: number }[] = [];
+  private bedSpots: { x: number; y: number; z: number }[] = [];
 
   /** A blow landed on the world at (x, y, z) (a car's alarm may go off). */
   strikeAt(x: number, y: number, z: number): void {
@@ -448,6 +458,7 @@ export class Atmosphere {
     this.leaks = [];
     this.taps = [];
     this.tapSpots = [];
+    this.bedSpots = [];
     const oldPhones = this.phones;
     this.phones = [];
     this.loopSpots = [];
@@ -533,6 +544,9 @@ export class Atmosphere {
             this.leaks.push(kept ?? { x, y, z, floor, r: ((0.7 + seed * 0.8) / 2) * 0.85, base: 0.8 + seed * 2.2, next: Math.random() * 2 });
             break;
           }
+          case LIFE.bed:
+            this.bedSpots.push({ x, y, z });
+            break;
           case LIFE.tap:
             this.tapSpots.push({ x, y, z });
             if (this.water && spots[i + 9] !== 1) this.taps.push({ x, y, z, next: Math.random() * 3 });

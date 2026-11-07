@@ -1,4 +1,5 @@
 import type { MapSave } from './MapMemory';
+import type { Placed } from './Base';
 import type { ItemId, ItemStack } from '../data/items';
 import type { ModelKind } from '../zombies/stats';
 import type { ContainerRef } from './Containers';
@@ -46,6 +47,8 @@ export interface SaveV1 {
   meta?: MetaData;
   /** What the survivor has seen of the map, and their marks. */
   map?: MapSave;
+  /** What the survivors built (the base stays when one dies). */
+  base?: Placed[];
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

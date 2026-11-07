@@ -211,6 +211,22 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     s.rect(5, 8, 6, 3, 0x2a6aa0);
     s.line(6, 5, 6, 13, 0xcfe4ee);
   },
+  emptyBottle: (s) => {
+    s.rect(7, 1, 2, 2, 0x4a5a64);
+    s.rect(6, 3, 4, 1, 0x8a9aa0);
+    s.rect(5, 4, 6, 11, 0x6e7c82);
+    s.rect(6, 5, 4, 9, 0x3a4248);
+    s.line(6, 5, 6, 13, 0xa8b4b8);
+  },
+  dirtyWater: (s) => {
+    s.rect(7, 1, 2, 2, 0x4a5a64);
+    s.rect(6, 3, 4, 1, 0x8a9aa0);
+    s.rect(5, 4, 6, 11, 0x7a8a7c);
+    s.rect(5, 7, 6, 8, 0x5a6a50);
+    s.dot(7, 11, 0x3e4434);
+    s.dot(9, 9, 0x3e4434);
+    s.line(6, 5, 6, 13, 0xa8b4a8);
+  },
   soda: (s) => {
     s.rect(5, 2, 6, 12, 0x2a6a3a);
     s.rect(5, 2, 6, 1, C.tinLight);
