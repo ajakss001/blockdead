@@ -173,6 +173,9 @@ function stashRef(p: Placed): ContainerRef {
 
 /** The base's fires in the world's flames, glow and crackle (WorldLife / Atmosphere). */
 const BASE_FX_KEY = 2 ** 40 + 1;
+/** While the game is being made (the dev server): no carry limit; `?weight=1` brings it back to check it. */
+Inventory.noOverload = import.meta.env.DEV && new URLSearchParams(location.search).get('weight') !== '1';
+
 /** Asleep the clock runs this many game minutes per real second (a night in ~40 s). */
 const SLEEP_RATE = 12;
 const _zs: PlayerSense = { pos: new Vector3(), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 0 };
@@ -1088,7 +1091,7 @@ export class WorldScene implements IScene {
     this.syncBody();
   }
 
-  /** ?give=rifle_m4a1,mod_suppressor: the guns loaded and in hand, for checking them (weapons/give.ts). */
+  /** ?give=rifle_m4a1,mod_suppressor (or all, guns, mods, melee): the guns loaded and in hand, for checking them (weapons/give.ts). */
   private giveDebug(): void {
     const list = new URLSearchParams(location.search).get('give');
     if (list) giveLoadout(this.inventory, list);

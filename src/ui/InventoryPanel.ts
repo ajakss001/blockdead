@@ -4,7 +4,6 @@ import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
 import type { ContainerRef, Containers } from '../systems/Containers';
-import type { Inventory } from '../systems/Inventory';
 import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
@@ -14,7 +13,7 @@ import { volumeControl } from './VolumeControl';
 import { gearIcon } from './gearIcon';
 import { itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
-import { QUICK_SLOTS } from '../systems/Inventory';
+import { Inventory, QUICK_SLOTS } from '../systems/Inventory';
 
 const SLOT_NAMES: Record<ModSlot, string> = { muzzle: 'Ствол', mag: 'Магазин', rail: 'Планка' };
 
@@ -174,7 +173,7 @@ export class InventoryPanel {
     if (this.selected && !this.exists(this.selected)) this.selected = null;
 
     const head = el('div', 'inv__head');
-    const ratio = inv.weight / inv.limit;
+    const ratio = Inventory.noOverload ? 0 : inv.weight / inv.limit;
     const bar = el('div', 'inv__load');
     const fill = el('div', 'inv__load-fill');
     fill.style.width = `${Math.min(100, ratio * 100)}%`;
@@ -189,7 +188,7 @@ export class InventoryPanel {
     });
     const credits = el('button', 'credits-link inv__credits', 'Авторы');
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), credits, close);
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} кг (без лимита)` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), credits, close);
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).

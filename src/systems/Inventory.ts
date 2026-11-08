@@ -45,6 +45,12 @@ export class Inventory {
   /** Backpack limit, kg (the class can add or take a little). */
   capacity: number;
 
+  /**
+   * While the game is being made (the dev server, unless `?weight=1`): no carry limit — anything fits, the
+   * weight is only shown. Set by the world scene; tests keep the limit.
+   */
+  static noOverload = false;
+
   constructor(capacity = BACKPACK_CAPACITY) {
     this.capacity = capacity;
   }
@@ -85,6 +91,7 @@ export class Inventory {
 
   /** How many of `id` fit by weight. */
   room(id: ItemId): number {
+    if (Inventory.noOverload) return Number.MAX_SAFE_INTEGER;
     return Math.max(0, Math.floor((this.limit - this.weight + 1e-6) / (ITEMS[id].weight * (1 - this.reduce))));
   }
 
@@ -222,7 +229,7 @@ export class Inventory {
     if (!id) return false;
     // A bag (or pouches) can come off only if everything still fits without it.
     const pack = ITEMS[id].wear?.pack;
-    if (pack) {
+    if (pack && !Inventory.noOverload) {
       const reduce = slot === 'back' ? 0 : this.reduce;
       if ((this.rawWeight + ITEMS[id].weight) * (1 - reduce) > this.limit - pack.capacity + 1e-6) return false;
     }

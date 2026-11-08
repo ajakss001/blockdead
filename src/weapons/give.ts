@@ -1,14 +1,23 @@
 import { ITEMS, type ItemId } from '../data/items';
 import type { Inventory } from '../systems/Inventory';
-import { capacityOf, GUNS, isGun, isMod, MOD_FITS } from './guns';
+import { capacityOf, GUN_IDS, GUNS, isGun, isMod, MOD_FITS, MOD_IDS } from './guns';
+
+/** Shorthands in the list: every gun, every mod, everything to fight with (the guns, then the melee). */
+const GROUPS: Readonly<Record<string, readonly string[]>> = {
+  guns: GUN_IDS,
+  mods: MOD_IDS,
+  melee: ['knife', 'bat', 'hammer', 'crowbar', 'axe'],
+  all: [...GUN_IDS, 'knife', 'bat', 'hammer', 'crowbar', 'axe'],
+};
 
 /**
  * `?give=rifle_m4a1,mod_suppressor,…` (checking guns): a gun comes loaded, with two magazines' worth of
  * rounds and a spare magazine, and goes into the hand; a mod goes onto the given gun that fits it;
- * anything else into the bag. Weight is not a limit here.
+ * anything else into the bag. Weight is not a limit here. Shorthands: `all` (every gun and melee weapon),
+ * `guns`, `mods`, `melee` — `?give=all,mods`.
  */
 export function giveLoadout(inv: Inventory, list: string): void {
-  const ids = list.split(',').map((s) => s.trim()).filter((s): s is ItemId => s in ITEMS);
+  const ids = [...new Set(list.split(',').flatMap((s) => GROUPS[s.trim()] ?? [s.trim()]))].filter((s): s is ItemId => s in ITEMS);
   if (ids.length === 0) return;
   inv.capacity += 200;
   let hand: ItemId | null = null;
