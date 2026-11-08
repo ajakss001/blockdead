@@ -11,7 +11,7 @@ import { nearestPoi, type PoiKind } from '../world/gen/poi';
  */
 const WANT: Record<string, string[]> = {
   airport: ['checkin', 'suitcase', 'planeCabin', 'cargoHold', 'garage'],
-  base: ['militaryLocker', 'canteen', 'militaryCrate', 'vehicleCabin', 'cargoHold'],
+  base: ['militaryLocker', 'canteen', 'militaryCrate', 'baseArmory', 'vehicleCabin', 'cargoHold'],
 };
 
 export function main(): number {

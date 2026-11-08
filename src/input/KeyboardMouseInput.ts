@@ -9,8 +9,15 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   Tab: 'inventory',
   KeyI: 'inventory',
   KeyM: 'map',
-  Digit1: 'item1',
-  Digit2: 'item2',
+  Digit1: 'slot1',
+  Digit2: 'slot2',
+  Digit3: 'slot3',
+  Digit4: 'slot4',
+  KeyH: 'item2',
+  KeyR: 'reload',
+  KeyV: 'inspect',
+  KeyB: 'fireMode',
+  KeyQ: 'bash',
   Space: 'jump',
 };
 
@@ -42,6 +49,8 @@ export class KeyboardMouseInput {
     document.addEventListener('mousedown', this.onMouseDown);
     document.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('pointerlockchange', this.onLockChange);
+    // The right button aims: no context menu over the game.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   get locked(): boolean {
@@ -94,10 +103,12 @@ export class KeyboardMouseInput {
 
   private readonly onMouseDown = (e: MouseEvent): void => {
     if (this.locked && e.button === 0) this.input.press('attack');
+    if (this.locked && e.button === 2) this.input.press('aim');
   };
 
   private readonly onMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.input.release('attack');
+    if (e.button === 2) this.input.release('aim');
   };
 
   private readonly onLockChange = (): void => {

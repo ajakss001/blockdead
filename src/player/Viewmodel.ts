@@ -2,15 +2,24 @@ import {
   AmbientLight,
   type BufferGeometry,
   DirectionalLight,
+  CylinderGeometry,
   Group,
   type Material,
-  type Mesh,
+  Matrix4,
+  Mesh,
+  MeshLambertMaterial,
   type MeshStandardMaterial,
   PerspectiveCamera,
   PointLight,
+  Quaternion,
   Scene,
   Vector3,
 } from 'three';
+import { GUNS, type GunId, isGun, type ModId } from '../weapons/guns';
+import type { GunAction } from '../weapons/gunState';
+import { GunModel } from '../weapons/gunModel';
+import { grim } from '../style/palette';
+import { gunRigData, type GunPoseInput, type GunPoseOut, newGunPoseOut, poseGun } from './gunPose';
 import { clamp, damp } from '../core/math';
 import { FLASHLIGHT } from '../items/config';
 import { setLensGlow } from '../items/flashlight';
@@ -22,6 +31,24 @@ import { buildHeldModel, FISTS, HELD, type HeldConfig, type HeldId } from './hel
 import { SPEED_WALK } from './PlayerController';
 
 export type RightItem = 'fists' | Exclude<HeldId, 'torch'>;
+/** What the right hand can hold: a melee item (or nothing) or a gun. */
+export type HandItem = RightItem | GunId;
+
+/** The gun's state for its animation, set by the scene (systems/Firearms) every frame. */
+export interface GunView {
+  action: GunAction;
+  t: number;
+  duration: number;
+  open: boolean;
+  /** Wants the sights / how close a wall is in front 0..1 (eased by the viewmodel). */
+  ads: boolean;
+  wall: number;
+  /** How far the wall straight ahead is, m (99: none): the muzzle never goes past it. */
+  wallDist: number;
+  /** The rocket is in the tube. */
+  chamber: boolean;
+  mods: readonly ModId[];
+}
 
 export interface ViewmodelFrame {
   lookX: number;
@@ -32,12 +59,21 @@ export interface ViewmodelFrame {
   flashlightOn: boolean;
   /** How bright the flashlight shines now, 0..1 (battery, flicker): the lens glow and the bounce. */
   light?: number;
+  /** 0..1 crouched. */
+  crouch?: number;
 }
 
 const _axisY = new Vector3(0, 1, 0);
 /** The beam's main direction (eye space): ahead, a touch down. */
 const _fwd = new Vector3(0, -0.08, -1).normalize();
 const _hand = new Vector3();
+const _m4 = new Matrix4();
+const _m4b = new Matrix4();
+const _gq = new Quaternion();
+const _gp = new Vector3();
+const _one = new Vector3(1, 1, 1);
+/** Seconds in the sights before the aim starts to waver (the arms tire). */
+const STEADY = 4;
 
 /**
  * First-person arms, drawn in a second pass with their own camera and FOV after clearing depth:
@@ -48,6 +84,8 @@ const _hand = new Vector3();
  * then moves to the head (`headlamp`) — or the flashlight, itself an item posed the same way.
  * The arms drawn are the character model's own (fpArms), skinned to the solve's frames.
  */
+const _wallM = new Vector3();
+
 export class Viewmodel {
   readonly scene = new Scene();
   readonly camera = new PerspectiveCamera(60, 1, 0.01, 5);
@@ -80,15 +118,32 @@ export class Viewmodel {
   private readonly itemState: ItemState = { attackT: -1, sprint: 0, pump: 0, lower: 0 };
   private readonly torchState: ItemState = { attackT: -1, sprint: 0, pump: 0, lower: 0 };
 
-  private item: RightItem = 'knife';
-  private pendingItem: RightItem | null = null;
+  private item: HandItem = 'knife';
+  private pendingItem: HandItem | null = null;
+  /** Guns: each in a holder in the right hand (the grip_main frame undone), made on first use. */
+  private readonly guns = new Map<GunId, { holder: Group; model: GunModel; base: Matrix4 }>();
+  /** The shell (pump gun / bolt rifle) in the left hand while loading. */
+  private readonly shell: Mesh;
+  /** Set by the scene each frame while a gun is in hand. */
+  readonly gunView: GunView = { action: 'idle', t: 0, duration: 1, open: false, ads: false, wall: 0, wallDist: 99, chamber: true, mods: [] };
+  /** The pose of the gun this frame (read by test:anim, ?animdebug and the scene for the muzzle). */
+  readonly gunPose: GunPoseOut = newGunPoseOut();
+  private readonly gunIn: GunPoseInput = { ads: 0, sprint: 0, crouch: 0, wall: 0, lower: 0, pump: 0, action: 'idle', t: 0, duration: 1, sinceShot: -1, open: false, kickBack: 0, kickUp: 0, kickSide: 0, kickRoll: 0 };
+  /** In the sights 0..1 (eased), and for how long (the aim wavers after STEADY s). */
+  ads = 0;
+  private adsTime = 0;
+  private wallT = 0;
+  /** Recoil springs: value and velocity of back (m), up, side, roll (rad). */
+  private readonly kick = [0, 0, 0, 0];
+  private readonly kickV = [0, 0, 0, 0];
+  private sinceShot = -1;
   /** -1 = idle, otherwise seconds since the attack started. */
   private attackT = -1;
   private strikeFired = false;
   /** Seconds until the next blow may start (the weapon's interval). */
   private cooldown = 0;
   /** Recoil of a blow that met something, 1 → 0. */
-  private kick = 0;
+  private blowKick = 0;
   private strikePending = false;
   /** Set when a swing starts (sound); the caller clears it. */
   swingStarted = false;
@@ -130,6 +185,14 @@ export class Viewmodel {
     this.lens = ((this.torchModel.children[0] as Mesh).material as Material[])[1] as MeshStandardMaterial;
     this.materials.push(this.lens);
     this.handL.add(this.torch);
+    const shellGeo = new CylinderGeometry(0.0105, 0.0105, 0.07, 8).rotateX(Math.PI / 2);
+    this.geometries.push(shellGeo);
+    const shellMat = new MeshLambertMaterial({ color: grim(0x4a5a44) });
+    this.materials.push(shellMat);
+    this.shell = new Mesh(shellGeo, shellMat);
+    this.shell.position.set(0.03, 0, -0.05);
+    this.shell.visible = false;
+    this.handL.add(this.shell);
 
     this.root.add(this.armR, this.armL, ...this.uppers);
     this.scene.add(this.root);
@@ -140,8 +203,23 @@ export class Viewmodel {
     return this.config(this.item);
   }
 
-  get currentItem(): RightItem {
+  get currentItem(): HandItem {
     return this.item;
+  }
+
+  /** The gun in hand (switched to), or null. */
+  get gun(): GunId | null {
+    return isGun(this.item) ? this.item : null;
+  }
+
+  /** The model of the gun in hand. */
+  get gunModel(): GunModel | null {
+    return isGun(this.item) ? (this.guns.get(this.item)?.model ?? null) : null;
+  }
+
+  /** A switch is under way (the old item going down or the new one not up yet). */
+  get switching(): boolean {
+    return this.pendingItem !== null || this.rightDown > 0.05;
   }
 
   /** Camera pitch the swing asks for this frame (rad, + up): leaning back in the windup. */
@@ -151,7 +229,17 @@ export class Viewmodel {
 
   /** The current weapon needs both hands: the flashlight is worn on the head. */
   get headlamp(): boolean {
-    return this.config(this.item).twoHanded;
+    return this.twoHands && !this.underLight;
+  }
+
+  /** Both hands on what is in the right one (every gun is held with both). */
+  get twoHands(): boolean {
+    return isGun(this.item) || this.config(this.item).twoHanded;
+  }
+
+  /** The gun in hand carries the underbarrel flashlight: the beam comes from it. */
+  get underLight(): boolean {
+    return isGun(this.item) && this.gunView.mods.includes('mod_flashlight');
   }
 
   /** Day / night for the arms (they are drawn in their own scene). */
@@ -173,7 +261,8 @@ export class Viewmodel {
     this.arms.setBody(body, scale, this.scene);
   }
 
-  equip(item: RightItem): void {
+  equip(item: HandItem): void {
+    if (isGun(item)) this.gunHolder(item);
     if (item !== this.item || this.pendingItem) this.pendingItem = item === this.item ? null : item;
   }
 
@@ -181,6 +270,10 @@ export class Viewmodel {
   fixedUpdate(dt: number, wantsAttack: boolean): void {
     if (this.scrubT !== null) {
       this.attackT = this.scrubT;
+      return;
+    }
+    if (isGun(this.item)) {
+      this.attackT = -1;
       return;
     }
     this.cooldown -= dt * this.swingRate;
@@ -224,6 +317,13 @@ export class Viewmodel {
    * the left hand on the handle, thrown about as the hand swings away from where it rests.
    */
   lightFrame(pos: Vector3, dir: Vector3): void {
+    const gm = this.gunModel;
+    if (gm && this.underLight) {
+      gm.root.updateWorldMatrix(true, false);
+      pos.set(...gm.sockets.light).applyMatrix4(gm.root.matrixWorld);
+      dir.set(0, 0, -1).transformDirection(gm.root.matrixWorld);
+      return;
+    }
     if (this.torch.visible) {
       this.torchModel.updateWorldMatrix(true, false);
       pos.set(0, FLASHLIGHT.length, 0);
@@ -240,31 +340,54 @@ export class Viewmodel {
 
   /** The blow met a zombie or a wall: the arms jolt back. */
   recoil(): void {
-    this.kick = 1;
+    this.blowKick = 1;
+  }
+
+  /**
+   * A shot: the gun kicks back, the muzzle up and a random bit aside (less in the sights); on auto the
+   * burst's climb adds up. Also the slide / bolt travel.
+   */
+  fire(up: number, side: number, back: number): void {
+    const k = 1 - 0.45 * this.ads;
+    this.kickV[0] += back * 22 * k;
+    this.kickV[1] += up * 18 * k;
+    this.kickV[2] += side * (Math.random() * 2 - 1) * 18 * k;
+    this.kickV[3] += (Math.random() * 2 - 1) * up * 6 * k;
+    this.sinceShot = 0;
   }
 
   update(dt: number, f: ViewmodelFrame): void {
     this.time += dt;
-    this.kick = Math.max(0, this.kick - dt * 7);
+    this.blowKick = Math.max(0, this.blowKick - dt * 7);
     this.sprintT = damp(this.sprintT, f.sprinting ? 1 : 0, 10, dt);
     // The flashlight is always in the left hand (raised from below when it comes back from a two-handed grip).
     this.leftUp = this.headlamp ? 0 : damp(this.leftUp, 1, 7, dt);
     this.clickT = Math.max(0, this.clickT - dt * 6);
 
-    // Weapon switch: lower, swap at the bottom, raise.
-    this.rightDown = damp(this.rightDown, this.pendingItem ? 1 : 0, 12, dt);
-    if (this.pendingItem && this.rightDown > 0.95) {
+    // Weapon switch: lower, swap at the bottom, raise (a gun in its own draw / holster time).
+    const goingDown = !!this.pendingItem;
+    if (isGun(this.item)) {
+      const tm = goingDown ? GUNS[this.item].times.holster : GUNS[this.item].times.draw;
+      this.rightDown = goingDown ? Math.min(1, this.rightDown + dt / tm) : Math.max(0, this.rightDown - dt / tm);
+    } else this.rightDown = damp(this.rightDown, goingDown ? 1 : 0, 12, dt);
+    if (this.pendingItem && this.rightDown > (isGun(this.item) ? 0.999 : 0.95)) {
       this.item = this.pendingItem;
       this.pendingItem = null;
       for (const [id, g] of this.held) g.visible = id === this.item;
+      for (const [id, g] of this.guns) g.holder.visible = id === this.item;
+      if (isGun(this.item)) this.rightDown = 1;
       this.rig.reset();
     }
-    const twoHanded = this.headlamp;
+    const twoHanded = this.twoHands;
     this.torch.visible = !twoHanded;
     const light = f.light ?? (f.flashlightOn ? 1 : 0);
     setLensGlow(this.lens, light);
     // The light spills on the hands from the left fist (on the handle when both hands are on a weapon).
     this.bounce.position.set(twoHanded ? 0 : -0.12, -0.12, -0.35);
+    if (isGun(this.item)) {
+      this.updateGun(dt, f);
+      return;
+    }
     this.bounce.intensity = (twoHanded ? 0.1 : 0.08) * light;
 
     // Arms pump in step with the legs while sprinting (the left one in counter-phase).
@@ -299,7 +422,7 @@ export class Viewmodel {
     const bobX = Math.sin(f.stepPhase) * 0.01 * amp;
     const bobY = -Math.abs(Math.sin(f.stepPhase)) * 0.012 * amp;
     const breathe = Math.sin(this.time * 1.6) * 0.0035;
-    const kick = this.kick * this.kick;
+    const kick = this.blowKick * this.blowKick;
     this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
     this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
@@ -310,6 +433,180 @@ export class Viewmodel {
     this.restL.y = damp(this.restL.y, _hand.y, 3, dt);
   }
 
+  /**
+   * Where a hand should be on what it holds this frame (world = the arms' scene): the right on the gun's
+   * grip, the left on its socket, on the magazine in its hand, or (reaching for the pouch) where it was sent.
+   * test:anim measures the hands against these.
+   */
+  gunSocket(k: 0 | 1, outGrip: Vector3, outQ: Quaternion): void {
+    const gm = this.gunModel!;
+    const d = gunRigData(gm.id);
+    const root = gm.root;
+    root.updateWorldMatrix(true, false);
+    const out = this.gunPose;
+    let h = d.main;
+    let obj = root;
+    let dz = 0;
+    if (k === 1) {
+      if (out.left === 'gun') {
+        h = d.off;
+        dz = out.pump;
+      } else if (out.left === 'mag') {
+        h = d.magHold;
+        obj = gm.parts.mag;
+        obj.updateWorldMatrix(true, false);
+      } else {
+        this.root.updateWorldMatrix(true, false);
+        outGrip.copy(out.leftGrip).applyMatrix4(this.root.matrixWorld);
+        this.root.getWorldQuaternion(outQ).multiply(out.leftQ);
+        return;
+      }
+    }
+    outGrip.copy(h.at);
+    outGrip.z += dz;
+    outGrip.applyMatrix4(obj.matrixWorld);
+    obj.getWorldQuaternion(outQ).multiply(h.q);
+    // The hand's extra turn about the grip in the sights is part of its hold.
+    const roll = k === 0 ? out.rollR : out.left === 'gun' ? out.rollL : 0;
+    if (roll) outQ.multiply(_gq.setFromAxisAngle(_gp.set(0, 1, 0), roll));
+  }
+
+  /** The holder of a gun in the right hand: the gun frame placed so its grip_main frame sits in the fist. */
+  private gunHolder(id: GunId): Group {
+    let g = this.guns.get(id);
+    if (!g) {
+      const model = new GunModel(id);
+      const holder = new Group();
+      // hand ← gun: the fist's grip point and the hand frame on the gun, undone.
+      const d = gunRigData(id);
+      _m4.compose(_gp.set(GRIP_X, 0, GRIP_Z), _gq.identity(), _one);
+      _m4b.compose(d.main.at, d.main.q, _one).invert();
+      const base = _m4b.clone();
+      _m4.multiply(_m4b);
+      _m4.decompose(holder.position, holder.quaternion, holder.scale);
+      holder.add(model.root);
+      holder.visible = false;
+      this.handR.add(holder);
+      g = { holder, model, base };
+      this.guns.set(id, g);
+    }
+    return g.holder;
+  }
+
+  /** The gun in hand: its pose (gunPose), both arms to its sockets, the moving parts, the sway. */
+  private updateGun(dt: number, f: ViewmodelFrame): void {
+    const id = this.item as GunId;
+    const gv = this.gunView;
+    const { holder, model } = this.guns.get(id)!;
+    holder.visible = true;
+    model.setMods(gv.mods);
+    // Sights, wall: eased; the aim wavers after a while in the sights.
+    const aimT = GUNS[id].times.aim;
+    const wantAds = gv.ads && this.sprintT < 0.3 && this.rightDown < 0.05 && gv.wall < 0.3;
+    this.ads = clamp(this.ads + (wantAds ? dt : -dt) / aimT, 0, 1);
+    this.adsTime = this.ads > 0.9 ? this.adsTime + dt : 0;
+    this.wallT = damp(this.wallT, gv.wall, 16, dt);
+    // Recoil springs (stiff, well damped).
+    for (let i = 0; i < 4; i++) {
+      this.kickV[i] += (-this.kick[i] * 260 - this.kickV[i] * 26) * dt;
+      this.kick[i] += this.kickV[i] * dt;
+    }
+    if (this.sinceShot >= 0) this.sinceShot += dt;
+    const inp = this.gunIn;
+    inp.ads = this.ads;
+    inp.sprint = this.sprintT;
+    inp.crouch = f.crouch ?? 0;
+    inp.wall = this.wallT;
+    // A wall right in front: no room for the gun at all — it goes down out of the way.
+    const wallLow = isGun(this.item) && GUNS[this.item].cls === 'pistol' ? 0.3 : 0.5;
+    inp.lower = Math.max(this.rightDown, clamp((wallLow - this.gunView.wallDist) / 0.2, 0, 1));
+    inp.pump = Math.sin(f.stepPhase) * this.sprintT;
+    inp.action = gv.action;
+    inp.t = gv.t;
+    inp.duration = gv.duration;
+    inp.sinceShot = this.sinceShot;
+    inp.open = gv.open;
+    inp.kickBack = this.kick[0];
+    inp.kickUp = this.kick[1];
+    inp.kickSide = this.kick[2];
+    inp.kickRoll = this.kick[3];
+    const out = this.gunPose;
+    poseGun(id, inp, out);
+    // Never through a wall: whatever the pose, the muzzle (the suppressor's end) stays this side of it.
+    const gmw = this.gunModel;
+    if (gmw && gv.wallDist < 5) {
+      _wallM.set(...gmw.sockets.muzzle);
+      if (gv.mods.includes('mod_suppressor')) _wallM.z -= 0.16;
+      _wallM.applyQuaternion(out.q).add(out.pos);
+      const over = -_wallM.z - (gv.wallDist - 0.1);
+      if (over > 0) {
+        out.pos.z += over;
+        out.rightGrip.z += over;
+        out.leftGrip.z += over;
+        out.magPos.z += over;
+      }
+    }
+    const rig = this.rig;
+    rig.right.shoulder.copy(rig.right.rest).add(out.shoulderR);
+    rig.left.shoulder.copy(rig.left.rest).add(out.shoulderL);
+    rig.item.pos.copy(out.pos);
+    rig.item.q.copy(out.q);
+    rig.targetR.q.copy(out.rightQ);
+    rig.targetR.grip.copy(out.rightGrip);
+    rig.targetL.q.copy(out.leftQ);
+    rig.targetL.grip.copy(out.leftGrip);
+    rig.pitch = 0;
+    rig.phase = 'rest';
+    // The fist turned about the grip (the sights): the gun stays where the pose has it.
+    {
+      const g = this.guns.get(id)!;
+      _m4.makeTranslation(GRIP_X, 0, GRIP_Z).multiply(_m4b.makeRotationY(-out.rollR)).multiply(g.base);
+      _m4.decompose(g.holder.position, g.holder.quaternion, g.holder.scale);
+    }
+    rig.right.solve(out.rightQ, out.rightGrip);
+    rig.left.solve(out.leftQ, out.leftGrip);
+    this.applyArm(this.armR, this.handR, this.uppers[0], rig.right.pose);
+    this.applyArm(this.armL, this.handL, this.uppers[1], rig.left.pose);
+    // Moving parts, in the gun frame.
+    const p = model.parts;
+    p.slide.position.z = out.slide;
+    p.pump.position.z = out.pump;
+    p.mag.visible = out.magShown;
+    if (out.magOnGun) {
+      p.mag.position.set(...model.sockets.mag);
+      p.mag.quaternion.identity();
+    } else {
+      // gun⁻¹ × magazine (both in the arms' space).
+      _m4.compose(out.pos, out.q, _one).invert();
+      _m4b.compose(out.magPos, out.magQ, _one);
+      _m4.multiply(_m4b);
+      _m4.decompose(p.mag.position, p.mag.quaternion, _gp);
+    }
+    p.rocket.visible = out.rocket || out.left === 'rocket';
+    if (out.left === 'rocket') {
+      // The rocket rides in the left hand until it is in the tube.
+      _gp.copy(out.leftGrip).sub(out.pos).applyQuaternion(_gq.copy(out.q).invert());
+      p.rocket.position.set(_gp.x - model.sockets.load[0], _gp.y - model.sockets.load[1], _gp.z - model.sockets.load[2]);
+    } else p.rocket.position.set(0, 0, 0);
+    this.shell.visible = out.left === 'shell';
+    // Sway and bob, much less in the sights (but growing after STEADY s there); breathing.
+    const still = 1 - 0.85 * this.ads;
+    const tired = this.ads * clamp((this.adsTime - STEADY) / 6, 0, 1);
+    const inv = 1 / Math.max(dt, 1e-3);
+    this.swayX = damp(this.swayX, clamp(-f.lookX * inv * 0.012, -0.05, 0.05) * still, 12, dt);
+    this.swayY = damp(this.swayY, clamp(f.lookY * inv * 0.012, -0.05, 0.05) * still, 12, dt);
+    const amp = clamp(f.speed / SPEED_WALK, 0, 1.6) * still;
+    const bobX = Math.sin(f.stepPhase) * 0.01 * amp;
+    const bobY = -Math.abs(Math.sin(f.stepPhase)) * 0.012 * amp;
+    const breathe = Math.sin(this.time * 1.6) * 0.0035 * (1 - 0.9 * this.ads);
+    const waver = tired * 0.004;
+    this.root.position.set(bobX + this.swayX + Math.sin(this.time * 0.9) * waver, bobY + this.swayY + breathe + Math.sin(this.time * 1.3 + 1) * waver, 0);
+    this.root.rotation.set(this.swayY * 1.2, this.swayX * 2, this.swayX * 1.5);
+    this.root.updateMatrixWorld(true);
+    this.arms.update(0, this.uppers[0], rig.right.pose.upperLen, this.armR, this.handR);
+    this.arms.update(1, this.uppers[1], rig.left.pose.upperLen, this.armL, this.handL);
+  }
+
   /** Shared grunge materials are owned by look/materials; only the lens is ours. */
   dispose(): void {
     for (const g of this.geometries) g.dispose();
@@ -317,8 +614,8 @@ export class Viewmodel {
     this.arms.dispose();
   }
 
-  private config(item: RightItem): HeldConfig {
-    return item === 'fists' ? FISTS : HELD[item];
+  private config(item: HandItem): HeldConfig {
+    return item === 'fists' || isGun(item) ? FISTS : HELD[item];
   }
 
   /** Solved arm → meshes: the forearm at the elbow, the hand at its tip (on the end of the sleeve), the upper arm. */

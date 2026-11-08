@@ -1,4 +1,5 @@
 import { WEAPONS } from '../weapons/config';
+import { AMMO, type AmmoId, GUN_IDS, GUNS, type GunId, MAGS, type MagId, MOD_IDS, MODS, type ModId } from '../weapons/guns';
 /**
  * Item catalog. Effects are fractions of the 0..1 survival scales (hunger −0.3 = a third of an
  * empty stomach). Weights in kg; the backpack holds BACKPACK_CAPACITY.
@@ -30,9 +31,6 @@ export type ItemId =
   | 'matches'
   | 'junk'
   | 'axe'
-  | 'cap'
-  | 'beanie'
-  | 'hardhat'
   | 'hoodie'
   | 'leatherJacket'
   | 'workJacket'
@@ -42,17 +40,12 @@ export type ItemId =
   | 'boots'
   | 'tshirt'
   | 'soap'
-  | 'militaryHelmet'
   | 'militaryJacket'
   | 'militaryPants'
   | 'combatBoots'
-  | 'swatHelmet'
-  | 'swatVest'
   | 'swatPants'
-  | 'policeCap'
   | 'policeShirt'
   | 'policePants'
-  | 'fireHelmet'
   | 'fireCoat'
   | 'firePants'
   | 'scrubsTop'
@@ -70,19 +63,24 @@ export type ItemId =
   | 'outfitDoctor'
   | 'outfitMechanic'
   | 'outfitBuilder'
+  // Gear (models: public/models/gear, fitted to every body by tools/build-gear.mjs).
+  | 'helmetMilitary'
+  | 'helmetSwat'
+  | 'helmetFire'
+  | 'helmetConstruction'
+  | 'vestMilitary'
+  | 'vestSwat'
+  | 'backpackMilitary'
+  | 'backpackSchool'
+  | 'backpackHiking'
+  | 'bagMedic'
+  | 'toolboxMechanic'
   | 'gorkaJacket'
   | 'gorkaPants'
-  | 'policeVest'
-  | 'tacticalRig'
   | 'workGloves'
   | 'fireGloves'
   | 'tacticalGloves'
   | 'medGloves'
-  | 'schoolBackpack'
-  | 'sportsBag'
-  | 'hikingBackpack'
-  | 'armyBackpack'
-  | 'medBag'
   // POI finds.
   | 'map'
   | 'walkie'
@@ -109,15 +107,34 @@ export type ItemId =
   | 'campNote4'
   // Water at the base (stage 5.15): bottles to fill, rain water to boil.
   | 'emptyBottle'
-  | 'dirtyWater';
+  | 'dirtyWater'
+  // Firearms, their ammunition, spare magazines and modules (weapons/guns).
+  | GunId
+  | AmmoId
+  | MagId
+  | ModId;
 
 import type { CostumeId } from '../characters/assets';
 
-export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing';
+export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing' | 'ammo';
 
 /** Body slots for clothing; the weapon goes to the hand. */
-export type WearSlot = 'outfit' | 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back';
-export const WEAR_SLOTS: readonly WearSlot[] = ['outfit', 'head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back'];
+export type WearSlot = 'outfit' | 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back' | 'bag';
+export const WEAR_SLOTS: readonly WearSlot[] = ['outfit', 'head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back', 'bag'];
+
+/** Gear models (public/models/gear/<id>.glb and their fits to each body). */
+export type GearId =
+  | 'helmet_military'
+  | 'helmet_swat'
+  | 'helmet_firefighter'
+  | 'helmet_construction'
+  | 'vest_military'
+  | 'vest_swat'
+  | 'backpack_military'
+  | 'backpack_school'
+  | 'backpack_hiking'
+  | 'bag_medic'
+  | 'toolbox_mechanic';
 
 /** What a piece of clothing does. Every field is summed over the worn set. */
 export interface WearStats {
@@ -146,10 +163,10 @@ export interface WearDef {
   sleeves?: boolean;
   /** Feet only: which shoe model the legs get. */
   shoe?: 'sneakers' | 'boots';
-  /** Back only: a bag — how much it holds (kg) and how much lighter it makes what is in it (0..1). */
+  /** Bags (back, bag) and pouches (vest): how much it holds (kg) and how much lighter it makes what is in it (0..1). */
   pack?: { capacity: number; reduce: number };
-  /** Head only: placeholder shape on the figure. */
-  hat?: 'cap' | 'beanie' | 'helmet' | 'hardhat';
+  /** The gear model it is (head, vest, back, bag). */
+  gear?: GearId;
 }
 
 export interface ItemDef {
@@ -186,6 +203,19 @@ export interface ItemDef {
 /** What you carry with no bag at all (pockets, hands), kg; bags (`back` slot) and vests add to it. */
 export const BACKPACK_CAPACITY = 8;
 
+/** The firearms and what goes with them (weapons/guns): weights, stacks, the card's line. */
+const FIREARM_ITEMS = {
+  ...Object.fromEntries(GUN_IDS.map((id) => [id, { name: GUNS[id].name, kind: 'weapon', weight: GUNS[id].weight, stack: 1, equip: true, durability: GUNS[id].durability, note: gunNote(id) }])),
+  ...Object.fromEntries((Object.keys(AMMO) as AmmoId[]).map((id) => [id, { name: AMMO[id].name, kind: 'ammo', weight: AMMO[id].weight, stack: AMMO[id].stack }])),
+  ...Object.fromEntries((Object.keys(MAGS) as MagId[]).map((id) => [id, { name: MAGS[id].name, kind: 'ammo', weight: MAGS[id].weight, stack: 6, note: 'Запасной: с ним перезарядка с пустым магазином быстрее' }])),
+  ...Object.fromEntries(MOD_IDS.map((id) => [id, { name: MODS[id].name, kind: 'tool', weight: MODS[id].weight, stack: 1, note: MODS[id].note }])),
+} as Record<GunId | AmmoId | MagId | ModId, ItemDef>;
+
+function gunNote(id: GunId): string {
+  const g = GUNS[id];
+  return `${AMMO[g.caliber].name.replace('Патроны ', '')} · ${g.capacity} · слышно за ${g.noise} м`;
+}
+
 export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   beans: { name: 'Консервы: фасоль', kind: 'food', weight: 0.45, stack: 6, hunger: -0.35, thirst: 0.04 },
   soup: { name: 'Консервы: суп', kind: 'food', weight: 0.45, stack: 6, hunger: -0.3, thirst: -0.08 },
@@ -217,9 +247,6 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   junk: { name: 'Хлам', kind: 'junk', weight: 0.3, stack: 10 },
   soap: { name: 'Мыло', kind: 'tool', weight: 0.1, stack: 5, note: 'Для стирки одежды (скоро)' },
   // Clothing. Warmth in °C of felt temperature: jackets and boots warm the most, a T-shirt and sneakers the least.
-  cap: { name: 'Кепка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x2e3a30, stats: { bite: 0.02, warmth: 1 } } },
-  beanie: { name: 'Вязаная шапка', kind: 'clothing', weight: 0.1, stack: 1, wear: { slot: 'head', color: 0x5a2a26, stats: { bite: 0.04, warmth: 4 } } },
-  hardhat: { name: 'Строительная каска', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'head', color: 0xc89a2a, stats: { bite: 0.35, warmth: 1 } } },
   tshirt: { name: 'Футболка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x8a8a7e, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   hoodie: { name: 'Толстовка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'torso', color: 0x3d4a5c, stats: { bite: 0.08, warmth: 6 } } },
   leatherJacket: { name: 'Кожаная куртка', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'torso', color: 0x2b2420, stats: { bite: 0.3, warmth: 9 } } },
@@ -229,12 +256,9 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   sneakers: { name: 'Кроссовки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'feet', color: 0x5e6266, stats: { bite: 0.05, warmth: 1 }, shoe: 'sneakers' } },
   boots: { name: 'Рабочие ботинки', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'feet', color: 0x4a3626, stats: { bite: 0.3, warmth: 4 }, shoe: 'boots' } },
   // Uniforms (class starting outfits; also found in the world).
-  militaryHelmet: { name: 'Армейская каска', kind: 'clothing', weight: 1.2, stack: 1, wear: { slot: 'head', color: 0x3e4630, stats: { bite: 0.45, warmth: 2 } } },
   militaryJacket: { name: 'Армейский китель', kind: 'clothing', weight: 1.3, stack: 1, wear: { slot: 'torso', color: 0x4a5236, stats: { bite: 0.35, warmth: 8 } } },
   militaryPants: { name: 'Армейские брюки', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'legs', color: 0x4a5236, stats: { bite: 0.2, warmth: 5 } } },
   combatBoots: { name: 'Берцы', kind: 'clothing', weight: 1.5, stack: 1, wear: { slot: 'feet', color: 0x26231f, stats: { bite: 0.35, warmth: 5 }, shoe: 'boots' } },
-  swatHelmet: { name: 'Шлем SWAT', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'head', color: 0x1c1e22, stats: { bite: 0.5, warmth: 2 } } },
-  swatVest: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.5, stack: 1, wear: { slot: 'vest', color: 0x1e2226, stats: { bite: 0.5, warmth: 3 } } },
   outfitSwat: { name: 'Форма SWAT', kind: 'clothing', weight: 3.2, stack: 1, note: 'Тактический комбинезон, наколенники, ботинки', wear: { slot: 'outfit', costume: 'swat', color: 0x262a30, soil: 0.8, stats: { bite: 0.35, warmth: 11 } } },
   outfitMilitary: { name: 'Полевая форма армии США', kind: 'clothing', weight: 2.6, stack: 1, note: 'Камуфляж, берцы', wear: { slot: 'outfit', costume: 'military', color: 0x5b5a3e, soil: 0.6, stats: { bite: 0.3, warmth: 12 } } },
   outfitPolice: { name: 'Полицейская форма', kind: 'clothing', weight: 1.8, stack: 1, note: 'Рубашка, брюки, ботинки', wear: { slot: 'outfit', costume: 'police', color: 0x2c3a5a, soil: 1, stats: { bite: 0.15, warmth: 7 } } },
@@ -244,25 +268,28 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   outfitBuilder: { name: 'Рабочая форма строителя', kind: 'clothing', weight: 2.2, stack: 1, note: 'Сигнальный жилет, ботинки', wear: { slot: 'outfit', costume: 'builder', color: 0x5c5236, soil: 0.6, stats: { bite: 0.25, warmth: 10 } } },
   swatShirt: { name: 'Тактическая куртка', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'torso', color: 0x262a30, stats: { bite: 0.2, warmth: 6 } } },
   swatPants: { name: 'Тактические брюки', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'legs', color: 0x23262a, stats: { bite: 0.25, warmth: 5 } } },
-  policeCap: { name: 'Полицейская фуражка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'head', color: 0x1f2533, stats: { bite: 0.02, warmth: 1 } } },
   policeShirt: { name: 'Полицейская рубашка', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'torso', color: 0x2c3a5a, stats: { bite: 0.1, warmth: 4 } } },
   policePants: { name: 'Полицейские брюки', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'legs', color: 0x1f2533, stats: { bite: 0.12, warmth: 4 } } },
-  fireHelmet: { name: 'Пожарный шлем', kind: 'clothing', weight: 1.0, stack: 1, wear: { slot: 'head', color: 0xb89a32, stats: { bite: 0.4, warmth: 3 } } },
   fireCoat: { name: 'Боёвка пожарного', kind: 'clothing', weight: 2.2, stack: 1, wear: { slot: 'torso', color: 0x8a7038, stats: { bite: 0.4, warmth: 12 } } },
   firePants: { name: 'Пожарные брюки', kind: 'clothing', weight: 1.6, stack: 1, wear: { slot: 'legs', color: 0x8a7038, stats: { bite: 0.3, warmth: 8 } } },
   gorkaJacket: { name: 'Куртка «Горка»', kind: 'clothing', weight: 1.3, stack: 1, wear: { slot: 'torso', color: 0x5b5a3e, stats: { bite: 0.35, warmth: 9 } } },
   gorkaPants: { name: 'Брюки «Горка»', kind: 'clothing', weight: 0.9, stack: 1, wear: { slot: 'legs', color: 0x5b5a3e, stats: { bite: 0.22, warmth: 5 } } },
-  policeVest: { name: 'Полицейский жилет', kind: 'clothing', weight: 2.0, stack: 1, wear: { slot: 'vest', color: 0x1f2533, stats: { bite: 0.35, warmth: 2 } } },
-  tacticalRig: { name: 'Разгрузка', kind: 'clothing', weight: 1.2, stack: 1, wear: { slot: 'vest', color: 0x4a4f36, stats: { bite: 0.15, warmth: 1 }, pack: { capacity: 3, reduce: 0 } }, note: 'Подсумки: +3 кг к переноске.' },
+  // Gear: helmets, vests, packs, bags — models fitted to every body (tools/build-gear.mjs).
+  helmetMilitary: { name: 'Армейский шлем', kind: 'clothing', weight: 1.4, stack: 1, note: 'Кевлар, чехол, крепление под ПНВ', wear: { slot: 'head', gear: 'helmet_military', color: 0x3e4630, soil: 0.6, stats: { bite: 0.5, warmth: 2 } } },
+  helmetSwat: { name: 'Шлем SWAT', kind: 'clothing', weight: 1.5, stack: 1, wear: { slot: 'head', gear: 'helmet_swat', color: 0x1e2022, soil: 0.7, stats: { bite: 0.55, warmth: 2 } } },
+  helmetFire: { name: 'Пожарный шлем', kind: 'clothing', weight: 1.3, stack: 1, note: 'Поля и назатыльник', wear: { slot: 'head', gear: 'helmet_firefighter', color: 0x26231f, soil: 0.6, stats: { bite: 0.45, warmth: 4 } } },
+  helmetConstruction: { name: 'Строительная каска', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'head', gear: 'helmet_construction', color: 0x6e6438, soil: 0.8, stats: { bite: 0.3, warmth: 1 } } },
+  vestMilitary: { name: 'Армейская разгрузка', kind: 'clothing', weight: 3.2, stack: 1, note: 'Плиты и подсумки: +3 кг к переноске', wear: { slot: 'vest', gear: 'vest_military', color: 0x3e4232, soil: 0.6, stats: { bite: 0.45, warmth: 3 }, pack: { capacity: 3, reduce: 0 } } },
+  vestSwat: { name: 'Бронежилет SWAT', kind: 'clothing', weight: 3.8, stack: 1, note: 'Подсумки: +2 кг к переноске', wear: { slot: 'vest', gear: 'vest_swat', color: 0x1e2022, soil: 0.7, stats: { bite: 0.55, warmth: 3 }, pack: { capacity: 2, reduce: 0 } } },
+  backpackMilitary: { name: 'Армейский рюкзак', kind: 'clothing', weight: 1.8, stack: 1, note: 'Вмещает +16 кг, вещи в нём легче на четверть', wear: { slot: 'back', gear: 'backpack_military', color: 0x4a4f36, soil: 0.6, stats: { bite: 0.1, warmth: 2 }, pack: { capacity: 16, reduce: 0.25 } } },
+  backpackSchool: { name: 'Школьный рюкзак', kind: 'clothing', weight: 0.5, stack: 1, note: 'Вмещает +7 кг', wear: { slot: 'back', gear: 'backpack_school', color: 0x3b4252, stats: { bite: 0.05, warmth: 1 }, pack: { capacity: 7, reduce: 0 } } },
+  backpackHiking: { name: 'Туристический рюкзак', kind: 'clothing', weight: 2.1, stack: 1, note: 'Самый вместительный: +20 кг, вещи в нём легче на пятую часть', wear: { slot: 'back', gear: 'backpack_hiking', color: 0x5a3a2e, stats: { bite: 0.08, warmth: 3 }, pack: { capacity: 20, reduce: 0.2 } } },
+  bagMedic: { name: 'Медицинская сумка', kind: 'clothing', weight: 0.7, stack: 1, note: 'Через плечо: +6 кг, вещи в ней легче на десятую часть', wear: { slot: 'bag', gear: 'bag_medic', color: 0x5a3a30, stats: { bite: 0, warmth: 0 }, pack: { capacity: 6, reduce: 0.1 } } },
+  toolboxMechanic: { name: 'Ящик с инструментами', kind: 'clothing', weight: 3.5, stack: 1, note: 'В руке, пока руки свободны; с оружием — на бедре. +5 кг', wear: { slot: 'bag', gear: 'toolbox_mechanic', color: 0x5a3328, soil: 0.5, stats: { bite: 0, warmth: 0 }, pack: { capacity: 5, reduce: 0 } } },
   workGloves: { name: 'Рабочие перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x8a7650, stats: { bite: 0.15, warmth: 2 } } },
   fireGloves: { name: 'Перчатки пожарного', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'hands', color: 0x6b5a32, stats: { bite: 0.3, warmth: 4 } } },
   tacticalGloves: { name: 'Тактические перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x1c1d20, stats: { bite: 0.25, warmth: 2 } } },
   medGloves: { name: 'Медицинские перчатки', kind: 'clothing', weight: 0.05, stack: 1, wear: { slot: 'hands', color: 0x8fb6c8, stats: { bite: 0.02, warmth: 0 } } },
-  schoolBackpack: { name: 'Школьный рюкзак', kind: 'clothing', weight: 0.5, stack: 1, wear: { slot: 'back', color: 0x3b4d6b, stats: { bite: 0.05, warmth: 1 }, pack: { capacity: 7, reduce: 0 } }, note: 'Вмещает +7 кг.' },
-  sportsBag: { name: 'Спортивная сумка', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'back', color: 0x2a2c30, stats: { bite: 0, warmth: 0 }, pack: { capacity: 10, reduce: 0 } }, note: 'Вмещает +10 кг.' },
-  hikingBackpack: { name: 'Туристический рюкзак', kind: 'clothing', weight: 1.4, stack: 1, wear: { slot: 'back', color: 0x7a3a2a, stats: { bite: 0.05, warmth: 2 }, pack: { capacity: 14, reduce: 0.2 } }, note: 'Вмещает +14 кг, вещи в нём легче на 20%.' },
-  armyBackpack: { name: 'Армейский рюкзак', kind: 'clothing', weight: 1.8, stack: 1, wear: { slot: 'back', color: 0x4a4f36, stats: { bite: 0.1, warmth: 2 }, pack: { capacity: 16, reduce: 0.25 } }, note: 'Вмещает +16 кг, вещи в нём легче на 25%.' },
-  medBag: { name: 'Медицинская сумка', kind: 'clothing', weight: 0.6, stack: 1, wear: { slot: 'back', color: 0x8a2a2a, stats: { bite: 0, warmth: 0 }, pack: { capacity: 6, reduce: 0.1 } }, note: 'Вмещает +6 кг, вещи в нём легче на 10%.' },
   map: { name: 'Карта района', kind: 'tool', weight: 0.05, stack: 1, note: 'Отмечены заправки, участок, большие магазины. Кто-то обвёл выезды из города.' },
   walkie: { name: 'Рация', kind: 'tool', weight: 0.4, stack: 1, note: 'Только шипение на всех каналах.' },
   armoryKey: { name: 'Ключ от оружейной', kind: 'tool', weight: 0.02, stack: 1, note: 'Тяжёлый ключ с биркой «Оружейная». Открывает дверь в участке.' },
@@ -288,6 +315,7 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
   slacks: { name: 'Брюки', kind: 'clothing', weight: 0.5, stack: 1, wear: { slot: 'legs', color: 0x2a2a30, stats: { bite: 0.08, warmth: 3 } } },
   dressShoes: { name: 'Туфли', kind: 'clothing', weight: 0.7, stack: 1, wear: { slot: 'feet', color: 0x1e1a18, stats: { bite: 0.08, warmth: 2 }, shoe: 'sneakers' } },
+  ...FIREARM_ITEMS,
 };
 
 /**
@@ -345,4 +373,64 @@ export function useVerb(def: ItemDef): string | null {
 /** Kept one piece per stack with its own state (clothing: dirt; weapons: wear). */
 export function onePiece(def: ItemDef): boolean {
   return !!def.wear || !!def.durability;
+}
+
+/**
+ * Items that are no more (the procedural gear before the models), in older saves: each replaced by the new
+ * piece of its type, or gone (caps, the beanie: no model).
+ */
+const RENAMED: Readonly<Record<string, ItemId | null>> = {
+  militaryHelmet: 'helmetMilitary',
+  swatHelmet: 'helmetSwat',
+  fireHelmet: 'helmetFire',
+  hardhat: 'helmetConstruction',
+  swatVest: 'vestSwat',
+  policeVest: 'vestMilitary',
+  tacticalRig: 'vestMilitary',
+  armyBackpack: 'backpackMilitary',
+  schoolBackpack: 'backpackSchool',
+  sportsBag: 'backpackSchool',
+  hikingBackpack: 'backpackHiking',
+  medBag: 'bagMedic',
+  cap: null,
+  beanie: null,
+  policeCap: null,
+};
+const gone = (x: unknown): boolean => {
+  const id = Array.isArray(x) ? x[0] : x && typeof x === 'object' ? (x as { id?: unknown }).id : x;
+  return typeof id === 'string' && RENAMED[id] === null;
+};
+
+/**
+ * An older save brought up to date, in place: every old item id anywhere in it — a stack (`{id}` or
+ * `[id, count, …]`), a worn slot, the hand — becomes its replacement; the ones with none are dropped. A worn
+ * piece in a slot it no longer belongs to (the medic's bag: back → bag) moves to its own when that is free.
+ */
+export function migrateItems(data: unknown): void {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return v in RENAMED ? RENAMED[v] : v;
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) {
+        if (gone(v[i])) v.splice(i, 1);
+        else v[i] = walk(v[i]);
+      }
+      return v;
+    }
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      for (const k of Object.keys(o)) o[k] = walk(o[k]);
+      for (const slot of WEAR_SLOTS) {
+        const id = o[slot];
+        if (typeof id !== 'string' || !(id in ITEMS)) continue;
+        const real = ITEMS[id as ItemId].wear?.slot;
+        if (real && real !== slot && !o[real]) {
+          o[real] = id;
+          o[slot] = null;
+        }
+      }
+      return o;
+    }
+    return v;
+  };
+  walk(data);
 }

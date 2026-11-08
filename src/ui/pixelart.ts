@@ -454,27 +454,6 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     clearEllipse(s, 11, 12, 0.6, 0.6);
     s.rect(3, 3, 3, 2, 0x4a6a3a);
   },
-  cap: (s) => {
-    s.ellipse(8, 9, 5, 4, ITEMS.cap.wear!.color);
-    clearRect(s, 2, 10, 14, 5);
-    s.rect(8, 9, 7, 2, shadeRGB(ITEMS.cap.wear!.color, 0.8));
-    s.dot(8, 5, shadeRGB(ITEMS.cap.wear!.color, 1.4));
-  },
-  beanie: (s) => {
-    const c = ITEMS.beanie.wear!.color;
-    s.ellipse(8, 9, 5, 5, c);
-    clearRect(s, 2, 11, 14, 5);
-    s.rect(3, 10, 11, 3, shadeRGB(c, 0.8));
-    for (let x = 4; x < 13; x += 2) s.line(x, 10, x, 12, shadeRGB(c, 0.65));
-    s.ellipse(8, 3, 1.5, 1.5, 0xd8d0c0);
-  },
-  hardhat: (s) => {
-    const c = ITEMS.hardhat.wear!.color;
-    s.ellipse(8, 9, 5, 5, c);
-    clearRect(s, 2, 10, 14, 6);
-    s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
-    s.line(8, 4, 8, 9, shadeRGB(c, 1.25));
-  },
   soap: (s) => {
     s.rect(3, 6, 10, 6, 0xd8cfa8);
     s.rect(4, 5, 8, 1, 0xe8e0bc);
@@ -499,7 +478,7 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
   boots: (s) => shoeIcon(s, ITEMS.boots.wear!.color, true),
 };
 
-/** Generic clothing icon by slot, in the item's color (uniforms and anything without its own sprite). */
+/** Generic clothing icon by slot, in the item's color (gear has a render of its model instead: ui/gearIcon). */
 function garment(s: Sprite, id: ItemId): void {
   const w = ITEMS[id].wear;
   if (!w) {
@@ -508,11 +487,6 @@ function garment(s: Sprite, id: ItemId): void {
   }
   const c = w.color;
   switch (w.slot) {
-    case 'head':
-      s.ellipse(8, 9, 6, 5, c);
-      clearRect(s, 1, 10, 15, 6);
-      s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
-      break;
     case 'torso':
       top(s, c, false, true, shadeRGB(c, 0.7));
       break;
@@ -522,34 +496,12 @@ function garment(s: Sprite, id: ItemId): void {
     case 'feet':
       shoeIcon(s, c, w.shoe === 'boots');
       break;
-    case 'vest':
-      // Sleeveless body, a collar cut, pouches on the rig.
-      s.rect(4, 3, 8, 11, c);
-      clearRect(s, 6, 3, 4, 3);
-      s.rect(4, 3, 1, 11, shadeRGB(c, 0.8));
-      s.rect(11, 3, 1, 11, shadeRGB(c, 0.8));
-      if (w.pack) for (const x of [4, 7, 10]) s.rect(x, 9, 2, 3, shadeRGB(c, 0.65));
-      break;
     case 'hands':
       // A glove: palm, four fingers, a thumb.
       s.rect(5, 7, 6, 6, c);
       for (let i = 0; i < 4; i++) s.rect(5 + i * 1.5, 3, 1, 4, c);
       s.rect(11, 7, 2, 3, c);
       s.rect(5, 12, 6, 2, shadeRGB(c, 0.7));
-      break;
-    case 'back':
-      // A bag: body, flap, straps; the duffel lies on its side.
-      if (id === 'sportsBag') {
-        s.rect(2, 7, 12, 6, c);
-        s.rect(5, 4, 6, 1, shadeRGB(c, 0.6));
-        s.rect(5, 4, 1, 3, shadeRGB(c, 0.6));
-        s.rect(10, 4, 1, 3, shadeRGB(c, 0.6));
-      } else {
-        const tall = id === 'hikingBackpack' ? 1 : 0;
-        s.rect(4, 3 - tall, 8, 11 + tall, c);
-        s.rect(4, 3 - tall, 8, 3, shadeRGB(c, 0.8));
-        s.rect(6, 9, 4, 3, shadeRGB(c, 0.7));
-      }
       break;
   }
 }
@@ -562,10 +514,6 @@ function clearEllipse(s: Sprite, cx: number, cy: number, rx: number, ry: number)
       if (dx * dx + dy * dy <= 1 && x >= 0 && y >= 0 && x < s.w && y < s.h) s.px[y * s.w + x] = 0;
     }
   }
-}
-
-function clearRect(s: Sprite, x0: number, y0: number, x1: number, y1: number): void {
-  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (x >= 0 && y >= 0 && x < s.w && y < s.h) s.px[y * s.w + x] = 0;
 }
 
 /** HUD indicators: health, hunger, thirst, energy, body warmth, calm, flashlight battery; wound is a status. */

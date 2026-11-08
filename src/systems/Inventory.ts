@@ -1,4 +1,9 @@
 import { BACKPACK_CAPACITY, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
+import { GUNS, type GunId, isGun, MOD_FITS, MOD_IDS, MODS, type ModId } from '../weapons/guns';
+import { type GunInst, newInst } from '../weapons/gunState';
+
+/** Quick slots 1–4. */
+export const QUICK_SLOTS = 4;
 
 export type Worn = Record<WearSlot, ItemId | null>;
 
@@ -13,6 +18,9 @@ export interface InventoryData {
   wornDirt?: Partial<Record<WearSlot, number>>;
   /** Colors of worn pieces that differ from the item default. */
   wornTint?: Partial<Record<WearSlot, number>>;
+  /** Each firearm's rounds, mods, fire mode (one per kind: the survivor carries one of each). */
+  guns?: Partial<Record<GunId, GunInst>>;
+  quick?: (ItemId | null)[];
 }
 
 /**
@@ -24,9 +32,13 @@ export class Inventory {
   hand: ItemId | null = 'knife';
   /** How worn the weapon in hand is, 0..1 (it breaks at 1). */
   handWear = 0;
-  readonly worn: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
-  readonly wornDirt: Record<WearSlot, number> = { outfit: 0, head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0 };
+  readonly worn: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
+  readonly wornDirt: Record<WearSlot, number> = { outfit: 0, head: 0, torso: 0, vest: 0, hands: 0, legs: 0, feet: 0, back: 0, bag: 0 };
   readonly wornTint: Partial<Record<WearSlot, number>> = {};
+  /** Each firearm kind's state: rounds loaded, mods, mode, jam (its wear is the stack's / the hand's). */
+  readonly guns: Partial<Record<GunId, GunInst>> = {};
+  /** Quick slots 1–4: what the keys draw (filled as weapons are picked up). */
+  readonly quick: (ItemId | null)[] = [null, null, null, null];
   /** Bumped on every change, so UI can redraw lazily. */
   version = 0;
 
@@ -93,8 +105,63 @@ export class Inventory {
       this.stacks.push(onePiece(def) ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}) } : { id, count: put });
       left -= put;
     }
-    if (added > 0) this.version++;
+    if (added > 0) {
+      this.version++;
+      if (ITEMS[id].equip) this.autoQuick(id);
+    }
     return added;
+  }
+
+  /** The state of a firearm kind (made on first use: empty, no mods). */
+  gun(id: GunId): GunInst {
+    return (this.guns[id] ??= newInst(id, 0));
+  }
+
+  /** A weapon picked up goes to the first free quick slot (melee to 1, firearms from 2). */
+  autoQuick(id: ItemId): void {
+    if (this.quick.includes(id)) return;
+    const from = isGun(id) ? 1 : 0;
+    for (let i = from; i < QUICK_SLOTS; i++) {
+      if (!this.quick[i] || !this.has(this.quick[i]!)) {
+        this.quick[i] = id;
+        return;
+      }
+    }
+  }
+
+  /** In the bag or in the hand. */
+  has(id: ItemId): boolean {
+    return this.hand === id || this.count(id) > 0;
+  }
+
+  /** Puts `id` into quick slot `i` (out of any other). */
+  setQuick(i: number, id: ItemId | null): void {
+    for (let k = 0; k < QUICK_SLOTS; k++) if (this.quick[k] === id) this.quick[k] = null;
+    this.quick[i] = id;
+    this.version++;
+  }
+
+  /** A mod from the bag onto a gun (the one already in that slot back into the bag). */
+  attachMod(gun: GunId, mod: ModId): boolean {
+    if (!MOD_FITS[mod].includes(gun) || this.count(mod) === 0) return false;
+    const inst = this.gun(gun);
+    const old = inst.mods.find((m) => MODS[m].slot === MODS[mod].slot);
+    this.remove(mod, 1);
+    if (old) {
+      inst.mods = inst.mods.filter((m) => m !== old);
+      this.add(old, 1);
+    }
+    inst.mods.push(mod);
+    this.version++;
+    return true;
+  }
+
+  detachMod(gun: GunId, mod: ModId): boolean {
+    const inst = this.gun(gun);
+    if (!inst.mods.includes(mod) || this.add(mod, 1) === 0) return false;
+    inst.mods = inst.mods.filter((m) => m !== mod);
+    this.version++;
+    return true;
   }
 
   /** Dirt of the piece `remove(id, 1)` would take (the last stack of it), 0 if none. */
@@ -217,6 +284,8 @@ export class Inventory {
       worn: { ...this.worn },
       wornDirt: { ...this.wornDirt },
       wornTint: { ...this.wornTint },
+      guns: JSON.parse(JSON.stringify(this.guns)) as Partial<Record<GunId, GunInst>>,
+      quick: [...this.quick],
     };
   }
 
@@ -239,7 +308,7 @@ export class Inventory {
         saved[slot] = null;
       }
     }
-    if (data.worn && !('back' in data.worn)) saved.back = 'schoolBackpack';
+    if (data.worn && !('back' in data.worn)) saved.back = 'backpackSchool';
     for (const slot of WEAR_SLOTS) {
       const id = saved[slot] ?? null;
       this.worn[slot] = id && ITEMS[id]?.wear?.slot === slot ? id : null;
@@ -247,6 +316,20 @@ export class Inventory {
       const tint = data.wornTint?.[slot];
       if (this.worn[slot] && tint !== undefined) this.wornTint[slot] = tint;
       else delete this.wornTint[slot];
+    }
+    for (const k of Object.keys(this.guns)) delete this.guns[k as GunId];
+    for (const [id, g] of Object.entries(data.guns ?? {})) {
+      if (!(id in GUNS) || !g) continue;
+      const base = newInst(id as GunId, 0);
+      this.guns[id as GunId] = { ...base, ...g, mods: (g.mods ?? []).filter((m) => (MOD_IDS as readonly string[]).includes(m)) };
+    }
+    for (let i = 0; i < QUICK_SLOTS; i++) {
+      const id = data.quick?.[i] ?? null;
+      this.quick[i] = id && ITEMS[id] ? id : null;
+    }
+    if (!data.quick) {
+      if (this.hand) this.autoQuick(this.hand);
+      for (const s of this.stacks) if (ITEMS[s.id].equip) this.autoQuick(s.id);
     }
     this.version++;
   }

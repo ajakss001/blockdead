@@ -18,6 +18,7 @@ import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
 import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
 import { loadCharacters } from './characters/assets';
+import { loadGearMeta, setGearSource } from './characters/gear';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
@@ -56,7 +57,8 @@ async function boot(): Promise<void> {
   // Third-party vehicles and props (one atlas layer each), before the world streams in.
   await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, maxAniso);
   // The character models (player, zombies, bodies): everything that draws a person uses them synchronously.
-  await loadCharacters(level === 'low' ? 512 : 1024);
+  setGearSource(level === 'low' ? 512 : 1024);
+  await Promise.all([loadCharacters(level === 'low' ? 512 : 1024), loadGearMeta()]);
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);

@@ -1,7 +1,7 @@
 import type { CostumeId } from '../characters/assets';
 import type { MapSave } from './MapMemory';
 import type { Placed } from './Base';
-import type { ItemId, ItemStack } from '../data/items';
+import { type GearId, type ItemId, type ItemStack, migrateItems } from '../data/items';
 import type { ModelKind } from '../zombies/stats';
 import type { ContainerRef } from './Containers';
 import type { Appearance } from '../player/appearance';
@@ -64,6 +64,8 @@ export interface TwinRecord {
   kind?: ModelKind;
   /** The costume they wore (men; null: everyday clothes; old saves: by kind). */
   costume?: CostumeId | null;
+  /** The gear they had on (it stays on them as a zombie). */
+  gear?: GearId[];
 }
 
 /**
@@ -81,6 +83,7 @@ export class SaveGame {
     try {
       const data = (await this.platform.load()) as Partial<SaveV1> | null;
       if (!data || data.v !== VERSION || data.seed !== this.seed || !data.player) return null;
+      migrateItems(data);
       return data as SaveV1;
     } catch {
       return null;

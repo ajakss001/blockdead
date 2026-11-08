@@ -1,4 +1,5 @@
 import type { CostumeId } from '../characters/assets';
+import type { GearId } from '../data/items';
 import { Vector3 } from 'three';
 import { clamp } from '../core/math';
 import { mulberry32 } from '../core/random';
@@ -68,7 +69,11 @@ export interface Zombie {
    * Dead: how it died — the blow (where from, how hard, on the head, where it landed) and how it was moving
    * (walk phase, gait) — for its ragdoll. Null while alive.
    */
-  death: { fromX: number; fromZ: number; damage: number; head: boolean; point: Vector3 | null; phase: number; gait: number; speed: number } | null;
+  death: { fromX: number; fromZ: number; damage: number; head: boolean; point: Vector3 | null; phase: number; gait: number; speed: number; push?: number } | null;
+  /** Shot in the leg: limps (slower) for this many seconds. */
+  limp: number;
+  /** A shot to the head: the model snaps it back once (ZombieModels takes it). */
+  snap: boolean;
   /** Dead and its ragdoll asleep: frozen — nothing moves it or its limbs again. When it died (sim time). */
   rest: boolean;
   diedAt: number;
@@ -81,6 +86,8 @@ export interface Zombie {
   twin?: TwinData;
   /** The costume it wears, when the world says (a twin in the survivor's); undefined: by kind and place. */
   costume?: CostumeId | null;
+  /** The gear it wears, when the world says (a twin's own); undefined: by kind and costume. */
+  gear?: readonly GearId[];
 }
 
 export interface ZombieWorld {
@@ -294,6 +301,8 @@ export class ZombieSim {
       groanCd: 2 + r() * 8,
       hp: T.hp * KIND[k].hp,
       death: null,
+      limp: 0,
+      snap: false,
       rest: false,
       diedAt: 0,
       shake: 0,
@@ -328,6 +337,7 @@ export class ZombieSim {
         continue;
       }
       if (z.shake > 0) z.shake -= dt;
+      if (z.limp > 0) z.limp -= dt;
       const dist = Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z);
       if (this.time >= z.nextThink) {
         const step = dist < T.nearThink ? dt : 1 / T.farHz;
@@ -530,8 +540,8 @@ export class ZombieSim {
    * Death: its AI, chasing, shoving and shudder stop at once; how it died is kept for its ragdoll (the
    * scene turns it into one this step).
    */
-  private kill(z: Zombie, fromX: number, fromZ: number, damage: number, head: boolean, point: Vector3 | null): void {
-    z.death = { fromX, fromZ, damage, head, point: point?.clone() ?? null, phase: z.phase, gait: z.gait, speed: z.speed };
+  private kill(z: Zombie, fromX: number, fromZ: number, damage: number, head: boolean, point: Vector3 | null, push = 1): void {
+    z.death = { fromX, fromZ, damage, head, point: point?.clone() ?? null, phase: z.phase, gait: z.gait, speed: z.speed, push };
     z.state = 'dead';
     z.shake = 0;
     z.speed = 0;
@@ -543,11 +553,16 @@ export class ZombieSim {
     this.died.push(z);
   }
 
-  /** A blow from the player. Returns true if it killed. */
-  hit(z: Zombie, damage: number, fromX: number, fromZ: number, head = false, point: Vector3 | null = null): boolean {
+  /**
+   * A blow or a shot from the player. Returns true if it killed. Shots: the head snaps back, a leg hit
+   * makes it limp a while; `push` scales the ragdoll's impulse (the blast).
+   */
+  hit(z: Zombie, damage: number, fromX: number, fromZ: number, head = false, point: Vector3 | null = null, push = 1): boolean {
     if (z.state === 'dead') return false;
     z.hp -= damage;
     z.shake = 0.25;
+    if (head) z.snap = true;
+    if (point && !head && point.y < z.pos.y + 0.75 * ZombieSim.scale(z)) z.limp = 6;
     // Knocked back a little, away from the blow.
     const dx = z.pos.x - fromX;
     const dz = z.pos.z - fromZ;
@@ -558,7 +573,7 @@ export class ZombieSim {
     z.awareness = 1.2;
     z.target.set(fromX, z.pos.y, fromZ);
     if (z.hp <= 0) {
-      this.kill(z, fromX, fromZ, damage, head, point);
+      this.kill(z, fromX, fromZ, damage, head, point, push);
       if (z.twin) this.killedTwins.push(z);
       return true;
     }
@@ -610,6 +625,7 @@ export class ZombieSim {
     const dz = z.steer.z - z.pos.z;
     const d = Math.hypot(dx, dz);
     const go = want > 0 && d > (z.state === 'chase' ? 0.8 : 0.4) && !(z.state === 'chase' && dist < 0.9);
+    if (z.limp > 0) want *= 0.5;
     z.speed += ((go ? want * z.pace : 0) - z.speed) * Math.min(1, dt * 3);
     if (go) {
       const yaw = Math.atan2(dx, dz);

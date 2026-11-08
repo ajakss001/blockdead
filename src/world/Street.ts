@@ -161,6 +161,14 @@ export class Street {
     if (i >= 0 && y < 1.9) this.alarm(i);
   }
 
+  /** Cars whose centre is within r of (x, z) (an explosion sets them on fire). */
+  carsNear(x: number, z: number, r: number): { x: number; z: number }[] {
+    const out: { x: number; z: number }[] = [];
+    const c = this.cars;
+    for (let i = 0; i + 3 < c.length; i += 4) if (Math.hypot(c[i] - x, c[i + 1] - z) < r) out.push({ x: c[i], z: c[i + 1] });
+    return out;
+  }
+
   /** Index of the car whose footprint (grown by `pad`) holds (x, z), or −1. */
   private carAt(x: number, z: number, pad: number): number {
     const c = this.cars;

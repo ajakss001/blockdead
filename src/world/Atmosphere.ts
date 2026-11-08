@@ -182,6 +182,16 @@ export class Atmosphere {
     return this.street.hazard(x, y, z);
   }
 
+  /** Cars near a point (Street). */
+  carsNear(x: number, z: number, r: number): { x: number; z: number }[] {
+    return this.street.carsNear(x, z, r);
+  }
+
+  /** A blow / a bullet on a car: its alarm. */
+  carHit(x: number, y: number, z: number): void {
+    this.street.strikeAt(x, y, z);
+  }
+
   /** The city's power and water (systems/Utilities): fridges, TVs, phones; taps and broken hydrants. */
   setUtilities(power: boolean, water: boolean): void {
     if (power === this.power && water === this.water) return;

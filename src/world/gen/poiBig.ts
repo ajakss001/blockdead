@@ -431,7 +431,8 @@ export function militaryBase(S: Site, rand: Rand): void {
     for (const x of [-17, -9]) {
       p.box(0x4a4e3e, x, 0, z, 2.6, 0.12, 1.2, 'wood', true);
       for (let k = 0; k < 2; k++) p.box(0x4e5438, x, 0.12 + k * 0.6, z, 2.2, 0.55, 1.0, 'wood');
-      S.container('militaryCrate', x, z + 0.9);
+      // The front row is the base's armoury: rifles, rounds, the only RPGs.
+      S.container(z === -50 ? 'baseArmory' : 'militaryCrate', x, z + 0.9);
     }
   }
 

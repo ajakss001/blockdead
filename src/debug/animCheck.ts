@@ -2,7 +2,9 @@ import { type Group, Quaternion, Vector3 } from 'three';
 import { FOREARM_ROLL, hitTime, swingTime, WRIST_DEV, WRIST_FLEX, WRIST_TWIST } from '../player/armRig';
 import { GRIP_X, GRIP_Z } from '../player/hand';
 import { FISTS, HELD, type HeldConfig } from '../player/held';
-import type { RightItem, Viewmodel, ViewmodelFrame } from '../player/Viewmodel';
+import type { HandItem, RightItem, Viewmodel, ViewmodelFrame } from '../player/Viewmodel';
+import { GUN_IDS, GUNS, type GunId, isGun } from '../weapons/guns';
+import { type AmmoSource, type GunInput, GunState, newInst } from '../weapons/gunState';
 
 /**
  * Frame-by-frame check of the first-person weapon animations, on the real Viewmodel scene graph
@@ -96,7 +98,7 @@ const _qa = new Quaternion();
 const _qb = new Quaternion();
 const _qc = new Quaternion();
 
-const cfgOf = (item: RightItem): HeldConfig => (item === 'fists' ? FISTS : HELD[item]);
+const cfgOf = (item: HandItem): HeldConfig => (item === 'fists' || isGun(item) ? FISTS : HELD[item]);
 
 function quatAngle(a: Quaternion, b: Quaternion): number {
   return 2 * Math.acos(Math.min(1, Math.abs(a.dot(b)))) * DEG;
@@ -122,19 +124,20 @@ class Sampler {
   private prevRoll = [0, 0];
   private prevSwivel = [0, 0];
   private first = true;
-  private lastItem: RightItem | null = null;
+  private lastItem: HandItem | null = null;
   constructor(private readonly vm: Viewmodel) {}
 
   restart(): void {
     this.first = true;
   }
 
-  hand(k: 0 | 1, item: RightItem, checkFrame: boolean): HandRow {
+  hand(k: 0 | 1, item: HandItem, checkFrame: boolean): HandRow {
     const vm = this.vm;
     const v = vm as unknown as VmInternals;
     const pose = k === 0 ? vm.rig.right.pose : vm.rig.left.pose;
     const hand = k === 0 ? v.handR : v.handL;
     const side = k === 0 ? 1 : -1;
+    if (isGun(item)) return this.gunHand(k, hand, side, checkFrame);
     const cfg = cfgOf(item);
     // The socket this hand holds and the object it is on.
     let socketObj: Group;
@@ -182,7 +185,67 @@ class Sampler {
     };
   }
 
-  row(frame: number, phase: string, item: RightItem, checkFrame: boolean, leftActive: boolean): FrameRow {
+  /** A hand on a gun: against the socket the viewmodel says it holds (grip, handguard, magazine, bolt). */
+  private gunHand(k: 0 | 1, hand: Group, side: number, checkFrame: boolean): HandRow {
+    const vm = this.vm;
+    const pose = k === 0 ? vm.rig.right.pose : vm.rig.left.pose;
+    const gripW = _a.set(GRIP_X * side, 0, GRIP_Z).applyMatrix4(hand.matrixWorld);
+    const socketW = new Vector3();
+    vm.gunSocket(k, socketW, _qb);
+    const socketGap = gripW.distanceTo(socketW);
+    const inFrame = !checkFrame || inView(vm, gripW);
+    hand.getWorldQuaternion(_qa);
+    const socketTurn = quatAngle(_qa, _qb);
+    const sleeveGap = vm.arms.cuff[k].distanceTo(vm.arms.wrist[k]);
+    const dWrist = this.first ? 0 : quatAngle(hand.quaternion, this.prevWrist[k]);
+    const dRoll = this.first ? 0 : Math.abs(pose.roll - this.prevRoll[k]) * DEG;
+    const dSwivel = this.first ? 0 : Math.abs(pose.swivel - this.prevSwivel[k]) * DEG;
+    this.prevWrist[k].copy(hand.quaternion);
+    this.prevRoll[k] = pose.roll;
+    this.prevSwivel[k] = pose.swivel;
+    const fwd = new Vector3(0, 0, -1).applyQuaternion(hand.quaternion);
+    return {
+      flex: pose.flex * DEG,
+      dev: pose.dev * DEG,
+      twist: pose.twist * DEG,
+      roll: pose.roll * DEG,
+      bend: Math.acos(Math.min(1, Math.max(-1, -fwd.z))) * DEG,
+      dWrist,
+      dRoll,
+      dSwivel,
+      sleeveGap,
+      socketGap,
+      socketTurn,
+      inFrame,
+    };
+  }
+
+  /** A frame with a gun in hand: the hands, and the muzzle (its head) on screen. */
+  gunRow(frame: number, phase: string, item: GunId, checkFrame: boolean): FrameRow {
+    const vm = this.vm;
+    vm.scene.updateMatrixWorld(true);
+    // Long guns and the launcher: the hand on the grip sits low at the hip, below the frame (as in any shooter); the left hand and the muzzle stay in it.
+    const R = this.hand(0, item, checkFrame && GUNS[item].cls === 'pistol');
+    // The launcher on the shoulder: the left hand on the rear grip is behind the right one, below the frame too.
+    const L = this.hand(1, item, checkFrame && GUNS[item].cls !== 'launcher');
+    this.first = false;
+    const gm = vm.gunModel!;
+    const muzzle = gm.muzzle(new Vector3()).applyMatrix4(gm.root.matrixWorld);
+    const headInFrame = !checkFrame || inView(vm, muzzle);
+    const cam = vm.camera;
+    const prev = cam.aspect;
+    cam.aspect = 16 / 9;
+    cam.updateProjectionMatrix();
+    const pm = muzzle.clone().project(cam);
+    cam.aspect = prev;
+    cam.updateProjectionMatrix();
+    const swap = this.lastItem !== null && this.lastItem !== item;
+    this.lastItem = item;
+    return { frame, phase, R, L, headInFrame, checkFrame, swap, headX: pm.x, headY: pm.y, butX: 0, butY: 0, contact: false };
+  }
+
+  row(frame: number, phase: string, item: HandItem, checkFrame: boolean, leftActive: boolean): FrameRow {
+    if (isGun(item)) return this.gunRow(frame, phase, item, checkFrame);
     const vm = this.vm;
     const v = vm as unknown as VmInternals;
     vm.scene.updateMatrixWorld(true);
@@ -226,7 +289,7 @@ class Sampler {
 const frameOf = (o: Partial<ViewmodelFrame> = {}): ViewmodelFrame => ({ lookX: 0, lookY: 0, stepPhase: 0, speed: 0, sprinting: false, flashlightOn: true, ...o });
 
 /** Put an item in hand and let the switch settle. */
-function settle(vm: Viewmodel, item: RightItem, f: ViewmodelFrame): void {
+function settle(vm: Viewmodel, item: HandItem, f: ViewmodelFrame): void {
   const v = vm as unknown as VmInternals;
   vm.equip(item);
   for (let i = 0; i < 90 && (v.item !== item || i < 40); i++) {
@@ -236,7 +299,8 @@ function settle(vm: Viewmodel, item: RightItem, f: ViewmodelFrame): void {
 }
 
 /** The swing of `item` as 60 frames at 60 Hz: a few frames at rest, the whole swing, rest again. */
-export function swingFrames(vm: Viewmodel, item: RightItem): FrameRow[] {
+export function swingFrames(vm: Viewmodel, item: HandItem): FrameRow[] {
+  if (isGun(item)) return gunAnimations(vm, item).fire;
   const f = frameOf();
   settle(vm, item, f);
   const cfg = cfgOf(item);
@@ -262,7 +326,8 @@ export function swingFrames(vm: Viewmodel, item: RightItem): FrameRow[] {
 }
 
 /** Every animation of an item: rest, sprint, swing, flashlight down/up (one-handed), switching away and back. */
-export function allAnimations(vm: Viewmodel, item: RightItem): Record<string, FrameRow[]> {
+export function allAnimations(vm: Viewmodel, item: HandItem): Record<string, FrameRow[]> {
+  if (isGun(item)) return gunAnimations(vm, item);
   const out: Record<string, FrameRow[]> = {};
   const cfg = cfgOf(item);
   out.swing = swingFrames(vm, item);
@@ -306,7 +371,7 @@ export function allAnimations(vm: Viewmodel, item: RightItem): Record<string, Fr
 export function failures(item: string, anim: string, rows: FrameRow[]): Failure[] {
   const out: Failure[] = [];
   const add = (frame: number, what: string) => out.push({ item, anim, frame, what });
-  const path = !!cfgOf(item as RightItem).keys.swing;
+  const path = !isGun(item) && !!cfgOf(item as RightItem).keys.swing;
   // The bottom-20% and upright-handle rules are the two-handed chop's.
   const twoH = cfgOf(item as RightItem).twoHanded;
   let prev: FrameRow | null = null;
@@ -326,7 +391,7 @@ export function failures(item: string, anim: string, rows: FrameRow[]): Failure[
       if (r.checkFrame && !h.inFrame) add(r.frame, `${name} hand out of the frame`);
     }
     // A path swing may lift the head over the top right edge in the windup.
-    if (r.checkFrame && !r.headInFrame && !(path && r.phase === 'windup')) add(r.frame, 'weapon head out of the frame');
+    if (r.checkFrame && !r.headInFrame && !(path && r.phase === 'windup')) add(r.frame, isGun(item) ? 'muzzle out of the frame' : 'weapon head out of the frame');
     if (!path || !r.checkFrame || r.swap) continue;
     // Path swings (the axe's chop): distances in screen widths, 16:9.
     const dist = (x: number, y: number) => Math.hypot(x, (y * 9) / 16) / 2;
@@ -366,4 +431,138 @@ export function table(rows: FrameRow[]): string {
   return lines.join('\n');
 }
 
-export const ITEMS: RightItem[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer', 'fists'];
+export const ITEMS: HandItem[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer', 'fists', ...GUN_IDS];
+
+/** Unlimited rounds and magazines for the checks. */
+const plenty = (): AmmoSource => ({ count: () => 999, take: (_id, n) => n, give: () => {}, spareMags: () => 9, takeMag: () => true });
+
+/**
+ * Every animation of a gun, on the real gun logic (GunState) at 60 Hz: idle (breathing), walk, sprint and
+ * back, crouch, into the sights and out, fire (single shots, a burst on auto, in the sights), every reload
+ * (tactical, from empty, one at a time with a shot cutting it short), the pump / bolt, a jam cleared, inspect,
+ * the fire-mode switch, the butt strike, a wall in front, switching away and back (holster / draw).
+ */
+export function gunAnimations(vm: Viewmodel, id: GunId): Record<string, FrameRow[]> {
+  const g = GUNS[id];
+  const dt = 1 / 60;
+  const out: Record<string, FrameRow[]> = {};
+  const inst = newInst(id, g.capacity + 1);
+  const gs = new GunState(id, inst, plenty());
+  const gv = vm.gunView;
+  gv.mods = [];
+  const s = new Sampler(vm);
+  const none: GunInput = { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true };
+  /** One frame: the gun logic, then the arms; check: the hands and the muzzle in the frame. */
+  const tick = (rows: FrameRow[], phase: string, inp: Partial<GunInput>, f: Partial<ViewmodelFrame>, check: boolean) => {
+    for (const e of gs.update(dt, { ...none, ...inp })) if (e.kind === 'shot') vm.fire(g.recoil.up, g.recoil.side, g.recoil.back);
+    gv.action = gs.action;
+    gv.t = gs.t;
+    gv.duration = gs.duration;
+    gv.open = gs.open;
+    gv.chamber = inst.chamber;
+    vm.fixedUpdate(dt, false);
+    vm.update(dt, frameOf({ flashlightOn: false, ...f }));
+    rows.push(s.gunRow(rows.length, gs.action === 'idle' ? phase : gs.action, id, check && gs.action === 'idle'));
+  };
+  const run = (name: string, n: number, inp: (i: number) => Partial<GunInput>, f: (i: number) => Partial<ViewmodelFrame> = () => ({}), check = true) => {
+    s.restart();
+    const rows: FrameRow[] = (out[name] = []);
+    for (let i = 0; i < n; i++) tick(rows, name, inp(i), f(i), check);
+  };
+  const until = (name: string, max: number, inp: (i: number) => Partial<GunInput>, check = false) => {
+    // What the last one left going (the bolt after a shot) finishes first, off the record.
+    for (let k = 0; k < 600 && (gs.busy || k < 20); k++) {
+      gs.update(dt, none);
+      gv.action = gs.action;
+      gv.t = gs.t;
+      gv.duration = gs.duration;
+      vm.fixedUpdate(dt, false);
+      vm.update(dt, frameOf({ flashlightOn: false }));
+    }
+    s.restart();
+    const rows: FrameRow[] = (out[name] = []);
+    let i = 0;
+    do tick(rows, name, inp(i), {}, check);
+    while (++i < max && (gs.busy || i < 3));
+    // A few frames of rest after it.
+    for (let k = 0; k < 6; k++) tick(rows, name, {}, {}, check);
+  };
+  gv.ads = false;
+  gv.wall = 0;
+  settle(vm, id, frameOf({ flashlightOn: false }));
+  // The draw from the switch: let it finish.
+  for (let i = 0; i < 60; i++) {
+    gs.update(dt, none);
+    vm.update(dt, frameOf({ flashlightOn: false }));
+  }
+  run('idle', 60, () => ({}));
+  let phase = 0;
+  run('walk', 90, () => ({}), () => ((phase += (Math.PI * 1.8) / 60), { stepPhase: phase, speed: 1.6 }));
+  run('sprint', 100, () => ({}), (i) => ((phase += (Math.PI * 2.6) / 60), { sprinting: i < 70, stepPhase: phase, speed: i < 70 ? 5 : 1 }), false);
+  run('crouch', 50, () => ({}), (i) => ({ crouch: Math.min(1, i / 20) }));
+  gv.ads = true;
+  run('ads', 40, () => ({}), () => ({}), false);
+  run('adsFire', 50, (i) => ({ pulled: i % 12 === 0, trigger: i % 12 < 2 }), () => ({}), false);
+  gv.ads = false;
+  run('adsOut', 30, () => ({}));
+  if (g.modes.includes('auto')) {
+    inst.mode = 'auto';
+    run('auto', 60, (i) => ({ trigger: i < 40, pulled: i === 0 }));
+    inst.mode = g.modes[0];
+  }
+  run('fire', 60, (i) => ({ pulled: i % 20 === 0, trigger: i % 20 < 2 }));
+  if (g.feed === 'mag') {
+    until('reload', 400, (i) => ({ reload: i === 0 }));
+    inst.mag = 0;
+    inst.chamber = false;
+    until('reloadEmpty', 400, (i) => ({ reload: i === 0 }));
+  } else if (g.feed === 'rocket') {
+    inst.chamber = false;
+    until('reload', 400, (i) => ({ reload: i === 0 }));
+  } else {
+    inst.mag = 0;
+    inst.chamber = false;
+    // One at a time, cut short by the trigger after a few rounds.
+    until('load', 600, (i) => ({ reload: i === 0, pulled: i === 100, trigger: i === 100 }));
+  }
+  if (g.action === 'pump' || g.action === 'bolt') {
+    inst.chamber = true;
+    inst.mag = Math.max(inst.mag, 2);
+    until('cycle', 200, (i) => ({ pulled: i === 0, trigger: i < 2 }));
+  }
+  if (g.feed !== 'rocket') {
+    inst.jammed = true;
+    inst.chamber = true;
+    inst.mag = Math.max(1, inst.mag);
+    until('unjam', 400, (i) => ({ reload: i === 0 }));
+  }
+  until('inspect', 400, (i) => ({ inspect: i === 0 }), true);
+  if (g.modes.length > 1) until('mode', 100, (i) => ({ mode: i === 0 }), true);
+  until('bash', 100, (i) => ({ bash: i === 0 }), false);
+  // A wall comes close and goes (gunView.wall from its distance: muzzle up and back).
+  out.wall = [];
+  s.restart();
+  for (let i = 0; i < 70; i++) {
+    gv.wall = i < 35 ? Math.min(1, i / 15) : Math.max(0, 1 - (i - 35) / 15);
+    tick(out.wall, 'wall', {}, {}, false);
+  }
+  gv.wall = 0;
+  // Switching away (holster) and back (draw).
+  s.restart();
+  out.switch = [];
+  vm.equip('fists');
+  for (let i = 0; i < 60; i++) {
+    vm.fixedUpdate(dt, false);
+    vm.update(dt, frameOf({ flashlightOn: false }));
+    if (!vm.gun) break;
+    out.switch.push(s.gunRow(out.switch.length, 'holster', id, false));
+  }
+  for (let i = 0; i < 20; i++) vm.update(dt, frameOf({ flashlightOn: false }));
+  vm.equip(id);
+  for (let i = 0; i < 90; i++) {
+    vm.fixedUpdate(dt, false);
+    vm.update(dt, frameOf({ flashlightOn: false }));
+    if (vm.gun) out.switch.push(s.gunRow(out.switch.length, 'draw', id, false));
+  }
+  return out;
+}

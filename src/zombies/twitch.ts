@@ -122,6 +122,12 @@ export class Twitch {
     this.base.clear();
   }
 
+  /** Shot in the head: it snaps back (and a little aside), then the clip takes it again. */
+  snapHead(): void {
+    this.jerks.push({ bone: this.b.head, to: [-0.75, (this.rnd() * 2 - 1) * 0.2, (this.rnd() * 2 - 1) * 0.25], t: 0 });
+    this.jerks.push({ bone: this.b.neck, to: [-0.35, 0, 0], t: 0 });
+  }
+
   private add(bone: number, x: number, y: number, z: number): void {
     let o = this.offset.get(bone);
     if (!o) this.offset.set(bone, (o = new Quaternion()));

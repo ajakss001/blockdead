@@ -1,4 +1,5 @@
 import type { CostumeId } from '../characters/assets';
+import type { GearId } from '../data/items';
 import type { ModelKind } from './stats';
 
 /**
@@ -39,4 +40,36 @@ export function zombieCostume(id: number, kind: ModelKind, female: boolean, own?
   }
   if (female || BY_KIND[kind]) return null;
   return r < STRAY ? ANY[Math.floor(hash(id, 0x2b) * ANY.length)] : null;
+}
+
+/** Per costume, then per kind: [piece, share] — what a zombie of it still wears over its clothes. */
+const GEAR_BY_COSTUME: Partial<Record<CostumeId, [GearId, number][]>> = {
+  military: [['helmet_military', 0.8], ['vest_military', 0.7], ['backpack_military', 0.3]],
+  swat: [['helmet_swat', 0.85], ['vest_swat', 0.9]],
+  firefighter: [['helmet_firefighter', 0.75]],
+  builder: [['helmet_construction', 0.8]],
+  mechanic: [['toolbox_mechanic', 0.3]],
+  doctor: [['bag_medic', 0.4]],
+};
+const GEAR_BY_KIND: Partial<Record<ModelKind, [GearId, number][]>> = {
+  soldier: [['helmet_military', 0.5], ['vest_military', 0.3]],
+  firefighter: [['helmet_firefighter', 0.5]],
+  builder: [['helmet_construction', 0.6]],
+  medic: [['bag_medic', 0.25]],
+  tourist: [['backpack_hiking', 0.5]],
+  jogger: [['backpack_school', 0.3]],
+  courier: [['backpack_school', 0.35]],
+  survivorM: [['backpack_school', 0.35], ['backpack_hiking', 0.15]],
+  survivorF: [['backpack_school', 0.35], ['backpack_hiking', 0.15]],
+};
+
+/** A zombie's gear (each piece by its own share; one per slot), fixed by the id. */
+export function zombieGear(id: number, kind: ModelKind, _female: boolean, costume: CostumeId | null): GearId[] {
+  const list = (costume && GEAR_BY_COSTUME[costume]) || GEAR_BY_KIND[kind] || [];
+  const out: GearId[] = [];
+  const slot = (g: GearId) => g.split('_')[0];
+  list.forEach(([g, share], i) => {
+    if (hash(id, 0x6e + i * 7) < share && !out.some((o) => slot(o) === slot(g))) out.push(g);
+  });
+  return out;
 }

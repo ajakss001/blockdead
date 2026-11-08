@@ -1,5 +1,5 @@
 import { Viewmodel } from '../player/Viewmodel';
-import type { RightItem } from '../player/Viewmodel';
+import type { HandItem } from '../player/Viewmodel';
 import { failures, type FrameRow, swingFrames, table } from './animCheck';
 
 /**
@@ -15,7 +15,7 @@ export function installAnimDebug(vm: Viewmodel, root: HTMLElement): void {
   box.style.cssText =
     'position:absolute;left:8px;top:40px;z-index:50;margin:0;padding:6px 8px;background:rgba(0,0,0,.6);color:#d8f0c0;font:11px/1.35 monospace;pointer-events:none;white-space:pre';
   root.append(box);
-  let item: RightItem | null = null;
+  let item: HandItem | null = null;
   let rows: FrameRow[] = [];
   let frame = 0;
   const lead = 3 / 60;

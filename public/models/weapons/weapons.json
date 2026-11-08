@@ -1,0 +1,68 @@
+{
+ "pistol_g17": {
+  "parts": [
+   "body",
+   "slide"
+  ],
+  "tris": 2445
+ },
+ "pistol_m1911": {
+  "parts": [
+   "body",
+   "slide"
+  ],
+  "tris": 2432
+ },
+ "rifle_m4a1": {
+  "parts": [
+   "body",
+   "mag"
+  ],
+  "tris": 3998
+ },
+ "rifle_ak": {
+  "parts": [
+   "body",
+   "mag"
+  ],
+  "tris": 3840
+ },
+ "shotgun_pump": {
+  "parts": [
+   "body",
+   "pump"
+  ],
+  "tris": 3998
+ },
+ "rifle_hunting": {
+  "parts": [
+   "body"
+  ],
+  "tris": 3926
+ },
+ "launcher_rpg": {
+  "parts": [
+   "body",
+   "rocket"
+  ],
+  "tris": 3672
+ },
+ "mod_suppressor": {
+  "parts": [
+   "body"
+  ],
+  "tris": 800
+ },
+ "mod_ext_mag_m4": {
+  "parts": [
+   "body"
+  ],
+  "tris": 800
+ },
+ "mod_ext_mag_ak": {
+  "parts": [
+   "body"
+  ],
+  "tris": 800
+ }
+}

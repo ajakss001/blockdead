@@ -33,6 +33,14 @@ export type ItemSound = 'click' | 'pick' | 'move' | 'cloth' | 'weapon' | 'eat' |
 export type SwingKind = 'heavy' | 'blade' | 'fist';
 /** What a blow on a body sounds like: a club, a metal tool, an axe, a blade's point, a fist. */
 export type FleshBlow = 'blunt' | 'metal' | 'chop' | 'stab' | 'fist';
+/** Guns by how they sound: the report, its crack and boom. */
+export type GunSound = 'pistol' | 'pistol45' | 'rifle' | 'ak' | 'shotgun' | 'hunting' | 'rpg';
+/** The gun's mechanics in the hands. */
+export type GunMech = 'magOut' | 'magIn' | 'rack' | 'slideLock' | 'boltCatch' | 'pump' | 'bolt' | 'shell' | 'rocket' | 'mode' | 'dry' | 'jam' | 'draw' | 'holster' | 'lastRounds';
+/** Where the shot rings: indoors (short, dense), a street (one late slap), an alley (fluttering). */
+export type EchoPlace = 'indoor' | 'street' | 'alley';
+/** What a bullet hits. */
+export type BulletHit = 'concrete' | 'metal' | 'wood' | 'glass' | 'car' | 'flesh' | 'soft';
 /** A zombie's blow on the survivor: stopped by the clothes, a scratch, a bite. */
 export type Attacked = 'blocked' | 'scratch' | 'bite';
 
@@ -115,6 +123,7 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
   warehouse: 'crate',
   plantStore: 'locker',
   militaryCrate: 'crate',
+  baseArmory: 'crate',
   bodyZombie: 'bag',
   labLocker: 'locker',
   labBench: 'drawer',
@@ -684,6 +693,180 @@ class Sound {
     if (kind === 'heavy') this.noiseHit(out, t, { type: 'bandpass', f: 280, f2: 1300, q: 1.6, dur: dur * 1.6, peak: 0.32, attack: dur * 0.9 });
     else if (kind === 'blade') this.noiseHit(out, t, { type: 'bandpass', f: 900, f2: 3200, q: 2, dur: dur * 1.5, peak: 0.2, attack: dur * 0.8 });
     else this.noiseHit(out, t, { type: 'bandpass', f: 400, f2: 900, q: 1, dur: dur * 1.4, peak: 0.12, attack: dur * 0.7 });
+  }
+
+  /**
+   * A shot: the crack of the report, its low boom and the mechanism; suppressed — a dull thud and the action
+   * loud in its own right. The place answers: indoors a dense short ring, a street one late slap off the
+   * far fronts, an alley a flutter between its walls. `self`: ours (no distance falloff, at the ear).
+   */
+  gunShot(kind: GunSound, pos: Pos | null, suppressed: boolean, place: EchoPlace): void {
+    const v = this.voice(pos, 1.6, 6, true);
+    if (!v) return;
+    const [out, t] = v;
+    const big = kind === 'rpg' ? 1.6 : kind === 'shotgun' || kind === 'hunting' ? 1.25 : kind === 'rifle' || kind === 'ak' ? 1.1 : kind === 'pistol45' ? 0.95 : 0.85;
+    const low = kind === 'pistol' ? 170 : kind === 'pistol45' ? 130 : kind === 'shotgun' ? 95 : kind === 'rpg' ? 60 : kind === 'ak' ? 115 : 125;
+    if (suppressed) {
+      this.noiseHit(out, t, { type: 'lowpass', f: 900, f2: 300, dur: 0.09, peak: 0.45 * big });
+      this.noiseHit(out, t, { type: 'bandpass', f: 2200, q: 1.5, dur: 0.03, peak: 0.12 });
+      this.tone(out, t, { f: low * 1.4, f2: low * 0.8, dur: 0.08, peak: 0.12 });
+    } else if (kind === 'rpg') {
+      this.noiseHit(out, t, { type: 'lowpass', f: 1800, f2: 200, dur: 0.6, peak: 0.95, attack: 0.01 });
+      this.noiseHit(out, t + 0.02, { type: 'bandpass', f: 600, f2: 2400, q: 0.8, dur: 1.1, peak: 0.35, attack: 0.08 });
+      this.tone(out, t, { f: 70, f2: 38, dur: 0.5, peak: 0.6 });
+    } else {
+      // The crack (supersonic, the muzzle blast), the boom, a tail.
+      this.noiseHit(out, t, { type: 'highpass', f: 1800, dur: 0.025, peak: 0.9 * big });
+      this.noiseHit(out, t, { type: 'lowpass', f: 2600, f2: 350, dur: 0.16 * big, peak: 0.85 * big });
+      this.tone(out, t, { f: low * 1.6, f2: low * 0.6, dur: 0.18 * big, peak: 0.55 * big });
+      this.noiseHit(out, t + 0.03, { type: 'bandpass', f: 700, q: 0.7, dur: 0.35 * big, peak: 0.18 * big, attack: 0.02 });
+    }
+    // The echo by place.
+    const e = suppressed ? 0.25 : 1;
+    if (place === 'indoor') {
+      for (let i = 0; i < 5; i++) this.noiseHit(out, t + 0.012 + i * 0.017, { type: 'lowpass', f: 2200 - i * 300, dur: 0.08, peak: (0.32 - i * 0.05) * big * e });
+    } else if (place === 'alley') {
+      for (let i = 0; i < 6; i++) this.noiseHit(out, t + 0.06 + i * 0.075, { type: 'bandpass', f: 1300 - i * 120, q: 0.9, dur: 0.07, peak: (0.24 - i * 0.035) * big * e });
+    } else {
+      this.noiseHit(out, t + 0.32 + Math.random() * 0.15, { type: 'lowpass', f: 900, dur: 0.5, peak: 0.2 * big * e, attack: 0.04 });
+      this.noiseHit(out, t + 0.75 + Math.random() * 0.3, { type: 'lowpass', f: 600, dur: 0.7, peak: 0.1 * big * e, attack: 0.06 });
+    }
+  }
+
+  /** The gun's own noises in the hands (magazine, slide, bolt, pump, the dry click…), at the ear. */
+  gunMech(kind: GunMech, pitch = 1): void {
+    const v = this.voice(null, 0.6);
+    if (!v) return;
+    const [out, t] = v;
+    const k = (f: number) => f * pitch;
+    switch (kind) {
+      case 'magOut':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1800), q: 3, dur: 0.03, peak: 0.25 });
+        this.noiseHit(out, t + 0.04, { type: 'bandpass', f: k(900), q: 1.5, dur: 0.12, peak: 0.12, attack: 0.03 });
+        break;
+      case 'magIn':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1300), q: 2, dur: 0.05, peak: 0.2 });
+        this.noiseHit(out, t + 0.06, { type: 'bandpass', f: k(2600), q: 4, dur: 0.025, peak: 0.35 });
+        this.tone(out, t + 0.06, { f: k(1900), dur: 0.05, peak: 0.06 });
+        break;
+      case 'rack':
+      case 'pump':
+      case 'bolt':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(kind === 'pump' ? 900 : 1500), q: 2, dur: 0.06, peak: 0.28 });
+        this.noiseHit(out, t + (kind === 'pump' ? 0.16 : 0.12), { type: 'bandpass', f: k(2200), q: 3, dur: 0.04, peak: 0.38 });
+        this.tone(out, t + 0.12, { f: k(2600), dur: 0.04, peak: 0.07 });
+        break;
+      case 'slideLock':
+      case 'boltCatch':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(3000), q: 5, dur: 0.02, peak: 0.35 });
+        this.noiseHit(out, t + 0.01, { type: 'bandpass', f: k(1700), q: 2, dur: 0.06, peak: 0.25 });
+        break;
+      case 'shell':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1100), q: 2, dur: 0.05, peak: 0.2 });
+        this.tone(out, t + 0.03, { f: k(1500), dur: 0.04, peak: 0.05 });
+        break;
+      case 'rocket':
+        this.noiseHit(out, t, { type: 'lowpass', f: 700, dur: 0.25, peak: 0.25, attack: 0.08 });
+        this.noiseHit(out, t + 0.3, { type: 'bandpass', f: 1200, q: 2, dur: 0.05, peak: 0.3 });
+        break;
+      case 'mode':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(3400), q: 6, dur: 0.015, peak: 0.3 });
+        break;
+      case 'dry':
+      case 'jam':
+        this.noiseHit(out, t, { type: 'bandpass', f: k(kind === 'jam' ? 1200 : 2400), q: 5, dur: 0.02, peak: 0.3 });
+        break;
+      case 'lastRounds':
+        // The M4's brighter ping on the last rounds: the spring nearly bare.
+        this.tone(out, t, { f: k(3200), dur: 0.09, peak: 0.08 });
+        this.tone(out, t, { f: k(4700), dur: 0.06, peak: 0.04 });
+        break;
+      case 'draw':
+      case 'holster':
+        this.noiseHit(out, t, { type: 'bandpass', f: kind === 'draw' ? 700 : 500, q: 0.8, dur: 0.18, peak: 0.1, attack: 0.05 });
+        this.noiseHit(out, t + 0.16, { type: 'bandpass', f: 1600, q: 2, dur: 0.03, peak: 0.12 });
+        break;
+    }
+  }
+
+  /** A spent case on the floor: a few bright tinkles (a shotgun's hull: a dull plastic tap). */
+  casing(pos: Pos, shell: boolean, soft: boolean): void {
+    const v = this.voice(pos, 0.6, 1.5);
+    if (!v) return;
+    const [out, t] = v;
+    if (shell || soft) {
+      this.noiseHit(out, t, { type: 'bandpass', f: soft ? 500 : 900, q: 1.2, dur: 0.05, peak: soft ? 0.08 : 0.15 });
+      return;
+    }
+    for (let i = 0; i < 3; i++) {
+      const dt = i * (0.07 + Math.random() * 0.05);
+      this.tone(out, t + dt, { f: 4200 + Math.random() * 2200, dur: 0.06, peak: 0.07 / (i + 1) });
+      this.noiseHit(out, t + dt, { type: 'highpass', f: 5000, dur: 0.012, peak: 0.06 / (i + 1) });
+    }
+  }
+
+  /** A magazine dropped on the floor. */
+  magDrop(pos: Pos): void {
+    const v = this.voice(pos, 0.5, 1.5);
+    if (!v) return;
+    const [out, t] = v;
+    this.noiseHit(out, t, { type: 'bandpass', f: 800, q: 1.2, dur: 0.08, peak: 0.3 });
+    this.noiseHit(out, t + 0.12, { type: 'bandpass', f: 1100, q: 2, dur: 0.04, peak: 0.12 });
+  }
+
+  /** A bullet hits: dust off concrete, a ricochet off metal, wood, glass breaking, a car's tin; a body. */
+  bulletHit(kind: BulletHit, pos: Pos): void {
+    const v = this.voice(pos, 0.9, 2, true);
+    if (!v) return;
+    const [out, t] = v;
+    switch (kind) {
+      case 'metal':
+        this.noiseHit(out, t, { type: 'highpass', f: 3000, dur: 0.03, peak: 0.4 });
+        // The ricochet's whine.
+        if (Math.random() < 0.6) this.tone(out, t + 0.01, { f: 3800 + Math.random() * 1500, f2: 1400, dur: 0.35, peak: 0.08, type: 'triangle' });
+        else this.tone(out, t, { f: 1250, dur: 0.25, peak: 0.08 });
+        break;
+      case 'car':
+        this.noiseHit(out, t, { type: 'bandpass', f: 1400, q: 1, dur: 0.06, peak: 0.4 });
+        this.tone(out, t, { f: 520, f2: 380, dur: 0.22, peak: 0.12 });
+        break;
+      case 'wood':
+        this.noiseHit(out, t, { type: 'bandpass', f: 900, q: 1.2, dur: 0.07, peak: 0.45 });
+        this.tone(out, t, { f: 260, f2: 170, dur: 0.1, peak: 0.2 });
+        break;
+      case 'glass':
+        this.hit('glass', pos, 1);
+        break;
+      case 'flesh':
+        this.noiseHit(out, t, { type: 'lowpass', f: 450, dur: 0.08, peak: 0.5 });
+        break;
+      case 'soft':
+        this.noiseHit(out, t, { type: 'lowpass', f: 700, dur: 0.06, peak: 0.25 });
+        break;
+      default:
+        this.noiseHit(out, t, { type: 'bandpass', f: 1600, q: 0.9, dur: 0.05, peak: 0.45 });
+        for (let i = 0; i < 4; i++) this.noiseHit(out, t + 0.03 + Math.random() * 0.15, { type: 'highpass', f: 3000, dur: 0.012, peak: 0.07 });
+    }
+  }
+
+  /** The hitmarker's tick (ui): a headshot rings higher and doubled. */
+  hitMarker(head: boolean): void {
+    const v = this.voice(null, 0.3);
+    if (!v) return;
+    const [out, t] = v;
+    this.tone(out, t, { f: head ? 2100 : 1500, dur: 0.05, peak: 0.07, type: 'triangle' });
+    if (head) this.tone(out, t + 0.045, { f: 2800, dur: 0.06, peak: 0.06, type: 'triangle' });
+  }
+
+  /** An explosion: the blast, its rumble rolling away, debris falling. */
+  explosion(pos: Pos): void {
+    const v = this.voice(pos, 3, 12, true);
+    if (!v) return;
+    const [out, t] = v;
+    this.noiseHit(out, t, { type: 'lowpass', f: 3000, f2: 120, dur: 1.4, peak: 1, attack: 0.005 });
+    this.tone(out, t, { f: 55, f2: 28, dur: 1.6, peak: 0.8 });
+    this.noiseHit(out, t + 0.25, { type: 'lowpass', f: 400, dur: 2.2, peak: 0.35, attack: 0.3 });
+    for (let i = 0; i < 10; i++) this.noiseHit(out, t + 0.5 + Math.random() * 1.2, { type: 'bandpass', f: 1500 + Math.random() * 2500, q: 2, dur: 0.03, peak: 0.06 });
   }
 
   hit(material: HitMaterial, pos: Pos, heavy = 1): void {

@@ -9,3 +9,4 @@ function fakeCanvas(): any {
 }
 const g = globalThis as any;
 g.document ??= { createElement: () => fakeCanvas(), createElementNS: () => fakeCanvas() };
+g.localStorage ??= { getItem: () => null, setItem() {}, removeItem() {} };

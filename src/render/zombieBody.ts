@@ -26,7 +26,7 @@ export function zombieRagdoll(z: Zombie, start: { parts: PartPose[]; shape: Body
     parts,
     scale: start.scale ?? 1,
     velocity: new Vector3(Math.sin(z.yaw), 0, Math.cos(z.yaw)).multiplyScalar(d.speed),
-    impulse: { part, at, dir, strength: 30 + Math.min(d.damage, 90) * 1.6 },
+    impulse: { part, at, dir, strength: (30 + Math.min(d.damage, 90) * 1.6) * (d.push ?? 1) },
     floorY: z.pos.y,
     boxes,
     shape: start.shape,

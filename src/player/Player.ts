@@ -10,6 +10,7 @@ import type { QualityPreset } from '../render/QualityPresets';
 import type { CollisionWorld } from '../world/CollisionWorld';
 import type { Appearance } from './appearance';
 import { BodyModel } from './BodyModel';
+import type { GearId } from '../data/items';
 import { bodyFor, figureScale } from './CharacterFigure';
 import { bodyNow, type BodyId, loadBody } from '../characters/assets';
 import type { ItemId } from '../data/items';
@@ -101,6 +102,11 @@ export class Player {
     if (body !== want) void loadBody(want).then(() => this.lookWant === want && this.setLook(look, outfit));
     this.body.setBody(body, figureScale(look, body));
     this.viewmodel.setBody(body, figureScale(look, body));
+  }
+
+  /** The gear worn on the first-person body (`handFree`: nothing held, the toolbox in the hand). */
+  setGear(gear: readonly GearId[], handFree: boolean): void {
+    this.body.setGear(gear, handFree);
   }
 
   /** The survivor died: hide the first-person arms, weapon and legs (the ragdoll figure takes over). */
@@ -199,10 +205,22 @@ export class Player {
     const d = this.camera.getWorldDirection(_d);
     const dist = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, reach);
     if (dist < 0) return;
-    // The material from the triangle the ray meets in the world meshes near the player.
+    const surface = this.surfaceAlong(o, d, dist);
+    const material: HitMaterial = (surface && MATERIAL[surface]) ?? 'concrete';
+    sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
+    this.viewmodel.recoil();
+    // A little in front of the surface: sparks fly off it, not inside it.
+    const at = dist - 0.04;
+    this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item);
+  }
+
+  /**
+   * What the world is made of where a ray from `o` along `d` meets it (about `dist` away): the surface
+   * of the triangle in the world meshes (chunks, interiors), decals skipped; null if none found.
+   */
+  surfaceAlong(o: Vector3, d: Vector3, dist: number): Surface | null {
     _ray.set(o, d);
     _ray.far = dist + 0.4;
-    let material: HitMaterial = 'concrete';
     const targets: Mesh[] = [];
     this.scene.traverse((obj) => {
       if ((obj as Mesh).isMesh && /^(chunk|interior)/.test(obj.name)) targets.push(obj as Mesh);
@@ -212,16 +230,27 @@ export class Player {
       if (layer === undefined) continue;
       const surface = SURFACE_LIST[Math.round(layer)];
       // Decals lie on top of the real surface.
-      if (surface.startsWith('decal')) continue;
-      material = MATERIAL[surface] ?? 'concrete';
-      break;
+      if (!surface || surface.startsWith('decal')) continue;
+      return surface;
     }
-    sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
-    this.viewmodel.recoil();
-    // A little in front of the surface: sparks fly off it, not inside it.
-    const at = dist - 0.04;
-    this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item);
+    return null;
   }
+
+  /** A shot's jolt of the camera (decays fast); `zoom` the field of view's share in the sights. */
+  shake(amount: number): void {
+    this.shakeT = Math.max(this.shakeT, amount);
+  }
+  zoom = 1;
+
+  /** The scene's field of view (resize); the sights' zoom applies on top. */
+  setBaseFov(fov: number): void {
+    this.baseFov = fov;
+    this.camera.fov = fov * this.lastZoom;
+    this.camera.updateProjectionMatrix();
+  }
+  private shakeT = 0;
+  private lastZoom = 1;
+  private baseFov = 0;
 
   render(alpha: number, frameDt: number): void {
     const c = this.controller;
@@ -261,7 +290,17 @@ export class Player {
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
     this.camera.position.set(eye.x, eye.y - this.landDip, eye.z);
-    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick, c.yaw, Math.sin(phase) * 0.004 * amp, 'YXZ');
+    this.shakeT = damp(this.shakeT, 0, 14, frameDt);
+    const sh = this.shakeT * 0.02;
+    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp + (Math.random() - 0.5) * sh, 'YXZ');
+    // The sights narrow the view a little (the scene sets the base field of view on resize).
+    if (!this.baseFov) this.baseFov = this.camera.fov;
+    const want = 1 + (this.zoom - 1) * this.viewmodel.ads;
+    if (Math.abs(want - this.lastZoom) > 1e-4) {
+      this.lastZoom = want;
+      this.camera.fov = this.baseFov * want;
+      this.camera.updateProjectionMatrix();
+    }
     const light = this.lightLevel(frameDt);
 
     const f = this.frame;
@@ -270,6 +309,7 @@ export class Player {
     f.stepPhase = phase;
     f.speed = c.speed;
     f.sprinting = c.sprinting;
+    f.crouch = crouchT;
     f.flashlightOn = this.flashlightOn;
     f.light = light;
     this.viewmodel.update(frameDt, f);

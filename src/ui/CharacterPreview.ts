@@ -34,6 +34,7 @@ export class CharacterPreview {
   private height = 1.76;
 
   constructor(className = 'inv__doll') {
+    this.figure.onChange = () => (this.dirty = true);
     this.canvas.className = className;
     this.canvas.style.touchAction = 'none';
     this.scene.add(new HemisphereLight(0xc8ccd8, 0x2a2622, 1.6));

@@ -123,6 +123,8 @@ export class Interaction {
     }
     if (input.consumePressed('item1')) this.drawWeapon();
     if (input.consumePressed('item2')) this.putAway();
+    // Quick slots 1–4: draw what is in the slot (the one in hand: put it away).
+    for (let i = 0; i < 4; i++) if (input.consumePressed(`slot${i + 1}` as 'slot1')) this.quickSlot(i);
     // Touch: one button draws or puts away, whatever is in hand (a class can start armed).
     if (input.consumePressed('weapon')) {
       if (this.inventory.hand) this.putAway();
@@ -467,6 +469,24 @@ export class Interaction {
       return;
     }
     inv.equip(best);
+    this.syncBody();
+  }
+
+  private quickSlot(i: number): void {
+    const inv = this.inventory;
+    const id = inv.quick[i];
+    if (!id || !inv.has(id)) {
+      this.ctx.hud.toast(`Слот ${i + 1} пуст`, 800);
+      return;
+    }
+    if (inv.hand === id) {
+      this.putAway();
+      return;
+    }
+    if (!inv.equip(id)) {
+      this.ctx.hud.toast('Рюкзак переполнен', 900);
+      return;
+    }
     this.syncBody();
   }
 

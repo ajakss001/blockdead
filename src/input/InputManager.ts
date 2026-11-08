@@ -1,7 +1,28 @@
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 
-export type Action = 'attack' | 'sprint' | 'crouch' | 'flashlight' | 'use' | 'inventory' | 'item1' | 'item2' | 'weapon' | 'jump' | 'map';
+export type Action =
+  | 'attack'
+  | 'sprint'
+  | 'crouch'
+  | 'flashlight'
+  | 'use'
+  | 'inventory'
+  | 'item1'
+  | 'item2'
+  | 'weapon'
+  | 'jump'
+  | 'map'
+  // Firearms: the sights (RMB), reload (R; held: inspect), inspect (V), fire mode (B), butt strike (Q), quick slots 1–4.
+  | 'aim'
+  | 'reload'
+  | 'inspect'
+  | 'fireMode'
+  | 'bash'
+  | 'slot1'
+  | 'slot2'
+  | 'slot3'
+  | 'slot4';
 export type InputMode = 'kbm' | 'touch';
 
 export interface LookDelta {

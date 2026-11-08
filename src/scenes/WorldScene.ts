@@ -1,3 +1,4 @@
+import { wornGear } from '../characters/gear';
 import {
   BoxGeometry,
   BufferAttribute,
@@ -37,6 +38,10 @@ import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
 import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../player/appearance';
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
+import { Firearms } from '../systems/Firearms';
+import { GunHud } from '../ui/GunHud';
+import { isGun } from '../weapons/guns';
+import type { EchoPlace } from '../audio/Sound';
 import type { RightItem } from '../player/Viewmodel';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
@@ -83,6 +88,7 @@ import { labCode } from '../world/gen/scenarios';
 import { NOTE_VARS } from '../data/items';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
+import { giveLoadout } from '../weapons/give';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
 import { type ContainerRef, searchBox } from '../systems/Containers';
@@ -191,7 +197,7 @@ const START_KIT: InventoryData & { battery: number } = {
     ['chocolate', 1],
   ],
   hand: 'knife',
-  worn: { head: null, torso: 'hoodie', legs: 'jeans', feet: 'sneakers', back: 'schoolBackpack' },
+  worn: { head: null, torso: 'hoodie', legs: 'jeans', feet: 'sneakers', back: 'backpackSchool' },
   battery: 0.6,
 };
 /** Hand items with a first-person model. */
@@ -307,6 +313,15 @@ export class WorldScene implements IScene {
   /** No save was found: a new game asks for a character first. */
   private isNewGame = true;
   private readonly particles = new Particles();
+  /** Guns in the hands: shots, noise, the RPG's blast. */
+  private firearms!: Firearms;
+  private gunHud!: GunHud;
+  /** Where the last hurt came from (the HUD's hit-direction mark), and when (world seconds ago). */
+  hitFrom: Vector3 | null = null;
+  hitFromT = 9;
+  /** Cars set on fire by a blast: their fire spots and how long they still burn. */
+  private carFires: { key: number; t: number }[] = [];
+  private carFireN = 0;
   private atmo!: Atmosphere;
   /** Dead survivors walking (saved until killed), and the bodies they left with their things. */
   private twins: TwinRecord[] = [];
@@ -498,6 +513,30 @@ export class WorldScene implements IScene {
       else this.particles.burst(_wallHit.set(x, y, z), 4, 0.4);
       this.weaponBlow();
     };
+    this.firearms = new Firearms({
+      input: ctx.input,
+      player: this.player,
+      inventory: this.inventory,
+      zombies: this.zombies,
+      particles: this.particles,
+      scene: this.scene,
+      camera: this.camera,
+      toast: (t, ms) => this.ctx.hud.toast(t, ms),
+      rayHit: (o, d, max) => this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, max),
+      surface: (o, d, dist) => this.player.surfaceAlong(o, d, dist),
+      noise: (x, y, z, r) => {
+        this.zombies.noiseAt(x, y, z, r);
+        this.hordes.hear(x, z, r);
+      },
+      groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
+      hurtSelf: (hp) => this.hurt(hp, 'Подорвались на своём выстреле', true),
+      igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
+      carHit: (x, y, z) => this.atmo.carHit(x, y, z),
+      handling: () => this.mods().firearms,
+      place: () => this.echoPlace(),
+    });
+    this.gunHud = new GunHud(document.getElementById('ui')!, ctx.input);
+    this.firearms.onShot = (r) => this.gunHud.shot(r);
     // The trees' far-away impostors are baked once, now.
     this.atmo.vegetation.bake(ctx.renderer.gl);
     this.landmarks = new Landmarks(this.scene, layout);
@@ -554,8 +593,9 @@ export class WorldScene implements IScene {
   /** First-person body follows the inventory: weapon in the hand, sleeves, trousers, shoes. */
   private syncBody(): void {
     const hand = this.inventory.hand;
-    this.player.viewmodel.equip((hand && HELD[hand]) ?? 'fists');
+    this.player.viewmodel.equip(hand && isGun(hand) ? hand : (hand && HELD[hand]) ?? 'fists');
     this.player.setLook(this.look, this.inventory.worn.outfit);
+    this.player.setGear(wornGear(this.inventory.worn), !hand);
     this.dirtShown = dirtSteps(this.inventory.wornDirt);
   }
 
@@ -596,6 +636,7 @@ export class WorldScene implements IScene {
       this.survival.restore(save.stats);
       // Saves from before clothing existed: keep the starting clothes on.
       this.inventory.restore({ ...save.inventory, worn: save.inventory.worn ?? START_KIT.worn });
+      this.giveDebug();
       this.syncBody();
     }
     // ?poi=gas|police: start in front of the nearest such place (for checking them).
@@ -690,6 +731,15 @@ export class WorldScene implements IScene {
     // Tired: the swing is slower.
     this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
     if (!this.dead) this.player.fixedUpdate(dt);
+    if (!this.dead) this.firearms.fixedUpdate(dt);
+    this.hitFromT += dt;
+    for (let i = this.carFires.length - 1; i >= 0; i--) {
+      const f = this.carFires[i];
+      if ((f.t -= dt) > 0) continue;
+      this.life.remove(f.key);
+      this.atmo.remove(f.key);
+      this.carFires.splice(i, 1);
+    }
     // Zombies hear and see the player as it is after this step.
     _zs.pos.copy(c.position);
     _zs.eye = c.crouched ? 1.0 : 1.6;
@@ -809,6 +859,32 @@ export class WorldScene implements IScene {
     this.particles.update(gameDt);
     // The survivor's body, arms and light move by world time: frozen on pause like everything else.
     this.player.render(alpha, gameDt);
+    this.firearms.render(gameDt);
+    {
+      const fa = this.firearms;
+      let hurtAngle: number | null = null;
+      if (this.hitFrom) {
+        const c = this.player.controller;
+        const dx = this.hitFrom.x - c.position.x;
+        const dz = this.hitFrom.z - c.position.z;
+        // 0 ahead (−Z rotated by yaw), + to the right.
+        hurtAngle = Math.atan2(dx, -dz) + c.yaw;
+        hurtAngle = Math.atan2(Math.sin(hurtAngle), Math.cos(hurtAngle));
+      }
+      this.gunHud.update(gameDt, {
+        gun: this.dead ? null : fa.hud(),
+        fov: this.camera.fov,
+        sinceUse: fa.sinceUse,
+        hitMark: fa.hitMark,
+        hitMarkT: fa.hitMarkT,
+        noise: fa.lastNoise,
+        hurtAngle,
+        hurtT: this.hitFromT,
+        quick: this.inventory.quick,
+        hand: this.inventory.hand,
+        touch: this.ctx.input.mode === 'touch',
+      });
+    }
     if (this.death) this.renderDeath(gameDt);
     // After the camera moved: the zombies in its view, up to the fog (paused: their mixers and twitches too).
     this.models.update(this.zombies.list, this.player.controller.position, gameDt, this.camera, (this.scene.fog as Fog).far + 2);
@@ -1001,7 +1077,14 @@ export class WorldScene implements IScene {
     this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
     this.skills.start(this.classId, this.meta.legacy);
     this.applyClass();
+    this.giveDebug();
     this.syncBody();
+  }
+
+  /** ?give=rifle_m4a1,mod_suppressor: the guns loaded and in hand, for checking them (weapons/give.ts). */
+  private giveDebug(): void {
+    const list = new URLSearchParams(location.search).get('give');
+    if (list) giveLoadout(this.inventory, list);
   }
 
   /**
@@ -1096,8 +1179,36 @@ export class WorldScene implements IScene {
   private hazardHp = 0;
 
   /** The player takes `hp` of 100 (a bite, a fall); clothes soften bites. */
+  /** Indoors, an alley (walls close on both sides) or the open street: the echo of a shot. */
+  private echoPlace(): EchoPlace {
+    if (this.indoors) return 'indoor';
+    const c = this.camera.position;
+    const yaw = this.player.controller.yaw;
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    const l = this.world.rayHit(c.x, c.y, c.z, -rx, 0, -rz, 7);
+    const r = this.world.rayHit(c.x, c.y, c.z, rx, 0, rz, 7);
+    return l >= 0 && r >= 0 ? 'alley' : 'street';
+  }
+
+  /** A blast sets the cars within `r` burning for a minute or so (fire spots like the base's fires). */
+  private igniteCars(x: number, _y: number, z: number, r: number): void {
+    for (const car of this.atmo.carsNear(x, z, r)) {
+      const key = -2_000_000 - (this.carFireN++ % 100_000);
+      const y = this.layout.walkHeightAt(car.x, car.z);
+      const fx = new Float32Array([LIFE.fire, car.x, y + 0.9, car.z, 0, 1, 0.8, 0, Math.random(), 0]);
+      this.life.add(key, fx);
+      this.atmo.add(key, fx);
+      this.carFires.push({ key, t: 60 + Math.random() * 40 });
+    }
+  }
+
   private hurt(hp: number, cause: string, ignoreArmor = false, from?: Vector3): void {
     if (this.dead) return;
+    if (from) {
+      this.hitFrom = from.clone();
+      this.hitFromT = 0;
+    }
     const armor = ignoreArmor ? 0 : Math.min(0.5, (wornStat(this.inventory.worn, 'bite') / 4) * 0.6);
     this.survival.health = Math.max(0, this.survival.health - (hp * (1 - armor)) / 100);
     this.survival.anxiety = Math.min(1, this.survival.anxiety + 0.08);
@@ -1114,6 +1225,7 @@ export class WorldScene implements IScene {
       const z = this.zombies.spawnAt(t.x, t.z, 'idle', t.kind ?? twinKind({}, this.classId), t.y);
       z.twin = { id: t.id, x: t.x, y: t.y, z: t.z, colors: t.colors };
       if (t.costume !== undefined) z.costume = t.costume;
+      if (t.gear) z.gear = t.gear;
       this.twinZombies.set(t.id, z);
     }
   }
@@ -1181,7 +1293,7 @@ export class WorldScene implements IScene {
       kills: this.meta.kills + this.skills.kills,
     };
     const color = (slot: WearSlot) => { const id = inv.worn[slot]; return id ? (inv.wornTint[slot] ?? ITEMS[id].wear?.color ?? null) : null; };
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex), costume: this.look.sex === 'male' ? ((inv.worn.outfit && ITEMS[inv.worn.outfit].wear?.costume) ?? null) : null });
+    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex), costume: this.look.sex === 'male' ? ((inv.worn.outfit && ITEMS[inv.worn.outfit].wear?.costume) ?? null) : null, gear: wornGear(inv.worn) });
     this.save();
   }
 
@@ -1636,6 +1748,8 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
+    this.firearms.dispose();
+    this.gunHud.dispose();
     this.models.dispose();
     this.baseProps.dispose();
     this.particles.dispose();
@@ -1676,8 +1790,7 @@ export class WorldScene implements IScene {
     // Vertical FOV 75°, but never wider than 100° horizontally: on a 812×375 phone a fixed 75° would
     // be ~117° across, stretching everything near the edges (legs looked long, feet far away).
     const maxV = (2 * Math.atan(Math.tan((MAX_HFOV * Math.PI) / 360) / aspect) * 180) / Math.PI;
-    this.camera.fov = Math.min(BASE_VFOV, maxV);
-    this.camera.updateProjectionMatrix();
+    this.player.setBaseFov(Math.min(BASE_VFOV, maxV));
     this.player.viewmodel.setAspect(width / height);
   }
 }

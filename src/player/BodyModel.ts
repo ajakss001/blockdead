@@ -1,6 +1,9 @@
-import { type AnimationAction, type Bone, BufferGeometry, Group, LoopOnce, Quaternion, Vector3 } from 'three';
+import { type AnimationAction, type Bone, BufferGeometry, Group, LoopOnce, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import { baseOf, bodyAsset, type BodyId, type ClipId } from '../characters/assets';
+import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear } from '../characters/gear';
+import { characterMaterial } from '../characters/material';
 import { CharacterRig, stand } from '../characters/rig';
+import type { GearId } from '../data/items';
 
 /**
  * The player's own body in first person: the same character model as in the inventory, feet where the
@@ -9,7 +12,11 @@ import { CharacterRig, stand } from '../characters/rig';
  * (fpBodyGeometry; the first-person arms with the weapon are the viewmodel's);
  * the camera sits in the head bone, so looking down you see your own legs and body. Looking down bends
  * the spine and neck a little, which brings the head forward over the belly.
+ *
+ * Gear on it as on the figure (characters/gear), but never in the way: no helmet (it is round the eyes), and
+ * nothing of a vest's collar or the straps nearer the eye than NEAR; the toolbox only when it is on the hip.
  */
+const NEAR = 0.22;
 
 const SPEED_WALK = 1.4;
 const SPEED_RUN = 3.6;
@@ -21,6 +28,9 @@ type Gait = 'idle' | 'walk' | 'run' | 'crouch';
 export class BodyModel {
   readonly root = new Group();
   private rig: CharacterRig | null = null;
+  private readonly hide = { value: 0 };
+  private readonly gear = new Map<GearId, SkinnedMesh>();
+  private gearWant: GearId[] = [];
 
   /** The model's bones (tests). */
   get bones(): readonly Bone[] {
@@ -47,10 +57,14 @@ export class BodyModel {
     this.posed = false;
     if (this.rig) this.root.remove(this.rig.root);
     this.body = body;
-    const r = new CharacterRig(body, 0, {}, fpBodyGeometry(body));
+    for (const m of this.gear.values()) (m.material as { dispose(): void }).dispose();
+    this.gear.clear();
+    coverBody(body);
+    const r = new CharacterRig(body, 0, { cover: true, hide: this.hide }, fpBodyGeometry(body));
     r.mesh.castShadow = true;
     this.root.add(r.root);
     this.rig = r;
+    this.dress();
     const walk: ClipId = baseOf(body) === 'female' ? 'walking_female' : 'walking';
     this.gaits = { idle: r.action('idle'), walk: r.action(walk), run: r.action('running'), crouch: r.action('crouched_walking') };
     for (const a of Object.values(this.gaits)) a.play();
@@ -68,6 +82,43 @@ export class BodyModel {
   /** The eyes above the feet for a crouch (0..1), m. */
   standEye(crouchT: number): number {
     return (this.eyeY[0] + (this.eyeY[1] - this.eyeY[0]) * crouchT) * this.scale;
+  }
+
+  /** The gear worn (`handFree`: the toolbox is in the hand, so not on the hip). */
+  setGear(gear: readonly GearId[], handFree: boolean): void {
+    this.gearWant = gear.filter((g) => gearKind(g) !== 'helmet' && !(gearKind(g) === 'box' && handFree));
+    this.dress();
+  }
+
+  /** The gear on its body (the ones still loading come when they are in). */
+  private dress(): void {
+    const r = this.rig;
+    const body = this.body;
+    if (!r || !body) return;
+    for (const [g, m] of this.gear)
+      if (!this.gearWant.includes(g)) {
+        m.removeFromParent();
+        (m.material as { dispose(): void }).dispose();
+        this.gear.delete(g);
+      }
+    let missing = false;
+    for (const g of this.gearWant) {
+      if (this.gear.has(g)) continue;
+      const geo = gearGeometry(body, g, 0);
+      if (!geo) {
+        missing = true;
+        continue;
+      }
+      const m = new SkinnedMesh(geo, characterMaterial(bodyAsset(body), r.rig, { map: gearTexture(g), near: NEAR }));
+      m.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+      m.frustumCulled = false;
+      m.castShadow = true;
+      r.mesh.add(m);
+      this.gear.set(g, m);
+    }
+    this.hide.value = hideBits(this.gearWant);
+    const want = this.gearWant;
+    if (missing) void loadGear(body, want).then(() => this.body === body && this.gearWant === want && (coverBody(body), this.dress()));
   }
 
   /** Torso shown (the head and arms are not in its geometry). */
@@ -191,7 +242,7 @@ function fpBodyGeometry(body: BodyId): BufferGeometry {
     if (!off(a) && !off(b) && !off(c)) keep.push(a, b, c);
   }
   g = new BufferGeometry();
-  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) g.setAttribute(name, src.getAttribute(name));
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'aCover']) if (src.getAttribute(name)) g.setAttribute(name, src.getAttribute(name));
   g.setIndex(keep);
   g.boundingBox = src.boundingBox ?? (src.computeBoundingBox(), src.boundingBox);
   fpGeos.set(body, g);

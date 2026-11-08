@@ -13,6 +13,7 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   LoopOnce,
+  type Material,
   Matrix4,
   NearestFilter,
   Quaternion,
@@ -21,7 +22,9 @@ import {
   Vector3,
 } from 'three';
 import { BASE_BODIES, type BaseBody, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, type RigAsset } from '../characters/assets';
+import { coverBody, gearGeometry, gearReady, gearTexture, hideBits, loadGear } from '../characters/gear';
 import { characterMaterial } from '../characters/material';
+import type { GearId } from '../data/items';
 import { createBones, RagdollPose, ragdollStart } from '../characters/rig';
 import type { QualityLevel } from '../core/types';
 import type { BodyShape, PartPose, Ragdoll } from '../physics/ragdoll';
@@ -29,8 +32,21 @@ import { grim } from '../style/palette';
 import { PHASE_M, type Zombie, type ZombieState } from '../systems/zombies';
 import { ZOMBIE_STATS } from '../zombies/stats';
 import { Twitch } from '../zombies/twitch';
-import { zombieCostume } from '../zombies/costumes';
+import { zombieCostume, zombieGear } from '../zombies/costumes';
 import { ZOMBIE_TYPES, type ZombieType } from '../zombies/types';
+
+/** What a zombie wears over its clothes (by kind and costume, or its own: a twin's), cached by id. */
+const gearCache = new Map<number, readonly GearId[]>();
+function gearOf(z: Zombie, type: ZombieType): readonly GearId[] {
+  if (z.gear) return z.gear;
+  let g = gearCache.get(z.id);
+  if (!g) {
+    if (gearCache.size > 4096) gearCache.clear();
+    const female = !!ZOMBIE_STATS[type.id].female;
+    gearCache.set(z.id, (g = zombieGear(z.id, type.id, female, zombieCostume(z.id, type.id, female, z.costume))));
+  }
+  return g;
+}
 
 /** A kind as one zombie wears it: its costume's body once that is loaded (until then the base), scaled to the kind. */
 const dressed = new Map<string, ZombieType>();
@@ -169,15 +185,75 @@ function kit(body: BodyId): Kit {
   return k;
 }
 
-/** One instanced mesh of a body and its skin texture (a row per instance). */
+/** One piece of gear over a body's layer: instances that ride on the body's skin rows (`aRow`). */
+class GearLayer {
+  mesh: InstancedMesh;
+  rows: Float32Array;
+  n = 0;
+
+  constructor(
+    readonly geometry: BufferGeometry,
+    readonly material: Material,
+    readonly cap: number,
+    group: Group,
+    name: string,
+  ) {
+    this.rows = new Float32Array(cap);
+    const g = new BufferGeometry();
+    for (const [k, a] of Object.entries(geometry.attributes)) g.setAttribute(k, a);
+    g.setIndex(geometry.index);
+    g.setAttribute('aRow', new InstancedBufferAttribute(this.rows, 1).setUsage(DynamicDrawUsage));
+    g.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
+    this.mesh = new InstancedMesh(g, material, cap);
+    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    this.mesh.name = name;
+    this.mesh.frustumCulled = false;
+    this.mesh.count = 0;
+    this.mesh.visible = false;
+    this.mesh.castShadow = true;
+    group.add(this.mesh);
+  }
+
+  push(m: Matrix4, row: number): void {
+    this.mesh.setMatrixAt(this.n, m);
+    this.rows[this.n++] = row;
+  }
+
+  end(): void {
+    this.mesh.count = this.n;
+    this.mesh.visible = this.n > 0;
+    if (!this.n) return;
+    this.mesh.instanceMatrix.clearUpdateRanges();
+    this.mesh.instanceMatrix.addUpdateRange(0, this.n * 16);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    const a = this.mesh.geometry.getAttribute('aRow') as InstancedBufferAttribute;
+    a.clearUpdateRanges();
+    a.addUpdateRange(0, this.n);
+    a.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.mesh.removeFromParent();
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+  }
+}
+
+/**
+ * One instanced mesh of a body and its skin texture (a row per instance), and the gear worn over it: a mesh
+ * per piece on the same rows; each instance's `aHide` keeps the body under its pieces from being drawn.
+ */
 class Layer {
   mesh!: InstancedMesh;
   tex!: DataTexture;
   data!: Float32Array;
   tints!: Float32Array;
   tints2!: Float32Array;
+  hides!: Float32Array;
   cap = 0;
   count = 0;
+  private readonly gear = new Map<GearId, GearLayer>();
+  private readonly asked = new Set<GearId>();
 
   constructor(
     private readonly k: Kit,
@@ -188,11 +264,16 @@ class Layer {
   }
 
   private make(cap: number): void {
-    const old = this.mesh ? { mesh: this.mesh, tex: this.tex, data: this.data, t: this.tints, t2: this.tints2 } : null;
+    const old = this.mesh ? { mesh: this.mesh, tex: this.tex, data: this.data, t: this.tints, t2: this.tints2, h: this.hides } : null;
     this.cap = cap;
     this.data = new Float32Array(cap * this.k.floats);
     this.tints = new Float32Array(cap * 3);
     this.tints2 = new Float32Array(cap * 3);
+    this.hides = new Float32Array(cap);
+    // The gear's meshes read the old skin texture: made again on the new one when next worn.
+    for (const gl of this.gear.values()) gl.dispose();
+    this.gear.clear();
+    coverBody(this.k.body);
     this.tex = new DataTexture(this.data, this.k.nb * 4, cap, RGBAFormat, FloatType);
     this.tex.minFilter = this.tex.magFilter = NearestFilter;
     this.tex.needsUpdate = true;
@@ -202,10 +283,11 @@ class Layer {
     g.setIndex(src.index);
     g.setAttribute('aTint', new InstancedBufferAttribute(this.tints, 3).setUsage(DynamicDrawUsage));
     g.setAttribute('aTint2', new InstancedBufferAttribute(this.tints2, 3).setUsage(DynamicDrawUsage));
+    g.setAttribute('aHide', new InstancedBufferAttribute(this.hides, 1).setUsage(DynamicDrawUsage));
     g.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
     // A costume keeps its own colours (only a little of the kind's tint); everyday clothes take the kind's.
     const costume = !BASE_BODIES.includes(this.k.body as BaseBody);
-    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex, tintMix: costume ? 0.18 : 0.6 }), cap);
+    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex, tintMix: costume ? 0.18 : 0.6, cover: true }), cap);
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.mesh.name = `zombies-${this.k.body}`;
     this.mesh.frustumCulled = false;
@@ -216,31 +298,73 @@ class Layer {
       this.data.set(old.data);
       this.tints.set(old.t);
       this.tints2.set(old.t2);
+      this.hides.set(old.h);
       (this.mesh.instanceMatrix.array as Float32Array).set(old.mesh.instanceMatrix.array as Float32Array);
       this.release(old.mesh, old.tex);
     }
   }
 
-  /** The next instance at `m` in the kind's clothes: its skin row to fill. */
-  push(m: Matrix4, tint: Color, tint2: Color): Float32Array {
+  begin(): void {
+    this.count = 0;
+    for (const gl of this.gear.values()) gl.n = 0;
+  }
+
+  /** The next instance at `m` in the kind's clothes and `gear`: its skin row to fill. */
+  push(m: Matrix4, tint: Color, tint2: Color, gear: readonly GearId[] = []): Float32Array {
     if (this.count >= this.cap) this.make(this.cap * 2);
     this.mesh.setMatrixAt(this.count, m);
     tint.toArray(this.tints, this.count * 3);
     tint2.toArray(this.tints2, this.count * 3);
+    let shown = 0;
+    for (const g of gear) {
+      const gl = this.gearLayer(g);
+      if (!gl) continue;
+      gl.push(m, this.count);
+      shown |= hideBits([g]);
+    }
+    this.hides[this.count] = shown;
     return this.data.subarray(this.count * this.k.floats, ++this.count * this.k.floats);
+  }
+
+  /** A piece's mesh over this layer (null while it loads). */
+  private gearLayer(g: GearId): GearLayer | null {
+    let gl = this.gear.get(g);
+    if (gl && gl.n < gl.cap) return gl;
+    const body = this.k.body;
+    if (!gearReady(body, g)) {
+      if (!this.asked.has(g)) {
+        this.asked.add(g);
+        void loadGear(body, [g]);
+      }
+      return null;
+    }
+    const geo = gearGeometry(body, g, 1);
+    if (!geo) return null;
+    const old = gl;
+    gl = new GearLayer(geo, characterMaterial(bodyAsset(body), this.k.rig, { skin: this.tex, row: true, map: gearTexture(g) }), Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${g}`);
+    if (old) {
+      // Grown: the instances so far carried over.
+      (gl.mesh.instanceMatrix.array as Float32Array).set((old.mesh.instanceMatrix.array as Float32Array).subarray(0, old.n * 16));
+      gl.rows.set(old.rows.subarray(0, old.n));
+      gl.n = old.n;
+      old.dispose();
+    }
+    this.gear.set(g, gl);
+    return gl;
   }
 
   end(): void {
     this.mesh.count = this.count;
     this.mesh.visible = this.count > 0;
+    for (const gl of this.gear.values()) gl.end();
     if (!this.count) return;
     this.mesh.instanceMatrix.clearUpdateRanges();
     this.mesh.instanceMatrix.addUpdateRange(0, this.count * 16);
     this.mesh.instanceMatrix.needsUpdate = true;
-    for (const n of ['aTint', 'aTint2']) {
+    for (const n of ['aTint', 'aTint2', 'aHide']) {
       const a = this.mesh.geometry.getAttribute(n) as InstancedBufferAttribute;
       a.clearUpdateRanges();
-      a.addUpdateRange(0, this.count * 3);
+      a.addUpdateRange(0, this.count * a.itemSize);
       a.needsUpdate = true;
     }
     this.tex.needsUpdate = true;
@@ -254,6 +378,7 @@ class Layer {
   }
 
   dispose(): void {
+    for (const gl of this.gear.values()) gl.dispose();
     this.release(this.mesh, this.tex);
   }
 }
@@ -281,6 +406,7 @@ interface Corpse {
   pose: RagdollPose;
   skin: Float32Array;
   done: boolean;
+  gear: readonly GearId[];
 }
 
 const _m = new Matrix4();
@@ -356,7 +482,7 @@ export class ZombieModels {
       _frustum.setFromProjectionMatrix(_m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     }
     const seen = (p: Vector3, r: number) => !camera || _frustum.intersectsSphere(_sphere.set(p, r));
-    for (const l of this.layers.values()) l.count = 0;
+    for (const l of this.layers.values()) l.begin();
     const near: { z: Zombie; d: number }[] = [];
     const r2 = this.detail.near * this.detail.near;
     for (const z of list) {
@@ -382,9 +508,9 @@ export class ZombieModels {
       if (this.detailed.has(z.id)) {
         const rig = this.rig(z, type);
         this.pose(rig, z, type, dt);
-        if (inView) this.writeRig(rig, type, l.push(this.placement(z, type, _m), t1, t2));
+        if (inView) this.writeRig(rig, type, l.push(this.placement(z, type, _m), t1, t2, gearOf(z, type)));
       } else if (inView) {
-        const row = l.push(this.placement(z, type, _m), t1, t2);
+        const row = l.push(this.placement(z, type, _m), t1, t2, gearOf(z, type));
         row.set(this.bakedFrame(kit(type.body), type, z, d2 > FAR_STEP * FAR_STEP));
         if (ZOMBIE_STATS[type.id].oneArm) this.dropArm(kit(type.body), row, row);
       }
@@ -395,7 +521,7 @@ export class ZombieModels {
       const d2 = (_v.x - eye.x) ** 2 + (_v.z - eye.z) ** 2;
       if (d2 > far2 || !seen(_v, 1.4)) continue;
       const [t1, t2] = tints(c, c.type);
-      this.layer(c.type.body).push(_ident, t1, t2).set(c.skin);
+      this.layer(c.type.body).push(_ident, t1, t2, c.gear).set(c.skin);
     }
     for (const l of this.layers.values()) l.end();
     if (this.steps.size > list.length + 64) {
@@ -517,6 +643,10 @@ export class ZombieModels {
     a.zombie_running.setEffectiveWeight(move * run * rest);
     r.last = s;
     r.twitch.reset(r.bones);
+    if (z.snap) {
+      z.snap = false;
+      r.twitch.snapHead();
+    }
     r.mixer.update(dt);
     r.twitch.apply(r.bones, dt);
     r.root.updateMatrixWorld(true);
@@ -551,7 +681,7 @@ export class ZombieModels {
     if (!type) return { ok: false, evicted: null };
     const evicted = this.corpses.length >= this.detail.corpses ? this.corpses.shift()!.id : null;
     const k = kit(type.body);
-    const c: Corpse = { id: z.id, type, pose: new RagdollPose(type.body, 1, k.rig, this.boneWorld(z, type), rd, type.scale), skin: new Float32Array(k.floats), done: false };
+    const c: Corpse = { id: z.id, type, pose: new RagdollPose(type.body, 1, k.rig, this.boneWorld(z, type), rd, type.scale), skin: new Float32Array(k.floats), done: false, gear: gearOf(z, type) };
     this.corpses.push(c);
     this.writeCorpse(c);
     return { ok: true, evicted };

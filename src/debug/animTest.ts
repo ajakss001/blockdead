@@ -34,7 +34,10 @@ export async function main(args: string[]): Promise<number> {
       const count = fails.filter((g) => `${g.anim}:${g.what.replace(/[\d.]+/g, '#')}` === k).length;
       console.log(`       ${f.anim} frame ${f.frame}: ${f.what}${count > 1 ? `  (${count} frames)` : ''}`);
     }
-    if (want === item) console.log(table(anims.swing));
+    if (want === item) {
+      const which = args[args.indexOf('--table') + 2];
+      console.log(table(anims[which && which in anims ? which : 'swing'] ?? anims.fire));
+    }
     failed += fails.length;
   }
   console.log(failed ? `\ntest:anim FAILED (${failed} frame failures)` : '\ntest:anim passed');

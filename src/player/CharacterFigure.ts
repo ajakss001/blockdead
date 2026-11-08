@@ -1,14 +1,15 @@
-import { BoxGeometry, type BufferGeometry, CylinderGeometry, Group, Mesh, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { type BufferGeometry, Group, Matrix4, Mesh, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import { type BodyId, bodyAsset, bodyNow, type ClipId, costumeBody, loadBody } from '../characters/assets';
+import { boxInHand, coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
 import { handFrame } from '../characters/hands';
+import { characterMaterial } from '../characters/material';
 import { CharacterRig } from '../characters/rig';
 import { type ItemId, ITEMS, type WearSlot } from '../data/items';
-import { characterMaterial } from '../render/look/materials';
 import type { Worn } from '../systems/Inventory';
 import { type Appearance, DEFAULT_APPEARANCE } from './appearance';
 import { buildHeldModel, HELD, type HeldId } from './held';
 
-const NO_WORN: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null };
+const NO_WORN: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
 
 /** The model a survivor wears: the costume in the outfit slot (men; women keep their base body), else a man or a woman. */
 export function bodyFor(look: Pick<Appearance, 'sex'>, outfit?: ItemId | null): BodyId {
@@ -23,7 +24,9 @@ export function figureScale(look: Pick<Appearance, 'height'>, body: BodyId): num
 /**
  * The survivor as a whole — the character model (src/characters): a man, a woman, or a man in a class costume,
  * scaled to the look's height, standing at ease (the first frame of `idle`). What is held rides in the
- * right hand (the RightHand socket, the fist closed on its grip), hats on Head, vests and bags on Spine2.
+ * right hand (the RightHand socket, the fist closed on its grip). Gear is the fitted models (characters/gear):
+ * skinned to the same skeleton, the body under them not drawn; the toolbox in the free right hand, on the hip
+ * when something is held.
  * The inventory figure, the character editor and the body on death (PlayerDeath drives its bones from the
  * ragdoll).
  */
@@ -33,8 +36,8 @@ export class CharacterFigure {
   private body: BodyId | null = null;
   private readonly geometries: BufferGeometry[] = [];
   private readonly held = new Map<HeldId, Group>();
-  private readonly hats = new Map<ItemId, Group>();
-  private readonly gear = new Map<ItemId, Group>();
+  private readonly gear = new Map<string, Mesh>();
+  private readonly hide = { value: 0 };
   private look: Appearance = { ...DEFAULT_APPEARANCE };
   private classId: string | null = null;
   private worn: Worn = { ...NO_WORN };
@@ -49,8 +52,6 @@ export class CharacterFigure {
       g.visible = false;
       this.held.set(id, g);
     }
-    this.buildHats();
-    this.buildGear();
     this.rebuild();
   }
 
@@ -88,6 +89,7 @@ export class CharacterFigure {
   dispose(): void {
     this.disposed = true;
     for (const g of this.geometries) g.dispose();
+    this.dropGear();
     this.rig?.dispose();
   }
 
@@ -96,15 +98,20 @@ export class CharacterFigure {
     return id && id in HELD && this.held.has(id as HeldId) ? (id as HeldId) : null;
   }
 
+  /** Called when something that was loading came in and the figure changed (a still preview redraws). */
+  onChange: (() => void) | null = null;
+
   private rebuild(): void {
     const want = bodyFor(this.look, this.worn.outfit);
     const body = bodyNow(want);
     // A costume not loaded yet: the base body until it is, then the costume.
-    if (body !== want) void loadBody(want).then(() => !this.disposed && bodyFor(this.look, this.worn.outfit) === want && this.rebuild());
+    if (body !== want) void loadBody(want).then(() => !this.disposed && bodyFor(this.look, this.worn.outfit) === want && (this.rebuild(), this.onChange?.()));
     if (body !== this.body) {
       const old = this.rig;
       this.body = body;
-      this.rig = new CharacterRig(body, 0);
+      this.dropGear();
+      coverBody(body);
+      this.rig = new CharacterRig(body, 0, { cover: true, hide: this.hide });
       this.root.add(this.rig.root);
       this.attach();
       if (old) {
@@ -113,32 +120,87 @@ export class CharacterFigure {
       }
     }
     this.rig!.root.scale.setScalar(figureScale(this.look, body));
-    for (const [hid, g] of this.hats) g.visible = this.worn.head === hid;
-    for (const [gid, g] of this.gear) g.visible = this.worn.vest === gid || this.worn.back === gid;
+    this.dress();
     const id = this.heldItem();
     for (const [hid, g] of this.held) g.visible = id === hid;
     this.pose();
   }
 
-  /** Into the sockets: held items in the right hand's grip, hats on Head, vests and bags on Spine2. */
+  /** The gear worn, on this body: skinned pieces on its skeleton (the toolbox in the free hand is held). */
+  private dress(): void {
+    const r = this.rig!;
+    const body = this.body!;
+    const want = wornGear(this.worn);
+    const inHand = !this.heldItem();
+    const keys = new Set(want.map((g) => (gearKind(g) === 'box' && inHand ? `${g}:hand` : g)));
+    for (const [k, m] of this.gear)
+      if (!keys.has(k)) {
+        m.removeFromParent();
+        (m.material as { dispose(): void }).dispose();
+        this.gear.delete(k);
+      }
+    let missing = false;
+    for (const g of want) {
+      const hand = gearKind(g) === 'box' && inHand;
+      const key = hand ? `${g}:hand` : g;
+      if (this.gear.has(key)) continue;
+      const mat = characterMaterial(bodyAsset(body), r.rig, { map: gearTexture(g) });
+      if (hand) {
+        const hf = handFrame(r.rig, 'R');
+        const b = hf && boxInHand(g);
+        if (!b || !hf) {
+          missing = true;
+          mat.dispose();
+          continue;
+        }
+        // Hanging from the fist: upright in the figure's frame whatever the arm does (a box swings on its
+        // handle, it does not turn with the wrist).
+        const gripInHand = hf.grip.clone();
+        const hang = new Matrix4().makeBasis(new Vector3(0, 0, 1), new Vector3(0, 1, 0), new Vector3(-1, 0, 0)).setPosition(0, 0.012 - b.top, 0);
+        const m = new Mesh(b.geometry, mat);
+        m.matrixAutoUpdate = false;
+        const socket = r.socket('hand');
+        const root = r.root;
+        const at = new Vector3();
+        m.updateMatrixWorld = () => {
+          at.copy(gripInHand).applyMatrix4(socket.matrixWorld);
+          m.matrixWorld.copy(root.matrixWorld).setPosition(0, 0, 0).multiply(hang);
+          m.matrixWorld.elements[12] += at.x;
+          m.matrixWorld.elements[13] += at.y;
+          m.matrixWorld.elements[14] += at.z;
+        };
+        socket.add(m);
+        this.gear.set(key, m);
+        continue;
+      }
+      const geo = gearGeometry(body, g, 0);
+      if (!geo) {
+        missing = true;
+        mat.dispose();
+        continue;
+      }
+      const m = new SkinnedMesh(geo, mat);
+      m.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+      m.frustumCulled = false;
+      m.castShadow = true;
+      r.mesh.add(m);
+      this.gear.set(key, m);
+    }
+    this.hide.value = hideBits(want.filter((g) => !(gearKind(g) === 'box' && inHand)));
+    if (missing) void loadGear(body, want).then(() => !this.disposed && this.body === body && (coverBody(body), this.rebuild(), this.onChange?.()));
+  }
+
+  private dropGear(): void {
+    for (const m of this.gear.values()) {
+      m.removeFromParent();
+      (m.material as { dispose(): void }).dispose();
+    }
+    this.gear.clear();
+  }
+
+  /** Into the sockets: held items in the right hand's grip. */
   private attach(): void {
     const r = this.rig!;
-    const head = r.socket('head');
-    const k = bodyAsset(this.body!).height / 1.8;
-    for (const g of this.hats.values()) {
-      head.add(g);
-      g.position.set(0, 0.105 * k, 0.012 * k);
-      g.rotation.set(0, Math.PI, 0);
-      g.scale.setScalar(k);
-    }
-    const back = r.socket('back');
-    for (const g of this.gear.values()) {
-      back.add(g);
-      // Built facing −Z about a chest 0.25 m above the hips: turned to the model's +Z.
-      g.position.set(0, -0.06 * k, 0.01 * k);
-      g.rotation.set(0, Math.PI, 0);
-      g.scale.setScalar(k);
-    }
     const hand = r.socket('hand');
     const hf = handFrame(r.rig, 'R');
     for (const [id, g] of this.held) {
@@ -152,78 +214,14 @@ export class CharacterFigure {
   private pose(): void {
     const r = this.rig!;
     r.hold(this.clip, this.clipTime);
-    if (this.heldItem()) {
+    const held = !!this.heldItem();
+    if (held || this.gear.has(`${this.worn.bag ? ITEMS[this.worn.bag].wear?.gear : ''}:hand`)) {
       const hf = handFrame(r.rig, 'R');
       if (hf) for (const [i, q] of hf.fist) r.bones[i].quaternion.copy(q);
-      // The right forearm brought forward a little: the item clear of the leg.
-      const fore = r.bone('RightForeArm');
-      fore.quaternion.multiply(_q.setFromAxisAngle(_x, -0.5));
+      // The right forearm brought forward a little: a held item clear of the leg (a toolbox just hangs).
+      if (held) r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.5));
       r.root.updateMatrixWorld(true);
     }
-  }
-
-  /**
-   * Vests and bags: boxes over the chest and on the back, sized to an average build (placeholders until
-   * the gear is fitted: they ride on the Spine2 socket).
-   */
-  private buildGear(): void {
-    const box = (sx: number, sy: number, sz: number) => this.geo(new BoxGeometry(sx, sy, sz));
-    const chestY = 0;
-    const make = (id: ItemId, parts: [BufferGeometry, number, number, number, number?][]) => {
-      const g = new Group();
-      const m = characterMaterial('jacket', ITEMS[id].wear!.color);
-      for (const [geo, x, y, z, rz] of parts) {
-        const mesh = new Mesh(geo, m);
-        mesh.position.set(x, y, z);
-        if (rz) mesh.rotation.z = rz;
-        g.add(mesh);
-      }
-      g.visible = false;
-      this.gear.set(id, g);
-    };
-    const vest = box(0.36, 0.4, 0.25);
-    const pouch = box(0.08, 0.1, 0.05);
-    make('swatVest', [[vest, 0, chestY, 0], [box(0.3, 0.12, 0.04), 0, chestY + 0.05, -0.135]]);
-    make('policeVest', [[vest, 0, chestY, 0]]);
-    make('tacticalRig', [[box(0.35, 0.36, 0.24), 0, chestY, 0], [pouch, -0.1, chestY - 0.08, -0.14], [pouch, 0, chestY - 0.08, -0.14], [pouch, 0.1, chestY - 0.08, -0.14]]);
-    const strap = box(0.04, 0.42, 0.02);
-    const backY = chestY - 0.02;
-    make('schoolBackpack', [[box(0.28, 0.34, 0.12), 0, backY, 0.19], [strap, -0.1, backY + 0.02, -0.125], [strap, 0.1, backY + 0.02, -0.125]]);
-    make('hikingBackpack', [[box(0.32, 0.56, 0.2), 0, backY + 0.06, 0.22], [box(0.3, 0.1, 0.16), 0, backY + 0.38, 0.21], [strap, -0.1, backY + 0.02, -0.125], [strap, 0.1, backY + 0.02, -0.125]]);
-    make('armyBackpack', [[box(0.36, 0.46, 0.22), 0, backY + 0.02, 0.23], [box(0.12, 0.18, 0.08), -0.2, backY - 0.06, 0.21], [box(0.12, 0.18, 0.08), 0.2, backY - 0.06, 0.21], [strap, -0.1, backY + 0.02, -0.125], [strap, 0.1, backY + 0.02, -0.125]]);
-    make('sportsBag', [[this.geo(new CylinderGeometry(0.11, 0.11, 0.42, 10).rotateZ(Math.PI / 2)), 0.05, -0.3, 0.18], [box(0.03, 0.6, 0.02), 0, chestY, 0, 0.6]]);
-    make('medBag', [[box(0.22, 0.18, 0.1), 0.24, -0.3, 0.02], [box(0.08, 0.02, 0.105), 0.24, -0.28, 0.02], [box(0.03, 0.6, 0.02), 0, chestY, 0, -0.6]]);
-  }
-
-  /** Headwear placeholders sized to the head (about the skull's centre). */
-  private buildHats(): void {
-    const dome = this.geo(new SphereGeometry(0.1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2));
-    const make = (id: ItemId, parts: [BufferGeometry, number, number, number][], scale: [number, number, number]) => {
-      const g = new Group();
-      const m = characterMaterial('cuff', ITEMS[id].wear!.color);
-      for (const [geo, px, py, pz] of parts) {
-        const mesh = new Mesh(geo, m);
-        mesh.position.set(px, py, pz);
-        mesh.scale.set(...scale);
-        g.add(mesh);
-      }
-      g.visible = false;
-      this.hats.set(id, g);
-    };
-    const brim = this.geo(new BoxGeometry(0.16, 0.012, 0.1));
-    const fold = this.geo(new CylinderGeometry(0.103, 0.103, 0.04, 12));
-    const rim = this.geo(new CylinderGeometry(0.15, 0.15, 0.014, 14));
-    for (const id of Object.keys(ITEMS) as ItemId[]) {
-      if (ITEMS[id].wear?.slot !== 'head') continue;
-      if (id === 'cap' || id === 'policeCap') make(id, [[dome, 0, 0, 0], [brim, 0, 0.005, -0.115]], [1, 0.95, 1.08]);
-      else if (id === 'beanie') make(id, [[dome, 0, 0, 0], [fold, 0, 0.01, 0]], [1.02, 1.25, 1.08]);
-      else make(id, [[dome, 0, 0, 0], [rim, 0, 0.004, -0.01]], id === 'hardhat' || id === 'fireHelmet' ? [1.1, 1.08, 1.14] : [1.08, 1.12, 1.12]);
-    }
-  }
-
-  private geo<T extends BufferGeometry>(g: T): T {
-    this.geometries.push(g);
-    return g;
   }
 }
 

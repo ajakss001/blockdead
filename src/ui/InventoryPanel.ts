@@ -11,7 +11,12 @@ import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
 import { openCredits } from './CreditsScreen';
 import { volumeControl } from './VolumeControl';
+import { gearIcon } from './gearIcon';
 import { itemIcon } from './pixelart';
+import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
+import { QUICK_SLOTS } from '../systems/Inventory';
+
+const SLOT_NAMES: Record<ModSlot, string> = { muzzle: 'Ствол', mag: 'Магазин', rail: 'Планка' };
 
 export interface InventoryHost {
   inventory: Inventory;
@@ -40,6 +45,7 @@ const SLOTS: { slot: Slot; label: string }[] = [
   { slot: 'legs', label: 'Ноги' },
   { slot: 'feet', label: 'Обувь' },
   { slot: 'back', label: 'Рюкзак' },
+  { slot: 'bag', label: 'Сумка' },
 ];
 const BAG_MIN_CELLS = 24;
 const BOX_MIN_CELLS = 12;
@@ -201,7 +207,7 @@ export class InventoryPanel {
     // Clothing slots down the left, level with head, torso, legs and feet of the figure.
     const left = el('div', 'inv__slots');
     // Body down the left (head, torso, legs, feet); what goes over it on the right (vest, gloves, bag).
-    const over = new Set<Slot>(['vest', 'hands', 'back']);
+    const over = new Set<Slot>(['vest', 'hands', 'back', 'bag']);
     for (const { slot, label } of SLOTS) if (!over.has(slot)) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
     this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint);
     const figure = el('div', 'inv__figure');
@@ -373,7 +379,67 @@ export class InventoryPanel {
       actions.append(b);
     }
     card.append(actions);
+    if (place0(sel) && isGun(id)) card.append(this.gunMods(id));
+    else if ((MOD_IDS as readonly string[]).includes(id)) card.append(el('div', 'inv__hint', 'Подходит: ' + MOD_FITS[id as ModId].map((g) => GUNS[g].name).join(', ')));
+    if (place0(sel) && def.equip) card.append(this.quickRow(id));
     return card;
+  }
+
+  /** The gun's mod slots: what is on (tap — take off), what from the pack fits (tap — put on); the rounds in it. */
+  private gunMods(id: ItemId & keyof typeof GUNS): HTMLElement {
+    const inv = this.host.inventory;
+    const inst = inv.gun(id);
+    const g = GUNS[id];
+    const box = el('div', 'inv__mods');
+    const loaded = inst.mag + (inst.chamber && g.feed !== 'rocket' ? 1 : 0);
+    box.append(el('div', 'inv__hint', `Заряжено ${loaded} / ${capacityOf(id, inst.mods)} · ${ITEMS[g.caliber].name}: ${inv.count(g.caliber)}${g.mag ? ` · магазинов: ${inv.count(g.mag)}` : ''}`));
+    const slots = [...new Set(MOD_IDS.filter((m) => MOD_FITS[m].includes(id)).map((m) => MODS[m].slot))];
+    for (const slot of slots) {
+      const row = el('div', 'inv__mod');
+      row.append(el('span', 'inv__mod-slot', SLOT_NAMES[slot]));
+      const on = inst.mods.find((m) => MODS[m].slot === slot) as ModId | undefined;
+      if (on) {
+        const b = el('button', 'inv__btn', `${MODS[on].name} ✕`);
+        b.title = 'Снять';
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!inv.detachMod(id, on)) this.ctx.hud.toast('Рюкзак переполнен');
+          sfx.gunMech('magIn', 1.3);
+          this.render();
+        });
+        row.append(b);
+      } else row.append(el('span', 'inv__mod-empty', 'пусто'));
+      for (const m of MOD_IDS) {
+        if (m === on || MODS[m].slot !== slot || !MOD_FITS[m].includes(id) || inv.count(m) === 0) continue;
+        const b = el('button', 'inv__btn inv__btn--quiet', `+ ${MODS[m].name}`);
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          inv.attachMod(id, m);
+          sfx.gunMech('magIn', 1.3);
+          this.render();
+        });
+        row.append(b);
+      }
+      box.append(row);
+    }
+    return box;
+  }
+
+  /** Quick slots 1–4: put the item on one (keys 1–4 / the buttons on the HUD). */
+  private quickRow(id: ItemId): HTMLElement {
+    const inv = this.host.inventory;
+    const row = el('div', 'inv__mod');
+    row.append(el('span', 'inv__mod-slot', 'Слот'));
+    for (let i = 0; i < QUICK_SLOTS; i++) {
+      const b = el('button', `inv__btn${inv.quick[i] === id ? '' : ' inv__btn--quiet'}`, String(i + 1));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        inv.setQuick(i, inv.quick[i] === id ? null : id);
+        this.render();
+      });
+      row.append(b);
+    }
+    return row;
   }
 
   private actionsFor(place: Place, id: ItemId): [string, () => void, boolean?][] {
@@ -675,8 +741,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 function icon(id: ItemId, cls = 'cell__icon'): HTMLImageElement {
   const img = document.createElement('img');
   img.className = cls;
-  img.src = itemIcon(id);
+  const g = ITEMS[id].wear?.gear;
+  // Gear: a render of the model itself (a moment later the first time).
+  if (g) gearIcon(g, img);
+  else img.src = itemIcon(id);
   img.alt = ITEMS[id].name;
   img.draggable = false;
   return img;
+}
+
+/** Items in the pack or in the hand (not in a container): their mods and quick slots can be set. */
+function place0(p: { from: string }): boolean {
+  return p.from !== 'box';
 }
