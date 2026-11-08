@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry, Matrix4, type Object3D, Quaternion, Skeleton, SkinnedMesh, Vector3 } from 'three';
 import { type BodyId, bodyAsset, type RigAsset } from '../characters/assets';
-import { type HandFrame, handFrame } from '../characters/hands';
+import { type HandFrame, handFrame, type HandPose } from '../characters/hands';
 import { characterMaterial } from '../characters/material';
 import { createBones } from '../characters/rig';
 import { GRIP_X, GRIP_Z } from './hand';
@@ -99,6 +99,21 @@ export class FpArms {
   /** Where each wrist ended (the hand bone) and where its forearm bone ends: the same point (test:anim). */
   readonly wrist = [new Vector3(), new Vector3()];
   readonly cuff = [new Vector3(), new Vector3()];
+  private posed: (HandPose | null)[] = [null, null];
+
+  /** The fingers of hand `k` (0 right, 1 left) in a pose (hands.ts), set when it changes. */
+  setPose(k: 0 | 1, pose: HandPose): void {
+    const a = this.arms[k];
+    if (!a || !this.mesh || this.posed[k] === pose) return;
+    this.posed[k] = pose;
+    const bones = this.mesh.skeleton.bones;
+    for (const [i, q] of a.hf.poses[pose]) bones[i].quaternion.copy(q);
+  }
+
+  /** The body's hands have finger bones (else they stay open: the model needs rigging again with fingers). */
+  get fingers(): boolean {
+    return !!this.arms[0]?.hf.fingers;
+  }
 
   /** The arms of a body (a man, a woman, the SWAT officer), `scale` its height's. */
   setBody(body: BodyId, scale: number, parent: Object3D): void {
@@ -110,6 +125,7 @@ export class FpArms {
       (this.mesh.material as { dispose(): void }).dispose();
     }
     this.body = body;
+    this.posed = [null, null];
     const asset = bodyAsset(body);
     const rig = asset.lod0;
     const bones = createBones(rig);

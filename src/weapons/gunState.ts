@@ -261,6 +261,8 @@ export class GunState {
     if (this.cfg.feed === 'rocket') {
       if (this.marks === 0 && k >= RELOAD_MARKS.in) {
         this.marks = 3;
+        // Loaded the moment it is in the tube: the model, the HUD and the trigger all read `chamber`.
+        if (!this.inst.chamber && this.ammo.take(this.cfg.caliber, 1) > 0) this.inst.chamber = true;
         ev.push({ kind: 'rocketIn' });
       }
       return;
@@ -294,10 +296,7 @@ export class GunState {
         }
         break;
       case 'reload': {
-        if (g.feed === 'rocket') {
-          if (this.ammo.take(g.caliber, 1) > 0) inst.chamber = true;
-          break;
-        }
+        if (g.feed === 'rocket') break;
         // The rounds left in the old magazine go back to the pouch; a full one in, the chamber kept.
         this.ammo.give(g.caliber, inst.mag);
         inst.mag = this.ammo.take(g.caliber, this.capacity);

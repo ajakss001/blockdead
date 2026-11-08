@@ -1,4 +1,5 @@
-import { type BufferGeometry, CylinderGeometry, Group, type Material, Mesh } from 'three';
+import { type BufferGeometry, CylinderGeometry, Group, type Material, Mesh, Vector3 } from 'three';
+import { type GripFrame, GRIPS, onGripsChanged, quat } from './grips';
 import { characterMaterial } from '../render/look/materials';
 import { FLASHLIGHT } from '../items/config';
 import { flashlightHeldMatrix, flashlightMesh } from '../items/flashlight';
@@ -272,3 +273,29 @@ export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
   }
   return g;
 }
+
+// ── What the grip editor saved (data/grips.json) on top of the configs above. ──
+const ORIGINAL = new Map<HeldId, Pick<HeldConfig, 'main' | 'off' | 'keys'>>();
+const keyOf = (base: Key, f: GripFrame): Key => {
+  const q = quat(f.q);
+  const axis = new Vector3(0, 1, 0).applyQuaternion(q);
+  const edge = new Vector3(0, 0, -1).applyQuaternion(q);
+  return { ...base, at: f.at, axis: [axis.x, axis.y, axis.z], edge: [edge.x, edge.y, edge.z] };
+};
+const same = (a: { along: number; roll: number }, b: { along: number; roll: number }) => Math.abs(a.along - b.along) < 1e-3 && Math.abs(a.roll - b.roll) < 1e-3;
+/** The configs as the file has them now (called again when the editor changes them). */
+export function applyHeldGrips(): void {
+  for (const id of Object.keys(HELD) as HeldId[]) {
+    const c = HELD[id] as HeldConfig;
+    if (!ORIGINAL.has(id)) ORIGINAL.set(id, { main: c.main, off: c.off, keys: c.keys });
+    const o = ORIGINAL.get(id)!;
+    const G = GRIPS[id] ?? {};
+    // The file rounds to 1e-4: a socket within that of the config is the config's own (tuned) value.
+    c.main = G.socketR && !same(o.main, G.socketR) ? { ...o.main, ...G.socketR } : o.main;
+    c.off = G.socketL && o.off && !same(o.off, G.socketL) ? { ...o.off, ...G.socketL } : o.off;
+    // A new key set object: the arm rig compiles per object.
+    c.keys = G.stance || G.sprint ? { ...o.keys, idle: G.stance ? keyOf(o.keys.idle, G.stance) : o.keys.idle, sprint: G.sprint ? keyOf(o.keys.sprint, G.sprint) : o.keys.sprint } : o.keys;
+  }
+}
+applyHeldGrips();
+onGripsChanged(applyHeldGrips);

@@ -53,6 +53,8 @@ export interface HandRow {
   socketGap: number;
   socketTurn: number;
   inFrame: boolean;
+  /** The elbow's height (arms' space, m): up near the eye the sleeve fills the view. */
+  elbowY: number;
 }
 
 export interface FrameRow {
@@ -182,6 +184,7 @@ class Sampler {
       socketGap,
       socketTurn,
       inFrame,
+      elbowY: pose.elbow.y,
     };
   }
 
@@ -217,6 +220,7 @@ class Sampler {
       socketGap,
       socketTurn,
       inFrame,
+      elbowY: pose.elbow.y,
     };
   }
 

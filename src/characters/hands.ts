@@ -8,6 +8,22 @@ import { bodyAsset, type RigAsset } from './assets';
  * that close it. Measured off the bind pose, so any Mixamo body fits.
  */
 
+/**
+ * What the fingers do: grip_fist round a handle; grip_trigger the same with the index finger straight along
+ * the trigger guard; grip_support the other hand under a handguard (fingers wrapped a little looser, thumb
+ * along); relaxed a free hand, fingers a little bent.
+ */
+export type HandPose = 'grip_fist' | 'grip_trigger' | 'grip_support' | 'relaxed';
+export const HAND_POSES: readonly HandPose[] = ['grip_fist', 'grip_trigger', 'grip_support', 'relaxed'];
+
+/** Curl of each finger's three joints (rad), the thumb's two, per pose; the index finger may differ. */
+const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly number[]; thumb: readonly number[] }> = {
+  grip_fist: { fingers: [1.25, 1.45, 1.1], index: [1.25, 1.45, 1.1], thumb: [0.35, 0.5] },
+  grip_trigger: { fingers: [1.25, 1.45, 1.1], index: [0.35, 0.2, 0.1], thumb: [0.35, 0.5] },
+  grip_support: { fingers: [1.0, 1.15, 0.85], index: [0.95, 1.05, 0.8], thumb: [0.15, 0.25] },
+  relaxed: { fingers: [0.35, 0.45, 0.3], index: [0.25, 0.35, 0.25], thumb: [0.1, 0.15] },
+};
+
 export interface HandFrame {
   /** The grip frame in the hand bone's frame. */
   q: Quaternion;
@@ -15,10 +31,13 @@ export interface HandFrame {
   grip: Vector3;
   /** Finger bone index → its local rotation in a fist. */
   fist: Map<number, Quaternion>;
+  /** The same for every hand pose (grip_fist is `fist`). */
+  poses: Record<HandPose, Map<number, Quaternion>>;
+  /** The model has finger bones (else it needs rigging again with fingers). */
+  fingers: boolean;
 }
 
 const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'] as const;
-const CURL = [1.25, 1.45, 1.1];
 const cache = new WeakMap<RigAsset, Record<'L' | 'R', HandFrame | null>>();
 const pos = (rig: RigAsset, n: string) => {
   const i = rig.index.get(n);
@@ -36,7 +55,9 @@ function fingerless(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   const male = bodyAsset('male').lod0;
   if (male === rig || !rig.index.has(side === 'R' ? 'RightHand' : 'LeftHand')) return null;
   const m = handFrame(male, side);
-  return m ? { q: m.q.clone(), grip: m.grip.clone(), fist: new Map() } : null;
+  if (!m) return null;
+  const none = () => new Map<number, Quaternion>();
+  return { q: m.q.clone(), grip: m.grip.clone(), fist: none(), poses: { grip_fist: none(), grip_trigger: none(), grip_support: none(), relaxed: none() }, fingers: false };
 }
 
 function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
@@ -44,7 +65,8 @@ function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   const hi = rig.index.get(`${S}Hand`);
   const wrist = pos(rig, `${S}Hand`);
   const index = pos(rig, `${S}HandIndex1`);
-  const pinky = pos(rig, `${S}HandPinky1`);
+  // Some costumes are rigged without a little finger (or a ring finger): the outermost one there is.
+  const pinky = pos(rig, `${S}HandPinky1`) ?? pos(rig, `${S}HandRing1`);
   const middle = pos(rig, `${S}HandMiddle1`);
   if (hi === undefined || !wrist || !index || !pinky || !middle) return null;
   const f = middle.clone().sub(wrist);
@@ -70,27 +92,33 @@ function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   const q = inv.clone().multiply(new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(x, y, z)));
   const gripWorld = wrist.clone().addScaledVector(f, palmLen * 0.62).addScaledVector(palm, 0.026);
   const grip = gripWorld.sub(wrist).applyQuaternion(inv);
-  // The fist: each finger joint turned about the palm's width axis, towards the palm.
-  const fist = new Map<number, Quaternion>();
   const axis = new Vector3().crossVectors(f, palm).normalize();
-  const world = new Map<number, Quaternion>();
-  const worldQ = (i: number) => world.get(i) ?? new Quaternion().setFromRotationMatrix(rig.bind[i]);
-  for (const F of [...FINGERS, 'Thumb'] as const) {
-    for (let n = 1; n <= 3; n++) {
-      const i = rig.index.get(`${S}Hand${F}${n}`);
-      if (i === undefined) continue;
-      const p = rig.parents[i];
-      const a = F === 'Thumb' ? (n === 1 ? 0.35 : 0.5) : CURL[n - 1];
-      const ax = F === 'Thumb' ? f.clone().negate().addScaledVector(axis, 0.4).normalize() : axis;
-      const turn = new Quaternion().setFromAxisAngle(ax, a);
-      // The world turn of this joint, on top of its parent's already curled one.
-      const parentNow = worldQ(p);
-      const parentBind = new Quaternion().setFromRotationMatrix(rig.bind[p]);
-      const bindQ = new Quaternion().setFromRotationMatrix(rig.bind[i]);
-      const now = parentNow.clone().multiply(parentBind.clone().invert()).multiply(turn).multiply(bindQ);
-      world.set(i, now);
-      fist.set(i, parentNow.clone().invert().multiply(now));
+  const curlOf = (pose: HandPose): Map<number, Quaternion> => {
+    const c = POSE_CURL[pose];
+    const out = new Map<number, Quaternion>();
+    const world = new Map<number, Quaternion>();
+    const worldQ = (i: number) => world.get(i) ?? new Quaternion().setFromRotationMatrix(rig.bind[i]);
+    for (const F of [...FINGERS, 'Thumb'] as const) {
+      for (let n = 1; n <= 3; n++) {
+        const i = rig.index.get(`${S}Hand${F}${n}`);
+        if (i === undefined) continue;
+        const p = rig.parents[i];
+        const a = F === 'Thumb' ? (c.thumb[n === 1 ? 0 : 1] ?? 0) : (F === 'Index' ? c.index : c.fingers)[n - 1];
+        const ax = F === 'Thumb' ? f.clone().negate().addScaledVector(axis, 0.4).normalize() : axis;
+        const turn = new Quaternion().setFromAxisAngle(ax, a);
+        // The world turn of this joint, on top of its parent's already curled one.
+        const parentNow = worldQ(p);
+        const parentBind = new Quaternion().setFromRotationMatrix(rig.bind[p]);
+        const bindQ = new Quaternion().setFromRotationMatrix(rig.bind[i]);
+        const now = parentNow.clone().multiply(parentBind.clone().invert()).multiply(turn).multiply(bindQ);
+        world.set(i, now);
+        out.set(i, parentNow.clone().invert().multiply(now));
+      }
     }
-  }
-  return { q, grip, fist };
+    return out;
+  };
+  const poses = { grip_fist: curlOf('grip_fist'), grip_trigger: curlOf('grip_trigger'), grip_support: curlOf('grip_support'), relaxed: curlOf('relaxed') };
+  const fingers = rig.index.has(`${S}HandMiddle1`) && rig.index.has(`${S}HandThumb1`);
+  return { q, grip, fist: poses.grip_fist, poses, fingers };
+
 }

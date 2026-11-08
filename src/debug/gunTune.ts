@@ -5,6 +5,9 @@ import { loadCharactersNode } from './nodeCharacters';
 import { GUN_POSES, type GunPoses, resetGunRig } from '../player/gunPose';
 import { GUN_TUNED } from '../player/gunTuned';
 import { GUN_IDS, type GunId, GUNS } from '../weapons/guns';
+import { Quaternion, Vector3 } from 'three';
+import { type Grip, GRIPS, gripsChanged } from '../player/grips';
+import { gunRigData } from '../player/gunPose';
 
 /**
  * Where the gun may sit at the hip and how far from the eye in the sights, by class (a pose outside costs):
@@ -21,7 +24,10 @@ function looksCost(id: GunId): number {
   const L = LOOKS[GUNS[id].cls];
   let c = 0;
   for (let i = 0; i < 3; i++) c += (Math.max(0, L.lo[i] - P.hip[i]) + Math.max(0, P.hip[i] - L.hi[i])) * 40000;
-  c += (Math.max(0, L.relief[0] - P.relief) + Math.max(0, P.relief - L.relief[1])) * 40000;
+  const relief = gunRigData(id).cls.relief;
+  c += (Math.max(0, L.relief[0] - relief) + Math.max(0, relief - L.relief[1])) * 40000;
+  // The grips (data/grips.json) kept near where the reference / the editor put them.
+  for (let i = 0; i < GP_N; i++) c += Math.max(0, Math.abs(gp[i]) - GP_FREE[i]) * GP_COST[i];
   for (const k of ['shoulderR', 'shoulderL', 'adsShoulderR', 'adsShoulderL'] as const) for (const v of P[k]) c += Math.max(0, Math.abs(v) - 0.1) * 40000;
   return c;
 }
@@ -35,6 +41,49 @@ function looksCost(id: GunId): number {
  */
 
 const over = (v: number, lim: number) => Math.max(0, Math.abs(v) - lim);
+
+/**
+ * The grip parameters tuned on top of data/grips.json as it was: the hands' turn about their grip axis and
+ * the tilt of the handle across the palm (right, left), the stance moved, the sprint and reload poses
+ * moved and turned (camera axes).
+ */
+const GP_NAMES = ['mainD', 'mainT', 'offD', 'offT', 'sx', 'sy', 'sz', 'spx', 'spy', 'spz', 'sprx', 'spry', 'rlx', 'rly', 'rlz', 'rlrx', 'rlry', 'rlrz'] as const;
+const GP_N = GP_NAMES.length;
+const GP_STEP = [0.12, 0.12, 0.12, 0.12, 0.015, 0.015, 0.015, 0.03, 0.03, 0.03, 0.15, 0.15, 0.03, 0.03, 0.03, 0.15, 0.15, 0.15];
+/** Free play before it costs, and the cost per unit past it (the stance stays where it looks right). */
+const GP_FREE = [0.8, 0.8, 0.8, 0.8, 0.025, 0.025, 0.025, 0.08, 0.08, 0.08, 0.5, 0.5, 0.06, 0.06, 0.06, 0.5, 0.5, 0.5];
+const GP_COST = [200, 200, 200, 200, 20000, 20000, 20000, 5000, 5000, 5000, 300, 300, 5000, 5000, 5000, 300, 300, 300];
+let gp = new Array<number>(GP_N).fill(0);
+let gpBase: Grip = {};
+
+const _q = new Quaternion();
+const _ax = (x: number, y: number, z: number, a: number) => new Quaternion().setFromAxisAngle(new Vector3(x, y, z), a);
+function applyGrip(id: GunId): void {
+  const B = gpBase;
+  const G: Grip = structuredClone(B);
+  const turn = (q: number[], d: number, t: number) => {
+    _q.set(q[0], q[1], q[2], q[3]).multiply(_ax(0, 1, 0, d)).multiply(_ax(1, 0, 0, t));
+    return [_q.x, _q.y, _q.z, _q.w] as [number, number, number, number];
+  };
+  const camTurn = (q: number[], rx: number, ry: number, rz: number) => {
+    _q.set(q[0], q[1], q[2], q[3]).premultiply(_ax(0, 0, 1, rz)).premultiply(_ax(1, 0, 0, rx)).premultiply(_ax(0, 1, 0, ry));
+    return [_q.x, _q.y, _q.z, _q.w] as [number, number, number, number];
+  };
+  const add = (a: number[], x: number, y: number, z: number) => [a[0] + x, a[1] + y, a[2] + z] as [number, number, number];
+  if (G.main && B.main) G.main.q = turn(B.main.q, gp[0], gp[1]);
+  if (G.off && B.off) G.off.q = turn(B.off.q, gp[2], gp[3]);
+  if (G.stance && B.stance) G.stance.at = add(B.stance.at, gp[4], gp[5], gp[6]);
+  if (G.sprint && B.sprint) {
+    G.sprint.at = add(B.sprint.at, gp[7], gp[8], gp[9]);
+    G.sprint.q = camTurn(B.sprint.q, gp[10], gp[11], 0);
+  }
+  if (G.reload && B.reload) {
+    G.reload.at = add(B.reload.at, gp[12], gp[13], gp[14]);
+    G.reload.q = camTurn(B.reload.q, gp[15], gp[16], gp[17]);
+  }
+  GRIPS[id] = G;
+  gripsChanged();
+}
 
 /** How far past the limits the animations go, summed over frames (degrees), and the failure count. */
 export function gunCost(vm: Viewmodel, id: GunId, only?: string[]): { cost: number; fails: number; worst: string } {
@@ -53,6 +102,8 @@ export function gunCost(vm: Viewmodel, id: GunId, only?: string[]): { cost: numb
         c += over(h.flex, LIMITS.flex - 2) + over(h.dev, LIMITS.dev - 2) + over(h.twist, LIMITS.twist - 2) + over(h.roll, LIMITS.roll - 2);
         c += over(h.dWrist, LIMITS.jump - 2) * 2 + over(h.dRoll, LIMITS.jump - 2) + over(h.dSwivel, LIMITS.jump - 2) + h.socketGap * 400;
         if (r.checkFrame && !h.inFrame) c += 12;
+        // An elbow up by the eye: the sleeve fills the view.
+        c += Math.max(0, h.elbowY + 0.2) * 100;
       }
       if (r.checkFrame && !r.headInFrame) c += 12;
     }
@@ -133,11 +184,13 @@ export async function main(args: string[]): Promise<number> {
   const rounds = Number(pos[1] ?? 3);
   for (const id of ids) {
     const P = GUN_POSES[id];
+    gpBase = structuredClone(GRIPS[id] ?? {});
+    gp = new Array<number>(GP_N).fill(0);
     const t0 = Date.now();
     let best = gunCost(vm, id);
     if (!args.includes('--no-scan')) scanRolls(vm, id, P);
     console.log(`${id}: start cost ${best.cost.toFixed(0)} (${best.fails} fails; ${best.worst}) ${Date.now() - t0} ms/eval`);
-    for (let r = 0; r < rounds && best.fails > 0; r++) {
+    for (let r = 0; r < rounds && (best.fails > 0 || r < 1); r++) {
       const scale = 1 / (1 + r);
       for (const { path, step } of PARAMS) {
         const only = animsOf(path);
@@ -153,6 +206,21 @@ export async function main(args: string[]): Promise<number> {
         if (only) best = gunCost(vm, id);
         else best = gunCost(vm, id);
       }
+      if (gpBase.stance)
+        for (let i = 0; i < GP_N; i++) {
+          let base = best.cost;
+          for (const dir of [1, -1, 2, -2]) {
+            const old = gp[i];
+            gp[i] = old + dir * GP_STEP[i] * scale;
+            applyGrip(id);
+            const c = gunCost(vm, id);
+            if (c.cost < base - 0.5) {
+              base = c.cost;
+              best = c;
+            } else gp[i] = old;
+          }
+          applyGrip(id);
+        }
       console.log(`  round ${r + 1}: cost ${best.cost.toFixed(0)} (${best.fails} fails; ${best.worst})`);
     }
     // What differs from the class defaults goes to gunTuned.ts.
@@ -174,6 +242,13 @@ export async function main(args: string[]): Promise<number> {
       `import type { GunId } from '../weapons/guns';\nimport type { GunPoses } from './gunPose';\n\n/** Written by \`node tools/vite-run.mjs src/debug/gunTune.ts <gun|all> [rounds] --write\`: per-gun overrides of the class poses. */\nexport const GUN_TUNED: Partial<Record<GunId, Partial<GunPoses>>> = ${body};\n`,
     );
     console.log('written src/player/gunTuned.ts');
+    // The grips: merged into the file as it is on disk (tuners on other guns may have written it).
+    const gdisk = JSON.parse((fs as FsR).readFileSync('src/data/grips.json', 'utf8')) as Record<string, Grip>;
+    for (const id of ids) if (GRIPS[id]) gdisk[id] = GRIPS[id];
+    const r4 = (_k: string, v: unknown) => (typeof v === 'number' ? Math.round(v * 10000) / 10000 : v);
+    fs.writeFileSync('src/data/grips.json', `${JSON.stringify(gdisk, r4, 2)}
+`);
+    console.log('written src/data/grips.json');
   }
   vm.dispose();
   return 0;

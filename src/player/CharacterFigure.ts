@@ -2,6 +2,7 @@ import { type BufferGeometry, Group, Matrix4, Mesh, Quaternion, SkinnedMesh, Vec
 import { type BodyId, bodyAsset, bodyNow, type ClipId, costumeBody, loadBody } from '../characters/assets';
 import { boxInHand, coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
 import { handFrame } from '../characters/hands';
+import { gripHands } from './grips';
 import { characterMaterial } from '../characters/material';
 import { CharacterRig } from '../characters/rig';
 import { type ItemId, ITEMS, type WearSlot } from '../data/items';
@@ -95,7 +96,15 @@ export class CharacterFigure {
 
   private heldItem(): HeldId | null {
     const id = this.holding;
-    return id && id in HELD && this.held.has(id as HeldId) ? (id as HeldId) : null;
+    const h = id && id in HELD && this.held.has(id as HeldId) ? (id as HeldId) : null;
+    // A toolbox carried takes the right hand from a one-handed tool (it rides in the pack meanwhile);
+    // a two-handed weapon keeps the hands, the box goes to the hip.
+    if (h && !HELD[h].twoHanded && this.boxWorn()) return null;
+    return h;
+  }
+
+  private boxWorn(): boolean {
+    return wornGear(this.worn).some((g) => gearKind(g) === 'box');
   }
 
   /** Called when something that was loading came in and the figure changed (a still preview redraws). */
@@ -214,10 +223,15 @@ export class CharacterFigure {
   private pose(): void {
     const r = this.rig!;
     r.hold(this.clip, this.clipTime);
-    const held = !!this.heldItem();
+    const item = this.heldItem();
+    const held = !!item;
+    // The free left hand a little bent; the right as its item says (data/grips.json), a fist on a box's handle.
+    const hl = handFrame(r.rig, 'L');
+    if (hl) for (const [i, q] of hl.poses.relaxed) r.bones[i].quaternion.copy(q);
+    const hr = handFrame(r.rig, 'R');
+    if (hr && !held) for (const [i, q] of hr.poses.relaxed) r.bones[i].quaternion.copy(q);
     if (held || this.gear.has(`${this.worn.bag ? ITEMS[this.worn.bag].wear?.gear : ''}:hand`)) {
-      const hf = handFrame(r.rig, 'R');
-      if (hf) for (const [i, q] of hf.fist) r.bones[i].quaternion.copy(q);
+      if (hr) for (const [i, q] of hr.poses[held ? gripHands(item, false, false).R : 'grip_fist']) r.bones[i].quaternion.copy(q);
       // The right forearm brought forward a little: a held item clear of the leg (a toolbox just hangs).
       if (held) r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.5));
       r.root.updateMatrixWorld(true);

@@ -26,6 +26,7 @@ import { setLensGlow } from '../items/flashlight';
 import type { BodyId } from '../characters/assets';
 import { type ArmPose, HAND_OFFSET, HandsRig, hitTime, type ItemState, swingTime } from './armRig';
 import { FpArms } from './fpArms';
+import { gripHands } from './grips';
 import { GRIP_X, GRIP_Z } from './hand';
 import { buildHeldModel, FISTS, HELD, type HeldConfig, type HeldId } from './held';
 import { SPEED_WALK } from './PlayerController';
@@ -128,7 +129,7 @@ export class Viewmodel {
   readonly gunView: GunView = { action: 'idle', t: 0, duration: 1, open: false, ads: false, wall: 0, wallDist: 99, chamber: true, mods: [] };
   /** The pose of the gun this frame (read by test:anim, ?animdebug and the scene for the muzzle). */
   readonly gunPose: GunPoseOut = newGunPoseOut();
-  private readonly gunIn: GunPoseInput = { ads: 0, sprint: 0, crouch: 0, wall: 0, lower: 0, pump: 0, action: 'idle', t: 0, duration: 1, sinceShot: -1, open: false, kickBack: 0, kickUp: 0, kickSide: 0, kickRoll: 0 };
+  private readonly gunIn: GunPoseInput = { ads: 0, sprint: 0, crouch: 0, wall: 0, lower: 0, pump: 0, action: 'idle', t: 0, duration: 1, sinceShot: -1, open: false, chamber: true, kickBack: 0, kickUp: 0, kickSide: 0, kickRoll: 0 };
   /** In the sights 0..1 (eased), and for how long (the aim wavers after STEADY s). */
   ads = 0;
   private adsTime = 0;
@@ -404,7 +405,11 @@ export class Viewmodel {
     this.rig.update(this.config(this.item), st, HELD.torch, ts);
     // The item rides in the right hand; it slides through the fist when the swing slides the grip.
     const model = this.held.get(this.item)?.children[0];
-    if (model) model.position.y = -this.rig.mainAlong;
+    if (model) {
+      model.position.y = -this.rig.mainAlong;
+      // The hand's turn about the handle (the grip editor may change it).
+      model.quaternion.setFromAxisAngle(_axisY, -this.config(this.item).main.roll);
+    }
     this.applyArm(this.armR, this.handR, this.uppers[0], this.rig.right.pose);
     this.applyArm(this.armL, this.handL, this.uppers[1], this.rig.left.pose);
     // The thumb presses the button: the fist (and the flashlight in it) dips and tilts a hair.
@@ -426,6 +431,10 @@ export class Viewmodel {
     this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
     this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
+    // The fingers: the item's hand poses (data/grips.json); the left fist round the flashlight when one-handed.
+    const hp = gripHands(this.item, false, twoHanded);
+    this.arms.setPose(0, hp.R);
+    this.arms.setPose(1, twoHanded ? hp.L : 'grip_fist');
     this.arms.update(0, this.uppers[0], this.rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], this.rig.left.pose.upperLen, this.armL, this.handL);
     this.handL.getWorldPosition(_hand);
@@ -526,6 +535,7 @@ export class Viewmodel {
     inp.duration = gv.duration;
     inp.sinceShot = this.sinceShot;
     inp.open = gv.open;
+    inp.chamber = gv.chamber;
     inp.kickBack = this.kick[0];
     inp.kickUp = this.kick[1];
     inp.kickSide = this.kick[2];
@@ -560,6 +570,9 @@ export class Viewmodel {
     // The fist turned about the grip (the sights): the gun stays where the pose has it.
     {
       const g = this.guns.get(id)!;
+      // hand ← gun from the rig's hand frame now (the grip editor may have moved it).
+      const dm = gunRigData(id).main;
+      g.base.compose(dm.at, dm.q, _one).invert();
       _m4.makeTranslation(GRIP_X, 0, GRIP_Z).multiply(_m4b.makeRotationY(-out.rollR)).multiply(g.base);
       _m4.decompose(g.holder.position, g.holder.quaternion, g.holder.scale);
     }
@@ -603,6 +616,9 @@ export class Viewmodel {
     this.root.position.set(bobX + this.swayX + Math.sin(this.time * 0.9) * waver, bobY + this.swayY + breathe + Math.sin(this.time * 1.3 + 1) * waver, 0);
     this.root.rotation.set(this.swayY * 1.2, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
+    const hp = gripHands(id, true, true);
+    this.arms.setPose(0, hp.R);
+    this.arms.setPose(1, out.left === 'gun' ? hp.L : out.left === 'none' ? 'relaxed' : 'grip_fist');
     this.arms.update(0, this.uppers[0], rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], rig.left.pose.upperLen, this.armL, this.handL);
   }

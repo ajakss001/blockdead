@@ -24,6 +24,42 @@ const shots: Plugin = {
   },
 };
 
+/**
+ * Dev only: POST /__grips with the grips as JSON writes src/data/grips.json (the grip editor's «Сохранить»,
+ * ?gripedit=<id>); the editor keeps its state, so that write does not reload the page.
+ */
+let gripsSaved = 0;
+const grips: Plugin = {
+  name: 'dev-grips',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use('/__grips', (req, res) => {
+      if (req.method !== 'POST') {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body) as Record<string, unknown>;
+          const round = (_k: string, v: unknown) => (typeof v === 'number' ? Math.round(v * 10000) / 10000 : v);
+          gripsSaved = Date.now();
+          writeFileSync('src/data/grips.json', `${JSON.stringify(data, round, 2)}\n`);
+          res.end('ok');
+        } catch (e) {
+          res.statusCode = 400;
+          res.end(String(e));
+        }
+      });
+    });
+  },
+  handleHotUpdate(ctx) {
+    if (ctx.file.endsWith('src/data/grips.json') && Date.now() - gripsSaved < 3000) return [];
+  },
+};
+
 export default defineConfig({
   // Relative paths: Yandex/VK serve the build from an arbitrary sub-path inside an iframe.
   base: './',
@@ -35,5 +71,5 @@ export default defineConfig({
   // Module workers: the chunk worker imports three.js and the world generator.
   worker: { format: 'es' },
   server: { port: 5173, fs: { allow: [root, realRoot] } },
-  plugins: [shots],
+  plugins: [shots, grips],
 });

@@ -6,6 +6,7 @@ import { baseLook } from '../player/appearance';
 import { CharacterFigure } from '../player/CharacterFigure';
 import { grim } from '../style/palette';
 import type { Worn } from '../systems/Inventory';
+import { CLASSES } from '../data/classes';
 import { applyStage } from './viewerStage';
 
 /**
@@ -15,10 +16,13 @@ import { applyStage } from './viewerStage';
  * with the bag, the mechanic with the toolbox (in the free hand; on the hip with the axe).
  */
 
-const W = 190;
-const H = 300;
+const QS = new URLSearchParams(location.search);
+const W = Number(QS.get('w')) || 190;
+const H = Math.round((W * 300) / 190);
 const NONE: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
-const ROWS: { name: string; sex: 'male' | 'female'; worn: Partial<Worn> }[] = [
+/** ?classes=1: every class as the character editor dresses it (its uniform, the item it starts with in hand). */
+const CLASS_MODE = new URLSearchParams(location.search).has('classes');
+const ROWS_ALL: { name: string; sex: 'male' | 'female'; worn: Partial<Worn>; hand?: ItemId | null }[] = [
   { name: 'Военный (м)', sex: 'male', worn: { outfit: 'outfitMilitary', head: 'helmetMilitary', vest: 'vestMilitary', back: 'backpackMilitary' } },
   { name: 'Военный (ж)', sex: 'female', worn: { torso: 'militaryJacket', legs: 'militaryPants', feet: 'combatBoots', head: 'helmetMilitary', vest: 'vestMilitary', back: 'backpackMilitary' } },
   { name: 'SWAT (м)', sex: 'male', worn: { outfit: 'outfitSwat', head: 'helmetSwat', vest: 'vestSwat' } },
@@ -28,8 +32,10 @@ const ROWS: { name: string; sex: 'male' | 'female'; worn: Partial<Worn> }[] = [
   { name: 'Механик', sex: 'male', worn: { outfit: 'outfitMechanic', bag: 'toolboxMechanic' } },
   { name: 'Школьный / туристический', sex: 'female', worn: { torso: 'hoodie', legs: 'jeans', back: 'backpackHiking', head: 'helmetConstruction' } },
 ];
-type Cell = { label: string; clip: ClipId; t: number; dir: [number, number]; swing?: boolean };
-const CELLS: Cell[] = [
+const ONLY = QS.get('only')?.split(',');
+const ROWS = CLASS_MODE ? CLASSES.filter((c) => !ONLY || ONLY.includes(c.id)).map((c) => ({ name: c.name, sex: 'male' as const, worn: { ...(c.uniform as Partial<Worn>), back: c.uniform.back ?? (c.uniform.bag ? null : 'backpackSchool') } as Partial<Worn>, hand: c.hand })) : ROWS_ALL;
+type Cell = { label: string; clip: ClipId; t: number; dir: [number, number]; swing?: boolean; close?: boolean };
+const CELLS_ALL: Cell[] = [
   { label: 'спереди', clip: 'idle', t: 0, dir: [0, 1] },
   { label: 'сбоку', clip: 'idle', t: 0, dir: [1, 0] },
   { label: 'сзади', clip: 'idle', t: 0, dir: [0, -1] },
@@ -38,6 +44,15 @@ const CELLS: Cell[] = [
   { label: 'присед', clip: 'crouched_walking', t: 0.4, dir: [0.7, 0.7] },
   { label: 'замах топором', clip: 'idle', t: 0, dir: [0.8, 0.6], swing: true },
 ];
+const CELLS: Cell[] = CLASS_MODE
+  ? [
+      { label: 'спереди', clip: 'idle', t: 0, dir: [0, 1] },
+      { label: 'сбоку', clip: 'idle', t: 0, dir: [1, 0] },
+      { label: 'сзади', clip: 'idle', t: 0, dir: [0, -1] },
+      { label: 'голова/торс', clip: 'idle', t: 0, dir: [0.5, 0.87], close: true },
+      { label: 'торс сбоку', clip: 'idle', t: 0, dir: [-0.87, 0.5], close: true },
+    ]
+  : CELLS_ALL;
 
 const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(1);
@@ -61,7 +76,8 @@ for (const [ri, row] of ROWS.entries()) {
   f.setAppearance({ ...baseLook(row.sex), height: row.sex === 'male' ? 180 : 168 });
   scene.add(f.root);
   for (const [ci, c] of CELLS.entries()) {
-    f.setOutfit({ ...NONE, ...row.worn }, c.swing ? ('axe' as ItemId) : null);
+    const hand = 'hand' in row ? ((row.hand ?? null) as ItemId | null) : null;
+    f.setOutfit({ ...NONE, ...row.worn }, c.swing ? ('axe' as ItemId) : hand);
     f.setPose(row.sex === 'female' && c.clip === 'walking' ? 'walking_female' : c.clip, c.t);
     if (c.swing) {
       // The top of the windup: the right arm up and back over the shoulder, the body turned with it.
@@ -73,9 +89,9 @@ for (const [ri, row] of ROWS.entries()) {
       r.bone('LeftArm').quaternion.multiply(_q.setFromAxisAngle(new Vector3(0, 0, 1), 0.9));
       r.root.updateMatrixWorld(true);
     }
-    const d = 4.6;
-    cam.position.set(c.dir[0] * d, 1.0, c.dir[1] * d);
-    cam.lookAt(0, 0.92, 0);
+    const d = c.close ? 2.1 : 4.6;
+    cam.position.set(c.dir[0] * d, c.close ? 1.45 : 1.0, c.dir[1] * d);
+    cam.lookAt(0, c.close ? 1.3 : 0.92, 0);
     const y = (ROWS.length - 1 - ri) * H;
     renderer.setViewport(ci * W, y, W, H);
     renderer.setScissor(ci * W, y, W, H);

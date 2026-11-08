@@ -6,6 +6,7 @@ import type { GunAction } from '../weapons/gunState';
 import { RELOAD_MARKS } from '../weapons/gunState';
 import { basisQuat } from './armRig';
 import { GUN_TUNED } from './gunTuned';
+import { GRIPS, onGripsChanged, quat, vec } from './grips';
 
 /**
  * Firearms in first person (pure math, no meshes: the viewmodel applies it, test:anim checks it).
@@ -37,6 +38,8 @@ export interface GunPoseInput {
   /** Seconds since the last shot (slide / bolt travel), and the slide locked back (a pistol fired dry). */
   sinceShot: number;
   open: boolean;
+  /** A round / the rocket is in the chamber (GunInst.chamber: the one loaded state; the RPG's rocket shows by it). */
+  chamber: boolean;
   /** Recoil now: back (m), up (rad), sideways (rad), roll (rad). */
   kickBack: number;
   kickUp: number;
@@ -95,6 +98,8 @@ function handFrame(f: HandFrame, roll: number): HandOnGun {
 export interface PoseKey {
   at: V3;
   turn: V3;
+  /** The gun's rotation outright (camera space, a quaternion), instead of `turn` (set in the grip editor). */
+  q?: readonly [number, number, number, number];
 }
 
 /**
@@ -251,6 +256,7 @@ export interface GunRigData {
 }
 
 const rigs = new Map<GunId, GunRigData>();
+onGripsChanged(() => rigs.clear());
 
 /** Forget the compiled rig of a gun (its poses changed). */
 export function resetGunRig(id: GunId): void {
@@ -264,15 +270,25 @@ export function gunRigData(id: GunId): GunRigData {
   if (r) return r;
   const s = gunSockets(id);
   const g = GUNS[id];
-  const cls = GUN_POSES[id];
-  const main = handFrame(s.main, cls.mainRoll);
-  const off = handFrame(s.off, cls.offRoll);
-  off.at.add(v(cls.offShift));
-  if (cls.offTilt) off.q.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), cls.offTilt));
+  // The class / tuned poses with what the grip editor saved (data/grips.json) on top.
+  const G = GRIPS[id] ?? {};
+  const cls: GunPoses = { ...GUN_POSES[id] };
+  if (G.ads?.relief !== undefined) cls.relief = G.ads.relief;
+  if (G.ads?.drop !== undefined) cls.adsDrop = G.ads.drop;
+  if (G.sprint) cls.sprint = { at: G.sprint.at, turn: [0, 0, 0], q: G.sprint.q };
+  if (G.reload) cls.reload = { at: G.reload.at, turn: [0, 0, 0], q: G.reload.q };
+  const main = G.main ? { at: vec(G.main.at), q: quat(G.main.q) } : handFrame(s.main, cls.mainRoll);
+  let off: HandOnGun;
+  if (G.off) off = { at: vec(G.off.at), q: quat(G.off.q) };
+  else {
+    off = handFrame(s.off, cls.offRoll);
+    off.at.add(v(cls.offShift));
+    if (cls.offTilt) off.q.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), cls.offTilt));
+  }
   // Hip: the barrel to where the crosshair is `converge` ahead.
-  const hipAt = v(cls.hip);
+  const hipAt = G.stance ? vec(G.stance.at) : v(cls.hip);
   const aimDir = new Vector3(0, 0, -cls.converge).sub(hipAt).normalize();
-  const hipQ = new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), aimDir);
+  const hipQ = G.stance ? quat(G.stance.q) : new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), aimDir);
   // Sights: the line from the eye (`adsDrop` over the rear sight) through the front sight onto the view
   // axis, the rear sight `relief` ahead: the front sight in the middle of the screen.
   const eye = v(s.sightR).add(new Vector3(0, cls.adsDrop, 0));
@@ -306,7 +322,8 @@ const _a = new Vector3();
 const _pose = { at: new Vector3(), q: new Quaternion() };
 
 /** The gun's rotation of a key: the hip rotation turned by the key's axis-angle (camera axes). */
-function keyQ(d: GunRigData, k: PoseKey, out: Quaternion): Quaternion {
+export function keyQ(d: GunRigData, k: PoseKey, out: Quaternion): Quaternion {
+  if (k.q) return out.set(k.q[0], k.q[1], k.q[2], k.q[3]).normalize();
   _a.set(...k.turn);
   const ang = _a.length();
   out.copy(d.hipQ);
@@ -397,7 +414,7 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   const blow = sinceShot >= 0 && sinceShot < 0.09 ? Math.sin((Math.PI * sinceShot) / 0.09) : 0;
   if (g.cls === 'pistol') out.slide = inp.open ? 0.028 : 0.028 * blow;
   else if (g.action === 'auto') out.slide = 0.045 * blow;
-  out.rocket = true;
+  out.rocket = inp.chamber;
   out.magOnGun = true;
   out.magShown = true;
   out.left = 'gun';
@@ -517,7 +534,6 @@ function leftPath(d: GunRigData, feed: string, a: GunAction, k: number, at: Vect
   // At the pouch the hand is turned as at the loading port, a little down.
   const pouchQ = _q2.copy(_hQ).premultiply(_q.setFromAxisAngle(_a.set(1, 0, 0), -0.4));
   if (feed === 'rocket') {
-    out.rocket = k >= M.in;
     if (k < 0.3) {
       between(_offG, _offQ, pouchG, pouchQ, seg(k, 0, 0.3), out);
       out.left = 'none';

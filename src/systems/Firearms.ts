@@ -280,7 +280,7 @@ export class Firearms {
     return {
       id,
       name: g.name,
-      mag: inst.mag + (inst.chamber && g.feed !== 'rocket' ? 1 : 0),
+      mag: inst.mag + (inst.chamber ? 1 : 0),
       chamber: inst.chamber,
       capacity: capacityOf(id, inst.mods),
       reserve: this.w.inventory.count(g.caliber),

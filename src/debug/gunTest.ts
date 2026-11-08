@@ -392,6 +392,53 @@ export async function main(): Promise<number> {
     rk.rockets.length = 0;
   }
 
+  // 11. The RPG's one loaded state: the rocket in the tube, the HUD and the trigger agree at every step.
+  {
+    draw('launcher_rpg');
+    const id: GunId = 'launcher_rpg';
+    const rocketShown = () => (vm as unknown as { guns: Map<GunId, { model: { parts: { rocket: { visible: boolean } } } }> }).guns.get(id)!.model.parts.rocket.visible;
+    const view = (tag: string) => {
+      const h = fa.hud()!;
+      const reloadMsg = h.mag === 0 && !h.reloading && h.reserve > 0;
+      return { tag, loaded: fa.state!.inst.chamber, rocket: rocketShown(), mag: h.mag, reserve: h.reserve, reloadMsg, reloading: h.reloading };
+    };
+    const agree = (v: ReturnType<typeof view>, loaded: boolean) =>
+      check(
+        v.loaded === loaded && v.rocket === loaded && v.mag === (loaded ? 1 : 0) && v.reloadMsg === (!loaded && !v.reloading),
+        `RPG ${v.tag}: loaded ${v.loaded}, rocket ${v.rocket ? 'shown' : 'hidden'}, HUD ${v.reloadMsg ? '«Перезарядка»' : `${v.mag} / ${v.reserve}`}`,
+      );
+    agree(view('drawn'), true);
+    const fired0 = fa.state!.inst.chamber;
+    fire();
+    for (let i = 0; i < 20; i++) step();
+    agree(view('after the shot'), false);
+    check(fired0 && !fa.state!.inst.chamber, 'RPG: the shot fired from the loaded state');
+    fire();
+    for (let i = 0; i < 5; i++) step();
+    check(!fa.state!.inst.chamber && (fa as unknown as { rockets: unknown[] }).rockets.length === 1, 'RPG: empty — the trigger does nothing');
+    input.press('reload');
+    step();
+    input.release('reload');
+    step();
+    check(fa.state!.busy, 'RPG: R starts the reload');
+    // Every frame of the reload: the model and the HUD read the same state.
+    let mismatch = 0;
+    for (let i = 0; i < 60 * 6 && fa.state!.busy; i++) {
+      step();
+      const v = view('reload');
+      if (v.rocket !== v.loaded && !(vm as unknown as { gunView: { action: string } }).gunView.action.startsWith('reload')) mismatch++;
+      if (v.mag !== (v.loaded ? 1 : 0)) mismatch++;
+    }
+    for (let i = 0; i < 30; i++) step();
+    check(mismatch === 0, `RPG reload: HUD and loaded state agree every frame (${mismatch} mismatches)`);
+    agree(view('after the reload'), true);
+    (fa as unknown as { rockets: unknown[] }).rockets.length = 0;
+    fire();
+    for (let i = 0; i < 20; i++) step();
+    agree(view('after the second shot'), false);
+    (fa as unknown as { rockets: unknown[] }).rockets.length = 0;
+  }
+
   // 10. import:assets with no files: the stand-ins, a manifest, no failure.
   {
     const fs = proc.getBuiltinModule('node:fs') as Fs;

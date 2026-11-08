@@ -37,6 +37,13 @@ function pickInputMode(device: DeviceInfo): InputMode {
 }
 
 async function boot(): Promise<void> {
+  // ?gripedit=<item> — the grip editor (dev): the item in the hands, gizmos, saved to src/data/grips.json.
+  if (import.meta.env.DEV && params.has('gripedit')) {
+    await loadCharacters(1024);
+    const m = await import('./debug/gripEditor');
+    await m.startGripEditor(params.get('gripedit'));
+    return;
+  }
   const gameEl = document.getElementById('game')!;
   const uiEl = document.getElementById('ui')!;
 

@@ -24,7 +24,8 @@ export class CharacterPreview {
   private readonly scene = new Scene();
   private readonly camera = new PerspectiveCamera(28, 0.5, 0.1, 30);
   /** The figure faces +Z (the camera); start turned three-quarters. */
-  private yaw = -0.45;
+  // Three-quarters: what is on the back (a pack and its straps) shows too.
+  private yaw = -0.8;
   private spin = 0;
   private dragX: number | null = null;
   private active = false;

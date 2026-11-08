@@ -41,10 +41,13 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
 export const GEAR = {
   helmet_military: { kind: 'helmet', tris: 1500, shell: 1.2, rim: 0.42 },
   helmet_swat: { kind: 'helmet', tris: 1500, shell: 1.2, rim: 0.42 },
-  helmet_firefighter: { kind: 'helmet', tris: 1500, shell: 1.18, rim: 0.4 },
+  // Its brim is wide: fitted by the dome, then made smaller and set down so the brim's front is at the brows.
+  helmet_firefighter: { kind: 'helmet', tris: 1500, shell: 1.18, rim: 0.4, shrink: 0.95, brimAtBrow: true },
   helmet_construction: { kind: 'helmet', tris: 1500, shell: 1.16, rim: 0.45 },
-  vest_military: { kind: 'vest', tris: 2500 },
-  vest_swat: { kind: 'vest', tris: 2500 },
+  // Vests as they come (≤ 5000): Meshy's baked vests have a UV island per triangle, and a simplifier with
+  // the borders locked can only tear them (the SWAT vest fell apart into dark triangles).
+  vest_military: { kind: 'vest', tris: 5000 },
+  vest_swat: { kind: 'vest', tris: 5000 },
   backpack_military: { kind: 'pack', tris: 2500, height: 0.64 },
   backpack_school: { kind: 'pack', tris: 2500, height: 0.44 },
   backpack_hiking: { kind: 'pack', tris: 2500, height: 0.8 },
@@ -60,6 +63,42 @@ const setV = (a, i, v) => ((a[i * 3] = v.x), (a[i * 3 + 1] = v.y), (a[i * 3 + 2]
 function percentile(values, p) {
   const s = Float64Array.from(values).sort();
   return s[Math.min(s.length - 1, Math.max(0, Math.floor(p * (s.length - 1))))];
+}
+/** Vertices at one position (UV seams split them): each one's group, and each group's members. */
+function positionGroups(pos) {
+  const key = new Map();
+  const group = new Int32Array(pos.length / 3);
+  const members = [];
+  for (let i = 0; i < group.length; i++) {
+    const k = `${Math.round(pos[i * 3] * 1e4)},${Math.round(pos[i * 3 + 1] * 1e4)},${Math.round(pos[i * 3 + 2] * 1e4)}`;
+    let gi = key.get(k);
+    if (gi === undefined) key.set(k, (gi = members.push([]) - 1));
+    group[i] = gi;
+    members[gi].push(i);
+  }
+  return { group, members };
+}
+/** Vertex normals with the copies of a corner sharing one (area-weighted over all their triangles). */
+function weldedNormals(pos, index, group, members) {
+  const gn = new Float32Array(members.length * 3);
+  const a = new Vector3(), b = new Vector3(), c = new Vector3();
+  for (let t = 0; t < index.length; t += 3) {
+    const [i, j, k] = [index[t], index[t + 1], index[t + 2]];
+    a.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    b.set(pos[j * 3], pos[j * 3 + 1], pos[j * 3 + 2]).sub(a);
+    c.set(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]).sub(a);
+    b.cross(c);
+    for (const v of [i, j, k]) (gn[group[v] * 3] += b.x), (gn[group[v] * 3 + 1] += b.y), (gn[group[v] * 3 + 2] += b.z);
+  }
+  const n = new Float32Array(pos.length);
+  for (let v = 0; v < group.length; v++) {
+    const g = group[v];
+    const l = Math.hypot(gn[g * 3], gn[g * 3 + 1], gn[g * 3 + 2]) || 1;
+    n[v * 3] = gn[g * 3] / l;
+    n[v * 3 + 1] = gn[g * 3 + 1] / l;
+    n[v * 3 + 2] = gn[g * 3 + 2] / l;
+  }
+  return n;
 }
 function vertexNormals(pos, index) {
   const n = new Float32Array(pos.length);
@@ -263,6 +302,7 @@ function weld(g) {
 }
 function simplifyGear(g, target) {
   g = weld(g);
+  if (g.index.length <= target * 3) return g;
   const want = Math.min(g.index.length, target * 3);
   const [index] = MeshoptSimplifier.simplifyWithAttributes(g.index, g.pos, 3, g.uv, 2, [1.5, 1.5], null, want, 1, ['LockBorder', 'Permissive']);
   // Compact: only the vertices still used.
@@ -300,7 +340,48 @@ function grimPixel(r, g, b) {
   if (c === undefined) gcache.set(k, (c = grim((r << 16) | (g << 8) | b)));
   return c;
 }
-async function texture(id, png) {
+/**
+ * The texels the triangles use (rasterised from the UVs) and the rest filled from them outwards: a baked
+ * texture's islands sit on a bare background, and a smaller copy (or a mip level) mixes it into the
+ * edges — the SWAT vest's light and dark triangle borders.
+ */
+function dilate(rgba, w, h, g, passes = 24) {
+  const used = new Uint8Array(w * h);
+  const U = g.uv, I = g.index;
+  for (let t = 0; t < I.length; t += 3) {
+    const p = [0, 1, 2].map((k) => [U[I[t + k] * 2] * w - 0.5, U[I[t + k] * 2 + 1] * h - 0.5]);
+    const x0 = Math.max(0, Math.floor(Math.min(p[0][0], p[1][0], p[2][0])) - 1), x1 = Math.min(w - 1, Math.ceil(Math.max(p[0][0], p[1][0], p[2][0])) + 1);
+    const y0 = Math.max(0, Math.floor(Math.min(p[0][1], p[1][1], p[2][1])) - 1), y1 = Math.min(h - 1, Math.ceil(Math.max(p[0][1], p[1][1], p[2][1])) + 1);
+    const area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
+    if (Math.abs(area) < 1e-9) continue;
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        const a = ((p[1][0] - x) * (p[2][1] - y) - (p[2][0] - x) * (p[1][1] - y)) / area;
+        const b = ((p[2][0] - x) * (p[0][1] - y) - (p[0][0] - x) * (p[2][1] - y)) / area;
+        const c = 1 - a - b;
+        if (a >= -0.02 && b >= -0.02 && c >= -0.02) used[y * w + x] = 1;
+      }
+  }
+  for (let pass = 0; pass < passes; pass++) {
+    const add = [];
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (used[i]) continue;
+        let r = 0, gg = 0, b = 0, n = 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h || !used[yy * w + xx]) continue;
+          const j = (yy * w + xx) * 4;
+          (r += rgba[j]), (gg += rgba[j + 1]), (b += rgba[j + 2]), n++;
+        }
+        if (n) add.push([i, r / n, gg / n, b / n]);
+      }
+    if (!add.length) break;
+    for (const [i, r, gg, b] of add) ((rgba[i * 4] = r), (rgba[i * 4 + 1] = gg), (rgba[i * 4 + 2] = b), (used[i] = 1));
+  }
+}
+async function texture(id, png, g) {
   const { data, info } = await sharp(Buffer.from(png)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const out = Buffer.alloc(info.width * info.height * 4);
   for (let i = 0; i < info.width * info.height; i++) {
@@ -310,9 +391,12 @@ async function texture(id, png) {
     out[i * 4 + 2] = c & 255;
     out[i * 4 + 3] = 255;
   }
+  // At 1024, the gutters filled, then both sizes from that.
+  const big = await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).resize(1024, 1024, { kernel: 'lanczos3' }).raw().toBuffer();
+  if (g) dilate(big, 1024, 1024, g);
   for (const size of [1024, 512]) {
     const f = join(OUT, `${id}_${size}.webp`);
-    await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).removeAlpha().webp({ quality: 82 }).toFile(f);
+    await sharp(big, { raw: { width: 1024, height: 1024, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).removeAlpha().webp({ quality: 82 }).toFile(f);
     report.push(`${id}_${size}.webp ${(statSync(f).size / 1024).toFixed(0)} KB`);
   }
 }
@@ -350,7 +434,7 @@ for (const id of IDS) {
   const c = b.min.map((v, i) => (v + b.max[i]) / 2);
   g = transform(g, new Matrix4().makeScale(real, real, real).multiply(new Matrix4().makeTranslation(-c[0], -c[1], -c[2])));
   pieces[id] = g;
-  await texture(id, g.tex);
+  await texture(id, g.tex, g);
   const doc = new Document();
   const buf = doc.createBuffer();
   const scene = doc.createScene(id);
@@ -424,6 +508,20 @@ function fitVest(body, src) {
   const sx = (t.size[0] + 0.07) / size[0], sz = (t.size[2] + 0.07) / size[2], sy = (t.size[1] * 0.92) / size[1];
   let g = transform(src, new Matrix4().makeTranslation(t.c[0], t.min[1] + t.size[1] * 0.48, t.c[2]).multiply(new Matrix4().makeScale(sx, sy, sz)));
   const n = g.pos.length / 3;
+  // The copies of one corner (split at UV seams; a baked vest has every triangle on its own island) move
+  // as one, or the vest cracks along every seam.
+  const { group, members } = positionGroups(g.pos);
+  const together = (pos) => {
+    for (const m of members) {
+      if (m.length < 2) continue;
+      const c = new Vector3();
+      for (const i of m) c.add(V(pos, i));
+      c.multiplyScalar(1 / m.length);
+      for (const i of m) setV(pos, i, c);
+    }
+  };
+  // Smooth normals over the welded corners (not one per triangle: no faceted, dark patches).
+  g = { ...g, nor: weldedNormals(g.pos, g.index, group, members) };
   // Inner side: the vertices facing the torso's axis.
   const disp = [];
   const inner = new Uint8Array(n);
@@ -452,6 +550,7 @@ function fitVest(body, src) {
     }
     setV(pos, i, p.add(acc.multiplyScalar(1 / ws)));
   }
+  together(pos);
   // Nothing of the vest under the skin (nor nearer than half the offset).
   for (let pass = 0; pass < 2; pass++)
     for (let i = 0; i < n; i++) {
@@ -459,6 +558,7 @@ function fitVest(body, src) {
       const { d, s } = signed(body, p);
       if (s && d < OFFSET * 0.6) setV(pos, i, s.p.clone().addScaledVector(s.n, OFFSET * 0.6));
     }
+  together(pos);
   // The skin between the vest's vertices: wherever it comes through (or nearer than the offset), the vest
   // round there is pushed out along the skin's normal, smoothly.
   for (let pass = 0; pass < 6; pass++) {
@@ -485,9 +585,10 @@ function fitVest(body, src) {
       }
     }
     for (let k = 0; k < n; k++) if (wsum[k] > 0) for (let a = 0; a < 3; a++) pos[k * 3 + a] += push[k * 3 + a] / Math.max(1, wsum[k]);
+    together(pos);
     if (!pushed) break;
   }
-  g = { ...g, pos, nor: vertexNormals(pos, g.index), inner };
+  g = { ...g, pos, nor: weldedNormals(pos, g.index, group, members), inner };
   const { ji, jw } = skinFrom(body, pos, null, 'Spine2');
   return { ...g, ji, jw };
 }
@@ -717,7 +818,7 @@ function shellField(g) {
  * at which the head above the brow is inside the shell 4 mm clear; within a point of the best any scale
  * gives (hair that sticks out anyway is hidden). Hair and scalp under it are hidden.
  */
-function fitHelmet(body, src) {
+function fitHelmet(body, src, cfg = {}) {
   const head = [];
   for (let v = 0; v < body.count; v++) if (body.share(v, HEADB) >= 0.5) head.push(v);
   const hx = head.map((v) => body.pos[v * 3]), hz = head.map((v) => body.pos[v * 3 + 2]);
@@ -764,6 +865,24 @@ function fitHelmet(body, src) {
   }
   const top1 = Math.max(...tries.map((t) => t.inside)) / cap.length;
   const best = tries.find((t) => t.inside / cap.length >= Math.min(0.99, top1 - 0.025));
+  if (cfg.shrink) {
+    // Smaller about the top of the head: the crown stays put, the rim comes up and in.
+    const crown = top + 0.004;
+    best.at.y = crown - (crown - best.at.y) * cfg.shrink;
+    best.s *= cfg.shrink;
+  }
+  if (cfg.brimAtBrow) {
+    // The brim: the height where the piece is widest (not the face shield hanging lower in front), set at the brows.
+    const bins = new Map();
+    for (let i = 0; i < src.pos.length / 3; i++) {
+      const y = Math.round(src.pos[i * 3 + 1] / 0.02);
+      bins.set(y, Math.max(bins.get(y) ?? 0, Math.hypot(src.pos[i * 3], src.pos[i * 3 + 2])));
+    }
+    let brimY = 0, wide = -1;
+    for (const [y, r] of bins) if (r > wide) (wide = r), (brimY = y * 0.02);
+    best.at.y += brow + 0.012 - (best.at.y + brimY * best.s);
+  }
+
   const place = new Matrix4().makeTranslation(best.at.x, best.at.y, best.at.z).multiply(new Matrix4().makeScale(best.s, best.s, best.s));
   // Hidden: the head under the shell (inside it, or poking out of it: hair) above the brow.
   const cover = head.filter((v) => {
@@ -783,7 +902,7 @@ function fitHelmet(body, src) {
 }
 
 /** A ribbon laid on the body along a path (bind space): `width` wide, `thick` thick, `lift` off the skin. */
-function ribbon(body, path, { width = 0.045, thick = 0.006, lift = 0.005, uv, allowed, fallback }) {
+function ribbon(body, path, { width = 0.045, thick = 0.006, lift = 0.005, uv, allowed, fallback, flat = false, clear = 0.004, edgesOnSkin = true }) {
   // Dense, smooth path, each point on the skin.
   const pts = [];
   for (let k = 0; k < path.length - 1; k++) {
@@ -812,17 +931,45 @@ function ribbon(body, path, { width = 0.045, thick = 0.006, lift = 0.005, uv, al
     const s = surface(body, q.p, 0.1);
     if (s) q.p.copy(s.p).addScaledVector(s.n, lift), q.n.copy(s.n);
   }
-  const P = [], N = [], U = [], I = [];
+  // The normals along it smoothed and kept on one side: a strap is a flat band, it does not twist (loose
+  // cloth under it turns the skin's normal every few centimetres: the band went zigzag).
+  if (flat) for (let i = 1; i < onSkin.length; i++) if (onSkin[i].n.dot(onSkin[i - 1].n) < 0) onSkin[i].n.negate();
+  for (let it = 0; flat && it < 12; it++) {
+    const sm = onSkin.map((q, i) => q.n.clone().multiplyScalar(2).add(onSkin[Math.max(0, i - 1)].n).add(onSkin[Math.min(onSkin.length - 1, i + 1)].n).normalize());
+    sm.forEach((n, i) => onSkin[i].n.copy(n));
+  }
+  // Nowhere under the cloth (loose scrubs fold over the skin the path was laid on).
+  if (flat) for (const q of onSkin) {
+    const f = signed(body, q.p);
+    if (f.s && f.d < lift) q.p.addScaledVector(q.n, Math.min(clear, lift - f.d));
+  }
+  // One across-direction for the whole band, carried along it (parallel transport): no flips between samples.
+  const sides = [];
   onSkin.forEach((q, i) => {
     const tan = onSkin[Math.min(onSkin.length - 1, i + 1)].p.clone().sub(onSkin[Math.max(0, i - 1)].p).normalize();
-    const side = new Vector3().crossVectors(tan, q.n).normalize().multiplyScalar(width / 2);
-    const up = q.n.clone().multiplyScalar(thick);
-    // Cross-section: bottom-left, bottom-right, top-right, top-left.
-    // Its edges laid on the skin too (a strap bends over a shoulder, it does not stand off it).
+    const sd = new Vector3().crossVectors(tan, q.n).normalize();
+    if (i && sd.dot(sides[i - 1]) < 0) sd.negate();
+    sides.push(sd);
+  });
+  const P = [], N = [], U = [], I = [];
+  onSkin.forEach((q, i) => {
+    const side = sides[i].clone().multiplyScalar(width / 2);
+    // Cross-section: bottom-left, bottom-right, top-right, top-left. An edge that would sink into the skin
+    // is lifted along the band's normal (the band stays flat, its edges just clear the body).
     const edge = [-1, 1].map((a) => {
       const e = q.p.clone().addScaledVector(side, a);
-      const f = surface(body, e, 0.03);
-      return f ? { p: f.p.clone().addScaledVector(f.n, lift), n: f.n.clone().add(q.n).normalize() } : { p: e, n: q.n };
+      // On the body's curve (a shoulder): the edge laid on the skin near it, not lifted off along the flat band
+      // (not under loose cloth: the skin it would find is under the scrubs).
+      if (!flat) {
+        // A pack's strap bends over the shoulder with the skin under its edges.
+        const f = surface(body, e, 0.03);
+        return f ? { p: f.p.clone().addScaledVector(f.n, lift), n: f.n.clone().add(q.n).normalize() } : { p: e, n: q.n };
+      }
+      const sk = surface(body, e, 0.03);
+      if (sk && edgesOnSkin) e.copy(sk.p).addScaledVector(sk.n.dot(q.n) < 0 ? sk.n.clone().negate() : sk.n, lift);
+      const f = signed(body, e);
+      if (f.s && f.d < lift) e.addScaledVector(q.n, Math.min(clear, lift - f.d));
+      return { p: e, n: q.n };
     });
     for (const [a, b] of [[-1, 0], [1, 0], [1, 1], [-1, 1]]) {
       const e = edge[a < 0 ? 0 : 1];
@@ -946,6 +1093,9 @@ function fitPack(body, src) {
   return { place, bone: 'Spine2', straps };
 }
 
+/** Costumes in loose cloth (scrubs): a strap kept clear of their folds, or it sinks under them. */
+const LOOSE = new Set(['doctor_m']);
+
 /** The medic bag on the left hip (Hips), its strap from the right shoulder across the chest and the back. */
 function fitBag(body, src) {
   const t = torso(body);
@@ -973,7 +1123,7 @@ function fitBag(body, src) {
     new Vector3(t.c[0] + half * 0.5, spine1.y, back),
     at(b.max[0] - 0.02, b.max[1], b.min[2] * 0.3),
   ];
-  const strap = ribbon(body, path, { width: 0.04, uv, allowed: BAG_BONES, fallback: 'Spine1' });
+  const strap = ribbon(body, path, { width: 0.04, uv, allowed: BAG_BONES, fallback: 'Spine1', flat: true, ...(LOOSE.has(body.id) ? { lift: 0.01, clear: 0.012, edgesOnSkin: false } : {}) });
   return { place, bone: 'Hips', straps: strap };
 }
 
@@ -1000,6 +1150,7 @@ const bodies = readdirSync(CHAR).filter((f) => f.endsWith('.glb') && !f.includes
 const meta = { gear: Object.fromEntries(IDS.filter((id) => pieces[id]).map((id, i) => [id, { kind: GEAR[id].kind, bit: i, tris: pieces[id].index.length / 3 }])), bodies: {} };
 for (const id of bodies) {
   const body = await readBody(`${id}.glb`);
+  body.id = id;
   const lod1 = await readBody(`${id}_lod1.glb`);
   const map = lodMap(body, lod1);
   const cover = new Uint16Array(body.count);
@@ -1020,7 +1171,7 @@ for (const id of bodies) {
       for (const k of c) cover[k] |= bit;
       line.push(`${gid} cover ${c.length}`);
     } else if (kind === 'helmet') {
-      const h = fitHelmet(body, src);
+      const h = fitHelmet(body, src, GEAR[gid]);
       rigid[gid] = { bone: 'Head', place: h.place.toArray().map((x) => +x.toFixed(5)) };
       for (const k of h.cover) cover[k] |= bit;
       line.push(`${gid} ×${h.scale.toFixed(3)}${h.found ? '' : ' NOT FITTED'} hide ${h.cover.length}`);
