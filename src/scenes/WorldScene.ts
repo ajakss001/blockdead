@@ -620,6 +620,13 @@ export class WorldScene implements IScene {
       this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
       this.meta = { ...emptyMeta(), ...save.meta };
     }
+    // Dev: ?hour=12 — the clock wound forward to that hour (0–24, fractions too) on load; time runs on from there.
+    const hourQ = Number(new URLSearchParams(location.search).get('hour') || NaN);
+    if (Number.isFinite(hourQ)) {
+      const day = 24 * 60;
+      const want = (((hourQ * 60) % day) + day) % day;
+      this.clock.minutes += (((want - (this.clock.minutes % day)) % day) + day) % day;
+    }
     if (save && !save.dead) {
       this.isNewGame = false;
       // Saves before the editor: the default survivor and class, no editor.
