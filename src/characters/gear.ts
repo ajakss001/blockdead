@@ -16,7 +16,9 @@ import { type BodyId, bodyAsset, hasBody, type RigAsset } from './assets';
  * Loaded lazily per piece and body; until then nothing is drawn (the figure gets it a moment later).
  */
 
-type Kind = 'helmet' | 'vest' | 'pack' | 'bag' | 'box';
+type Kind = 'helmet' | 'vest' | 'pack' | 'bag' | 'box' | 'glasses' | 'mask';
+/** Worn on the head and face: never drawn in first person (it is round the eyes). */
+export const HEAD_KINDS: readonly Kind[] = ['helmet', 'glasses', 'mask'];
 interface Meta {
   gear: Record<GearId, { kind: Kind; bit: number; tris: number }>;
   bodies: Record<string, { rigid: Partial<Record<GearId, { bone: string; place: number[] }>>; cover: string; cover1: string }>;
@@ -145,16 +147,17 @@ function jointMap(body: BodyId, rig: RigAsset): number[] {
  * A piece on a body, skinned, in the body's bind space (`lod` 1: for the zombies' rig); the toolbox here is
  * the one on the hip (in the hand it is a plain mesh: `boxInHand`). Cached; null until loaded.
  */
-export function gearGeometry(body: BodyId, g: GearId, lod: 0 | 1): BufferGeometry | null {
+export function gearGeometry(body: BodyId, g: GearId, lod: 0 | 1, part: 'main' | 'lens' = 'main'): BufferGeometry | null {
   if (!gearReady(body, g) || !hasBody(body)) return null;
-  const key = `${body}:${g}:${lod}`;
+  if (part === 'lens' && !fits.get(body)!.get(`${g}_lens`)) return null;
+  const key = `${body}:${g}:${lod}:${part}`;
   let out = geos.get(key);
   if (out) return out;
   const asset = bodyAsset(body);
   const rig = lod ? asset.lod1 : asset.lod0;
   const map = jointMap(body, rig);
   const parts: { pos: ArrayLike<number>; nor: ArrayLike<number>; uv: ArrayLike<number>; index: ArrayLike<number>; ji: ArrayLike<number>; jw: ArrayLike<number> }[] = [];
-  const rigid = meta!.bodies[body].rigid[g];
+  const rigid = part === 'lens' ? undefined : meta!.bodies[body].rigid[g];
   if (rigid) {
     const src = pieces.get(g)!.geometry;
     const m = new Matrix4().fromArray(rigid.place);
@@ -172,7 +175,7 @@ export function gearGeometry(body: BodyId, g: GearId, lod: 0 | 1): BufferGeometr
     for (let i = 0; i < n; i++) (ji[i * 4] = bone), (jw[i * 4] = 1);
     parts.push({ pos, nor, uv: src.getAttribute('uv').array, index: src.index!.array, ji, jw });
   }
-  const fit = fits.get(body)!.get(g);
+  const fit = fits.get(body)!.get(part === 'lens' ? `${g}_lens` : g);
   if (fit) {
     const J = fit.getAttribute('skinIndex'), W = fit.getAttribute('skinWeight');
     const ji = new Uint16Array(J.count * 4);

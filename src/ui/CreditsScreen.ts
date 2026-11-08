@@ -1,14 +1,14 @@
-import { type Credit, LIBRARY_CREDITS, MODEL_CREDITS } from '../data/credits';
+import { type Credit, LIBRARY_CREDITS, MODEL_CREDITS, SOUND_CREDITS } from '../data/credits';
 
 /**
- * "Авторы": who made the third-party models (CC BY needs it) and the libraries. Links are shown as
+ * "Авторы": who made the third-party models (CC BY needs it), the recorded sounds and the libraries. Links are shown as
  * text, not clickable: game platforms forbid leading players out of the game.
  */
 export function openCredits(parent: HTMLElement): void {
   const root = el('div', 'credits');
   const box = el('div', 'credits__box');
   box.append(el('div', 'credits__title', 'Авторы'));
-  box.append(el('p', 'credits__note', 'BlockDead: мир, персонажи и звуки созданы процедурно для этой игры.'));
+  box.append(el('p', 'credits__note', 'BlockDead: мир создан процедурно для этой игры; большая часть звуков синтезируется в игре.'));
   const models = section('Модели', MODEL_CREDITS, 'Загрузка…');
   box.append(models);
   // Authors of the installed models come with the model library (public/models/models.json).
@@ -20,6 +20,7 @@ export function openCredits(parent: HTMLElement): void {
       for (const m of j.models) if (!seen.has(m.url)) seen.set(m.url, { what: 'Модель', title: m.title, author: m.author, license: m.license === 'CC0-1.0' ? 'CC0' : 'CC BY 4.0', url: m.url, changes: 'упрощена, текстуры уменьшены' });
       models.replaceWith(section('Модели', [...MODEL_CREDITS, ...seen.values()], 'Сторонних моделей пока нет.'));
     });
+  box.append(section('Звуки', SOUND_CREDITS, ''));
   box.append(section('Библиотеки', LIBRARY_CREDITS, ''));
   const close = el('button', 'credits__close', 'Закрыть');
   box.append(close);

@@ -229,6 +229,11 @@ const CLASS: Record<GunClass, GunPoses> = {
   },
 };
 
+/** The class's own poses of a gun, without the tuner's (gunTune --reset starts from these). */
+export function classPoses(id: GunId): GunPoses {
+  return structuredClone(CLASS[GUNS[id].cls]);
+}
+
 /** The poses of a gun now (the tuner edits these in place, then calls resetGunRig). */
 export const GUN_POSES: Record<GunId, GunPoses> = Object.fromEntries(
   (Object.keys(GUNS) as GunId[]).map((id) => [id, { ...structuredClone(CLASS[GUNS[id].cls]), ...structuredClone(GUN_TUNED[id] ?? {}) }]),

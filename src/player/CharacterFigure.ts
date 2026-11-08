@@ -3,14 +3,14 @@ import { type BodyId, bodyAsset, bodyNow, type ClipId, costumeBody, loadBody } f
 import { boxInHand, coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
 import { handFrame } from '../characters/hands';
 import { gripHands } from './grips';
-import { characterMaterial } from '../characters/material';
+import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig } from '../characters/rig';
 import { type ItemId, ITEMS, type WearSlot } from '../data/items';
 import type { Worn } from '../systems/Inventory';
 import { type Appearance, DEFAULT_APPEARANCE } from './appearance';
 import { buildHeldModel, HELD, type HeldId } from './held';
 
-const NO_WORN: Worn = { outfit: null, head: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
+const NO_WORN: Worn = { outfit: null, head: null, face: null, mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
 
 /** The model a survivor wears: the costume in the outfit slot (men; women keep their base body), else a man or a woman. */
 export function bodyFor(look: Pick<Appearance, 'sex'>, outfit?: ItemId | null): BodyId {
@@ -141,7 +141,7 @@ export class CharacterFigure {
     const body = this.body!;
     const want = wornGear(this.worn);
     const inHand = !this.heldItem();
-    const keys = new Set(want.map((g) => (gearKind(g) === 'box' && inHand ? `${g}:hand` : g)));
+    const keys = new Set(want.flatMap((g) => (gearKind(g) === 'box' && inHand ? [`${g}:hand`] : [g, `${g}:lens`])));
     for (const [k, m] of this.gear)
       if (!keys.has(k)) {
         m.removeFromParent();
@@ -194,6 +194,16 @@ export class CharacterFigure {
       m.castShadow = true;
       r.mesh.add(m);
       this.gear.set(key, m);
+      // Glasses: the lenses in their own see-through material, drawn after the face.
+      const lg = gearGeometry(body, g, 0, 'lens');
+      if (lg && !this.gear.has(`${g}:lens`)) {
+        const l = new SkinnedMesh(lg, characterMaterial(bodyAsset(body), r.rig, { lens: LENS_TINT[g] ?? 0x1e1f1d }));
+        l.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+        l.frustumCulled = false;
+        l.renderOrder = 2;
+        r.mesh.add(l);
+        this.gear.set(`${g}:lens`, l);
+      }
     }
     this.hide.value = hideBits(want.filter((g) => !(gearKind(g) === 'box' && inHand)));
     if (missing) void loadGear(body, want).then(() => !this.disposed && this.body === body && (coverBody(body), this.rebuild(), this.onChange?.()));

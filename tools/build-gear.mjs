@@ -19,7 +19,7 @@ import { Document, NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
 import { reorder } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
-import { Matrix4, Quaternion, Vector3 } from 'three';
+import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import sharp from 'sharp';
 import { grim } from '../src/style/palette.ts';
 
@@ -39,11 +39,11 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
  * size: the real size of the largest side (m); helmets and vests take the body's own.
  */
 export const GEAR = {
-  helmet_military: { kind: 'helmet', tris: 1500, shell: 1.2, rim: 0.42 },
-  helmet_swat: { kind: 'helmet', tris: 1500, shell: 1.2, rim: 0.42 },
-  // Its brim is wide: fitted by the dome, then made smaller and set down so the brim's front is at the brows.
-  helmet_firefighter: { kind: 'helmet', tris: 1500, shell: 1.18, rim: 0.4, shrink: 0.95, brimAtBrow: true },
-  helmet_construction: { kind: 'helmet', tris: 1500, shell: 1.16, rim: 0.45 },
+  // Helmets: fitted low and close to each head (fitHelmet), skinned on Head in the body's fit.
+  helmet_military: { kind: 'helmet', tris: 1500 },
+  helmet_swat: { kind: 'helmet', tris: 1500 },
+  helmet_firefighter: { kind: 'helmet', tris: 1500 },
+  helmet_construction: { kind: 'helmet', tris: 1500 },
   // Vests as they come (≤ 5000): Meshy's baked vests have a UV island per triangle, and a simplifier with
   // the borders locked can only tear them (the SWAT vest fell apart into dark triangles).
   vest_military: { kind: 'vest', tris: 5000 },
@@ -53,8 +53,15 @@ export const GEAR = {
   backpack_hiking: { kind: 'pack', tris: 2500, height: 0.8 },
   bag_medic: { kind: 'bag', tris: 2500, width: 0.38 },
   toolbox_mechanic: { kind: 'box', tris: 2500, width: 0.44 },
+  // The face slot: glasses (lenses apart: their own dark see-through material in the game) and masks.
+  glasses_ballistic: { kind: 'glasses', tris: 1500, lens: { by: 'color', sat: 48 } },
+  goggles_tactical: { kind: 'glasses', tris: 1500, lens: { by: 'window', inset: 0.1 } },
+  balaclava: { kind: 'mask', tris: 2000, mask: 'head' },
+  shemagh: { kind: 'mask', tris: 2000, mask: 'neck', standIn: shemaghStandIn },
+  mask_half: { kind: 'mask', tris: 1500, mask: 'mouth' },
 };
 const IDS = Object.keys(GEAR);
+const TAU = Math.PI * 2;
 const report = [];
 
 // ── Small vector helpers on flat arrays ────────────────────────────────────────────────────────────
@@ -381,14 +388,18 @@ function dilate(rgba, w, h, g, passes = 24) {
     for (const [i, r, gg, b] of add) ((rgba[i * 4] = r), (rgba[i * 4 + 1] = gg), (rgba[i * 4 + 2] = b), (used[i] = 1));
   }
 }
-async function texture(id, png, g) {
-  const { data, info } = await sharp(Buffer.from(png)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+async function texture(id, png, g, maxLum = 255) {
+  const { data, info } = png.raw ? { data: png.raw.data, info: { width: png.raw.w, height: png.raw.h } } : await sharp(Buffer.from(png)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const out = Buffer.alloc(info.width * info.height * 4);
   for (let i = 0; i < info.width * info.height; i++) {
     const c = grimPixel(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
-    out[i * 4] = (c >> 16) & 255;
-    out[i * 4 + 1] = (c >> 8) & 255;
-    out[i * 4 + 2] = c & 255;
+    let r = (c >> 16) & 255, gg = (c >> 8) & 255, b = c & 255;
+    // A cap on brightness (glasses: the frame dark polymer, no painted reflections of the old lens on it).
+    const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
+    if (l > maxLum) { const k = (maxLum + (l - maxLum) * 0.15) / l; r *= k; gg *= k; b *= k; }
+    out[i * 4] = r;
+    out[i * 4 + 1] = gg;
+    out[i * 4 + 2] = b;
     out[i * 4 + 3] = 255;
   }
   // At 1024, the gutters filled, then both sizes from that.
@@ -419,12 +430,18 @@ function addMesh(doc, buf, parent, name, g, extra = {}) {
 // ── Canonical pieces: real size, simplified, front +Z (the way the bodies face) ───────────────────────
 const pieces = {};
 for (const id of IDS) {
-  if (!existsSync(join(IN, `${id}.glb`))) {
+  const cfg = GEAR[id];
+  let g;
+  if (existsSync(join(IN, `${id}.glb`))) g = simplifyGear(await readGear(id), cfg.tris);
+  else if (cfg.standIn) {
+    // No model yet: the stand-in (the same fit makes the model when it comes).
+    const si = cfg.standIn();
+    g = { ...si, tex: { raw: si.raw } };
+    console.log(`нет gear/${id}.glb — заглушка`);
+  } else {
     console.log(`нет gear/${id}.glb — пропуск`);
     continue;
   }
-  const cfg = GEAR[id];
-  let g = simplifyGear(await readGear(id), cfg.tris);
   // Packs come with their straps' side on −Z: turned to face the back they sit on.
   if (cfg.kind === 'pack') g = transform(g, new Matrix4().makeRotationY(Math.PI));
   const b = bounds(g.pos);
@@ -433,14 +450,19 @@ for (const id of IDS) {
   // Centred on its box, at real size (helmets and vests: unit, sized per body below).
   const c = b.min.map((v, i) => (v + b.max[i]) / 2);
   g = transform(g, new Matrix4().makeScale(real, real, real).multiply(new Matrix4().makeTranslation(-c[0], -c[1], -c[2])));
+  if (cfg.lens) g.lens = await findLens(g, cfg.lens);
   pieces[id] = g;
-  await texture(id, g.tex, g);
+  await texture(id, g.tex, g, cfg.kind === 'glasses' ? 62 : 140);
   const doc = new Document();
   const buf = doc.createBuffer();
   const scene = doc.createScene(id);
-  addMesh(doc, buf, scene, id, g);
+  if (g.lens) {
+    const [frame, lens] = splitTris(g, g.lens);
+    addMesh(doc, buf, scene, id, frame);
+    addMesh(doc, buf, scene, `${id}_lens`, smoothNormals(lens));
+  } else addMesh(doc, buf, scene, id, g);
   await save(doc, `${id}.glb`);
-  report.push(`${id}: ${g.index.length / 3} tris`);
+  report.push(`${id}: ${g.index.length / 3} tris${g.lens ? `, линза ${g.lens.reduce((a, x) => a + x, 0)}` : ''}`);
 }
 
 // ── Fitting per body ───────────────────────────────────────────────────────────────────────────────
@@ -752,154 +774,610 @@ function coveredByVest(body, vest) {
   return out;
 }
 
-/**
- * Inside a helmet's shell (its frame), on a voxel grid: the shell straight above and out to the side (the
- * horizontal axis nearest outwards from its middle), the distance to the nearer of the two (0: not under it).
- */
-function shellField(g) {
-  const b = bounds(g.pos, 0, 1).full;
-  const N = 40, cell = Math.max(...b.max.map((v, i) => v - b.min[i])) / N;
-  const tris = g.index.length / 3;
-  const P = (t, k) => V(g.pos, g.index[t * 3 + k]);
-  // Triangles bucketed by the two other axes, per ray axis.
-  const buckets = [0, 1, 2].map((ax) => {
-    const [u, w] = [0, 1, 2].filter((a) => a !== ax);
-    const m = new Map();
-    for (let t = 0; t < tris; t++) {
-      const ps = [P(t, 0), P(t, 1), P(t, 2)].map((p) => p.toArray());
-      const lo = [u, w].map((a) => Math.floor((Math.min(...ps.map((p) => p[a])) - b.min[a]) / cell));
-      const hi = [u, w].map((a) => Math.floor((Math.max(...ps.map((p) => p[a])) - b.min[a]) / cell));
-      for (let i = lo[0]; i <= hi[0]; i++)
-        for (let j = lo[1]; j <= hi[1]; j++) {
-          const k = i * 1000 + j;
-          let l = m.get(k);
-          if (!l) m.set(k, (l = []));
-          l.push(t);
-        }
-    }
-    return { u, w, m };
-  });
-  const ray = (o, ax, sign) => {
-    const B = buckets[ax];
-    const oa = o.toArray();
-    const l = B.m.get(Math.floor((oa[B.u] - b.min[B.u]) / cell) * 1000 + Math.floor((oa[B.w] - b.min[B.w]) / cell));
-    if (!l) return -1;
-    const d = new Vector3().setComponent(ax, sign);
-    let best = -1;
-    for (const t of l) {
-      const h = rayTri(o, d, P(t, 0), P(t, 1), P(t, 2));
-      if (h > 0 && (best < 0 || h < best)) best = h;
-    }
-    return best;
-  };
-  const dims = b.max.map((v, i) => Math.ceil((v - b.min[i]) / cell) + 1);
-  const field = new Float32Array(dims[0] * dims[1] * dims[2]);
-  const o = new Vector3();
-  for (let i = 0; i < dims[0]; i++)
-    for (let j = 0; j < dims[1]; j++)
-      for (let k = 0; k < dims[2]; k++) {
-        o.set(b.min[0] + i * cell, b.min[1] + j * cell, b.min[2] + k * cell);
-        const up = ray(o, 1, 1);
-        if (up < 0) continue;
-        const side = Math.abs(o.x) > Math.abs(o.z) ? ray(o, 0, Math.sign(o.x) || 1) : ray(o, 2, Math.sign(o.z) || 1);
-        if (side < 0) continue;
-        field[(i * dims[1] + j) * dims[2] + k] = Math.min(up, side);
-      }
-  const at = (p) => {
-    const i = Math.round((p.x - b.min[0]) / cell), j = Math.round((p.y - b.min[1]) / cell), k = Math.round((p.z - b.min[2]) / cell);
-    if (i < 0 || j < 0 || k < 0 || i >= dims[0] || j >= dims[1] || k >= dims[2]) return 0;
-    return field[(i * dims[1] + j) * dims[2] + k];
-  };
-  return { at, top: b.max[1] };
-}
+// ── Head: helmets, glasses, masks ──────────────────────────────────────────────────────────────────
+const NECKB = (n) => n === 'Neck';
+const HEAD_OR_NECK = (n) => HEADB(n) || NECKB(n);
+const HELMET_GAP = 0.0075;
+
 
 /**
- * The helmet on this body's head: the smallest scale (its top over the head's, a little forward or back)
- * at which the head above the brow is inside the shell 4 mm clear; within a point of the best any scale
- * gives (hair that sticks out anyway is hidden). Hair and scalp under it are hidden.
+ * The head at bind: its vertices, the skull as an ellipse round its middle at the temples (width and depth
+ * from the hair-thin forehead and temples), the top, the brows, the eyes, the chin, the bridge of the nose.
  */
-function fitHelmet(body, src, cfg = {}) {
+function headFrame(body) {
+  if (body.headFrame) return body.headFrame;
   const head = [];
   for (let v = 0; v < body.count; v++) if (body.share(v, HEADB) >= 0.5) head.push(v);
-  const hx = head.map((v) => body.pos[v * 3]), hz = head.map((v) => body.pos[v * 3 + 2]);
-  const top = Math.max(...head.map((v) => body.pos[v * 3 + 1]));
-  const cx = (percentile(hx, 0.02) + percentile(hx, 0.98)) / 2, cz = (percentile(hz, 0.02) + percentile(hz, 0.98)) / 2;
-  const face = head.filter((v) => body.pos[v * 3 + 2] > cz + 0.03 && body.share(v, HEADB) > 0.95).map((v) => body.pos[v * 3 + 1]);
+  const X = (v) => body.pos[v * 3], Y = (v) => body.pos[v * 3 + 1], Z = (v) => body.pos[v * 3 + 2];
+  const top0 = Math.max(...head.map(Y));
+  const zf0 = percentile(head.map(Z), 0.98);
+  const cx = (percentile(head.map(X), 0.02) + percentile(head.map(X), 0.98)) / 2;
+  const cz0 = (percentile(head.map(Z), 0.02) + percentile(head.map(Z), 0.98)) / 2;
+  const face = head.filter((v) => Z(v) > cz0 + 0.03 && body.share(v, HEADB) > 0.95).map(Y);
   const chin = percentile(face, 0.01);
-  const brow = top - 0.4 * (top - chin);
-  // Above the brow in front, a little lower behind (the back of the head under the shell).
-  const cap = head.filter((v) => {
-    const y = body.pos[v * 3 + 1], z = body.pos[v * 3 + 2];
-    return y > brow + 0.005 - Math.min(1, Math.max(0, (cz - z) / 0.1)) * 0.03;
-  });
-  // The eyes stay clear of the rim.
-  const eyes = head.filter((v) => {
-    const y = body.pos[v * 3 + 1];
-    return y < brow - 0.012 && y > brow - 0.04 && body.pos[v * 3 + 2] > cz + 0.04;
-  });
-  const field = shellField(src);
-  const b = bounds(src.pos);
-  const width = b.max[0] - b.min[0];
-  const headW = percentile(hx, 0.98) - percentile(hx, 0.02);
-  const rel = new Vector3();
-  const tries = [];
-  for (let s = (headW * 0.9) / width; s < (headW * 2.2) / width; s *= 1.015) {
-    let pick = null;
-    for (let gap = 0.004; gap <= 0.05; gap += 0.004)
-      for (const dz of [0, -0.01, 0.01, -0.02, 0.02, -0.03, 0.03]) {
-        const at = new Vector3(cx, top + gap - field.top * s, cz + dz);
-        let inside = 0;
-        for (const v of cap) {
-          rel.copy(V(body.pos, v)).sub(at).multiplyScalar(1 / s);
-          if (field.at(rel) > 0.004 / s) inside++;
-        }
-        let blind = 0;
-        for (const v of eyes) {
-          rel.copy(V(body.pos, v)).sub(at).multiplyScalar(1 / s);
-          if (field.at(rel) > 0) blind++;
-        }
-        if (blind > eyes.length * 0.1) continue;
-        if (!pick || inside > pick.inside) pick = { s, at, inside };
-      }
-    if (pick) tries.push(pick);
-  }
-  const top1 = Math.max(...tries.map((t) => t.inside)) / cap.length;
-  const best = tries.find((t) => t.inside / cap.length >= Math.min(0.99, top1 - 0.025));
-  if (cfg.shrink) {
-    // Smaller about the top of the head: the crown stays put, the rim comes up and in.
-    const crown = top + 0.004;
-    best.at.y = crown - (crown - best.at.y) * cfg.shrink;
-    best.s *= cfg.shrink;
-  }
-  if (cfg.brimAtBrow) {
-    // The brim: the height where the piece is widest (not the face shield hanging lower in front), set at the brows.
-    const bins = new Map();
-    for (let i = 0; i < src.pos.length / 3; i++) {
-      const y = Math.round(src.pos[i * 3 + 1] / 0.02);
-      bins.set(y, Math.max(bins.get(y) ?? 0, Math.hypot(src.pos[i * 3], src.pos[i * 3 + 2])));
-    }
-    let brimY = 0, wide = -1;
-    for (const [y, r] of bins) if (r > wide) (wide = r), (brimY = y * 0.02);
-    best.at.y += brow + 0.012 - (best.at.y + brimY * best.s);
-  }
-
-  const place = new Matrix4().makeTranslation(best.at.x, best.at.y, best.at.z).multiply(new Matrix4().makeScale(best.s, best.s, best.s));
-  // Hidden: the head under the shell (inside it, or poking out of it: hair) above the brow.
-  const cover = head.filter((v) => {
-    if (body.pos[v * 3 + 1] < brow - 0.01) return false;
-    rel.copy(V(body.pos, v)).sub(best.at).multiplyScalar(1 / best.s);
-    return field.at(rel) > 0 || cap.includes(v);
-  });
-  const placed = transform(src, place);
-  const rim = b.full.min[1] + (b.full.max[1] - b.full.min[1]) * 0.45;
-  const shellIdx = [];
-  for (let t = 0; t < src.index.length; t += 3) if ([0, 1, 2].every((k) => src.pos[src.index[t + k] * 3 + 1] >= rim)) shellIdx.push(src.index[t], src.index[t + 1], src.index[t + 2]);
-  // The rim at bind: the lowest of the dome as placed (behind, it comes lower than the brow).
-  let rimAt = Infinity;
-  for (const i of shellIdx) rimAt = Math.min(rimAt, placed.pos[i * 3 + 1]);
-  const extra = pokeShell(body, { pos: placed.pos, index: Uint32Array.from(shellIdx) }, (v) => body.share(v, HEADB) >= 0.3 && body.pos[v * 3 + 1] > rimAt - 0.04, placed);
-  return { place, cover: [...new Set([...cover, ...extra])], scale: best.s, fit: best.inside / cap.length, found: top1 > 0.9 };
+  // The eyes halfway between the chin and the top (the midline of these meshes is too sparse to find the bridge
+  // of the nose in profile); the brows 1.2 cm over them.
+  const nasion = chin + 0.47 * (top0 - chin);
+  const brow = nasion + 0.012;
+  const slab = head.filter((v) => Y(v) > brow + 0.015 && Y(v) < brow + 0.05);
+  const ax = (percentile(slab.map(X), 0.97) - percentile(slab.map(X), 0.03)) / 2;
+  const mid = slab.filter((v) => Math.abs(X(v) - cx) < 0.03);
+  const zf = percentile(mid.map(Z), 0.97), zb = percentile(mid.map(Z), 0.03);
+  const az = Math.min((zf - zb) / 2, ax * 1.3);
+  const cz = zf - az;
+  const crown = head.filter((v) => Math.abs(X(v) - cx) < 0.04 && Math.abs(Z(v) - cz) < 0.05);
+  const top = percentile(crown.map(Y), 0.99);
+  const eyeY = nasion;
+  const bz = head.filter((v) => Math.abs(X(v) - cx) < 0.022 && Math.abs(Y(v) - eyeY) < 0.015 && Z(v) > cz0).map(Z);
+  const bridgeZ = bz.length ? Math.max(...bz) : zf0 - 0.01;
+  const eyeSlab = head.filter((v) => Math.abs(Y(v) - eyeY) < 0.01);
+  const faceW = percentile(eyeSlab.map(X), 0.985) - percentile(eyeSlab.map(X), 0.015);
+  return (body.headFrame = { head, cx, cz, ax, az, top, brow, chin, eyeY, bridgeZ, faceW, zf, zb });
 }
+
+/** A piece's inner surface round its own vertical axis: radius by angle and height, the rim by angle. */
+function innerProfile(src) {
+  const b = bounds(src.pos, 0, 1).full;
+  const H = b.max[1] - b.min[1];
+  const dome = [];
+  for (let i = 0; i < src.pos.length / 3; i++) if (src.pos[i * 3 + 1] > b.min[1] + H * 0.6) dome.push(i);
+  const lcx = (Math.min(...dome.map((i) => src.pos[i * 3])) + Math.max(...dome.map((i) => src.pos[i * 3]))) / 2;
+  const lcz = (Math.min(...dome.map((i) => src.pos[i * 3 + 2])) + Math.max(...dome.map((i) => src.pos[i * 3 + 2]))) / 2;
+  const tg = triGrid(src);
+  const reach = Math.max(b.max[0] - b.min[0], b.max[2] - b.min[2]);
+  const yMid = b.min[1] + H * 0.55;
+  const upHit = cast(tg, new Vector3(lcx, yMid, lcz), new Vector3(0, 1, 0), H);
+  const top = upHit > 0 ? yMid + upHit : b.max[1];
+  const NA = 36, NY = 48;
+  const y0 = b.min[1], dy = (top - y0) / NY;
+  const r = new Float32Array((NA + 1) * (NY + 1)).fill(0);
+  for (let a = 0; a <= NA; a++) {
+    const th = (a / NA) * TAU;
+    const d = new Vector3(Math.cos(th), 0, Math.sin(th));
+    for (let j = 0; j <= NY; j++) {
+      const h = cast(tg, new Vector3(lcx, y0 + j * dy, lcz), d, reach);
+      r[a * (NY + 1) + j] = h > 0 ? h : 0;
+    }
+  }
+  // Rim by angle: going down from under the crown, the first height with nothing round the head that way.
+  const rim = new Float32Array(NA + 1);
+  for (let a = 0; a <= NA; a++) {
+    let j = Math.floor(NY * 0.85);
+    while (j > 0 && r[a * (NY + 1) + j] > 0 && r[a * (NY + 1) + j] < reach * 0.75) j--;
+    rim[a] = y0 + (j + 1) * dy;
+  }
+  const at = (th, y) => {
+    const fa = (((th % TAU) + TAU) % TAU) / TAU * NA, fy = (y - y0) / dy;
+    if (fy < 0 || fy > NY) return 0;
+    const a0 = Math.floor(fa), j0 = Math.min(NY - 1, Math.floor(fy));
+    const ta = fa - a0, ty = fy - j0;
+    const v = (a, j) => r[Math.min(NA, a) * (NY + 1) + j];
+    const c = [v(a0, j0), v(a0 + 1, j0), v(a0, j0 + 1), v(a0 + 1, j0 + 1)];
+    if (c.some((x) => x <= 0)) {
+      // At the rim (open below): the corners that hit, averaged.
+      const hit = c.filter((x) => x > 0);
+      return hit.length ? hit.reduce((s, x) => s + x, 0) / hit.length : 0;
+    }
+    return (c[0] * (1 - ta) + c[1] * ta) * (1 - ty) + (c[2] * (1 - ta) + c[3] * ta) * ty;
+  };
+  const rimAt = (th) => {
+    const fa = (((th % TAU) + TAU) % TAU) / TAU * NA, a0 = Math.floor(fa), t = fa - a0;
+    return rim[a0] * (1 - t) + rim[Math.min(NA, a0 + 1)] * t;
+  };
+  return { lcx, lcz, top, at, rimAt, rimMin: Math.min(...rim), y0 };
+}
+
+/** Normals through the inverse transpose (a scale that is not the same on every axis). */
+function transformN(g, m) {
+  const nm = new Matrix3().getNormalMatrix(m);
+  const pos = new Float32Array(g.pos.length), nor = new Float32Array(g.nor.length);
+  for (let i = 0; i < g.pos.length / 3; i++) {
+    setV(pos, i, V(g.pos, i).applyMatrix4(m));
+    setV(nor, i, V(g.nor, i).applyMatrix3(nm).normalize());
+  }
+  return { ...g, pos, nor };
+}
+
+/**
+ * The piece's vertices that `pick` takes laid onto the body (`offset` off the skin), the rest following them
+ * smoothly; nothing left under the skin (nor nearer than `floor`). `region`: the body vertices it may lie on.
+ */
+function wrapOnto(body, g, { pick = () => true, offset = 0.004, floor = offset * 0.6, centre, sigma = 0.012, region = null }) {
+  const n = g.pos.length / 3;
+  const { group, members } = positionGroups(g.pos);
+  const together = (pos) => {
+    for (const m of members) {
+      if (m.length < 2) continue;
+      const c = new Vector3();
+      for (const i of m) c.add(V(pos, i));
+      c.multiplyScalar(1 / m.length);
+      for (const i of m) setV(pos, i, c);
+    }
+  };
+  const nor = weldedNormals(g.pos, g.index, group, members);
+  const near = region ? (p, max) => surfaceIn(body, p, max, region) : (p, max) => surface(body, p, max);
+  const disp = [];
+  for (let i = 0; i < n; i++) {
+    if (!pick(i)) continue;
+    const p = V(g.pos, i);
+    // Its inner side: the vertices facing the middle of what it wraps.
+    const toC = centre(p).sub(p);
+    if (V(nor, i).dot(toC) <= 0) continue;
+    const s = near(p, 0.12);
+    if (!s) continue;
+    disp.push([p, s.p.clone().addScaledVector(s.n, offset).sub(p)]);
+  }
+  const pos = new Float32Array(g.pos);
+  if (disp.length) {
+    const ig = new Grid(Float32Array.from(disp.flatMap(([p]) => [p.x, p.y, p.z])), 0.03);
+    for (let i = 0; i < n; i++) {
+      if (!pick(i)) continue;
+      const p = V(g.pos, i);
+      const nb = ig.within(p, sigma * 3);
+      if (!nb.length) continue;
+      const acc = new Vector3();
+      let ws = 0;
+      for (const [k, d] of nb) {
+        const w = Math.exp(-((d / sigma) ** 2));
+        acc.addScaledVector(disp[k][1], w);
+        ws += w;
+      }
+      setV(pos, i, p.add(acc.multiplyScalar(1 / ws)));
+    }
+  }
+  together(pos);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      const p = V(pos, i);
+      const { d, s } = signed(body, p);
+      if (s && d < floor && s.d < 0.06) setV(pos, i, s.p.clone().addScaledVector(s.n, floor));
+    }
+    together(pos);
+  }
+  return { ...g, pos, nor: weldedNormals(pos, g.index, group, members) };
+}
+/** The nearest body surface among `region`'s vertices (a mask on the face, not on the shoulder). */
+function surfaceIn(body, p, max, region) {
+  body.regionGrids ??= new Map();
+  let grid = body.regionGrids.get(region);
+  if (!grid) body.regionGrids.set(region, (grid = new Grid(body.pos, 0.03, (v) => body.share(v, region) >= 0.3)));
+  const v = grid.nearest(p, max);
+  if (v < 0) return null;
+  const tris = new Set(body.vt[v]);
+  for (const t of body.vt[v]) for (let k = 0; k < 3; k++) for (const t2 of body.vt[body.index[t + k]]) tris.add(t2);
+  const best = new Vector3(), tmp = new Vector3();
+  let bd = Infinity, bt = -1;
+  for (const t of tris) {
+    closestOnTri(p, V(body.pos, body.index[t]), V(body.pos, body.index[t + 1]), V(body.pos, body.index[t + 2]), tmp);
+    const d = tmp.distanceToSquared(p);
+    if (d < bd) (bd = d), best.copy(tmp), (bt = t);
+  }
+  const a = V(body.pos, body.index[bt]), b = V(body.pos, body.index[bt + 1]), c = V(body.pos, body.index[bt + 2]);
+  const nn = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+  if (nn.dot(V(body.nor, v)) < 0) nn.negate();
+  return { p: best, n: nn, v, d: Math.sqrt(bd) };
+}
+const allTo = (body, n, bone) => {
+  const ji = new Uint16Array(n * 4), jw = new Float32Array(n * 4);
+  const j = body.ix.get(bone);
+  for (let i = 0; i < n; i++) (ji[i * 4] = j), (jw[i * 4] = 1);
+  return { ji, jw };
+};
+
+/**
+ * A helmet low and close (CLAUDE.md: as a real one is worn): its inside 7.5 mm over the crown, its front rim
+ * 1.5 cm over the brows; as wide and deep as it takes to keep its inside ≥ 5 mm off the skull all round (width
+ * and height scaled apart, its middle moved front-to-back for the least size). The chin straps laid under the
+ * chin, the whole of it on Head. Hidden under it: the scalp and the hair above its rim.
+ */
+function fitHelmet(body, src, cfg = {}) {
+  const hf = headFrame(body);
+  const prof = (src.prof ??= innerProfile(src));
+  const rimFront = prof.rimAt(Math.PI / 2);
+  if (process.env.DEBUG_HEAD) console.log(body.id, JSON.stringify(Object.fromEntries(Object.entries(hf).filter(([k]) => k !== 'head').map(([k, v]) => [k, +v.toFixed(3)]))));
+  if (process.env.DEBUG_HELMET && !src.printed) {
+    src.printed = 1;
+    const deg = [0, 45, 90, 135, 180, 225, 270, 315];
+    console.log('prof y0', prof.y0.toFixed(3), 'top', prof.top.toFixed(3), 'rim', deg.map((d) => prof.rimAt((d * Math.PI) / 180).toFixed(3)).join(' '));
+    for (let y = prof.top; y > prof.y0; y -= (prof.top - prof.y0) / 14) console.log(y.toFixed(3), deg.map((d) => prof.at((d * Math.PI) / 180, y).toFixed(3)).join(' '));
+  }
+  const ellR = (th) => 1 / Math.sqrt((Math.cos(th) / hf.ax) ** 2 + (Math.sin(th) / hf.az) ** 2);
+  const eqY = hf.brow + 0.03, ay = Math.max(0.03, hf.top - eqY);
+  const samples = [];
+  for (let k = 0; k < 36; k++) {
+    const th = (k / 36) * TAU;
+    for (let j = 0; j <= 6; j++) {
+      const y = hf.brow + 0.01 + ((hf.top - 0.012 - hf.brow - 0.01) * j) / 6;
+      const f = y <= eqY ? 1 : Math.sqrt(Math.max(0, 1 - ((y - eqY) / ay) ** 2));
+      const r = ellR(th) * f;
+      samples.push(new Vector3(hf.cx + r * Math.cos(th), y, hf.cz + r * Math.sin(th)));
+    }
+  }
+  const innerTop = prof.top;
+  // Scales: across (sx), front to back (sz), up (sy); the middle moved front-to-back by dz.
+  let sx = (2 * hf.ax + 0.015) / (2 * Math.max(0.01, prof.at(0, (innerTop + prof.rimMin) / 2))), sz = sx, sy = sx, ty = 0, dz = 0, clear = [];
+  const gapsFor = (sx, sz, z) => {
+    const out = [];
+    for (const p of samples) {
+      const qx = (p.x - hf.cx) / sx, qz = (p.z - hf.cz - z) / sz, yl = (p.y - ty) / sy;
+      const th = Math.atan2(qz, qx);
+      if (yl < prof.rimAt(th) + 0.005) continue;
+      const r = prof.at(th, yl);
+      if (!r) continue;
+      const rl = Math.hypot(qx, qz);
+      // Local clearance to metres along that way.
+      out.push((r - rl) * Math.hypot(sx * Math.cos(th), sz * Math.sin(th)));
+    }
+    return out.sort((a, b) => a - b);
+  };
+  for (let it = 0; it < 4; it++) {
+    // Height: the inside over the crown, the front rim over the brows (kept near the other scales).
+    const sm = (sx + sz) / 2;
+    sy = (hf.top + HELMET_GAP - (hf.brow + 0.015)) / Math.max(1e-3, innerTop - rimFront);
+    sy = Math.min(sm * 1.3, Math.max(sm * 0.75, sy));
+    // The front rim first (the eyes stay clear): the crown's gap is what is left.
+    ty = hf.brow + 0.015 - sy * rimFront;
+    // Across and deep: 92% of the skull ≥ 5 mm inside (pads and the harness may touch), the middle gap the least.
+    let best = null;
+    for (let x = sx * 0.6; x < sx * 1.8; x *= 1.012)
+      for (let k = 0.8; k <= 1.25; k += 0.025)
+        for (let z = -0.02; z <= 0.0201; z += 0.004) {
+          const g = gapsFor(x, x * k, z);
+          if (g.length < samples.length * 0.3) continue;
+          if (g[Math.floor(g.length * 0.08)] < 0.005) continue;
+          const med = g[g.length >> 1];
+          const cost = Math.abs(med - HELMET_GAP) + x * 0.01;
+          if (!best || cost < best.cost) best = { cost, x, k, z, g };
+        }
+    if (!best) break;
+    sx = best.x;
+    sz = best.x * best.k;
+    dz = best.z;
+    clear = best.g;
+  }
+  const s = (sx + sz) / 2;
+  const place = new Matrix4().makeTranslation(hf.cx, ty, hf.cz + dz).multiply(new Matrix4().makeScale(sx, sy, sz)).multiply(new Matrix4().makeTranslation(-prof.lcx, 0, -prof.lcz));
+  const inv = place.clone().invert();
+  // The model's own chin straps hang loose (as it lay): cut off, a strap laid under the chin instead.
+  const strapY = prof.rimMin - 0.02;
+  const low = (i) => src.pos[i * 3 + 1] < strapY;
+  const shellIdx = [], strapV = [];
+  for (let t = 0; t < src.index.length; t += 3) {
+    const tri = [src.index[t], src.index[t + 1], src.index[t + 2]];
+    if (tri.some(low)) strapV.push(...tri);
+    else shellIdx.push(...tri);
+  }
+  let g = transformN({ ...src, index: Uint32Array.from(shellIdx) }, place);
+  g = wrapOnto(body, g, { pick: () => false, floor: 0.003, centre: () => new Vector3(hf.cx, hf.top - 0.08, hf.cz) });
+  g = { ...g, ...allTo(body, g.pos.length / 3, 'Head') };
+  if (strapV.length > 30) {
+    const at = (th, dy = 0) => {
+      const y = prof.rimAt(th) + 0.02;
+      const r = prof.at(th, y + 0.02) || 0.3;
+      return new Vector3(prof.lcx + Math.cos(th) * r * 0.97, y + dy, prof.lcz + Math.sin(th) * r * 0.97).applyMatrix4(place);
+    };
+    const strapUv = [src.uv[strapV[0] * 2], src.uv[strapV[0] * 2 + 1]];
+    const path = [
+      at(Math.PI * 0.12),
+      new Vector3(hf.cx + hf.ax * 0.85, (hf.eyeY + hf.chin) / 2, hf.cz + hf.az * 0.35),
+      new Vector3(hf.cx + hf.ax * 0.55, hf.chin - 0.005, hf.cz + hf.az * 0.45),
+      new Vector3(hf.cx, hf.chin - 0.025, hf.cz + hf.az * 0.5),
+      new Vector3(hf.cx - hf.ax * 0.55, hf.chin - 0.005, hf.cz + hf.az * 0.45),
+      new Vector3(hf.cx - hf.ax * 0.85, (hf.eyeY + hf.chin) / 2, hf.cz + hf.az * 0.35),
+      at(Math.PI * 0.88),
+    ];
+    const r = ribbon(body, path, { width: 0.018, thick: 0.003, lift: 0.004, uv: strapUv, allowed: HEADB, fallback: 'Head', flat: true });
+    g = merge(g, { ...r, ...allTo(body, r.pos.length / 3, 'Head') });
+  }
+  const { ji, jw } = g;
+  // Hidden: the head above the rim (the scalp and the hair under the shell), and anything poking out of it.
+  const cover = [];
+  const aboveRim = new Set();
+  const shellTg = triGrid(g);
+  const q = new Vector3();
+  for (const v of hf.head) {
+    q.copy(V(body.pos, v)).applyMatrix4(inv);
+    const th = Math.atan2(q.z - prof.lcz, q.x - prof.lcx);
+    const above = q.y - prof.rimAt(th);
+    if (above <= 0) continue;
+    aboveRim.add(v);
+    // Deep under the shell, or out through it (hair): hidden; just under the rim the skin shows (it would be a hole).
+    const r = prof.at(th, q.y);
+    if (!(above > 0.06 || (r && Math.hypot(q.x - prof.lcx, q.z - prof.lcz) > r - 0.01))) continue;
+    // And only where the shell is in front of it — straight out from the head and along the skin's normal: an
+    // open helmet (a hard hat on its suspension, a high-cut back) shows the head under its edge.
+    const p = V(body.pos, v);
+    const out = new Vector3(p.x - hf.cx, 0, p.z - hf.cz);
+    if (out.lengthSq() > 1e-8 && cast(shellTg, p, out.normalize(), 0.15) < 0) continue;
+    if (cast(shellTg, p, V(body.nor, v), 0.15) < 0) continue;
+    cover.push(v);
+  }
+  // Hair out through the shell: the piece between it and the dome's middle — above the rim only (below it the
+  // line to the middle crosses the chin straps and the harness, and hiding the cheeks there leaves holes; hair
+  // under a brim or a neck guard is under the helmet, not through it).
+  const extra = pokeShell(body, g, (v) => aboveRim.has(v) && body.share(v, HEADB) >= 0.1, g);
+  // Report: the clearance, the front rim over the brows, the side rim against the brows (the ears' top).
+  const rimW = (th) => new Vector3(prof.lcx + Math.cos(th) * 0.3, prof.rimAt(th), prof.lcz + Math.sin(th) * 0.3).applyMatrix4(place).y;
+  return {
+    g: { ...g, ji, jw },
+    cover: ringOf(body, new Set([...cover, ...extra]), (v) => body.share(v, HEADB) >= 0.1),
+    info: {
+      scale: [+sx.toFixed(3), +sy.toFixed(3), +sz.toFixed(3)],
+      gap8: +(clear[Math.floor(clear.length * 0.08)] ?? 0).toFixed(4),
+      gapMed: +(clear[clear.length >> 1] ?? 0).toFixed(4),
+      frontOverBrow: +(rimW(Math.PI / 2) - hf.brow).toFixed(4),
+      sideUnderBrow: +(hf.brow - Math.min(rimW(0), rimW(Math.PI))).toFixed(4),
+      backUnderBrow: +(hf.brow - rimW(-Math.PI / 2)).toFixed(4),
+    },
+  };
+}
+
+/**
+ * Glasses on the bridge of the nose: the front of the frame the face's width, its nose pads on the bridge, the
+ * lenses at the eyes (≥ 6 mm in front of them); the arms or the strap laid along the head (3 mm off: under a
+ * helmet, whose inside stands 5 mm off). All on Head. The lens triangles go apart (their own material).
+ */
+function fitGlasses(body, src) {
+  const hf = headFrame(body);
+  const b = bounds(src.pos, 0, 1).full;
+  const D = b.max[2] - b.min[2];
+  const front = (i) => src.pos[i * 3 + 2] > b.max[2] - D * 0.22;
+  const fx = [], fy = [];
+  for (let i = 0; i < src.pos.length / 3; i++) if (front(i)) fx.push(src.pos[i * 3]), fy.push(src.pos[i * 3 + 1]);
+  const frameW = Math.max(...fx) - Math.min(...fx);
+  const s = (hf.faceW * 0.98) / frameW;
+  // The lenses' middle height (their triangles), else the frame's.
+  const ly = [];
+  if (src.lens) for (let t = 0; t < src.index.length; t += 3) if (src.lens[t / 3]) for (let k = 0; k < 3; k++) ly.push(src.pos[src.index[t + k] * 3 + 1]);
+  const lensY = ly.length ? (Math.min(...ly) + Math.max(...ly)) / 2 : (Math.min(...fy) + Math.max(...fy)) / 2;
+  // The nose pads: the frame's back at the middle (the bridge), nearest the face.
+  let bridge = -Infinity;
+  for (let i = 0; i < src.pos.length / 3; i++) if (front(i) && Math.abs(src.pos[i * 3]) < 0.04 * D * 4 && src.pos[i * 3 + 1] > lensY - 0.15) bridge = Math.max(bridge, -src.pos[i * 3 + 2]);
+  let zBack = Infinity;
+  for (let i = 0; i < src.pos.length / 3; i++) if (front(i) && Math.abs(src.pos[i * 3]) < frameW * 0.08) zBack = Math.min(zBack, src.pos[i * 3 + 2]);
+  let place = new Matrix4().makeTranslation(hf.cx, hf.eyeY - lensY * s, hf.bridgeZ + 0.004 - zBack * s).multiply(new Matrix4().makeScale(s, s, s));
+  // The eyes ≥ 6 mm behind the lenses: moved forward until so.
+  const eyes = hf.head.filter((v) => Math.abs(body.pos[v * 3 + 1] - hf.eyeY) < 0.008 && Math.abs(Math.abs(body.pos[v * 3] - hf.cx) - 0.032) < 0.012 && body.pos[v * 3 + 2] > hf.cz);
+  const eyeZ = eyes.length ? Math.max(...eyes.map((v) => body.pos[v * 3 + 2])) : hf.bridgeZ - 0.01;
+  let lensBack = Infinity;
+  if (src.lens) for (let t = 0; t < src.index.length; t += 3) if (src.lens[t / 3]) for (let k = 0; k < 3; k++) { const i = src.index[t + k]; if (Math.abs(Math.abs(src.pos[i * 3]) * s - 0.032) < 0.015) lensBack = Math.min(lensBack, src.pos[i * 3 + 2]); }
+  if (Number.isFinite(lensBack)) {
+    const lz = new Vector3(0, 0, lensBack).applyMatrix4(place).z;
+    if (lz < eyeZ + 0.006) place = new Matrix4().makeTranslation(0, 0, eyeZ + 0.006 - lz).multiply(place);
+  }
+  let g = transform(src, place);
+  // Arms / strap: behind the front, along the head.
+  const back = (i) => !front(i);
+  g = wrapOnto(body, g, { pick: back, offset: 0.003, floor: 0.002, centre: () => new Vector3(hf.cx, hf.eyeY, hf.cz), region: HEADB, sigma: 0.01 });
+  const { ji, jw } = allTo(body, g.pos.length / 3, 'Head');
+  return { g: { ...g, ji, jw, lens: src.lens }, cover: pokeCover(body, g, (v) => body.share(v, HEADB) >= 0.3), info: { scale: +s.toFixed(3), eyeGap: Number.isFinite(lensBack) ? +(new Vector3(0, 0, lensBack).applyMatrix4(place).z - eyeZ).toFixed(4) : null } };
+}
+
+/**
+ * A mask (balaclava, shemagh, half mask) round the face and neck: its box set on the head by `cfg.mask`
+ * (what it covers), then laid on the skin 4 mm off with the body's weights (Head, Neck, the top of the spine).
+ * Hidden under it: what it covers (its inside along the skin's normal) and anything poking out.
+ */
+function fitMask(body, src, cfg) {
+  const hf = headFrame(body);
+  const b = bounds(src.pos, 0, 1).full;
+  const size = b.max.map((v, i) => v - b.min[i]);
+  const neck = body.joint('Neck');
+  const headW = hf.ax * 2, headD = hf.az * 2;
+  let lo, hi, w, d, zc = hf.cz;
+  if (cfg.mask === 'head') {
+    // Crown to the base of the neck.
+    (hi = hf.top + 0.006), (lo = neck.y - 0.05), (w = headW + 0.03), (d = headD + 0.03);
+  } else if (cfg.mask === 'mouth') {
+    // The bridge of the nose to under the chin; the loops back over the ears.
+    (hi = hf.eyeY - 0.012), (lo = hf.chin - 0.035), (w = hf.faceW * 1.05), (d = (hf.zf - hf.cz) * 2.1), (zc = hf.cz + 0.01);
+  } else {
+    // Round the neck up over the chin.
+    (hi = hf.chin + 0.03), (lo = neck.y - 0.08), (w = headW + 0.04), (d = headD + 0.02);
+  }
+  const place = new Matrix4()
+    .makeTranslation(hf.cx, (lo + hi) / 2, zc)
+    .multiply(new Matrix4().makeScale(w / size[0], (hi - lo) / size[1], d / size[2]))
+    .multiply(new Matrix4().makeTranslation(-(b.min[0] + b.max[0]) / 2, -(b.min[1] + b.max[1]) / 2, -(b.min[2] + b.max[2]) / 2));
+  let g = transformN(src, place);
+  const axisAt = (p) => new Vector3(hf.cx, Math.min(Math.max(p.y, neck.y - 0.06), hf.top - 0.06), hf.cz - 0.01);
+  g = wrapOnto(body, g, { offset: 0.004, floor: 0.003, centre: axisAt, region: (n) => HEAD_OR_NECK(n) || n === 'Spine2', sigma: 0.014 });
+  const { ji, jw } = skinFrom(body, g.pos, (n) => HEAD_OR_NECK(n) || /^Spine2$/.test(n), 'Head');
+  const keep = (v) => body.share(v, (n) => HEAD_OR_NECK(n) || n === 'Spine2') >= 0.3;
+  const under = coveredBy(body, g, keep);
+  // A balaclava covers the head whole: hair at the nape that would come out through it, hidden too.
+  const shell = cfg.mask === 'head' ? [...pokeShell(body, g, keep, g)] : [];
+  // A balaclava covers all but the eyes: the back of the head, the ears, the neck all round and the face under
+  // the eye slit — hair on Head and the fabric on the neck too part a little in motion, so all of it hidden,
+  // down to 2 cm above the hem; at the front above that only what the fabric is over.
+  if (cfg.mask === 'head') {
+    const nape = new Set();
+    for (let v = 0; v < body.count; v++)
+      if (keep(v) && body.pos[v * 3 + 1] >= lo + 0.02 && body.pos[v * 3 + 1] <= hi && body.pos[v * 3 + 2] <= hf.cz + 0.02) nape.add(v);
+    shell.push(...ringOf(body, nape, (v) => body.share(v, HEADB) >= 0.1));
+  }
+  return { g: { ...g, ji, jw }, cover: [...new Set([...under, ...pokeCover(body, g, keep), ...shell])], info: { tris: g.index.length / 3 } };
+}
+/** Body vertices with the piece straight out along the skin's normal over them (within 2.5 cm). */
+function coveredBy(body, piece, keep) {
+  const tg = triGrid(piece);
+  const pg = new Grid(piece.pos, 0.03);
+  const out = [];
+  for (let v = 0; v < body.count; v++) {
+    if (!keep(v)) continue;
+    const p = V(body.pos, v);
+    if (pg.nearest(p, 0.04) < 0) continue;
+    const n = V(body.nor, v);
+    if (cast(tg, p.clone().addScaledVector(n, -0.01), n, 0.035) >= 0) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * The lens triangles of a pair of glasses: by colour (tinted lenses in the texture) or, where the lens is the
+ * frame's own colour, by place — the frontmost surface inside the frame's outline, `inset` in from it.
+ */
+async function findLens(g, how) {
+  const n = g.index.length / 3;
+  const lens = new Uint8Array(n);
+  const P = (i) => V(g.pos, i);
+  const nrm = (t) => P(g.index[t * 3 + 1]).sub(P(g.index[t * 3])).cross(P(g.index[t * 3 + 2]).sub(P(g.index[t * 3]))).normalize();
+  if (how.by === 'color') {
+    const { data, info } = await sharp(Buffer.from(g.tex)).raw().toBuffer({ resolveWithObject: true });
+    for (let t = 0; t < n; t++) {
+      const c = [0, 0, 0];
+      for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]]) {
+        let u = 0, v = 0;
+        for (let k = 0; k < 3; k++) (u += w[k] * g.uv[g.index[t * 3 + k] * 2]), (v += w[k] * g.uv[g.index[t * 3 + k] * 2 + 1]);
+        const o = (Math.min(info.height - 1, Math.max(0, Math.floor(v * info.height))) * info.width + Math.min(info.width - 1, Math.max(0, Math.floor(u * info.width)))) * info.channels;
+        for (let k = 0; k < 3; k++) c[k] += data[o + k] / 4;
+      }
+      lens[t] = Math.max(...c) - Math.min(...c) >= how.sat && c[0] > c[1] * 1.15 && c[0] > c[2] * 1.3 ? 1 : 0;
+    }
+  } else {
+    // The outline from the front (rasterised), each pixel's distance in from it; the frontmost triangle per pixel.
+    const b = bounds(g.pos, 0, 1).full;
+    const R = 256, span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]) * 1.04;
+    const ox = (b.min[0] + b.max[0]) / 2 - span / 2, oy = (b.min[1] + b.max[1]) / 2 - span / 2;
+    const zb = new Float32Array(R * R).fill(-Infinity), owner = new Int32Array(R * R).fill(-1);
+    for (let t = 0; t < n; t++) {
+      const p = [0, 1, 2].map((k) => P(g.index[t * 3 + k]));
+      const q = p.map((v) => [((v.x - ox) / span) * R, ((v.y - oy) / span) * R, v.z]);
+      const x0 = Math.max(0, Math.floor(Math.min(...q.map((v) => v[0])))), x1 = Math.min(R - 1, Math.ceil(Math.max(...q.map((v) => v[0]))));
+      const y0 = Math.max(0, Math.floor(Math.min(...q.map((v) => v[1])))), y1 = Math.min(R - 1, Math.ceil(Math.max(...q.map((v) => v[1]))));
+      const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+      if (Math.abs(area) < 1e-9) continue;
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++) {
+          const a = ((q[1][0] - x) * (q[2][1] - y) - (q[2][0] - x) * (q[1][1] - y)) / area;
+          const bb = ((q[2][0] - x) * (q[0][1] - y) - (q[0][0] - x) * (q[2][1] - y)) / area;
+          const c = 1 - a - bb;
+          if (a < 0 || bb < 0 || c < 0) continue;
+          const z = a * q[0][2] + bb * q[1][2] + c * q[2][2];
+          if (z > zb[y * R + x]) (zb[y * R + x] = z), (owner[y * R + x] = t);
+        }
+    }
+    // Distance in from the outline (city-block passes).
+    const dist = new Float32Array(R * R).fill(1e9);
+    for (let i = 0; i < R * R; i++) if (owner[i] < 0) dist[i] = 0;
+    for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) { const i = y * R + x; if (x) dist[i] = Math.min(dist[i], dist[i - 1] + 1); if (y) dist[i] = Math.min(dist[i], dist[i - R] + 1); }
+    for (let y = R - 1; y >= 0; y--) for (let x = R - 1; x >= 0; x--) { const i = y * R + x; if (x < R - 1) dist[i] = Math.min(dist[i], dist[i + 1] + 1); if (y < R - 1) dist[i] = Math.min(dist[i], dist[i + R] + 1); }
+    const inset = (how.inset * (b.max[0] - b.min[0]) * R) / span;
+    const votes = new Map();
+    for (let i = 0; i < R * R; i++) if (owner[i] >= 0) {
+      const v = votes.get(owner[i]) ?? [0, 0];
+      v[dist[i] > inset ? 0 : 1]++;
+      votes.set(owner[i], v);
+    }
+    for (const [t, [inn, out]] of votes) if (inn > out && nrm(t).z > 0.2) lens[t] = 1;
+    // The lens's other layers (its inside, a second pane): every triangle wholly within the window too.
+    const dAt = (v) => {
+      const x = Math.round(((v.x - ox) / span) * R), y = Math.round(((v.y - oy) / span) * R);
+      return x < 0 || y < 0 || x >= R || y >= R ? 0 : dist[y * R + x];
+    };
+    for (let t = 0; t < n; t++) if (Math.min(...[0, 1, 2].map((k) => dAt(P(g.index[t * 3 + k])))) > inset * 1.3) lens[t] = 1;
+  }
+  // Tidy: a triangle goes with most of its neighbours (by shared corner positions).
+  const at = new Map();
+  for (let t = 0; t < n; t++) for (let k = 0; k < 3; k++) { const kk = P(g.index[t * 3 + k]).toArray().map((x) => Math.round(x * 1e4)).join(','); let l = at.get(kk); if (!l) at.set(kk, (l = [])); l.push(t); }
+  for (let pass = 0; pass < 2; pass++) {
+    const nx = Uint8Array.from(lens);
+    for (let t = 0; t < n; t++) {
+      const nb = new Set();
+      for (let k = 0; k < 3; k++) for (const u of at.get(P(g.index[t * 3 + k]).toArray().map((x) => Math.round(x * 1e4)).join(','))) if (u !== t) nb.add(u);
+      let on = 0;
+      for (const u of nb) on += lens[u];
+      if (nb.size >= 3) nx[t] = on * 2 > nb.size ? 1 : on * 4 < nb.size ? 0 : lens[t];
+    }
+    lens.set(nx);
+  }
+  return lens;
+}
+
+/** Split a geometry by a per-triangle flag: [the rest, the flagged]. */
+/**
+ * A lens's normals made a smooth curved shell (front +Z): from a centre 10 cm behind the lens's middle, the
+ * height bent half as much — smooth shading, not a sparkle off every simplified facet. All outward (the
+ * source's own normals are noisy; the inside is a back face, flipped by the double-sided material). A copy:
+ * the frame keeps its normals.
+ */
+function smoothNormals(g) {
+  const used = [...new Set(g.index)];
+  const c = [0, 0, 0];
+  for (const i of used) for (let k = 0; k < 3; k++) c[k] += g.pos[i * 3 + k] / used.length;
+  c[2] -= 0.1;
+  const nor = Float32Array.from(g.nor);
+  for (const i of used) {
+    const n = [g.pos[i * 3] - c[0], (g.pos[i * 3 + 1] - c[1]) * 0.5, g.pos[i * 3 + 2] - c[2]];
+    const l = Math.hypot(...n) || 1;
+    for (let k = 0; k < 3; k++) nor[i * 3 + k] = n[k] / l;
+  }
+  return { ...g, nor };
+}
+
+function splitTris(g, flag) {
+  const pick = (want) => {
+    const idx = [];
+    for (let t = 0; t < g.index.length; t += 3) if (!!flag[t / 3] === want) idx.push(g.index[t], g.index[t + 1], g.index[t + 2]);
+    return { ...g, index: Uint32Array.from(idx) };
+  };
+  return [pick(false), pick(true)];
+}
+
+/**
+ * A stand-in shemagh until its model comes (assets/incoming/gear/shemagh.glb): a scarf wound round the neck in
+ * loose folds, the knot's tails down the chest; its texture a faded sand-and-olive weave (grim palette).
+ */
+function shemaghStandIn() {
+  const P = [], N = [], U = [], I = [];
+  const SEG = 40, ROWS = 10;
+  for (let r = 0; r <= ROWS; r++) {
+    const v = r / ROWS;
+    for (let s = 0; s <= SEG; s++) {
+      const th = (s / SEG) * TAU;
+      const fold = 1 + 0.06 * Math.sin(th * 7 + v * 5) * Math.sin(v * Math.PI);
+      const R = (0.5 + 0.12 * Math.sin(v * Math.PI)) * fold;
+      const x = Math.cos(th) * R, z = Math.sin(th) * R * 0.92, y = v - 0.5 - (Math.sin(th) > 0 ? 0.12 * Math.sin(th) * (1 - v) : 0);
+      P.push(x, y, z);
+      N.push(Math.cos(th), 0, Math.sin(th));
+      U.push(s / SEG, v);
+    }
+  }
+  for (let r = 0; r < ROWS; r++)
+    for (let s = 0; s < SEG; s++) {
+      const a = r * (SEG + 1) + s, b = a + 1, c = a + SEG + 1, d = c + 1;
+      I.push(a, c, b, b, c, d);
+    }
+  // The tails of the knot, hanging down the front.
+  const base = P.length / 3;
+  for (let r = 0; r <= 6; r++)
+    for (let s = 0; s <= 4; s++) {
+      const v = r / 6, u = s / 4;
+      P.push((u - 0.5) * 0.4 * (1 - v * 0.5), -0.55 - v * 0.55, 0.55 + 0.02 * Math.sin(u * 9));
+      N.push(0, 0, 1);
+      U.push(u, 1 - v);
+    }
+  for (let r = 0; r < 6; r++)
+    for (let s = 0; s < 4; s++) {
+      const a = base + r * 5 + s, b = a + 1, c = a + 5, d = c + 1;
+      I.push(a, b, c, b, d, c);
+    }
+  const W = 256, img = Buffer.alloc(W * W * 4);
+  for (let y = 0; y < W; y++)
+    for (let x = 0; x < W; x++) {
+      const check = ((x >> 4) + (y >> 4)) & 1, thread = ((x >> 1) + (y >> 1)) & 1;
+      const sand = 0x8a8068, olive = 0x5b5a44;
+      const c = check ? sand : olive;
+      const k = 0.9 + 0.08 * thread + 0.06 * Math.sin(x * 0.7 + y * 0.3);
+      const o = (y * W + x) * 4;
+      img[o] = ((c >> 16) & 255) * k;
+      img[o + 1] = ((c >> 8) & 255) * k;
+      img[o + 2] = (c & 255) * k;
+      img[o + 3] = 255;
+    }
+  return { pos: Float32Array.from(P), nor: Float32Array.from(N), uv: Float32Array.from(U), index: Uint32Array.from(I), raw: { data: img, w: W, h: W } };
+}
+
 
 /** A ribbon laid on the body along a path (bind space): `width` wide, `thick` thick, `lift` off the skin. */
 function ribbon(body, path, { width = 0.045, thick = 0.006, lift = 0.005, uv, allowed, fallback, flat = false, clear = 0.004, edgesOnSkin = true }) {
@@ -1147,6 +1625,7 @@ const pack16 = (bits) => Buffer.from(new Uint16Array(bits).buffer).toString('bas
 
 const only = process.argv.slice(2);
 const bodies = readdirSync(CHAR).filter((f) => f.endsWith('.glb') && !f.includes('_lod1') && f !== 'anims.glb').map((f) => f.replace('.glb', '')).filter((b) => !only.length || only.includes(b));
+const fitInfo = {};
 const meta = { gear: Object.fromEntries(IDS.filter((id) => pieces[id]).map((id, i) => [id, { kind: GEAR[id].kind, bit: i, tris: pieces[id].index.length / 3 }])), bodies: {} };
 for (const id of bodies) {
   const body = await readBody(`${id}.glb`);
@@ -1170,11 +1649,17 @@ for (const id of bodies) {
       const c = [...new Set([...coveredByVest(body, v), ...pokeCover(body, v, (k) => body.share(k, ARM) < 0.75)])];
       for (const k of c) cover[k] |= bit;
       line.push(`${gid} cover ${c.length}`);
-    } else if (kind === 'helmet') {
-      const h = fitHelmet(body, src, GEAR[gid]);
-      rigid[gid] = { bone: 'Head', place: h.place.toArray().map((x) => +x.toFixed(5)) };
+    } else if (kind === 'helmet' || kind === 'glasses' || kind === 'mask') {
+      const h = kind === 'helmet' ? fitHelmet(body, src, GEAR[gid]) : kind === 'glasses' ? fitGlasses(body, src) : fitMask(body, src, GEAR[gid]);
+      if (h.g.lens) {
+        const [frame, lens] = splitTris(h.g, h.g.lens);
+        addMesh(doc, buf, scene, gid, frame);
+        addMesh(doc, buf, scene, `${gid}_lens`, smoothNormals(lens));
+      } else addMesh(doc, buf, scene, gid, h.g);
       for (const k of h.cover) cover[k] |= bit;
-      line.push(`${gid} ×${h.scale.toFixed(3)}${h.found ? '' : ' NOT FITTED'} hide ${h.cover.length}`);
+      fitInfo[id] ??= {};
+      fitInfo[id][gid] = h.info;
+      line.push(`${gid} ${JSON.stringify(h.info)} hide ${h.cover.length}`);
     } else if (kind === 'pack' || kind === 'bag') {
       const f = kind === 'pack' ? fitPack(body, src) : fitBag(body, src);
       rigid[gid] = { bone: f.bone, place: f.place.toArray().map((x) => +x.toFixed(5)) };
@@ -1198,4 +1683,10 @@ for (const id of bodies) {
 // Only some bodies refitted: the others' fits kept.
 if (only.length && existsSync(join(OUT, 'gear.json'))) meta.bodies = { ...JSON.parse(readFileSync(join(OUT, 'gear.json'), 'utf8')).bodies, ...meta.bodies };
 writeFileSync(join(OUT, 'gear.json'), JSON.stringify(meta));
+// The fit of every head piece on every body (clearances, rims): read by test:gear and the reports.
+{
+  const f = join(OUT, 'fit-report.json');
+  const old = only.length && existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {};
+  writeFileSync(f, JSON.stringify({ ...old, ...fitInfo }, null, 1));
+}
 console.log(report.join('\n'));

@@ -527,7 +527,7 @@ export class Viewmodel {
     inp.crouch = f.crouch ?? 0;
     inp.wall = this.wallT;
     // A wall right in front: no room for the gun at all — it goes down out of the way.
-    const wallLow = isGun(this.item) && GUNS[this.item].cls === 'pistol' ? 0.3 : 0.5;
+    const wallLow = isGun(this.item) && GUNS[this.item].cls === 'pistol' ? 0.3 : 0.6;
     inp.lower = Math.max(this.rightDown, clamp((wallLow - this.gunView.wallDist) / 0.2, 0, 1));
     inp.pump = Math.sin(f.stepPhase) * this.sprintT;
     inp.action = gv.action;

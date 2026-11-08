@@ -40,11 +40,25 @@
 |---|---|---|---|
 | G17, M1911, помповое ружьё, M4A1, AK, охотничья винтовка, РПГ; глушитель, магазины M4 и AK на 40 | модели из архива guns.zip, переданного автором проекта (Meshy GLB) | по договорённости с автором проекта | `npm run import:assets`: в кадр оружия (рукоять в начале координат, ствол −Z), разрезаны на подвижные части, упрощены до ≤ 4k треугольников (модули ≤ 800), текстуры через grim-палитру в WebP |
 | Магазин G17 на 33, подствольный фонарь, магазины пистолетов | процедурные low-poly заглушки (`src/weapons/gunModel.ts`) | — | — |
-| Звуки выстрелов, механики, гильз, попаданий, эха | синтез Web Audio (`src/audio/Sound.ts`: `gunShot`, `gunMech`, `casing`, `bulletHit`, `explosion`) | — | — |
+| Звуки выстрелов, перезарядок, эха (и механики, гильз, попаданий, пока записи не загружены) | синтез Web Audio (`src/audio/Sound.ts`: `gunShot`, `gunMech`, `casing`, `bulletHit`, `explosion`) | — | — |
 
 ## Звуки
 
-Все звуки синтезируются в игре (Web Audio, `src/audio/`), сторонних звуковых файлов нет — в том числе у каждого вида оружия свой выстрел, механика и эхо (помещение / переулок / улица).
+Большая часть звуков синтезируется в игре (Web Audio, `src/audio/`): шаги, выстрелы и перезарядки, двери, эхо.
+Записанные звуки — из Sonniss GDC 2026 Game Audio Bundle (лицензия Sonniss разрешает коммерческое использование),
+`npm run sounds` (`tools/build-sounds.mjs`): обрезка тишины, нормализация, моно MP3 96 kbps, нарезка → `public/sounds`.
+
+| Файлы в игре | Автор | Источник | Изменения |
+|---|---|---|---|
+| explosion_1–3 (взрыв РПГ) | Federico Soler | Effective Trailer Booms Vol. 2 (`EffectiveTrailer_Booms_Vol2_011`, `_075`, `_214`) | хвост обрезан до 4.5 с, затухание 2 с |
+| swing (замах топора, биты, монтировки) | David Dumais Audio | Melee Weapons Sound Effects Pack 2 (`METLFric_SWING SCRAPE Swift Melee Weapon Swing With A Long Blade 14`) | — |
+| hit_metal (удар по машинам, контейнерам) | David Dumais Audio | Melee Weapons Sound Effects Pack 2 (`METLImpt_METAL SWING HIT Weapon Swing To Metallic Body Impact And Resonant Tail 01`) | — |
+| heavy_hit_1–5 (тяжёлый удар по телу) | David Dumais Audio | Melee Weapons Sound Effects Pack 2 (`SWSH_SWING IMPACTS Quick Heavy Weapon Swing To Thud Impact Var 01`) | 62 с разрезаны по паузам, 5 лучших, от момента удара |
+| dry_fire (пустой магазин) | Epic Stock Media | HD Lock And Mechanism Sound Design Kit (`MECHLtch_Click Deep Mechanism Latch Button Nearfield Thunk 02`) | — |
+| mech_rattle (затвор, защёлка) | Epic Stock Media | HD Lock And Mechanism Sound Design Kit (`MACHMech_Mechanism Counting Machine Interact Loose Container Short 01`) | — |
+| casing_1–4, mag_drop_1–2 (гильзы, падение магазина) | Epic Stock Media | HD Lock And Mechanism Sound Design Kit (`METLTonl_Item Spring Wire Impact Flick Top Clatter Light Tap Roll Handling Short 01`) | 11 с разрезаны по атакам |
+| impact_metal (пуля по металлу) | Epic Stock Media | HD Game Materials (`METLImpt_Metal Old File Impact Tap Against Tire Iron Metallic Hit 01`) | — |
+| zombie_attack, zombie_scream, zombie_breath, zombie_death | Epic Stock Media | Humanoid Creatures Vol 4 — Monstrous and Undead Creature Vocalization Sound Sets | в игре высота ±10% |
 
 ## Библиотеки
 

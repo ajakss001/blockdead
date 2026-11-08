@@ -1,0 +1,51 @@
+{
+ "explosion": [
+  "explosion_1.mp3",
+  "explosion_2.mp3",
+  "explosion_3.mp3"
+ ],
+ "swing": [
+  "swing.mp3"
+ ],
+ "hitMetal": [
+  "hit_metal.mp3"
+ ],
+ "dry": [
+  "dry_fire.mp3"
+ ],
+ "rattle": [
+  "mech_rattle.mp3"
+ ],
+ "bulletMetal": [
+  "impact_metal.mp3"
+ ],
+ "zAttack": [
+  "zombie_attack.mp3"
+ ],
+ "zScream": [
+  "zombie_scream.mp3"
+ ],
+ "zBreath": [
+  "zombie_breath.mp3"
+ ],
+ "zDeath": [
+  "zombie_death.mp3"
+ ],
+ "heavyHit": [
+  "heavy_hit_1.mp3",
+  "heavy_hit_2.mp3",
+  "heavy_hit_3.mp3",
+  "heavy_hit_4.mp3",
+  "heavy_hit_5.mp3"
+ ],
+ "magDrop": [
+  "mag_drop_1.mp3",
+  "mag_drop_2.mp3"
+ ],
+ "casing": [
+  "casing_1.mp3",
+  "casing_2.mp3",
+  "casing_3.mp3",
+  "casing_4.mp3"
+ ]
+}

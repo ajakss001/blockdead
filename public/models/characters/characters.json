@@ -14,54 +14,54 @@
    "lod1": 2985,
    "lod1Error": 0.0057
   },
-  "swat_m": {
-   "leg": 0.7915,
+  "builder_m": {
+   "leg": 0.7574,
    "height": 1.8,
-   "tris": 9998,
-   "lod1": 3000,
-   "lod1Error": 0.0057
+   "tris": 9999,
+   "lod1": 2998,
+   "lod1Error": 0.0038
   },
-  "military_m": {
-   "leg": 0.786,
+  "doctor_m": {
+   "leg": 0.7674,
    "height": 1.8,
    "tris": 10000,
    "lod1": 2999,
-   "lod1Error": 0.0041
-  },
-  "police_m": {
-   "leg": 0.8289,
-   "height": 1.8,
-   "tris": 9999,
-   "lod1": 2996,
-   "lod1Error": 0.0041
+   "lod1Error": 0.003
   },
   "firefighter_m": {
-   "leg": 0.7966,
+   "leg": 0.7952,
    "height": 1.8,
    "tris": 9999,
    "lod1": 2997,
-   "lod1Error": 0.0046
+   "lod1Error": 0.0045
   },
-  "doctor_m": {
-   "leg": 0.763,
+  "mechanic_m": {
+   "leg": 0.8211,
+   "height": 1.8,
+   "tris": 10000,
+   "lod1": 2995,
+   "lod1Error": 0.0039
+  },
+  "military_m": {
+   "leg": 0.7908,
+   "height": 1.8,
+   "tris": 9999,
+   "lod1": 2998,
+   "lod1Error": 0.0043
+  },
+  "police_m": {
+   "leg": 0.8309,
    "height": 1.8,
    "tris": 9999,
    "lod1": 2999,
-   "lod1Error": 0.0028
+   "lod1Error": 0.0044
   },
-  "mechanic_m": {
-   "leg": 0.8132,
+  "swat_m": {
+   "leg": 0.793,
    "height": 1.8,
-   "tris": 9992,
-   "lod1": 3000,
-   "lod1Error": 0.004
-  },
-  "builder_m": {
-   "leg": 0.7561,
-   "height": 1.8,
-   "tris": 9999,
-   "lod1": 2996,
-   "lod1Error": 0.0034
+   "tris": 9998,
+   "lod1": 2995,
+   "lod1Error": 0.006
   }
  },
  "clips": {
@@ -77,5 +77,126 @@
   "zombie_attack": 4.633,
   "zombie_attack_2": 2.633,
   "zombie_scream": 2.8
+ },
+ "swaps": {
+  "builder_m": {
+   "removed": 1913,
+   "head": 2287,
+   "ring": [
+    32,
+    34
+   ],
+   "zip": 66,
+   "openSeamEdges": 0,
+   "gain": [
+    1.321,
+    1.29,
+    1.323
+   ],
+   "atlas": 2716,
+   "charts": 419
+  },
+  "doctor_m": {
+   "removed": 2116,
+   "head": 2287,
+   "ring": [
+    36,
+    34
+   ],
+   "zip": 70,
+   "openSeamEdges": 0,
+   "gain": [
+    1.332,
+    1.288,
+    1.306
+   ],
+   "atlas": 2724,
+   "charts": 422
+  },
+  "firefighter_m": {
+   "removed": 2114,
+   "head": 2287,
+   "ring": [
+    58,
+    34
+   ],
+   "zip": 92,
+   "openSeamEdges": 0,
+   "gain": [
+    1.181,
+    1.158,
+    1.177
+   ],
+   "atlas": 2710,
+   "charts": 504
+  },
+  "mechanic_m": {
+   "removed": 2590,
+   "head": 2287,
+   "ring": [
+    50,
+    34
+   ],
+   "zip": 84,
+   "openSeamEdges": 0,
+   "gain": [
+    1.067,
+    1.029,
+    1.043
+   ],
+   "atlas": 2576,
+   "charts": 519
+  },
+  "military_m": {
+   "removed": 1518,
+   "head": 2287,
+   "ring": [
+    38,
+    34
+   ],
+   "zip": 72,
+   "openSeamEdges": 0,
+   "gain": [
+    1.092,
+    1.097,
+    1.044
+   ],
+   "atlas": 2778,
+   "charts": 434
+  },
+  "police_m": {
+   "removed": 2041,
+   "head": 2287,
+   "ring": [
+    36,
+    34
+   ],
+   "zip": 70,
+   "openSeamEdges": 0,
+   "gain": [
+    1.323,
+    1.29,
+    1.319
+   ],
+   "atlas": 2740,
+   "charts": 504
+  },
+  "swat_m": {
+   "removed": 1320,
+   "head": 2287,
+   "ring": [
+    38,
+    34
+   ],
+   "zip": 72,
+   "openSeamEdges": 0,
+   "gain": [
+    1.155,
+    1.116,
+    1.139
+   ],
+   "atlas": 2711,
+   "charts": 613
+  }
  }
 }

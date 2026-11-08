@@ -12,6 +12,8 @@ import { loadCharactersNode } from './nodeCharacters';
  *    right under its skin (the piece inwards along its normal, nothing of it outwards);
  *  - the straps of the packs and the bag lie on the body: their inner side ≤ 2 cm off the skin (but where a
  *    strap leaves the body for its pack or bag);
+ *  - glasses and masks the same, alone and worn together with every helmet and each other (COMBOS): the
+ *    body under the whole set hidden at once, nothing of it through any of them;
  *  - nothing hangs in the air: a helmet on the head, a pack on the back, the bag and the box at the hip, a
  *    vest on the torso (≤ 3 cm from the skin at its nearest inner points).
  * Poses: idle, walk, run, crouched walk, jump, the zombies' walk and the top of an axe swing.
@@ -20,7 +22,21 @@ import { loadCharactersNode } from './nodeCharacters';
 type Fs = { readFileSync(p: string): Uint8Array };
 const process = (globalThis as unknown as { process: { env: Record<string, string> } }).process;
 const fs = (globalThis as unknown as { process: { getBuiltinModule(m: string): Fs } }).process.getBuiltinModule('node:fs');
-const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic'];
+const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic', 'glasses_ballistic', 'goggles_tactical', 'balaclava', 'shemagh', 'mask_half'];
+const HELMETS: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction'];
+const FACE: GearId[] = ['glasses_ballistic', 'goggles_tactical'];
+const MASK: GearId[] = ['balaclava', 'shemagh', 'mask_half'];
+/**
+ * Worn together (the body under all of them hidden at once — the check that nothing of it comes through any
+ * of them): every helmet with every glasses and every mask, glasses with a mask, the class kits.
+ */
+const COMBOS: GearId[][] = [
+  ...HELMETS.flatMap((h) => [...FACE, ...MASK].map((x) => [h, x])),
+  ...FACE.flatMap((g) => MASK.map((m) => [g, m])),
+  ...HELMETS.flatMap((h) => FACE.flatMap((g) => MASK.map((m) => [h, g, m]))),
+  ['helmet_military', 'glasses_ballistic', 'shemagh', 'vest_military'],
+  ['helmet_swat', 'goggles_tactical', 'balaclava', 'vest_swat'],
+];
 const POSES: { name: string; clip: ClipId; t: number; swing?: boolean }[] = [
   { name: 'idle', clip: 'idle', t: 0 },
   { name: 'walk', clip: 'walking', t: 0.3 },
@@ -177,6 +193,7 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
   const cover = bgeo.getAttribute('aCover');
   const meshes = new Map<GearId, { mesh: SkinnedMesh; geo: BufferGeometry }>();
   for (const g of GEAR) {
+    if (process.env.GEAR && !process.env.GEAR.split(',').includes(g)) continue;
     const geo = gearGeometry(body, g, 0);
     if (!geo) {
       console.log(`✗ ${body}: no ${g}`);
@@ -187,7 +204,7 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
     m.bind(rig.mesh.skeleton, rig.mesh.bindMatrix);
     meshes.set(g, { mesh: m, geo });
   }
-  for (const p of POSES) {
+  for (const p of process.env.POSES ? POSES.filter((x) => process.env.POSES!.split(',').includes(x.name)) : POSES) {
     rig.hold(p.clip, p.t);
     if (p.swing) {
       rig.bone('Spine1').quaternion.multiply(_q.setFromAxisAngle(new Vector3(0, 1, 0), -0.35));
@@ -197,12 +214,17 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
     }
     rig.root.updateMatrixWorld(true);
     const bp = pose(rig.mesh, bgeo);
-    for (const [g, { mesh, geo }] of meshes) {
-      let gp = pose(mesh, geo);
+    const posed = new Map<GearId, Posed>();
+    for (const [g, { mesh, geo }] of meshes) posed.set(g, pose(mesh, geo));
+    const sets: [GearId, GearId[]][] = [...[...meshes.keys()].map((g) => [g, [g]] as [GearId, GearId[]]), ...COMBOS.filter((c) => c.every((g) => meshes.has(g))).flatMap((c) => c.filter((g) => meshes.has(g)).map((g) => [g, c] as [GearId, GearId[]]))];
+    for (const [g, set] of sets) {
+      const { geo } = meshes.get(g)!;
+      const single = set.length === 1;
+      let gp = posed.get(g)!;
       const whole = gp;
       const kind = gearKind(g)!;
-      const bit = hideBits([g]);
-      const at = `${body} / ${g} / ${p.name}`;
+      const bit = hideBits(set);
+      const at = `${body} / ${single ? g : `${g} в [${set.join('+')}]`} / ${p.name}`;
       // Drawn body vertices: in a triangle not all of whose corners are under the piece.
       const hidden = (v: number) => (cover.getX(v) & bit) !== 0;
       const drawn = new Uint8Array(bp.pos.length / 3);
@@ -210,7 +232,7 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
         const [a, b, c] = [bp.index[t], bp.index[t + 1], bp.index[t + 2]];
         if (!(hidden(a) && hidden(b) && hidden(c))) drawn[a] = drawn[b] = drawn[c] = 1;
       }
-      if (kind === 'vest' || kind === 'helmet') {
+      if (kind === 'vest' || kind === 'helmet' || kind === 'glasses' || kind === 'mask') {
         // A helmet: its shell (above its rim, at bind), not the chin straps that run along the face.
         let rimY = -Infinity;
         const dome = new Vector3();
@@ -238,12 +260,14 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
           near++;
           V(bp.nor, v, n);
           if (kind === 'helmet') {
-            // Outside the dome: the way to its middle crosses it.
+            // Outside the dome: the way to its middle crosses it, and nothing of the helmet over it (hair hanging
+            // under a wide brim or a neck guard is below the helmet, not through it).
             const d = dome.clone().sub(q);
             const L = d.length();
             d.normalize();
-            if (cast(gp, q, d, L) > 0 && cast(whole, q, d.clone().negate(), 0.3) < 0) {
+            if (cast(gp, q, d, L) > 0 && cast(whole, q, d.clone().negate(), 0.3) < 0 && cast(whole, q, new Vector3(0, 1, 0), 0.3) < 0) {
               out++;
+              if (process.env.DEBUG_THROUGH && out <= 6) console.log('   ', v, bindY.getX(v).toFixed(3), bindY.getY(v).toFixed(3), bgeo.getAttribute('position').getZ(v).toFixed(3));
             }
             continue;
           }
@@ -251,16 +275,18 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
           if (inward < 0) continue;
           if (cast(gp, q, n, 0.04) < 0) {
             out++;
+            if (process.env.DEBUG_THROUGH && out <= 6) console.log('   ', v, bindY.getX(v).toFixed(3), bindY.getY(v).toFixed(3), bgeo.getAttribute('position').getZ(v).toFixed(3));
           }
         }
         const share = near ? out / near : 0;
-        note(`${kind}: кожа сквозь`, share, at);
+        note(`${kind}${single ? '' : ' (набор)'}: кожа сквозь`, share, at);
         checks++;
         if (share > 0.01) {
           fails++;
           if (fails < 1e9) console.log(`✗ ${at}: тело сквозь ${kind}: ${out}/${near} вершин`);
         }
       }
+      if (!single) continue;
       if (kind === 'pack' || kind === 'bag') {
         // Straps: the ribbons (generated: 4 vertices a section, the first two the inner side).
         const rigidN = geo.userData.rigid ?? 0;
@@ -331,5 +357,5 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
   console.log(`${body}: ok so far (${fails} fails)`);
 }
 for (const [k, w] of Object.entries(worst)) console.log(`  худшее «${k}»: ${w.v.toFixed(3)} (${w.at})`);
-console.log(fails ? `✗ test:gear: ${fails} из ${checks} проверок не прошли` : `✓ test:gear: ${checks} проверок (${BODY_IDS.length} тел × ${GEAR.length} предметов × ${POSES.length} поз)`);
+console.log(fails ? `✗ test:gear: ${fails} из ${checks} проверок не прошли` : `✓ test:gear: ${checks} проверок (${BODY_IDS.length} тел × (${GEAR.length} предметов + ${COMBOS.length} наборов) × ${POSES.length} поз)`);
 if (fails) (globalThis as unknown as { process: { exitCode: number } }).process.exitCode = 1;

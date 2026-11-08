@@ -20,7 +20,7 @@ export const HAND_POSES: readonly HandPose[] = ['grip_fist', 'grip_trigger', 'gr
 const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly number[]; thumb: readonly number[] }> = {
   grip_fist: { fingers: [1.25, 1.45, 1.1], index: [1.25, 1.45, 1.1], thumb: [0.35, 0.5] },
   grip_trigger: { fingers: [1.25, 1.45, 1.1], index: [0.35, 0.2, 0.1], thumb: [0.35, 0.5] },
-  grip_support: { fingers: [1.0, 1.15, 0.85], index: [0.95, 1.05, 0.8], thumb: [0.15, 0.25] },
+  grip_support: { fingers: [1.1, 1.25, 1.05], index: [1.06, 1.15, 1.05], thumb: [0.6, 0.7] },
   relaxed: { fingers: [0.35, 0.45, 0.3], index: [0.25, 0.35, 0.25], thumb: [0.1, 0.15] },
 };
 

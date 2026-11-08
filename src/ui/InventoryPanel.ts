@@ -39,6 +39,8 @@ type DropTarget = 'bag' | 'box' | `slot:${Slot}`;
 const SLOTS: { slot: Slot; label: string }[] = [
   { slot: 'outfit', label: 'Костюм' },
   { slot: 'head', label: 'Голова' },
+  { slot: 'face', label: 'Лицо: очки' },
+  { slot: 'mask', label: 'Лицо: маска' },
   { slot: 'torso', label: 'Торс' },
   { slot: 'vest', label: 'Жилет' },
   { slot: 'hands', label: 'Руки' },

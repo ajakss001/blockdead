@@ -1,6 +1,6 @@
 import { type AnimationAction, type Bone, BufferGeometry, Group, LoopOnce, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import { baseOf, bodyAsset, type BodyId, type ClipId } from '../characters/assets';
-import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear } from '../characters/gear';
+import { coverBody, gearGeometry, gearKind, gearTexture, HEAD_KINDS, hideBits, loadGear } from '../characters/gear';
 import { characterMaterial } from '../characters/material';
 import { CharacterRig, stand } from '../characters/rig';
 import type { GearId } from '../data/items';
@@ -86,7 +86,7 @@ export class BodyModel {
 
   /** The gear worn (`handFree`: the toolbox is in the hand, so not on the hip). */
   setGear(gear: readonly GearId[], handFree: boolean): void {
-    this.gearWant = gear.filter((g) => gearKind(g) !== 'helmet' && !(gearKind(g) === 'box' && handFree));
+    this.gearWant = gear.filter((g) => !HEAD_KINDS.includes(gearKind(g)!) && !(gearKind(g) === 'box' && handFree));
     this.dress();
   }
 

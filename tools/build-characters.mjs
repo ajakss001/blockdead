@@ -9,7 +9,7 @@
  *   anims.glb        every clip on one skeleton: rotations of the needed bones, the hips' height in leg lengths
  * Bone names: mixamorig:<Name>. Usage: npm run characters
  */
-import { mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Document, NodeIO } from '@gltf-transform/core';
 import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/extensions';
@@ -21,6 +21,7 @@ import { PNG } from 'pngjs';
 import sharp from 'sharp';
 import { resolveObjectURL } from 'node:buffer';
 import { loadFbx } from './fbx-node.mjs';
+import { headSwap } from './head-swap.mjs';
 import { grim } from '../src/style/palette.ts';
 
 const ROOT = process.cwd();
@@ -30,11 +31,18 @@ mkdirSync(OUT, { recursive: true });
 await MeshoptEncoder.ready;
 await MeshoptSimplifier.ready;
 
+// Costumes wear the base body's head (tools/head-swap.mjs): outfit_<class>_male → char_male's, _female → char_female's.
+const COSTUMES = readdirSync(join(IN, 'characters'))
+  .map((f) => /^outfit_(\w+)_(male|female)\.fbx$/.exec(f))
+  .filter(Boolean)
+  .map(([f, c, sex]) => ({ id: `${c}_${sex[0]}`, fbx: f, png: null, height: sex === 'male' ? 1.8 : 1.7, lod0: 10000, donor: sex }));
 const BODIES = [
   { id: 'male', fbx: 'char_male.fbx', png: 'char_male_obj.png', height: 1.8, lod0: 0 },
   { id: 'female', fbx: 'char_female.fbx', png: 'char_female.png', height: 1.7, lod0: 0 },
-  ...['swat', 'military', 'police', 'firefighter', 'doctor', 'mechanic', 'builder'].map((c) => ({ id: `${c}_m`, fbx: `outfit_${c}_male.fbx`, png: null, height: 1.8, lod0: 10000 })),
+  ...COSTUMES,
 ];
+/** The base bodies as they come (unwelded geometry, skeleton, texture): the costumes' heads. */
+const donors = {};
 const LOD1_TRIS = 3000;
 const CLIPS = ['idle', 'walking', 'walking_female', 'running', 'crouched_walking', 'jump', 'zombie_idle', 'zombie_walk', 'zombie_running', 'zombie_attack', 'zombie_attack_2', 'zombie_scream'];
 /** The bones a zombie / far figure keeps (fingers go to the hand, toes to the foot's toe base). */
@@ -268,6 +276,15 @@ for (const body of BODIES) {
     }
     geo.clearGroups();
   }
+  if (!body.donor) donors[body.id] = { geo: geo.clone(), bones, img: rgba };
+  else if (donors[body.donor]) {
+    const sw = headSwap({ geo, bones, img: rgba }, donors[body.donor]);
+    geo = sw.geo;
+    rgba = sw.img;
+    meta.swaps ??= {};
+    meta.swaps[body.id] = sw.info;
+    report.push(`${body.id}: голова ${body.donor} — ${JSON.stringify(sw.info)}`);
+  } else console.log(`${body.id}: нет ${body.donor} — голова своя`);
   await texture(body.id, rgba.data, rgba.w, rgba.h);
   geo = weld(geo);
   geo.computeBoundingBox();

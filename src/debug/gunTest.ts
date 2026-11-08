@@ -12,6 +12,8 @@ import { giveLoadout } from '../weapons/give';
 import { capacityOf, damageOf, GUN_IDS, type GunId, GUNS, type ModId, noiseOf } from '../weapons/guns';
 import { type AmmoSource, type GunInput, GunState, newInst } from '../weapons/gunState';
 import { gunAnimations } from './animCheck';
+import { gunLook, HAND_CIRCLE } from './gunChecks';
+import { gunParts } from './gunParts';
 import { loadCharactersNode } from './nodeCharacters';
 
 /**
@@ -20,7 +22,10 @@ import { loadCharactersNode } from './nodeCharacters';
  * come, outside don't), extended magazines, a shot cutting the shotgun's loading short, the front sight in the
  * middle of the screen in the sights (±2 px at 1080p) for every gun, the gun never through a wall, every gun
  * has its reload and inspect animations, pause freezes the shots' bodies and the rockets, import:assets with
- * no files leaves a working build.
+ * no files leaves a working build. How each gun is held, on what is drawn (debug/gunChecks): no roll at the
+ * hip and in the sights (< 2°), no pixel of a hand in the circle round the middle in the sights (15% of the
+ * height across), the left hand under the bore axis, the hip low and to the right; and every model's parts
+ * where they belong (debug/gunParts: no piece off the gun, the whole as long as the source model).
  */
 
 type Fs = { existsSync(p: string): boolean; mkdtempSync(p: string): string; readFileSync(p: string, e: string): string; rmSync(p: string, o: object): void };
@@ -327,10 +332,33 @@ export async function main(): Promise<number> {
     }
   }
 
+  // 6b. How it is held (the rules), at the hip and in the sights, every gun.
+  for (const id of GUN_IDS) {
+    draw(id);
+    vm.gunView.wall = 0;
+    for (const ads of [false, true]) {
+      vm.gunView.ads = ads;
+      for (let i = 0; i < 90; i++) {
+        vm.fixedUpdate(1 / 60, false);
+        vm.update(1 / 60, frame());
+      }
+      const l = gunLook(vm, id);
+      const tag = `${id} ${ads ? 'sights' : 'hip'}`;
+      check(Math.abs(l.roll) < 2, `${tag}: roll ${l.roll.toFixed(2)}° (< 2°)`);
+      if (ads) check(l.handPx === 0, `${tag}: hand pixels in the middle circle (r ${HAND_CIRCLE.toFixed(0)} px at 1080p) ${l.handPx}`);
+      check(l.palmBelow > 0.02, `${tag}: left palm ${(l.palmBelow * 100).toFixed(1)} cm under the bore axis`);
+      if (!ads && GUNS[id].cls !== 'launcher') check(l.muzzle[0] > 0 && l.muzzle[1] < 0, `${tag}: muzzle in the lower right quarter (${l.muzzle.join(', ')})`);
+    }
+    vm.gunView.ads = false;
+  }
+  // 6c. The models' parts together (no piece off the gun, the whole the source's size).
+  for (const r of await gunParts()) check(r.ok, r.what);
+
   // 7. Never through a wall: walking up to a wall, the muzzle stays on this side (hip and sights).
   for (const id of GUN_IDS) {
     draw(id);
     let worst = -1;
+    let worstAt = '';
     for (const ads of [false, true]) {
       vm.gunView.ads = ads;
       input[ads ? 'press' : 'release']('aim');
@@ -342,7 +370,7 @@ export async function main(): Promise<number> {
         gm.root.updateWorldMatrix(true, false);
         const m = gm.muzzle(new Vector3()).applyMatrix4(gm.root.matrixWorld);
         // In the arms' space the eye is the origin looking −Z: depth beyond the wall's plane.
-        worst = Math.max(worst, -m.z - d);
+        if (-m.z - d > worst) (worst = -m.z - d), (worstAt = `${ads ? 'sights' : 'hip'}, wall at ${d.toFixed(2)} m`);
       }
       // And at the wall, no shot: the trigger does nothing.
       const before = fa.state!.loaded;
@@ -351,7 +379,7 @@ export async function main(): Promise<number> {
     }
     input.release('aim');
     wallZ.v = -1;
-    check(worst < 0, `${id}: the muzzle never through the wall (${(worst * 100).toFixed(1)} cm)`);
+    check(worst < 0, `${id}: the muzzle never through the wall (${(worst * 100).toFixed(1)} cm${worst >= 0 ? `, ${worstAt}` : ''})`);
   }
 
   // 8. Every gun has its reload and inspect animations (test:anim checks them frame by frame).

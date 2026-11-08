@@ -92,6 +92,8 @@ const SWIVEL_MAX = 100 * DEG;
 const SWIVEL_STEP = 14 * DEG;
 /** The elbow keeps the wrist this far inside its range when it can. */
 const MARGIN = 1.5 * DEG;
+/** The twist kept off its limit too, by less (the hold under a handguard sits on it). */
+const TWIST_MARGIN = 0.5 * DEG;
 
 interface Eval {
   cost: number;
@@ -261,7 +263,7 @@ export class ArmRig {
     ev.roll = roll;
     const elbowNear = Math.max(0, ELBOW_CLEAR - _e.length());
     ev.cost =
-      10 * (over(flex, WRIST_FLEX - MARGIN) ** 2 + over(dev, WRIST_DEV - MARGIN) ** 2 + over(wristTw, WRIST_TWIST) ** 2 + over(roll, FOREARM_ROLL) ** 2) +
+      10 * (over(flex, WRIST_FLEX - MARGIN) ** 2 + over(dev, WRIST_DEV - MARGIN) ** 2 + over(wristTw, WRIST_TWIST - TWIST_MARGIN) ** 2 + over(roll, FOREARM_ROLL) ** 2) +
       0.01 * ((flex / WRIST_FLEX) ** 2 + (dev / WRIST_DEV) ** 2 + (tau / (2 * WRIST_TWIST)) ** 2) +
       0.05 * phi * phi +
       0.05 * (phi - prev) ** 2 +

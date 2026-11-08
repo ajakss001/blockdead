@@ -1,10 +1,13 @@
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
 import type { GameLoop } from '../core/GameLoop';
+import { type SampleGroup, Samples } from './samples';
 
 /*
- * Game sound, synthesized with WebAudio (no files to download: nothing to stream on a weak phone,
- * nothing to license). One AudioContext for the whole game:
+ * Game sound, synthesized with WebAudio, and a few recorded sounds over it (src/audio/samples: the melee
+ * swing and metal hits, the RPG's blast, the dry click, the action's rattle, cases and magazines on the floor,
+ * a bullet on metal, zombie screams, breaths, lunges and deaths — loaded lazily after the first gesture, ≈ 0.5
+ * MB; until they come, or without them, the synthesis plays). One AudioContext for the whole game:
  *
  *   world bus ─┬─────────────────────────────► master ─► speakers
  *              └─► reverb send ─► convolver ─┘
@@ -162,6 +165,7 @@ class Sound {
   private ui: GainNode | null = null;
   /** The world bus's low-pass (dying: everything goes dull and far). */
   private muffle: BiquadFilterNode | null = null;
+  private samples: Samples | null = null;
   private send: GainNode | null = null;
   noise: AudioBuffer | null = null;
   private voices = 0;
@@ -690,6 +694,9 @@ class Sound {
     const v = this.voice(pos, 0.5);
     if (!v) return;
     const [out, t] = v;
+    // The recorded whoosh for the axe, the bat and the crowbar (slower with a slower, tired swing), a blade's a
+    // little higher and lighter.
+    if (kind !== 'fist' && this.sample(out, t, 'swing', { rate: Math.min(1.3, Math.max(0.75, 0.32 / Math.max(0.1, dur))) * (kind === 'blade' ? 1.2 : 1), vary: 0.08, gain: kind === 'blade' ? 0.35 : 0.5 })) return;
     if (kind === 'heavy') this.noiseHit(out, t, { type: 'bandpass', f: 280, f2: 1300, q: 1.6, dur: dur * 1.6, peak: 0.32, attack: dur * 0.9 });
     else if (kind === 'blade') this.noiseHit(out, t, { type: 'bandpass', f: 900, f2: 3200, q: 2, dur: dur * 1.5, peak: 0.2, attack: dur * 0.8 });
     else this.noiseHit(out, t, { type: 'bandpass', f: 400, f2: 900, q: 1, dur: dur * 1.4, peak: 0.12, attack: dur * 0.7 });
@@ -739,6 +746,12 @@ class Sound {
     if (!v) return;
     const [out, t] = v;
     const k = (f: number) => f * pitch;
+    // Recorded: the dry click on an empty chamber; the action's rattle (the bolt, the slide, the latch).
+    if (kind === 'dry' && this.sample(out, t, 'dry', { rate: pitch, gain: 0.55 })) return;
+    if ((kind === 'rack' || kind === 'bolt' || kind === 'pump' || kind === 'boltCatch' || kind === 'slideLock') && this.sample(out, t + (kind === 'pump' ? 0.1 : 0.06), 'rattle', { rate: pitch * (kind === 'pump' ? 0.8 : kind === 'boltCatch' || kind === 'slideLock' ? 1.15 : 1), gain: 0.5 })) {
+      this.noiseHit(out, t, { type: 'bandpass', f: k(kind === 'pump' ? 900 : 1500), q: 2, dur: 0.06, peak: 0.2 });
+      return;
+    }
     switch (kind) {
       case 'magOut':
         this.noiseHit(out, t, { type: 'bandpass', f: k(1800), q: 3, dur: 0.03, peak: 0.25 });
@@ -798,6 +811,7 @@ class Sound {
       this.noiseHit(out, t, { type: 'bandpass', f: soft ? 500 : 900, q: 1.2, dur: 0.05, peak: soft ? 0.08 : 0.15 });
       return;
     }
+    if (this.sample(out, t, 'casing', { rate: 1.05, vary: 0.12, gain: 0.3 })) return;
     for (let i = 0; i < 3; i++) {
       const dt = i * (0.07 + Math.random() * 0.05);
       this.tone(out, t + dt, { f: 4200 + Math.random() * 2200, dur: 0.06, peak: 0.07 / (i + 1) });
@@ -807,9 +821,11 @@ class Sound {
 
   /** A magazine dropped on the floor. */
   magDrop(pos: Pos): void {
-    const v = this.voice(pos, 0.5, 1.5);
+    const v = this.voice(pos, 0.9, 1.5);
     if (!v) return;
     const [out, t] = v;
+    // The light clatter played lower: a heavier, hollow magazine.
+    if (this.sample(out, t, 'magDrop', { rate: 0.72, vary: 0.06, gain: 0.55 })) return;
     this.noiseHit(out, t, { type: 'bandpass', f: 800, q: 1.2, dur: 0.08, peak: 0.3 });
     this.noiseHit(out, t + 0.12, { type: 'bandpass', f: 1100, q: 2, dur: 0.04, peak: 0.12 });
   }
@@ -819,6 +835,11 @@ class Sound {
     const v = this.voice(pos, 0.9, 2, true);
     if (!v) return;
     const [out, t] = v;
+    if ((kind === 'metal' || kind === 'car') && this.sample(out, t, 'bulletMetal', { rate: kind === 'car' ? 0.75 : 1, vary: 0.1, gain: 0.6 })) {
+      // The ricochet's whine over it now and then.
+      if (kind === 'metal' && Math.random() < 0.35) this.tone(out, t + 0.01, { f: 3800 + Math.random() * 1500, f2: 1400, dur: 0.35, peak: 0.05, type: 'triangle' });
+      return;
+    }
     switch (kind) {
       case 'metal':
         this.noiseHit(out, t, { type: 'highpass', f: 3000, dur: 0.03, peak: 0.4 });
@@ -860,9 +881,14 @@ class Sound {
 
   /** An explosion: the blast, its rumble rolling away, debris falling. */
   explosion(pos: Pos): void {
-    const v = this.voice(pos, 3, 12, true);
+    const v = this.voice(pos, 4.5, 12, true);
     if (!v) return;
     const [out, t] = v;
+    if (this.sample(out, t, 'explosion', { vary: 0.06, gain: 1 })) {
+      // The chest's thump under the recording.
+      this.tone(out, t, { f: 55, f2: 28, dur: 1.2, peak: 0.4 });
+      return;
+    }
     this.noiseHit(out, t, { type: 'lowpass', f: 3000, f2: 120, dur: 1.4, peak: 1, attack: 0.005 });
     this.tone(out, t, { f: 55, f2: 28, dur: 1.6, peak: 0.8 });
     this.noiseHit(out, t + 0.25, { type: 'lowpass', f: 400, dur: 2.2, peak: 0.35, attack: 0.3 });
@@ -880,6 +906,8 @@ class Sound {
         this.noiseHit(out, t, { type: 'bandpass', f: 750, q: 1.2, dur: 0.14, peak: 0.6 * g });
         break;
       case 'metal':
+        // A car, a container, a locker: the recorded hit with its ring (a light blow higher and quieter).
+        if (this.sample(out, t, 'hitMetal', { rate: 1.15 - heavy * 0.15, vary: 0.08, gain: 0.35 + 0.35 * heavy })) break;
         for (const f of [410, 735, 1120, 1690]) this.tone(out, t, { f: f * (0.95 + Math.random() * 0.1), dur: 0.6, peak: 0.09 * g });
         this.noiseHit(out, t, { type: 'highpass', f: 2500, dur: 0.05, peak: 0.4 * g });
         break;
@@ -966,6 +994,17 @@ class Sound {
     const [out, t] = v;
     const r = Math.random();
     const f = (hz: number) => hz * pitch * (0.93 + Math.random() * 0.14);
+    // Recorded voices among the synthesized ones (not every time: a crowd of one voice is a loop), ±10% pitch.
+    const rec: SampleGroup | null = kind === 'alarm' ? 'zScream' : kind === 'swing' ? 'zAttack' : kind === 'rasp' ? 'zBreath' : kind === 'die' ? 'zDeath' : null;
+    const share = kind === 'die' ? 0.6 : kind === 'rasp' ? 0.35 : 0.45;
+    if (rec && Math.random() < share && this.sample(out, t, rec, { rate: pitch, vary: 0.1, gain: kind === 'rasp' ? 0.5 : 0.7 })) {
+      // The body still hits the ground.
+      if (kind === 'die') {
+        this.noiseHit(out, t + 0.45, { type: 'lowpass', f: 220, dur: 0.3, peak: 0.7 });
+        this.tone(out, t + 0.45, { f: 60, dur: 0.2, peak: 0.35 });
+      }
+      return;
+    }
     switch (kind) {
       case 'moan': {
         // A hungry growl, low in the chest: three shapes — a long rolling growl, a rise into a snarl, two
@@ -1046,6 +1085,11 @@ class Sound {
     switch (kind) {
       case 'blunt':
       case 'metal':
+        // The recorded heavy thud (a bat, a crowbar, a hammer on a body); a crowbar's ring over it.
+        if (this.sample(out, t, 'heavyHit', { vary: 0.08, gain: 0.8 * k })) {
+          if (kind === 'metal') for (const f of [880, 1460]) this.tone(out, t, { f: f * j(), dur: 0.22, peak: 0.04 });
+          break;
+        }
         this.noiseHit(out, t, { type: 'lowpass', f: 260 * j(), dur: 0.16, peak: 0.85 * k });
         this.tone(out, t, { f: 78 * j(), f2: 46, dur: 0.14, peak: 0.55 * k });
         this.noiseHit(out, t + 0.004, { type: 'bandpass', f: 1300 * j(), q: 0.9, dur: 0.06, peak: 0.35 * k });
@@ -1326,7 +1370,26 @@ class Sound {
     this.send = ac.createGain();
     this.send.gain.value = 0.1;
     this.world.connect(this.send).connect(conv).connect(this.master);
+    this.samples = new Samples(ac);
+    this.samples.load();
     this.apply();
+  }
+
+  /**
+   * A recorded sound of the group into `out` at `t`: `rate` its speed (and pitch), `vary` a random ± on it
+   * (0.1: ±10%), `gain` its level. False when the group has not loaded (the caller synthesizes instead).
+   */
+  private sample(out: Out, t: number, g: SampleGroup, o: { rate?: number; vary?: number; gain?: number } = {}): boolean {
+    const buf = this.samples?.pick(g);
+    if (!buf || !this.ac) return false;
+    const src = this.ac.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = (o.rate ?? 1) * (1 + (Math.random() * 2 - 1) * (o.vary ?? 0.05));
+    const gn = this.ac.createGain();
+    gn.gain.value = o.gain ?? 1;
+    src.connect(gn).connect(out);
+    src.start(t);
+    return true;
   }
 
   private apply(): void {

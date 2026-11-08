@@ -1802,6 +1802,6 @@ function partArmor(worn: Worn, part: BodyPart): number {
     return id ? (ITEMS[id].wear?.stats.bite ?? 0) : 0;
   };
   const sleeves = worn.torso && ITEMS[worn.torso].wear?.sleeves !== false ? bite('torso') : 0;
-  const a = part === 'head' ? bite('head') : part === 'torso' ? bite('torso') + bite('vest') : part === 'arms' ? sleeves * 0.8 + bite('hands') * 0.6 : bite('legs') + bite('feet') * 0.3;
+  const a = part === 'head' ? bite('head') + bite('face') : part === 'torso' ? bite('torso') + bite('vest') : part === 'arms' ? sleeves * 0.8 + bite('hands') * 0.6 : bite('legs') + bite('feet') * 0.3;
   return Math.min(0.9, a);
 }

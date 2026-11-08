@@ -75,6 +75,12 @@ export type ItemId =
   | 'backpackHiking'
   | 'bagMedic'
   | 'toolboxMechanic'
+  // The face slot: glasses (face) and masks (mask) — worn together.
+  | 'glassesBallistic'
+  | 'gogglesTactical'
+  | 'balaclava'
+  | 'shemagh'
+  | 'maskHalf'
   | 'gorkaJacket'
   | 'gorkaPants'
   | 'workGloves'
@@ -119,8 +125,9 @@ import type { CostumeId } from '../characters/assets';
 export type ItemKind = 'food' | 'drink' | 'medical' | 'tool' | 'weapon' | 'material' | 'junk' | 'clothing' | 'ammo';
 
 /** Body slots for clothing; the weapon goes to the hand. */
-export type WearSlot = 'outfit' | 'head' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back' | 'bag';
-export const WEAR_SLOTS: readonly WearSlot[] = ['outfit', 'head', 'torso', 'vest', 'hands', 'legs', 'feet', 'back', 'bag'];
+/** The face («Лицо») is two places: glasses over the eyes (face) and a mask over the mouth and neck (mask). */
+export type WearSlot = 'outfit' | 'head' | 'face' | 'mask' | 'torso' | 'vest' | 'hands' | 'legs' | 'feet' | 'back' | 'bag';
+export const WEAR_SLOTS: readonly WearSlot[] = ['outfit', 'head', 'face', 'mask', 'torso', 'vest', 'hands', 'legs', 'feet', 'back', 'bag'];
 
 /** Gear models (public/models/gear/<id>.glb and their fits to each body). */
 export type GearId =
@@ -134,7 +141,12 @@ export type GearId =
   | 'backpack_school'
   | 'backpack_hiking'
   | 'bag_medic'
-  | 'toolbox_mechanic';
+  | 'toolbox_mechanic'
+  | 'glasses_ballistic'
+  | 'goggles_tactical'
+  | 'balaclava'
+  | 'shemagh'
+  | 'mask_half';
 
 /** What a piece of clothing does. Every field is summed over the worn set. */
 export interface WearStats {
@@ -288,6 +300,11 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   toolboxMechanic: { name: 'Ящик с инструментами', kind: 'clothing', weight: 3.5, stack: 1, note: 'В руке, пока руки свободны; с оружием — на бедре. +5 кг', wear: { slot: 'bag', gear: 'toolbox_mechanic', color: 0x5a3328, soil: 0.5, stats: { bite: 0, warmth: 0 }, pack: { capacity: 5, reduce: 0 } } },
   workGloves: { name: 'Рабочие перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x8a7650, stats: { bite: 0.15, warmth: 2 } } },
   fireGloves: { name: 'Перчатки пожарного', kind: 'clothing', weight: 0.4, stack: 1, wear: { slot: 'hands', color: 0x6b5a32, stats: { bite: 0.3, warmth: 4 } } },
+  glassesBallistic: { name: 'Баллистические очки', kind: 'clothing', weight: 0.1, stack: 1, note: 'Тонированные линзы, держат осколки', wear: { slot: 'face', gear: 'glasses_ballistic', color: 0x3a2f26, soil: 0.4, stats: { bite: 0.08, warmth: 0 } } },
+  gogglesTactical: { name: 'Тактические очки-маска', kind: 'clothing', weight: 0.2, stack: 1, note: 'Закрытая маска на ремешке', wear: { slot: 'face', gear: 'goggles_tactical', color: 0x26282a, soil: 0.5, stats: { bite: 0.12, warmth: 1 } } },
+  balaclava: { name: 'Балаклава', kind: 'clothing', weight: 0.15, stack: 1, note: 'Закрывает голову, шею, волосы и уши', wear: { slot: 'mask', gear: 'balaclava', color: 0x1f2021, soil: 0.7, stats: { bite: 0, warmth: 4 } } },
+  shemagh: { name: 'Шемаг', kind: 'clothing', weight: 0.25, stack: 1, note: 'Платок на шею и лицо', wear: { slot: 'mask', gear: 'shemagh', color: 0x6b6450, soil: 0.6, stats: { bite: 0, warmth: 3 } } },
+  maskHalf: { name: 'Тканевая полумаска', kind: 'clothing', weight: 0.05, stack: 1, wear: { slot: 'mask', gear: 'mask_half', color: 0x4a4b46, soil: 1, stats: { bite: 0, warmth: 1 } } },
   tacticalGloves: { name: 'Тактические перчатки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'hands', color: 0x1c1d20, stats: { bite: 0.25, warmth: 2 } } },
   medGloves: { name: 'Медицинские перчатки', kind: 'clothing', weight: 0.05, stack: 1, wear: { slot: 'hands', color: 0x8fb6c8, stats: { bite: 0.02, warmth: 0 } } },
   map: { name: 'Карта района', kind: 'tool', weight: 0.05, stack: 1, note: 'Отмечены заправки, участок, большие магазины. Кто-то обвёл выезды из города.' },

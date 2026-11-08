@@ -23,7 +23,7 @@ import {
 } from 'three';
 import { BASE_BODIES, type BaseBody, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, type RigAsset } from '../characters/assets';
 import { coverBody, gearGeometry, gearReady, gearTexture, hideBits, loadGear } from '../characters/gear';
-import { characterMaterial } from '../characters/material';
+import { characterMaterial, LENS_TINT } from '../characters/material';
 import type { GearId } from '../data/items';
 import { createBones, RagdollPose, ragdollStart } from '../characters/rig';
 import type { QualityLevel } from '../core/types';
@@ -252,7 +252,7 @@ class Layer {
   hides!: Float32Array;
   cap = 0;
   count = 0;
-  private readonly gear = new Map<GearId, GearLayer>();
+  private readonly gear = new Map<string, GearLayer>();
   private readonly asked = new Set<GearId>();
 
   constructor(
@@ -320,6 +320,7 @@ class Layer {
       const gl = this.gearLayer(g);
       if (!gl) continue;
       gl.push(m, this.count);
+      this.gearLayer(g, true)?.push(m, this.count);
       shown |= hideBits([g]);
     }
     this.hides[this.count] = shown;
@@ -327,8 +328,9 @@ class Layer {
   }
 
   /** A piece's mesh over this layer (null while it loads). */
-  private gearLayer(g: GearId): GearLayer | null {
-    let gl = this.gear.get(g);
+  private gearLayer(g: GearId, lens = false): GearLayer | null {
+    const key = lens ? `${g}:lens` : g;
+    let gl = this.gear.get(key);
     if (gl && gl.n < gl.cap) return gl;
     const body = this.k.body;
     if (!gearReady(body, g)) {
@@ -338,10 +340,11 @@ class Layer {
       }
       return null;
     }
-    const geo = gearGeometry(body, g, 1);
+    const geo = gearGeometry(body, g, 1, lens ? 'lens' : 'main');
     if (!geo) return null;
     const old = gl;
-    gl = new GearLayer(geo, characterMaterial(bodyAsset(body), this.k.rig, { skin: this.tex, row: true, map: gearTexture(g) }), Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${g}`);
+    const look = lens ? { skin: this.tex, row: true, lens: LENS_TINT[g] ?? 0x1e1f1d } : { skin: this.tex, row: true, map: gearTexture(g) };
+    gl = new GearLayer(geo, characterMaterial(bodyAsset(body), this.k.rig, look), Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${key}`);
     if (old) {
       // Grown: the instances so far carried over.
       (gl.mesh.instanceMatrix.array as Float32Array).set((old.mesh.instanceMatrix.array as Float32Array).subarray(0, old.n * 16));
@@ -349,7 +352,7 @@ class Layer {
       gl.n = old.n;
       old.dispose();
     }
-    this.gear.set(g, gl);
+    this.gear.set(key, gl);
     return gl;
   }
 

@@ -2,7 +2,8 @@ import './domStub';
 import { Viewmodel } from '../player/Viewmodel';
 import { failures, type FrameRow, gunAnimations, LIMITS } from './animCheck';
 import { loadCharactersNode } from './nodeCharacters';
-import { GUN_POSES, type GunPoses, resetGunRig } from '../player/gunPose';
+import { classPoses, GUN_POSES, type GunPoses, resetGunRig } from '../player/gunPose';
+import { gunLook } from './gunChecks';
 import { GUN_TUNED } from '../player/gunTuned';
 import { GUN_IDS, type GunId, GUNS } from '../weapons/guns';
 import { Quaternion, Vector3 } from 'three';
@@ -10,22 +11,61 @@ import { type Grip, GRIPS, gripsChanged } from '../player/grips';
 import { gunRigData } from '../player/gunPose';
 
 /**
- * Where the gun may sit at the hip and how far from the eye in the sights, by class (a pose outside costs):
- * the tuner must not push the gun out of the picture to keep the wrists in their limits.
+ * Where the gun may sit at the hip and how far the grip is from the eye in the sights, by class (a pose
+ * outside costs): the tuner must not push the gun out of the picture to keep the wrists in their limits.
+ * Long guns low and to the right with the butt at the shoulder, the grip ~0.2–0.3 m ahead of the eye in the
+ * sights (the stock in the shoulder); pistols at arm's length.
  */
 const LOOKS = {
-  pistol: { lo: [0.04, -0.18, -0.5], hi: [0.16, -0.06, -0.25], relief: [0.3, 0.55] },
-  long: { lo: [0.06, -0.19, -0.4], hi: [0.2, -0.08, -0.16], relief: [0.14, 0.34] },
-  launcher: { lo: [0.02, -0.16, -0.25], hi: [0.12, -0.05, -0.05], relief: [0.1, 0.3] },
+  pistol: { lo: [0.06, -0.18, -0.48], hi: [0.17, -0.1, -0.3], eye: [0.34, 0.5] },
+  long: { lo: [0.1, -0.23, -0.3], hi: [0.2, -0.14, -0.15], eye: [0.2, 0.32] },
+  launcher: { lo: [0.02, -0.16, -0.25], hi: [0.12, -0.05, -0.05], eye: [-0.2, 0.2] },
 } as const;
+
+const settle = (vm: Viewmodel, ads: boolean) => {
+  vm.gunView.ads = ads;
+  vm.gunView.wall = 0;
+  vm.gunView.action = 'idle';
+  for (let i = 0; i < 50; i++) {
+    vm.fixedUpdate(1 / 60, false);
+    vm.update(1 / 60, { lookX: 0, lookY: 0, stepPhase: 0, speed: 0, sprinting: false, flashlightOn: false });
+  }
+};
+/**
+ * The rules on what is drawn (CLAUDE.md «Огнестрельное оружие», debug/gunChecks): no roll at the hip or in the
+ * sights; in the sights no hand in the circle round the middle; the left palm 4–6 cm under the bore (long
+ * guns); at the hip the muzzle in the lower right quarter.
+ */
+function rulesCost(vm: Viewmodel, id: GunId): number {
+  if (!vm.gunModel) return 0;
+  settle(vm, false);
+  const hip = gunLook(vm, id);
+  settle(vm, true);
+  const ads = gunLook(vm, id);
+  settle(vm, false);
+  let c = (Math.max(0, Math.abs(hip.roll) - 1) + Math.max(0, Math.abs(ads.roll) - 1)) * 200;
+  c += ads.handPx * 20;
+  if (GUNS[id].cls === 'long') {
+    c += (Math.max(0, 0.04 - hip.palmBelow) + Math.max(0, hip.palmBelow - 0.06)) * 20000;
+    c += (Math.max(0, 0.04 - ads.palmBelow) + Math.max(0, ads.palmBelow - 0.06)) * 20000;
+  } else if (GUNS[id].cls === 'pistol') c += Math.max(0, 0.02 - ads.palmBelow) * 20000;
+  if (GUNS[id].cls !== 'launcher') c += (Math.max(0, 0.03 - hip.muzzle[0]) + Math.max(0, hip.muzzle[1] + 0.03)) * 3000;
+  return c;
+}
+let lookVm: Viewmodel | null = null;
 
 function looksCost(id: GunId): number {
   const P = GUN_POSES[id];
   const L = LOOKS[GUNS[id].cls];
   let c = 0;
   for (let i = 0; i < 3; i++) c += (Math.max(0, L.lo[i] - P.hip[i]) + Math.max(0, P.hip[i] - L.hi[i])) * 40000;
-  const relief = gunRigData(id).cls.relief;
-  c += (Math.max(0, L.relief[0] - relief) + Math.max(0, relief - L.relief[1])) * 40000;
+  // The grip's distance ahead of the eye in the sights.
+  const eye = -gunRigData(id).adsAt.z;
+  c += (Math.max(0, L.eye[0] - eye) + Math.max(0, eye - L.eye[1])) * 40000;
+  // The stance as the grip editor / the rules put it (grips.json): its place within the class's range.
+  const st = GRIPS[id]?.stance?.at;
+  if (st) for (let i = 0; i < 3; i++) c += (Math.max(0, L.lo[i] - st[i]) + Math.max(0, st[i] - L.hi[i])) * 40000;
+  if (lookVm) c += rulesCost(lookVm, id);
   // The grips (data/grips.json) kept near where the reference / the editor put them.
   for (let i = 0; i < GP_N; i++) c += Math.max(0, Math.abs(gp[i]) - GP_FREE[i]) * GP_COST[i];
   for (const k of ['shoulderR', 'shoulderL', 'adsShoulderR', 'adsShoulderL'] as const) for (const v of P[k]) c += Math.max(0, Math.abs(v) - 0.1) * 40000;
@@ -36,8 +76,10 @@ function looksCost(id: GunId): number {
  * Gun pose tuner (dev tool): nudges the poses of a gun (player/gunPose GUN_POSES: the hand rolls about the
  * grip axes, the hip, sprint, wall, reload, inspect, butt-strike, put-away keys, the pouch) as little as it
  * must until every frame of all its animations (animCheck.gunAnimations) keeps the wrists and forearms in
- * range, the hands on their sockets and in the frame. --write saves the result to player/gunTuned.ts.
- *   node tools/vite-run.mjs src/debug/gunTune.ts <gun|all> [rounds] [--write]
+ * range, the hands on their sockets and in the frame, and the gun sits by the rules (rulesCost: no roll, no
+ * hand in the middle of the sights, the left palm under the bore, the hip low and right). --write saves the
+ * result to player/gunTuned.ts (and the grips to data/grips.json); --reset starts from the class's poses.
+ *   node tools/vite-run.mjs src/debug/gunTune.ts <gun|all> [rounds] [--reset] [--write]
  */
 
 const over = (v: number, lim: number) => Math.max(0, Math.abs(v) - lim);
@@ -179,12 +221,19 @@ export async function main(args: string[]): Promise<number> {
   const vm = new Viewmodel();
   vm.setBody('male', 1);
   vm.setAspect(16 / 9);
+  lookVm = vm;
   const pos = args.filter((a) => !a.startsWith('--'));
   const ids = !pos[0] || pos[0] === 'all' ? GUN_IDS : (pos[0].split(',') as GunId[]);
   const rounds = Number(pos[1] ?? 3);
   for (const id of ids) {
+    // --reset: from the class's poses (the earlier tuning dropped), the grips as they are.
+    if (args.includes('--reset')) {
+      GUN_POSES[id] = classPoses(id);
+      resetGunRig(id);
+    }
     const P = GUN_POSES[id];
     gpBase = structuredClone(GRIPS[id] ?? {});
+    vm.equip(id);
     gp = new Array<number>(GP_N).fill(0);
     const t0 = Date.now();
     let best = gunCost(vm, id);

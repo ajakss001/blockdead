@@ -35,6 +35,11 @@ export interface CharacterLook {
   near?: number;
   /** A texture instead of the body's (gear: its own; alpha 1, no skin). */
   map?: Texture | null;
+  /**
+   * A lens (glasses): no texture, this dark tint, nearly opaque (the eyes do not show through), a sharp
+   * mirror-like glint that moves as the head turns.
+   */
+  lens?: number;
 }
 
 function bounds(rig: RigAsset): { minY: number; height: number; hips: number } {
@@ -47,11 +52,21 @@ function bounds(rig: RigAsset): { minY: number; height: number; hips: number } {
 }
 
 const LUM = 'vec3(0.2126, 0.7152, 0.0722)';
+/** Lenses: dark sunglasses, the eyes behind them not seen. */
+export const LENS_OPACITY = 0.85;
+/** Lens tints by piece (already dark: through the grim palette's spirit, nothing bright). */
+export const LENS_TINT: Partial<Record<string, number>> = { goggles_tactical: 0x1b1d1f, glasses_ballistic: 0x261a12 };
 
 export function characterMaterial(body: BodyAsset, rig: RigAsset, o: CharacterLook = {}): MeshLambertMaterial {
-  const tex = o.map !== undefined ? o.map : body.texture;
+  const lens = o.lens !== undefined;
+  const tex = lens ? null : o.map !== undefined ? o.map : body.texture;
   const mat = new MeshLambertMaterial({ map: tex ?? null });
-  if (!tex) mat.color.setHex(0x6d6a60);
+  if (!tex) mat.color.setHex(lens ? o.lens! : 0x6d6a60);
+  if (lens) {
+    mat.transparent = true;
+    mat.opacity = LENS_OPACITY;
+    mat.depthWrite = true;
+  }
   const cover = !!o.cover, row = !!o.row, near = o.near ?? 0;
   const hide = o.hide ?? { value: 0 };
   const b = bounds(rig);
@@ -109,6 +124,22 @@ vTint2 = aTint2;`
       : '';
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\nvarying vec3 vBindPos;\nvarying vec3 vTint;\nvarying vec3 vTint2;\nuniform float uMinY;\nuniform float uHeight;\nuniform float uHips;\n${cover ? 'varying float vCover;\n' : ''}${NOISE_GLSL}`)
+      .replace(
+        '#include <opaque_fragment>',
+        lens
+          ? `{
+  // The glint: a soft diagonal streak of the sky across the lens (in its own bind space, so the simplified
+  // facets do not sparkle), sliding a little as the view turns; a faint rim at grazing angles.
+  vec3 lv = normalize(-vViewPosition);
+  float lb = fract((vBindPos.x * 0.55 + vBindPos.y) / 0.075 + lv.x * 0.8 + lv.y * 0.4);
+  float lg = smoothstep(0.0, 0.06, lb) * (1.0 - smoothstep(0.06, 0.2, lb)) * 0.5;
+  float lf = pow(1.0 - abs(dot(lv, normalize(normal))), 3.0);
+  outgoingLight += vec3(0.34, 0.35, 0.36) * lg + vec3(0.05) * lf;
+  diffuseColor.a = mix(diffuseColor.a, 1.0, lg);
+}
+#include <opaque_fragment>`
+          : '#include <opaque_fragment>',
+      )
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>${cover ? '\nif (vCover > 0.999) discard;' : ''}${near ? `\nif (length(vViewPosition) < ${near.toFixed(3)}) discard;` : ''}`)
       .replace(
         '#include <map_fragment>',
@@ -121,6 +152,6 @@ vTint2 = aTint2;`
 }`,
       );
   };
-  mat.customProgramCacheKey = () => `character-${zombie}-${batched}-${!!tex}-${o.map !== undefined}-${o.tintMix ?? 0.6}-${cover}-${row}-${near}`;
+  mat.customProgramCacheKey = () => `character-${lens}-${zombie}-${batched}-${!!tex}-${o.map !== undefined}-${o.tintMix ?? 0.6}-${cover}-${row}-${near}`;
   return mat;
 }
