@@ -1,7 +1,7 @@
-import { Color, type DataTexture, MeshLambertMaterial, type Texture } from 'three';
+import { Color, type DataTexture, DoubleSide, FrontSide, MeshLambertMaterial, type Texture } from 'three';
 import { SKIN } from '../style/palette';
 import { glslColor, NOISE_GLSL, stainGlsl } from '../style/look';
-import { type BodyAsset, type RigAsset } from './assets';
+import { type BodyAsset, lodTexture, type RigAsset } from './assets';
 
 /**
  * The material of every character (CLAUDE.md «Визуальный стиль»): Lambert, the body's texture (already
@@ -40,6 +40,8 @@ export interface CharacterLook {
    * mirror-like glint that moves as the head turns.
    */
   lens?: number;
+  /** Thin cloth (the shemagh, the masks): both faces drawn; everything else one-sided. */
+  doubleSide?: boolean;
 }
 
 function bounds(rig: RigAsset): { minY: number; height: number; hips: number } {
@@ -59,8 +61,9 @@ export const LENS_TINT: Partial<Record<string, number>> = { goggles_tactical: 0x
 
 export function characterMaterial(body: BodyAsset, rig: RigAsset, o: CharacterLook = {}): MeshLambertMaterial {
   const lens = o.lens !== undefined;
-  const tex = lens ? null : o.map !== undefined ? o.map : body.texture;
-  const mat = new MeshLambertMaterial({ map: tex ?? null });
+  // Zombies: the crowd's smaller texture (the player and the menu: the big one).
+  const tex = lens ? null : o.map !== undefined ? o.map : o.zombie ? lodTexture(body) : body.texture;
+  const mat = new MeshLambertMaterial({ map: tex ?? null, side: o.doubleSide ? DoubleSide : FrontSide });
   if (!tex) mat.color.setHex(lens ? o.lens! : 0x6d6a60);
   if (lens) {
     mat.transparent = true;

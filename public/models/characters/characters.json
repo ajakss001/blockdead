@@ -198,5 +198,147 @@
    "atlas": 2711,
    "charts": 613
   }
+ },
+ "fingers": {
+  "builder_m": {
+   "added": [
+    "LeftHandThumb1",
+    "LeftHandThumb2",
+    "LeftHandThumb3",
+    "LeftHandPinky1",
+    "LeftHandMiddle1",
+    "LeftHandRing1",
+    "LeftHandMiddle2",
+    "LeftHandMiddle3",
+    "LeftHandRing2",
+    "LeftHandRing3",
+    "RightHandThumb1",
+    "RightHandRing1",
+    "RightHandPinky1",
+    "RightHandMiddle1",
+    "RightHandMiddle2",
+    "RightHandRing2",
+    "RightHandThumb2",
+    "RightHandThumb3",
+    "RightHandRing3",
+    "RightHandMiddle3",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 2862,
+   "err": {
+    "Left": 0.03,
+    "Right": 0.07
+   }
+  },
+  "doctor_m": {
+   "added": [],
+   "moved": 0,
+   "err": {
+    "Left": 0.01,
+    "Right": 0.01
+   }
+  },
+  "firefighter_m": {
+   "added": [
+    "LeftHandPinky1",
+    "RightHandPinky1",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 4997,
+   "err": {
+    "Left": 0.01,
+    "Right": 0.02
+   }
+  },
+  "mechanic_m": {
+   "added": [
+    "LeftHandThumb1",
+    "LeftHandThumb2",
+    "LeftHandThumb3",
+    "LeftHandPinky1",
+    "LeftHandMiddle1",
+    "LeftHandRing1",
+    "LeftHandMiddle2",
+    "LeftHandMiddle3",
+    "LeftHandRing2",
+    "LeftHandRing3",
+    "RightHandThumb1",
+    "RightHandRing1",
+    "RightHandPinky1",
+    "RightHandMiddle1",
+    "RightHandMiddle2",
+    "RightHandRing2",
+    "RightHandThumb2",
+    "RightHandThumb3",
+    "RightHandRing3",
+    "RightHandMiddle3",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 7222,
+   "err": {
+    "Left": 0.03,
+    "Right": 0.07
+   }
+  },
+  "military_m": {
+   "added": [
+    "LeftHandPinky1",
+    "RightHandPinky1",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 4937,
+   "err": {
+    "Left": 0.01,
+    "Right": 0.03
+   }
+  },
+  "police_m": {
+   "added": [
+    "LeftHandThumb1",
+    "LeftHandThumb2",
+    "LeftHandThumb3",
+    "LeftHandPinky1",
+    "LeftHandMiddle1",
+    "LeftHandRing1",
+    "LeftHandMiddle2",
+    "LeftHandMiddle3",
+    "LeftHandRing2",
+    "LeftHandRing3",
+    "RightHandThumb1",
+    "RightHandRing1",
+    "RightHandPinky1",
+    "RightHandMiddle1",
+    "RightHandMiddle2",
+    "RightHandRing2",
+    "RightHandThumb2",
+    "RightHandThumb3",
+    "RightHandRing3",
+    "RightHandMiddle3",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 2709,
+   "err": {
+    "Left": 0.03,
+    "Right": 0.08
+   }
+  },
+  "swat_m": {
+   "added": [
+    "LeftHandPinky1",
+    "RightHandPinky1",
+    "RightHandPinky2",
+    "RightHandPinky3"
+   ],
+   "moved": 3893,
+   "err": {
+    "Left": 0.02,
+    "Right": 0.04
+   }
+  }
  }
 }

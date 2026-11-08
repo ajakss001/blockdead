@@ -76,8 +76,28 @@ export interface BodyAsset {
   height: number;
   lod0: RigAsset;
   lod1: RigAsset;
+  /** The texture seen up close (the player, the menu, the inventory): 2048, 512 on low. */
   texture: Texture | null;
+  /** The zombies' (LOD) texture: 1024 (512 on low), loaded on first use (`lodTexture`). */
+  textureLod?: Texture | null;
 }
+
+/** Texture sizes: up close (the player, the menu) and for the crowd (zombies, LOD). */
+export type TexSize = 0 | 512 | 1024 | 2048;
+/** The zombies' texture of a body: the smaller file, loaded the first time it is asked for. */
+export function lodTexture(asset: BodyAsset): Texture | null {
+  if (asset.textureLod !== undefined) return asset.textureLod;
+  const size = lodSize(source?.texSize ?? 0);
+  if (!source || !size || size === source.texSize) return (asset.textureLod = asset.texture);
+  const t = new TextureLoader().load(`${source.base}${asset.id}_${size}.webp`);
+  t.colorSpace = SRGBColorSpace;
+  t.minFilter = LinearMipmapLinearFilter;
+  t.anisotropy = 4;
+  if (asset.texture) t.flipY = asset.texture.flipY;
+  return (asset.textureLod = t);
+}
+/** The crowd's size for an up-close size: 2048 → 1024; low stays 512. */
+export const lodSize = (s: TexSize): TexSize => (s === 2048 ? 1024 : s);
 
 const PREFIX = 'mixamorig';
 export const bare = (name: string) => (name.startsWith(PREFIX) ? name.slice(PREFIX.length).replace(/^:/, '') : name);
@@ -116,7 +136,7 @@ async function parse(loader: GLTFLoader, read: Read, file: string) {
   return loader.parseAsync(buf, '');
 }
 
-let source: { get: Read; base: string; texSize: 0 | 512 | 1024; meta: Record<string, { leg: number; height: number }> } | null = null;
+let source: { get: Read; base: string; texSize: TexSize; meta: Record<string, { leg: number; height: number }> } | null = null;
 const pending = new Map<BodyId, Promise<BodyAsset | null>>();
 
 /** One body's two models and texture (null if the build has none of it). */
@@ -173,8 +193,8 @@ export function bodyNow(id: BodyId): BodyId {
   return baseOf(id);
 }
 
-/** Loads the base bodies and the clips (`texSize` 512 on low, 1024 otherwise; 0: no textures, as in Node tests). */
-export function loadCharacters(texSize: 0 | 512 | 1024, read?: Read): Promise<void> {
+/** Loads the base bodies and the clips (`texSize` 512 on low, 2048 otherwise; 0: no textures, as in Node tests). */
+export function loadCharacters(texSize: TexSize, read?: Read): Promise<void> {
   ready ??= (async () => {
     const base = `${import.meta.env?.BASE_URL ?? '/'}models/characters/`;
     const get: Read = read ?? ((f) => fetch(base + f).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${f}: ${r.status}`)))));

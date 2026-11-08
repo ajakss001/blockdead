@@ -441,7 +441,8 @@ export class WorldScene implements IScene {
           onXp: (xp) => this.skills.add('carpentry', xp),
         },
         syncBody,
-        onClose: () => this.save(),
+        onClose: () => void this.save(),
+        newCharacter: () => void this.newCharacter(),
       },
       document.getElementById('ui')!,
     );
@@ -756,7 +757,7 @@ export class WorldScene implements IScene {
     // Rain drowns footsteps.
     _zs.noise = c.noise * (1 - ATMO.weather.rainMasks * this.weather.rain);
     _zs.crouched = c.crouched;
-    _zs.lit = this.player.flashlightOn && this.player.battery > 0 ? 0.7 : 0;
+    _zs.lit = this.player.lightOn ? 0.7 : 0;
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
@@ -916,7 +917,7 @@ export class WorldScene implements IScene {
     this.atmo.update(gameDt, p, this.indoors, wa, this.life.windGust, {
       eye: this.camera.position,
       look: this.lookDir,
-      flashlight: this.player.flashlightOn && this.player.battery > 0,
+      flashlight: this.player.lightOn,
       daylight: this.clock.daylight,
       felt: this.felt,
       speed: this.player.controller.speed,
@@ -1017,11 +1018,22 @@ export class WorldScene implements IScene {
     return urban && h > 0.05 ? 'concrete' : 'grass';
   }
 
-  private save(): void {
-    if (this.creating) return;
+  /**
+   * «Новый персонаж» from the inventory: this survivor is retired (the save is marked as after a death, so
+   * the world stays as it is), and the page loads again into the character editor. No body, no zombie twin.
+   */
+  async newCharacter(): Promise<void> {
+    if (!confirm('Начать новым персонажем? Текущий выживший и его вещи пропадут, мир останется.')) return;
+    this.dead = true;
+    await this.save();
+    location.reload();
+  }
+
+  private save(): Promise<void> {
+    if (this.creating) return Promise.resolve();
     this.saveT = 0;
     const c = this.player.controller;
-    void this.saves.save({
+    return this.saves.save({
       player: { x: c.position.x, y: c.position.y, z: c.position.z, yaw: c.yaw, battery: this.player.battery },
       stats: this.survival.serialize(),
       inventory: this.inventory.serialize(),

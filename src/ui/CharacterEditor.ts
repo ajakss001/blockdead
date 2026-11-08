@@ -2,7 +2,7 @@ import { CLASSES, type ClassId, classDef, OUTFIT_TINTS, STARTER_OUTFITS } from '
 import { classSkillText } from '../systems/Skills';
 import { TRAITS, type TraitId, traitDef, traitPointsLeft } from '../data/traits';
 import type { ItemId, WearSlot } from '../data/items';
-import { type Appearance, HEIGHT_RANGE, baseLook, randomAppearance, REF_CLOTHES, SEX_LABEL, SEXES, type Sex } from '../player/appearance';
+import { type Appearance, baseLook, randomAppearance, REF_CLOTHES, SEX_LABEL, SEXES, type Sex } from '../player/appearance';
 import type { Worn } from '../systems/Inventory';
 import { CharacterPreview } from './CharacterPreview';
 
@@ -33,7 +33,7 @@ export function choiceTint(c: CharacterChoice): Partial<Record<WearSlot, number>
 }
 
 /**
- * New game: who the survivor is. Looks (name, man or woman, height), the class
+ * New game: who the survivor is. Looks (name, man or woman), the class
  * (former job) and the starting clothes, with the 3D figure updating live. Phone-first: big touch
  * targets, one scrolling column of options next to the figure.
  */
@@ -94,7 +94,7 @@ export class CharacterEditor {
       random.addEventListener('click', () => {
         this.choice.appearance = randomAppearance();
         this.choice.classId = CLASSES[Math.floor(Math.random() * CLASSES.length)].id;
-        this.choice.outfit = Math.random() < 0.5 ? 'uniform' : STARTER_OUTFITS[Math.floor(Math.random() * STARTER_OUTFITS.length)].id;
+        this.choice.outfit = Math.random() < 0.5 ? 'uniform' : 'casual';
         this.choice.tint = OUTFIT_TINTS[Math.floor(Math.random() * OUTFIT_TINTS.length)];
         this.choice.traits = randomTraits(this.choice.classId);
         name.value = this.choice.appearance.name;
@@ -174,29 +174,13 @@ export class CharacterEditor {
 
   private renderLook(): void {
     const a = this.choice.appearance;
-    // A man or a woman (the model); the name and the height after.
+    // A man or a woman (the model); the name after. The height is the model's own (no setting).
     this.chips('Персонаж', SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
       const sex = v as Sex;
       if (sex === a.sex) return;
       if (this.choice.tint === REF_CLOTHES[a.sex].tee) this.choice.tint = REF_CLOTHES[sex].tee;
       this.choice.appearance = baseLook(sex, a.name.trim() || undefined);
     });
-    // Height slider.
-    const row = div('editor__row');
-    const label = div('editor__label', `Рост: ${a.height} см`);
-    const range = document.createElement('input');
-    range.type = 'range';
-    range.className = 'editor__range';
-    range.min = String(HEIGHT_RANGE[0]);
-    range.max = String(HEIGHT_RANGE[1]);
-    range.value = String(a.height);
-    range.addEventListener('input', () => {
-      a.height = Number(range.value);
-      label.textContent = `Рост: ${a.height} см`;
-      this.refreshFigure();
-    });
-    row.append(label, range);
-    this.body.append(row);
   }
 
   private renderClass(): void {
@@ -223,8 +207,8 @@ export class CharacterEditor {
   }
 
   private renderOutfit(): void {
-    const cls = classDef(this.choice.classId);
-    const options: [string, string][] = [['uniform', `Форма: ${cls.name.toLowerCase()}`], ...STARTER_OUTFITS.map((o) => [o.id, o.name] as [string, string])];
+    // Two choices: the class's clothes, or everyday ones (a T-shirt, jeans, sneakers).
+    const options: [string, string][] = [['uniform', 'Одежда класса'], ['casual', 'Обычная']];
     this.chips('Стартовая одежда', options, this.choice.outfit, (v) => (this.choice.outfit = v));
     if (this.choice.outfit !== 'uniform') this.swatches('Цвет верха', OUTFIT_TINTS, this.choice.tint, (v) => (this.choice.tint = v));
     else this.body.append(div('editor__note', 'Форма класса — свой цвет и защита. Её можно снять и найти другую одежду в мире.'));

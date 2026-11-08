@@ -11,10 +11,11 @@ import { bodyAsset, type RigAsset } from './assets';
 /**
  * What the fingers do: grip_fist round a handle; grip_trigger the same with the index finger straight along
  * the trigger guard; grip_support the other hand under a handguard (fingers wrapped a little looser, thumb
- * along); relaxed a free hand, fingers a little bent.
+ * along); relaxed a free hand, fingers a little bent; grip_torch the flashlight's closed grip — the fingers
+ * round its body, the thumb laid over the top towards the lens.
  */
-export type HandPose = 'grip_fist' | 'grip_trigger' | 'grip_support' | 'relaxed';
-export const HAND_POSES: readonly HandPose[] = ['grip_fist', 'grip_trigger', 'grip_support', 'relaxed'];
+export type HandPose = 'grip_fist' | 'grip_trigger' | 'grip_support' | 'relaxed' | 'grip_torch';
+export const HAND_POSES: readonly HandPose[] = ['grip_fist', 'grip_trigger', 'grip_support', 'relaxed', 'grip_torch'];
 
 /** Curl of each finger's three joints (rad), the thumb's two, per pose; the index finger may differ. */
 const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly number[]; thumb: readonly number[] }> = {
@@ -22,7 +23,15 @@ const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly 
   grip_trigger: { fingers: [1.25, 1.45, 1.1], index: [0.35, 0.2, 0.1], thumb: [0.35, 0.5] },
   grip_support: { fingers: [1.1, 1.25, 1.05], index: [1.06, 1.15, 1.05], thumb: [0.6, 0.7] },
   relaxed: { fingers: [0.35, 0.45, 0.3], index: [0.25, 0.35, 0.25], thumb: [0.1, 0.15] },
+  grip_torch: { fingers: [1.2, 1.4, 1.05], index: [1.15, 1.35, 1.0], thumb: [0.45, 0.6] },
 };
+/**
+ * The poses whose thumb turns mirrored for the left hand. The thumb's axis below (−f + 0.4·axis) is the right
+ * hand's for both: on the left its f part should change sign (the curl axis already does), so the older poses
+ * turn the left thumb into the handle. Only the poses here have it right; the rest keep the weapons' holds
+ * as they were tuned (changing them moves every left hand on a weapon).
+ */
+const THUMB_MIRRORED: ReadonlySet<HandPose> = new Set(['grip_torch']);
 
 export interface HandFrame {
   /** The grip frame in the hand bone's frame. */
@@ -57,7 +66,7 @@ function fingerless(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   const m = handFrame(male, side);
   if (!m) return null;
   const none = () => new Map<number, Quaternion>();
-  return { q: m.q.clone(), grip: m.grip.clone(), fist: none(), poses: { grip_fist: none(), grip_trigger: none(), grip_support: none(), relaxed: none() }, fingers: false };
+  return { q: m.q.clone(), grip: m.grip.clone(), fist: none(), poses: { grip_fist: none(), grip_trigger: none(), grip_support: none(), relaxed: none(), grip_torch: none() }, fingers: false };
 }
 
 function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
@@ -104,7 +113,7 @@ function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
         if (i === undefined) continue;
         const p = rig.parents[i];
         const a = F === 'Thumb' ? (c.thumb[n === 1 ? 0 : 1] ?? 0) : (F === 'Index' ? c.index : c.fingers)[n - 1];
-        const ax = F === 'Thumb' ? f.clone().negate().addScaledVector(axis, 0.4).normalize() : axis;
+        const ax = F === 'Thumb' ? f.clone().multiplyScalar(THUMB_MIRRORED.has(pose) ? -s : -1).addScaledVector(axis, 0.4).normalize() : axis;
         const turn = new Quaternion().setFromAxisAngle(ax, a);
         // The world turn of this joint, on top of its parent's already curled one.
         const parentNow = worldQ(p);
@@ -117,7 +126,7 @@ function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
     }
     return out;
   };
-  const poses = { grip_fist: curlOf('grip_fist'), grip_trigger: curlOf('grip_trigger'), grip_support: curlOf('grip_support'), relaxed: curlOf('relaxed') };
+  const poses = { grip_fist: curlOf('grip_fist'), grip_trigger: curlOf('grip_trigger'), grip_support: curlOf('grip_support'), relaxed: curlOf('relaxed'), grip_torch: curlOf('grip_torch') };
   const fingers = rig.index.has(`${S}HandMiddle1`) && rig.index.has(`${S}HandThumb1`);
   return { q, grip, fist: poses.grip_fist, poses, fingers };
 

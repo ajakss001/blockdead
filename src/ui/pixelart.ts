@@ -478,7 +478,330 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
   boots: (s) => shoeIcon(s, ITEMS.boots.wear!.color, true),
 };
 
-/** Generic clothing icon by slot, in the item's color (gear has a render of its model instead: ui/gearIcon). */
+// ── Firearms, rounds, magazines, mods: drawn from the models (muzzle to the right, side view). ──
+const G = {
+  poly: 0x34363a,
+  polyLight: 0x4a4d50,
+  metal: 0x55595c,
+  blued: 0x3e4246,
+  wood: 0x7a5636,
+  woodDark: 0x553a24,
+  brass: 0xa88a48,
+  olive: 0x4e5636,
+  shell: 0x6e3b2e,
+} as const;
+
+/** A cartridge standing upright: case, then the bullet. */
+function round(s: Sprite, x: number, y: number, h: number, w: number, tip: number, cas: number = G.brass): void {
+  s.rect(x, y + 2, w, h - 2, cas);
+  s.rect(x + (w > 2 ? 1 : 0), y, Math.max(1, w - (w > 2 ? 2 : 0)), 2, tip);
+  s.rect(x, y + h - 1, w, 1, shadeRGB(cas, 0.7));
+}
+
+/** A box magazine leaning a little forward, with the top round showing. */
+function magIcon(s: Sprite, c: number, len: number, curve: number): void {
+  for (let i = 0; i < len; i++) s.rect(6 + Math.round((i * curve) / len), 2 + i, 4, 1, c);
+  s.rect(6, 2, 4, 1, shadeRGB(c, 1.3));
+  s.rect(7, 1, 2, 1, G.brass);
+  s.rect(6 + curve, 2 + len, 4, 1, shadeRGB(c, 0.7));
+}
+
+const GUN_DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
+  pistol_g17: (s) => {
+    s.rect(2, 4, 12, 3, G.poly); // slide
+    s.rect(2, 4, 12, 1, G.polyLight);
+    s.rect(13, 3, 1, 1, G.poly); // front sight
+    s.rect(3, 3, 1, 1, G.poly);
+    s.rect(4, 7, 9, 2, G.blued); // frame
+    s.line(5, 9, 3, 14, G.poly, 3); // grip
+    s.rect(7, 9, 3, 2, G.blued); // trigger guard
+    s.dot(8, 9, 0x1e1f1d);
+  },
+  pistol_m1911: (s) => {
+    s.rect(2, 4, 12, 3, G.metal);
+    s.rect(2, 4, 12, 1, 0x7a7e80);
+    s.rect(13, 3, 1, 1, G.metal);
+    s.rect(2, 3, 2, 1, G.metal); // hammer
+    s.rect(4, 7, 9, 2, G.metal);
+    s.line(5, 9, 3, 14, G.wood, 3); // wooden grip panels
+    s.line(5, 10, 4, 13, G.woodDark);
+    s.rect(7, 9, 3, 2, G.metal);
+    s.dot(8, 9, 0x1e1f1d);
+  },
+  shotgun_pump: (s) => {
+    s.rect(4, 6, 12, 1, G.blued); // barrel
+    s.rect(4, 7, 11, 1, G.metal); // tube under it
+    s.rect(9, 7, 4, 2, G.wood); // pump
+    s.rect(3, 5, 6, 3, G.blued); // receiver
+    s.line(3, 7, 0, 10, G.wood, 3); // stock
+    s.rect(4, 8, 2, 2, G.blued); // trigger guard
+    s.dot(15, 5, G.metal); // bead
+  },
+  rifle_m4a1: (s) => {
+    s.rect(5, 6, 8, 2, G.poly); // handguard
+    s.rect(13, 6, 3, 1, G.blued); // barrel
+    s.rect(3, 5, 5, 3, G.blued); // receiver
+    s.rect(3, 4, 4, 1, G.poly); // rail / carry
+    s.rect(11, 4, 1, 2, G.poly); // front sight post
+    s.rect(6, 8, 2, 4, G.poly); // magazine
+    s.dot(4, 8, G.poly); // grip
+    s.line(4, 9, 3, 11, G.poly, 2);
+    s.rect(0, 5, 3, 3, G.poly); // stock
+    s.rect(0, 8, 1, 1, G.poly);
+  },
+  rifle_ak: (s) => {
+    s.rect(6, 6, 5, 2, G.wood); // handguard
+    s.rect(11, 6, 5, 1, G.blued); // barrel
+    s.rect(9, 5, 5, 1, G.blued); // gas tube
+    s.rect(14, 4, 1, 2, G.blued); // front sight
+    s.rect(3, 5, 4, 3, G.blued); // receiver
+    for (let i = 0; i < 5; i++) s.rect(6 + Math.round(i * 0.5), 8 + i, 2, 1, G.shell); // curved magazine
+    s.line(4, 8, 3, 11, G.wood, 2); // grip
+    s.line(3, 6, 0, 8, G.wood, 2); // stock
+    s.rect(0, 9, 1, 1, G.woodDark);
+  },
+  rifle_hunting: (s) => {
+    s.rect(4, 5, 12, 1, G.blued); // barrel
+    s.rect(4, 6, 9, 2, G.wood); // fore-end
+    s.rect(3, 5, 4, 2, G.blued); // action
+    s.dot(5, 4, G.metal); // bolt handle
+    s.dot(6, 4, G.metal);
+    s.line(4, 7, 0, 10, G.wood, 3); // stock
+    s.rect(4, 8, 2, 1, G.blued);
+    s.dot(15, 4, G.blued); // front sight
+  },
+  launcher_rpg: (s) => {
+    s.rect(1, 6, 10, 2, G.olive); // tube
+    s.rect(1, 5, 2, 4, G.blued);
+    s.rect(4, 5, 3, 1, G.woodDark); // heat shield
+    s.rect(11, 5, 2, 4, G.olive); // warhead body
+    s.rect(13, 6, 2, 2, G.olive);
+    s.dot(15, 6, G.olive);
+    s.dot(15, 7, G.olive);
+    s.rect(5, 8, 1, 3, G.blued); // grips
+    s.rect(8, 8, 1, 3, G.blued);
+  },
+  rocket_rpg: (s) => {
+    s.line(2, 14, 8, 8, G.olive, 2); // motor
+    s.ellipse(10, 6, 2.5, 2.5, G.olive); // warhead
+    s.line(11, 5, 14, 2, G.olive, 2);
+    s.dot(15, 1, G.olive);
+    s.line(1, 13, 3, 15, G.metal); // fins
+  },
+  ammo_9mm: (s) => {
+    for (const [x, y] of [[3, 6], [7, 5], [11, 6]] as const) round(s, x, y, 6, 2, G.brass);
+    s.rect(2, 12, 12, 2, 0x5a5448);
+  },
+  ammo_45: (s) => {
+    for (const [x, y] of [[3, 6], [7, 5], [11, 6]] as const) round(s, x, y, 6, 3, G.metal);
+    s.rect(2, 12, 13, 2, 0x5a5448);
+  },
+  ammo_12: (s) => {
+    for (const [x, y] of [[2, 4], [7, 3], [12, 4]] as const) {
+      s.rect(x, y, 3, 8, G.shell);
+      s.rect(x, y + 8, 3, 2, G.brass);
+      s.rect(x + 1, y, 1, 1, shadeRGB(G.shell, 0.7));
+    }
+  },
+  ammo_556: (s) => {
+    for (const [x, y] of [[3, 3], [7, 2], [11, 3]] as const) {
+      round(s, x, y, 10, 2, G.brass);
+      s.dot(x, y + 3, shadeRGB(G.brass, 0.8));
+    }
+  },
+  ammo_762: (s) => {
+    for (const [x, y] of [[3, 4], [7, 3], [11, 4]] as const) round(s, x, y, 9, 2, 0x8a6a3a, 0x6a6448);
+  },
+  ammo_308: (s) => {
+    for (const [x, y] of [[3, 2], [7, 1], [11, 2]] as const) round(s, x, y, 12, 2, 0x9a7a5a);
+  },
+  mag_g17: (s) => magIcon(s, G.poly, 9, 0),
+  mag_m1911: (s) => magIcon(s, G.metal, 8, 0),
+  mag_m4: (s) => magIcon(s, G.blued, 11, 1),
+  mag_ak: (s) => magIcon(s, G.shell, 11, 4),
+  mod_ext_mag_g17: (s) => {
+    magIcon(s, G.poly, 13, 0);
+    s.rect(6, 12, 4, 1, G.polyLight);
+  },
+  mod_ext_mag_m4: (s) => magIcon(s, G.poly, 13, 1),
+  mod_ext_mag_ak: (s) => magIcon(s, G.shell, 13, 5),
+  mod_suppressor: (s) => {
+    s.line(2, 12, 12, 2, G.blued, 3);
+    s.line(1, 13, 3, 11, G.metal, 3);
+    s.dot(13, 2, 0x1e1f1d);
+  },
+  mod_flashlight: (s) => {
+    s.rect(3, 6, 8, 4, G.poly);
+    s.rect(11, 5, 3, 6, G.polyLight);
+    s.rect(14, 6, 1, 4, 0xb8b8a8); // lens
+    s.rect(4, 4, 6, 2, G.blued); // rail clamp
+    s.dot(6, 10, G.metal); // button
+  },
+};
+
+// ── Clothing and gear (the pieces' own colours, already grim). ──
+/** A whole-body uniform: a jacket over trousers. */
+function overall(s: Sprite, top: number, legs: number, detail?: (s: Sprite) => void): void {
+  s.rect(5, 1, 6, 7, top);
+  s.line(5, 1, 2, 7, top, 2);
+  s.line(10, 1, 13, 7, top, 2);
+  s.rect(6, 1, 4, 1, shadeRGB(top, 1.25));
+  s.rect(5, 8, 6, 2, legs);
+  s.rect(5, 10, 2, 5, legs);
+  s.rect(9, 10, 2, 5, legs);
+  s.rect(5, 8, 6, 1, shadeRGB(legs, 0.7));
+  detail?.(s);
+}
+
+function helmetIcon(s: Sprite, c: number, brim: boolean): void {
+  s.ellipse(8, 8, 6, 5, c);
+  s.px.fill(0, 160); // the dome only: below the rim cut off
+  if (brim) s.rect(1, 10, 14, 2, shadeRGB(c, 0.85));
+  else s.rect(2, 10, 12, 2, shadeRGB(c, 0.75));
+}
+
+function vestIcon(s: Sprite, c: number, pouches: boolean): void {
+  s.rect(4, 3, 8, 11, c);
+  s.rect(4, 1, 2, 2, c);
+  s.rect(10, 1, 2, 2, c);
+  for (let x = 7; x < 9; x++) for (let y = 3; y < 6; y++) s.px[y * 16 + x] = 0; // the neck
+  if (pouches) for (const x of [4, 7, 10]) s.rect(x, 9, 2, 3, shadeRGB(c, 1.25));
+  else s.rect(5, 7, 6, 4, shadeRGB(c, 1.15));
+}
+
+function packIcon(s: Sprite, c: number, top: boolean, side: boolean): void {
+  s.rect(4, 3, 8, 11, c);
+  s.rect(5, 2, 6, 1, c);
+  s.rect(5, 8, 6, 4, shadeRGB(c, 1.2)); // front pocket
+  s.line(5, 8, 10, 8, shadeRGB(c, 0.7));
+  if (top) s.rect(4, 3, 8, 3, shadeRGB(c, 0.85));
+  if (side) {
+    s.rect(2, 6, 2, 6, shadeRGB(c, 0.85));
+    s.rect(12, 6, 2, 6, shadeRGB(c, 0.85));
+  }
+  s.rect(7, 0, 2, 2, 0x3a3832); // handle
+}
+
+const WEAR_DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
+  outfitSwat: (s) => overall(s, ITEMS.outfitSwat.wear!.color, ITEMS.outfitSwat.wear!.color, (sp) => sp.rect(6, 3, 4, 4, 0x3a3e44)),
+  outfitMilitary: (s) =>
+    overall(s, ITEMS.outfitMilitary.wear!.color, ITEMS.outfitMilitary.wear!.color, (sp) => {
+      for (const [x, y] of [[6, 3], [9, 5], [7, 11], [10, 12], [3, 5]] as const) sp.rect(x, y, 2, 1, 0x464430);
+    }),
+  outfitPolice: (s) =>
+    overall(s, ITEMS.outfitPolice.wear!.color, 0x1f2533, (sp) => {
+      sp.rect(9, 3, 1, 2, 0x9a8a50); // badge
+      sp.line(8, 1, 8, 7, 0x3a4a6a);
+    }),
+  outfitFirefighter: (s) =>
+    overall(s, ITEMS.outfitFirefighter.wear!.color, ITEMS.outfitFirefighter.wear!.color, (sp) => {
+      sp.rect(5, 6, 6, 1, 0xa9a79c); // faded reflective bands
+      sp.rect(5, 13, 2, 1, 0xa9a79c);
+      sp.rect(9, 13, 2, 1, 0xa9a79c);
+    }),
+  outfitDoctor: (s) =>
+    overall(s, ITEMS.outfitDoctor.wear!.color, ITEMS.outfitDoctor.wear!.color, (sp) => {
+      sp.line(7, 1, 8, 3, shadeRGB(ITEMS.outfitDoctor.wear!.color, 0.7));
+      sp.line(9, 1, 8, 3, shadeRGB(ITEMS.outfitDoctor.wear!.color, 0.7));
+      sp.rect(6, 4, 2, 2, shadeRGB(ITEMS.outfitDoctor.wear!.color, 1.2));
+    }),
+  outfitMechanic: (s) =>
+    overall(s, ITEMS.outfitMechanic.wear!.color, ITEMS.outfitMechanic.wear!.color, (sp) => {
+      sp.line(8, 1, 8, 9, shadeRGB(ITEMS.outfitMechanic.wear!.color, 0.7));
+      sp.rect(9, 11, 1, 2, 0x2f3330); // oil
+    }),
+  outfitBuilder: (s) =>
+    overall(s, ITEMS.outfitBuilder.wear!.color, ITEMS.outfitBuilder.wear!.color, (sp) => {
+      sp.rect(5, 5, 6, 1, 0x8a7a48); // faded hi-vis band
+      sp.rect(5, 2, 1, 4, 0x8a7a48);
+      sp.rect(10, 2, 1, 4, 0x8a7a48);
+    }),
+  helmetMilitary: (s) => {
+    helmetIcon(s, ITEMS.helmetMilitary.wear!.color, false);
+    s.line(4, 6, 12, 6, shadeRGB(ITEMS.helmetMilitary.wear!.color, 0.8)); // cover band
+  },
+  helmetSwat: (s) => {
+    helmetIcon(s, 0x2a2c30, false);
+    s.rect(11, 7, 2, 2, G.metal); // rail
+  },
+  helmetFire: (s) => {
+    helmetIcon(s, 0x3a362e, true);
+    s.line(8, 3, 8, 9, 0x524c40); // ridge
+    s.rect(6, 7, 4, 2, 0x8a7a48); // faded front badge
+  },
+  helmetConstruction: (s) => {
+    helmetIcon(s, ITEMS.helmetConstruction.wear!.color, true);
+    s.line(8, 3, 8, 9, shadeRGB(ITEMS.helmetConstruction.wear!.color, 1.2));
+  },
+  vestMilitary: (s) => vestIcon(s, ITEMS.vestMilitary.wear!.color, true),
+  vestSwat: (s) => {
+    vestIcon(s, 0x2a2c30, false);
+    s.rect(6, 8, 4, 1, 0x8a8a80); // faded lettering
+  },
+  backpackMilitary: (s) => packIcon(s, ITEMS.backpackMilitary.wear!.color, true, true),
+  backpackSchool: (s) => packIcon(s, ITEMS.backpackSchool.wear!.color, false, false),
+  backpackHiking: (s) => {
+    packIcon(s, ITEMS.backpackHiking.wear!.color, true, false);
+    s.rect(3, 13, 10, 2, 0x4a4f36); // bedroll
+  },
+  bagMedic: (s) => {
+    s.rect(2, 6, 12, 8, ITEMS.bagMedic.wear!.color);
+    s.line(4, 6, 6, 2, 0x3a3832);
+    s.line(11, 6, 9, 2, 0x3a3832);
+    s.line(6, 2, 9, 2, 0x3a3832);
+    s.rect(7, 8, 2, 5, 0xa9a79c); // faded cross
+    s.rect(5, 10, 6, 1, 0xa9a79c);
+  },
+  toolboxMechanic: (s) => {
+    s.rect(2, 7, 12, 7, ITEMS.toolboxMechanic.wear!.color);
+    s.rect(2, 7, 12, 2, shadeRGB(ITEMS.toolboxMechanic.wear!.color, 1.2));
+    s.rect(5, 4, 6, 1, G.metal);
+    s.rect(5, 5, 1, 2, G.metal);
+    s.rect(10, 5, 1, 2, G.metal);
+    s.rect(7, 10, 2, 1, G.metal); // latch
+  },
+  glassesBallistic: (s) => {
+    s.rect(2, 6, 5, 4, 0x4a4a42);
+    s.rect(9, 6, 5, 4, 0x4a4a42);
+    s.rect(7, 7, 2, 1, ITEMS.glassesBallistic.wear!.color);
+    s.rect(2, 5, 12, 1, ITEMS.glassesBallistic.wear!.color);
+    s.dot(3, 7, 0x7a7a70);
+    s.dot(10, 7, 0x7a7a70);
+  },
+  gogglesTactical: (s) => {
+    s.rect(2, 5, 12, 6, 0x2a2c2e);
+    s.rect(3, 6, 4, 4, 0x4a4e4a);
+    s.rect(9, 6, 4, 4, 0x4a4e4a);
+    s.rect(0, 7, 2, 2, 0x26282a); // strap
+    s.rect(14, 7, 2, 2, 0x26282a);
+    s.dot(4, 7, 0x7a7e78);
+  },
+  balaclava: (s) => {
+    s.ellipse(8, 8, 5, 7, ITEMS.balaclava.wear!.color);
+    for (let x = 4; x < 12; x++) for (let y = 6; y < 8; y++) s.px[y * 16 + x] = 0xff7a8274; // eye slot: skin
+    s.dot(8, 7, ITEMS.balaclava.wear!.color);
+  },
+  shemagh: (s) => {
+    const c = ITEMS.shemagh.wear!.color;
+    s.rect(2, 4, 12, 8, c);
+    s.line(2, 12, 6, 15, c, 2);
+    for (let y = 5; y < 12; y += 2) for (let x = 3; x < 14; x += 3) s.dot(x + (y % 4 === 1 ? 1 : 0), y, shadeRGB(c, 0.7));
+  },
+  maskHalf: (s) => {
+    const c = ITEMS.maskHalf.wear!.color;
+    s.rect(3, 6, 10, 6, c);
+    s.rect(4, 5, 8, 1, c);
+    s.rect(5, 12, 6, 1, c);
+    s.line(4, 8, 11, 8, shadeRGB(c, 0.8));
+    s.line(4, 10, 11, 10, shadeRGB(c, 0.8));
+    s.line(0, 5, 3, 7, 0x3a3a36); // ear loops
+    s.line(15, 5, 12, 7, 0x3a3a36);
+  },
+};
+
+Object.assign(DRAW, GUN_DRAW, WEAR_DRAW);
+
+/** Generic clothing icon by slot, in the item's color (the pieces with their own drawing: WEAR_DRAW). */
 function garment(s: Sprite, id: ItemId): void {
   const w = ITEMS[id].wear;
   if (!w) {
@@ -607,9 +930,37 @@ export function statIcon(id: StatIcon, color: number): string {
 }
 
 const iconCache = new Map<ItemId, string>();
+/** Drawn icons (public/icons/items.png, tools/build-icons.ts): 32×32, they win over the code ones. */
+const sheetIcons = new Map<string, string>();
 
-/** Data URL of the item's 16×16 icon (cached). */
+/** Loads the drawn icons once at boot; no atlas (or an error) leaves the code icons. */
+export async function loadItemIcons(): Promise<void> {
+  try {
+    const base = `${import.meta.env.BASE_URL}icons/`;
+    const res = await fetch(`${base}items.json`);
+    if (!res.ok) return;
+    const meta = (await res.json()) as { cell: number; ids: Record<string, number> };
+    const img = new Image();
+    img.src = `${base}items.png`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = meta.cell;
+    const g = c.getContext('2d')!;
+    for (const [id, k] of Object.entries(meta.ids)) {
+      g.clearRect(0, 0, meta.cell, meta.cell);
+      g.drawImage(img, k * meta.cell, 0, meta.cell, meta.cell, 0, 0, meta.cell, meta.cell);
+      sheetIcons.set(id, c.toDataURL());
+    }
+    iconCache.clear();
+  } catch {
+    // The code icons stay.
+  }
+}
+
+/** Data URL of the item's icon: the drawn one if there is, else the 16×16 code one (cached). */
 export function itemIcon(id: ItemId): string {
+  const drawn = sheetIcons.get(id);
+  if (drawn) return drawn;
   let url = iconCache.get(id);
   if (!url) {
     const s = new Sprite(16, 16);

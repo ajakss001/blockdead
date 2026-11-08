@@ -26,6 +26,7 @@ import { WorldScene } from './scenes/WorldScene';
 import { TestScene } from './scenes/TestScene';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
 import { Hud } from './ui/Hud';
+import { loadItemIcons } from './ui/pixelart';
 
 const params = new URLSearchParams(location.search);
 
@@ -42,6 +43,14 @@ async function boot(): Promise<void> {
     await loadCharacters(1024);
     const m = await import('./debug/gripEditor');
     await m.startGripEditor(params.get('gripedit'));
+    return;
+  }
+  // ?gearedit=<gear|outfit|body> — the gear editor (dev): a piece's fit per body, saved to src/data/gearFit.json.
+  if (import.meta.env.DEV && params.has('gearedit')) {
+    setGearSource(2048);
+    await loadCharacters(2048);
+    const m = await import('./debug/gearEditor');
+    await m.startGearEditor(params.get('gearedit'));
     return;
   }
   const gameEl = document.getElementById('game')!;
@@ -64,8 +73,9 @@ async function boot(): Promise<void> {
   // Third-party vehicles and props (one atlas layer each), before the world streams in.
   await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, maxAniso);
   // The character models (player, zombies, bodies): everything that draws a person uses them synchronously.
-  setGearSource(level === 'low' ? 512 : 1024);
-  await Promise.all([loadCharacters(level === 'low' ? 512 : 1024), loadGearMeta()]);
+  // Up close (the player, the menu, the inventory) 2048, the zombies 1024 (lodTexture); 512 on low.
+  setGearSource(level === 'low' ? 512 : 2048);
+  await Promise.all([loadCharacters(level === 'low' ? 512 : 2048), loadGearMeta(), loadItemIcons()]);
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);

@@ -4,7 +4,7 @@
  * (public/models/characters, built first by npm run characters). Usage: npm run gear
  *
  *   <id>.glb               the piece at real size, ≤ 2500 triangles (helmets ≤ 1500), borders locked
- *   <id>_1024.webp / _512  its texture through the grim palette
+ *   <id>_2048.webp / _1024 / _512  its texture through the grim palette (WebP q90)
  *   fit_<body>.glb         per body: the vests shrink-wrapped onto its torso (1.5 cm off the skin, weights
  *                          taken from the body), the straps of the packs and the medic bag laid over its
  *                          shoulders and chest (skinned to the spine, shoulders and collarbones)
@@ -39,11 +39,13 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies(
  * size: the real size of the largest side (m); helmets and vests take the body's own.
  */
 export const GEAR = {
+  // Budgets (CLAUDE.md): a vest ≤ 5000 triangles, a helmet, glasses, a mask ≤ 2000 — a model within its budget
+  // goes as it comes (Meshy's are), only one over it is simplified (its borders and UV seams kept).
   // Helmets: fitted low and close to each head (fitHelmet), skinned on Head in the body's fit.
-  helmet_military: { kind: 'helmet', tris: 1500 },
-  helmet_swat: { kind: 'helmet', tris: 1500 },
-  helmet_firefighter: { kind: 'helmet', tris: 1500 },
-  helmet_construction: { kind: 'helmet', tris: 1500 },
+  helmet_military: { kind: 'helmet', tris: 2000 },
+  helmet_swat: { kind: 'helmet', tris: 2000 },
+  helmet_firefighter: { kind: 'helmet', tris: 2000 },
+  helmet_construction: { kind: 'helmet', tris: 2000 },
   // Vests as they come (≤ 5000): Meshy's baked vests have a UV island per triangle, and a simplifier with
   // the borders locked can only tear them (the SWAT vest fell apart into dark triangles).
   vest_military: { kind: 'vest', tris: 5000 },
@@ -54,11 +56,11 @@ export const GEAR = {
   bag_medic: { kind: 'bag', tris: 2500, width: 0.38 },
   toolbox_mechanic: { kind: 'box', tris: 2500, width: 0.44 },
   // The face slot: glasses (lenses apart: their own dark see-through material in the game) and masks.
-  glasses_ballistic: { kind: 'glasses', tris: 1500, lens: { by: 'color', sat: 48 } },
-  goggles_tactical: { kind: 'glasses', tris: 1500, lens: { by: 'window', inset: 0.1 } },
+  glasses_ballistic: { kind: 'glasses', tris: 2000, lens: { by: 'color', sat: 48 } },
+  goggles_tactical: { kind: 'glasses', tris: 2000, lens: { by: 'window', inset: 0.1 } },
   balaclava: { kind: 'mask', tris: 2000, mask: 'head' },
   shemagh: { kind: 'mask', tris: 2000, mask: 'neck', standIn: shemaghStandIn },
-  mask_half: { kind: 'mask', tris: 1500, mask: 'mouth' },
+  mask_half: { kind: 'mask', tris: 2000, mask: 'mouth' },
 };
 const IDS = Object.keys(GEAR);
 const TAU = Math.PI * 2;
@@ -104,6 +106,55 @@ function weldedNormals(pos, index, group, members) {
     n[v * 3] = gn[g * 3] / l;
     n[v * 3 + 1] = gn[g * 3 + 1] / l;
     n[v * 3 + 2] = gn[g * 3 + 2] / l;
+  }
+  return n;
+}
+/**
+ * Smooth normals across the welded corners, but not over a crease (> 60°): a thin flap's two faces, a pouch's
+ * lid and side keep their own — averaged together they turn sideways, off the triangles' own facing, and the
+ * one-sided material draws them dark.
+ */
+function creaseNormals(pos, index, group) {
+  const nt = index.length / 3;
+  const fn = new Float32Array(nt * 3);
+  const a = new Vector3(), b = new Vector3(), c = new Vector3();
+  for (let t = 0; t < nt; t++) {
+    const [i, j, k] = [index[t * 3], index[t * 3 + 1], index[t * 3 + 2]];
+    a.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    b.set(pos[j * 3], pos[j * 3 + 1], pos[j * 3 + 2]).sub(a);
+    c.set(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]).sub(a);
+    b.cross(c);
+    fn.set([b.x, b.y, b.z], t * 3);
+  }
+  // Each welded place's triangles; each vertex's own.
+  const byGroup = new Map(), own = new Map();
+  for (let t = 0; t < nt; t++)
+    for (let k = 0; k < 3; k++) {
+      const v = index[t * 3 + k];
+      const gk = group[v];
+      if (!byGroup.has(gk)) byGroup.set(gk, []);
+      byGroup.get(gk).push(t);
+      if (!own.has(v)) own.set(v, []);
+      own.get(v).push(t);
+    }
+  const n = new Float32Array(pos.length);
+  const o = new Vector3(), sum = new Vector3(), f = new Vector3();
+  for (let v = 0; v < pos.length / 3; v++) {
+    const mine = own.get(v);
+    if (!mine) continue;
+    o.set(0, 0, 0);
+    for (const t of mine) o.add(f.fromArray(fn, t * 3));
+    if (o.lengthSq() < 1e-20) o.fromArray(fn, mine[0] * 3);
+    o.normalize();
+    sum.set(0, 0, 0);
+    for (const t of byGroup.get(group[v])) {
+      f.fromArray(fn, t * 3);
+      const l = f.length();
+      if (l > 1e-12 && f.dot(o) / l > 0.5) sum.add(f);
+    }
+    if (sum.lengthSq() < 1e-20) sum.copy(o);
+    sum.normalize();
+    n.set([sum.x, sum.y, sum.z], v * 3);
   }
   return n;
 }
@@ -311,7 +362,7 @@ function simplifyGear(g, target) {
   g = weld(g);
   if (g.index.length <= target * 3) return g;
   const want = Math.min(g.index.length, target * 3);
-  const [index] = MeshoptSimplifier.simplifyWithAttributes(g.index, g.pos, 3, g.uv, 2, [1.5, 1.5], null, want, 1, ['LockBorder', 'Permissive']);
+  const [index] = MeshoptSimplifier.simplifyWithAttributes(g.index, g.pos, 3, g.uv, 2, [1.5, 1.5], null, want, 1, ['LockBorder']);
   // Compact: only the vertices still used.
   const used = new Int32Array(g.pos.length / 3).fill(-1);
   let n = 0;
@@ -388,6 +439,8 @@ function dilate(rgba, w, h, g, passes = 24) {
     for (const [i, r, gg, b] of add) ((rgba[i * 4] = r), (rgba[i * 4 + 1] = gg), (rgba[i * 4 + 2] = b), (used[i] = 1));
   }
 }
+/** 2048: the player, the menu and the inventory (seen up close); 1024: zombies and LOD; 512: low. WebP q90. */
+const TEX_SIZES = [2048, 1024, 512];
 async function texture(id, png, g, maxLum = 255) {
   const { data, info } = png.raw ? { data: png.raw.data, info: { width: png.raw.w, height: png.raw.h } } : await sharp(Buffer.from(png)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const out = Buffer.alloc(info.width * info.height * 4);
@@ -402,12 +455,13 @@ async function texture(id, png, g, maxLum = 255) {
     out[i * 4 + 2] = b;
     out[i * 4 + 3] = 255;
   }
-  // At 1024, the gutters filled, then both sizes from that.
-  const big = await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).resize(1024, 1024, { kernel: 'lanczos3' }).raw().toBuffer();
-  if (g) dilate(big, 1024, 1024, g);
-  for (const size of [1024, 512]) {
+  // At the largest size, the gutters filled, then every size from that.
+  const S = TEX_SIZES[0];
+  const big = await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).resize(S, S, { kernel: 'lanczos3' }).raw().toBuffer();
+  if (g) dilate(big, S, S, g);
+  for (const size of TEX_SIZES) {
     const f = join(OUT, `${id}_${size}.webp`);
-    await sharp(big, { raw: { width: 1024, height: 1024, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).removeAlpha().webp({ quality: 82 }).toFile(f);
+    await sharp(big, { raw: { width: S, height: S, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).removeAlpha().webp({ quality: 90 }).toFile(f);
     report.push(`${id}_${size}.webp ${(statSync(f).size / 1024).toFixed(0)} KB`);
   }
 }
@@ -543,7 +597,7 @@ function fitVest(body, src) {
     }
   };
   // Smooth normals over the welded corners (not one per triangle: no faceted, dark patches).
-  g = { ...g, nor: weldedNormals(g.pos, g.index, group, members) };
+  g = { ...g, nor: creaseNormals(g.pos, g.index, group) };
   // Inner side: the vertices facing the torso's axis.
   const disp = [];
   const inner = new Uint8Array(n);
@@ -610,7 +664,7 @@ function fitVest(body, src) {
     together(pos);
     if (!pushed) break;
   }
-  g = { ...g, pos, nor: weldedNormals(pos, g.index, group, members), inner };
+  g = { ...g, pos, nor: creaseNormals(pos, g.index, group), inner };
   const { ji, jw } = skinFrom(body, pos, null, 'Spine2');
   return { ...g, ji, jw };
 }
@@ -934,7 +988,7 @@ function wrapOnto(body, g, { pick = () => true, offset = 0.004, floor = offset *
     }
     together(pos);
   }
-  return { ...g, pos, nor: weldedNormals(pos, g.index, group, members) };
+  return { ...g, pos, nor: creaseNormals(pos, g.index, group) };
 }
 /** The nearest body surface among `region`'s vertices (a mask on the face, not on the shoulder). */
 function surfaceIn(body, p, max, region) {
@@ -1365,10 +1419,14 @@ function shemaghStandIn() {
   const W = 256, img = Buffer.alloc(W * W * 4);
   for (let y = 0; y < W; y++)
     for (let x = 0; x < W; x++) {
-      const check = ((x >> 4) + (y >> 4)) & 1, thread = ((x >> 1) + (y >> 1)) & 1;
-      const sand = 0x8a8068, olive = 0x5b5a44;
-      const c = check ? sand : olive;
-      const k = 0.9 + 0.08 * thread + 0.06 * Math.sin(x * 0.7 + y * 0.3);
+      // Plain worn cloth (a stand-in: no pattern — a check at this size reads as broken triangles): olive
+      // and sand mixed in soft blotches, a fine weave, faded folds.
+      const thread = ((x >> 1) + (y >> 1)) & 1;
+      const blot = 0.5 + 0.25 * Math.sin(x * 0.045 + Math.sin(y * 0.031) * 2) + 0.25 * Math.sin(y * 0.052 + Math.cos(x * 0.027) * 2);
+      const sand = [0x7c, 0x75, 0x60], olive = [0x5b, 0x5a, 0x44];
+      const cc = sand.map((v, i) => olive[i] + (v - olive[i]) * blot);
+      const c = (cc[0] << 16) | (cc[1] << 8) | cc[2];
+      const k = 0.94 + 0.04 * thread + 0.03 * Math.sin(x * 0.7 + y * 0.3);
       const o = (y * W + x) * 4;
       img[o] = ((c >> 16) & 255) * k;
       img[o + 1] = ((c >> 8) & 255) * k;

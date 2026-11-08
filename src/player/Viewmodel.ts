@@ -86,6 +86,12 @@ const STEADY = 4;
  * The arms drawn are the character model's own (fpArms), skinned to the solve's frames.
  */
 const _wallM = new Vector3();
+const _wallR = new Vector3();
+const _wallT = new Vector3();
+const _wallQ = new Quaternion();
+const _wallX = new Vector3(1, 0, 0);
+/** Most a gun tips down about its grip at a wall (rad); the rest of the way it is pulled back. */
+const WALL_TIP = 1.1;
 
 export class Viewmodel {
   readonly scene = new Scene();
@@ -236,6 +242,11 @@ export class Viewmodel {
   /** Both hands on what is in the right one (every gun is held with both). */
   get twoHands(): boolean {
     return isGun(this.item) || this.config(this.item).twoHanded;
+  }
+
+  /** A gun without the underbarrel flashlight: both hands on it, no flashlight shines. */
+  get lightBlocked(): boolean {
+    return isGun(this.item) && !this.underLight;
   }
 
   /** The gun in hand carries the underbarrel flashlight: the beam comes from it. */
@@ -431,10 +442,10 @@ export class Viewmodel {
     this.root.position.set(bobX + this.swayX, bobY + this.swayY + breathe + kick * 0.012, kick * 0.035);
     this.root.rotation.set(this.swayY * 1.2 + kick * 0.06, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
-    // The fingers: the item's hand poses (data/grips.json); the left fist round the flashlight when one-handed.
+    // The fingers: the item's hand poses (data/grips.json); the left hand's closed grip on the flashlight when one-handed.
     const hp = gripHands(this.item, false, twoHanded);
     this.arms.setPose(0, hp.R);
-    this.arms.setPose(1, twoHanded ? hp.L : 'grip_fist');
+    this.arms.setPose(1, twoHanded ? hp.L : 'grip_torch');
     this.arms.update(0, this.uppers[0], this.rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], this.rig.left.pose.upperLen, this.armL, this.handL);
     this.handL.getWorldPosition(_hand);
@@ -547,8 +558,30 @@ export class Viewmodel {
     if (gmw && gv.wallDist < 5) {
       _wallM.set(...gmw.sockets.muzzle);
       if (gv.mods.includes('mod_suppressor')) _wallM.z -= 0.16;
+      const room = gv.wallDist - 0.1;
+      // A long barrel first tips down about the grip (the arm cannot fold far enough to pull it all back), then
+      // what is left is pulled back.
+      _wallR.copy(_wallM).applyQuaternion(out.q);
+      if (-(out.pos.z + _wallR.z) > room) {
+        let lo = 0, hi = WALL_TIP;
+        for (let i = 0; i < 12; i++) {
+          const mid = (lo + hi) / 2;
+          _wallQ.setFromAxisAngle(_wallX, -mid);
+          if (-(out.pos.z + _wallT.copy(_wallR).applyQuaternion(_wallQ).z) > room) lo = mid;
+          else hi = mid;
+        }
+        const tip = hi;
+        if (tip > 1e-4) {
+          _wallQ.setFromAxisAngle(_wallX, -tip);
+          out.q.premultiply(_wallQ);
+          out.rightQ.premultiply(_wallQ);
+          out.leftQ.premultiply(_wallQ);
+          out.magQ.premultiply(_wallQ);
+          for (const p of [out.rightGrip, out.leftGrip, out.magPos]) p.sub(out.pos).applyQuaternion(_wallQ).add(out.pos);
+        }
+      }
       _wallM.applyQuaternion(out.q).add(out.pos);
-      const over = -_wallM.z - (gv.wallDist - 0.1);
+      const over = -_wallM.z - room;
       if (over > 0) {
         out.pos.z += over;
         out.rightGrip.z += over;

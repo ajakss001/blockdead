@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { basisQuat } from '../player/armRig';
 import { type Grip, frameOf, type GripFrame, quat } from '../player/grips';
-import { HELD, type HeldId } from '../player/held';
+import { heldConfig, type HeldId } from '../player/held';
 import { gunSockets } from '../weapons/gunFrame';
 import { GUNS, type GunId } from '../weapons/guns';
 import { GUN_POSES } from '../player/gunPose';
@@ -77,8 +77,8 @@ export function gunReference(id: GunId): Grip {
   };
 }
 
-export function meleeReference(id: HeldId): Grip {
-  const c = HELD[id];
+export function meleeReference(id: HeldId | 'fists'): Grip {
+  const c = heldConfig(id);
   const two = c.twoHanded;
   return {
     hands: { R: 'grip_fist', L: two ? 'grip_fist' : 'relaxed' },

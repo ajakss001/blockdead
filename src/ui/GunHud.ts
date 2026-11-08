@@ -2,6 +2,7 @@ import type { InputManager } from '../input/InputManager';
 import type { GunHudState } from '../systems/Firearms';
 import { type ItemId, ITEMS } from '../data/items';
 import { itemIcon } from './pixelart';
+import { GUNS } from '../weapons/guns';
 
 /**
  * The gun's HUD: rounds (in the magazine + chamber / in the pack), the fire mode and the name — it fades
@@ -38,6 +39,7 @@ export class GunHud {
   private readonly canvas = document.createElement('canvas');
   private readonly g: CanvasRenderingContext2D;
   private readonly panel = document.createElement('div');
+  private readonly icon = document.createElement('img');
   private readonly name = document.createElement('div');
   private readonly count = document.createElement('div');
   private readonly mode = document.createElement('div');
@@ -63,7 +65,12 @@ export class GunHud {
     this.mode.className = 'gunhud__mode';
     this.reload.className = 'gunhud__reload';
     this.reload.hidden = true;
-    this.panel.append(this.name, this.count, this.mode);
+    this.icon.className = 'gunhud__icon';
+    this.icon.alt = '';
+    const text = document.createElement('div');
+    text.className = 'gunhud__text';
+    text.append(this.name, this.count, this.mode);
+    this.panel.append(this.icon, text);
     this.slots.className = 'quickslots';
     for (let i = 0; i < 4; i++) {
       const b = document.createElement('button');
@@ -105,13 +112,15 @@ export class GunHud {
       return;
     }
     const low = gun.mag <= Math.max(1, Math.floor(gun.capacity * 0.25));
-    const key = `${gun.id}|${gun.mag}|${gun.reserve}|${gun.mode}|${low}|${gun.jammed}`;
+    const key = `${gun.id}|${gun.mag}|${gun.reserve}|${gun.mode}|${low}|${gun.jammed}|${f.touch}`;
     if (key !== this.key) {
       this.key = key;
       this.name.textContent = gun.name;
+      this.icon.src = itemIcon(gun.id as ItemId);
       this.count.textContent = `${gun.mag} / ${gun.reserve}`;
       this.count.style.color = low ? RUST : '';
-      this.mode.textContent = gun.jammed ? 'ЗАКЛИНИЛО' : gun.mode;
+      // A gun with more than one fire mode: the key that switches it (B) next to the mode.
+      this.mode.textContent = gun.jammed ? 'ЗАКЛИНИЛО' : GUNS[gun.id].modes.length > 1 && !f.touch ? `${gun.mode} · B` : gun.mode;
     }
     // Fades out 3 s after the last use; back when low or busy.
     const show = f.sinceUse < 3 || low || gun.busy;

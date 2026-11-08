@@ -10,7 +10,6 @@ import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
 import { openCredits } from './CreditsScreen';
 import { volumeControl } from './VolumeControl';
-import { gearIcon } from './gearIcon';
 import { itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
 import { Inventory, QUICK_SLOTS } from '../systems/Inventory';
@@ -28,6 +27,8 @@ export interface InventoryHost {
   /** Keep the first-person body in sync with what is held and worn. */
   syncBody(): void;
   onClose(): void;
+  /** «Новый персонаж»: retire this survivor and open the character editor. */
+  newCharacter?(): void;
 }
 
 type Slot = WearSlot | 'hand';
@@ -188,7 +189,9 @@ export class InventoryPanel {
     });
     const credits = el('button', 'credits-link inv__credits', 'Авторы');
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} кг (без лимита)` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), credits, close);
+    const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', 'Новый персонаж');
+    fresh.addEventListener('click', () => this.host.newCharacter?.());
+    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} кг (без лимита)` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), ...(this.host.newCharacter ? [fresh] : []), credits, close);
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).
@@ -742,10 +745,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 function icon(id: ItemId, cls = 'cell__icon'): HTMLImageElement {
   const img = document.createElement('img');
   img.className = cls;
-  const g = ITEMS[id].wear?.gear;
-  // Gear: a render of the model itself (a moment later the first time).
-  if (g) gearIcon(g, img);
-  else img.src = itemIcon(id);
+  // Pixel art for everything, gear too (ui/pixelart).
+  img.src = itemIcon(id);
   img.alt = ITEMS[id].name;
   img.draggable = false;
   return img;

@@ -172,6 +172,29 @@ function dist(m: Posed, p: Vector3, r = 0.1): number {
 }
 
 // ── Run ──
+/** The share of a geometry's area whose winding disagrees with its vertex normals. */
+function inwardShare(geo: BufferGeometry): number {
+  const P = geo.getAttribute('position'), N = geo.getAttribute('normal');
+  if (!N) return 0;
+  const idx = geo.index;
+  const n = idx ? idx.count : P.count;
+  const a = new Vector3(), b = new Vector3(), c = new Vector3(), fn = new Vector3(), vn = new Vector3(), t = new Vector3();
+  let all = 0, bad = 0;
+  for (let i = 0; i < n; i += 3) {
+    const ia = idx ? idx.getX(i) : i, ib = idx ? idx.getX(i + 1) : i + 1, ic = idx ? idx.getX(i + 2) : i + 2;
+    a.fromBufferAttribute(P, ia);
+    b.fromBufferAttribute(P, ib);
+    c.fromBufferAttribute(P, ic);
+    fn.crossVectors(b.sub(a), c.sub(a));
+    const area = fn.length() / 2;
+    if (area < 1e-12) continue;
+    vn.fromBufferAttribute(N, ia).add(t.fromBufferAttribute(N, ib)).add(t.fromBufferAttribute(N, ic));
+    all += area;
+    if (fn.dot(vn) < 0) bad += area;
+  }
+  return all ? bad / all : 0;
+}
+
 await loadCharactersNode();
 setGearSource(0, async (f) => {
   const b = fs.readFileSync(`public/models/gear/${f}`);
@@ -203,6 +226,17 @@ for (const body of (process.env.BODIES ? process.env.BODIES.split(",") : BODY_ID
     const m = new SkinnedMesh(geo);
     m.bind(rig.mesh.skeleton, rig.mesh.bindMatrix);
     meshes.set(g, { mesh: m, geo });
+  }
+  // Faces turned inside out: the winding's normal against the vertices' (by area) — a one-sided material
+  // drops those faces (holes) or lights them from behind (dark triangles). The body too.
+  for (const [name, geo] of [[body, bgeo], ...[...meshes].map(([g, m]) => [g, m.geo])] as [string, BufferGeometry][]) {
+    const inward = inwardShare(geo);
+    note('вывернутые грани, доля площади', inward, `${body}/${name}`);
+    checks++;
+    if (!(inward <= 0.05)) {
+      fails++;
+      console.log(`✗ ${body}/${name}: вывернутых граней ${(inward * 100).toFixed(1)}% площади (≤ 5%)`);
+    }
   }
   for (const p of process.env.POSES ? POSES.filter((x) => process.env.POSES!.split(',').includes(x.name)) : POSES) {
     rig.hold(p.clip, p.t);

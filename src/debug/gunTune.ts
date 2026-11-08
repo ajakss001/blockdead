@@ -17,9 +17,10 @@ import { gunRigData } from '../player/gunPose';
  * sights (the stock in the shoulder); pistols at arm's length.
  */
 const LOOKS = {
-  pistol: { lo: [0.06, -0.18, -0.48], hi: [0.17, -0.1, -0.3], eye: [0.34, 0.5] },
+  pistol: { lo: [0.06, -0.18, -0.48], hi: [0.17, -0.1, -0.3], eye: [0.28, 0.5] },
   long: { lo: [0.1, -0.23, -0.3], hi: [0.2, -0.14, -0.15], eye: [0.2, 0.32] },
-  launcher: { lo: [0.02, -0.16, -0.25], hi: [0.12, -0.05, -0.05], eye: [-0.2, 0.2] },
+  // On the right shoulder: the tube along the view, right of the middle and just under the eye.
+  launcher: { lo: [0.12, -0.19, -0.28], hi: [0.2, -0.12, -0.12], eye: [-0.2, 0.2] },
 } as const;
 
 const settle = (vm: Viewmodel, ads: boolean) => {
@@ -44,7 +45,9 @@ function rulesCost(vm: Viewmodel, id: GunId): number {
   const ads = gunLook(vm, id);
   settle(vm, false);
   let c = (Math.max(0, Math.abs(hip.roll) - 1) + Math.max(0, Math.abs(ads.roll) - 1)) * 200;
-  c += ads.handPx * 20;
+  c += ads.handPx * 200;
+  // No sleeve or shoulder through the near plane in the frame.
+  c += (hip.nearCut + ads.nearCut) * 500;
   if (GUNS[id].cls === 'long') {
     c += (Math.max(0, 0.04 - hip.palmBelow) + Math.max(0, hip.palmBelow - 0.06)) * 20000;
     c += (Math.max(0, 0.04 - ads.palmBelow) + Math.max(0, ads.palmBelow - 0.06)) * 20000;
@@ -78,8 +81,10 @@ function looksCost(id: GunId): number {
  * must until every frame of all its animations (animCheck.gunAnimations) keeps the wrists and forearms in
  * range, the hands on their sockets and in the frame, and the gun sits by the rules (rulesCost: no roll, no
  * hand in the middle of the sights, the left palm under the bore, the hip low and right). --write saves the
- * result to player/gunTuned.ts (and the grips to data/grips.json); --reset starts from the class's poses.
- *   node tools/vite-run.mjs src/debug/gunTune.ts <gun|all> [rounds] [--reset] [--write]
+ * result to player/gunTuned.ts (and the grips to data/grips.json); --reset starts from the class's poses;
+ * --no-scan skips the coarse scan of the grip rolls; --fine takes steps a fifth the size (the last fractions of
+ * a degree past a limit).
+ *   node tools/vite-run.mjs src/debug/gunTune.ts <gun|all> [rounds] [--reset] [--no-scan] [--fine] [--write]
  */
 
 const over = (v: number, lim: number) => Math.max(0, Math.abs(v) - lim);
@@ -153,6 +158,8 @@ export function gunCost(vm: Viewmodel, id: GunId, only?: string[]): { cost: numb
     cost += c;
   }
   cost += looksCost(id);
+  // Frames the test fails come first (as animTune does): the smooth cost only breaks ties.
+  cost += fails * 30;
   const worst = Object.entries(per)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
@@ -240,7 +247,8 @@ export async function main(args: string[]): Promise<number> {
     if (!args.includes('--no-scan')) scanRolls(vm, id, P);
     console.log(`${id}: start cost ${best.cost.toFixed(0)} (${best.fails} fails; ${best.worst}) ${Date.now() - t0} ms/eval`);
     for (let r = 0; r < rounds && (best.fails > 0 || r < 1); r++) {
-      const scale = 1 / (1 + r);
+      const scale = (args.includes('--fine') ? 0.2 : 1) / (1 + r);
+      const gain = args.includes('--fine') ? 0.05 : 0.5;
       for (const { path, step } of PARAMS) {
         const only = animsOf(path);
         let base = only ? gunCost(vm, id, only).cost : best.cost;
@@ -248,7 +256,7 @@ export async function main(args: string[]): Promise<number> {
           const old = get(P, path);
           set(P, path, old + dir * step * scale);
           const c = gunCost(vm, id, only);
-          if (c.cost < base - 0.5) {
+          if (c.cost < base - gain) {
             base = c.cost;
           } else set(P, path, old);
         }
@@ -263,7 +271,7 @@ export async function main(args: string[]): Promise<number> {
             gp[i] = old + dir * GP_STEP[i] * scale;
             applyGrip(id);
             const c = gunCost(vm, id);
-            if (c.cost < base - 0.5) {
+            if (c.cost < base - gain) {
               base = c.cost;
               best = c;
             } else gp[i] = old;

@@ -78,7 +78,10 @@ const ROW_PICK = QS.get('row')?.split(',');
 /** ?drop=mask,face: those slots taken off every row (to see a piece of a kit alone). */
 const DROP: Partial<Worn> = Object.fromEntries((QS.get('drop')?.split(',') ?? []).map((k) => [k, null]));
 const pick = (rows: Row[]) => (ROW_PICK ? rows.filter((r) => ROW_PICK.some((p) => r.name.includes(p))) : rows);
-const ROWS: Row[] = FACES ? pick(FACE_ROWS) : HELMETS ? pick(HELMET_ROWS) : KIT ? pick(KIT_ROWS) : CLASS_MODE ? CLASSES.filter((c) => !ONLY || ONLY.includes(c.id)).map((c) => ({ name: c.name, sex: 'male' as const, worn: { ...(c.uniform as Partial<Worn>), back: c.uniform.back ?? (c.uniform.bag ? null : 'backpackSchool') } as Partial<Worn>, hand: c.hand })) : ROWS_ALL;
+/** ?hold=axe,bat,rifle_m4a1: a man holding each of them at ease (the menu's hold), front / side / back / close. */
+const HOLD = QS.get('hold')?.split(',') as ItemId[] | undefined;
+const HOLD_ROWS: Row[] = (HOLD ?? []).map((h) => ({ name: h, sex: 'male' as const, worn: {}, hand: h }));
+const ROWS: Row[] = HOLD ? HOLD_ROWS : FACES ? pick(FACE_ROWS) : HELMETS ? pick(HELMET_ROWS) : KIT ? pick(KIT_ROWS) : CLASS_MODE ? CLASSES.filter((c) => !ONLY || ONLY.includes(c.id)).map((c) => ({ name: c.name, sex: 'male' as const, worn: { ...(c.uniform as Partial<Worn>), back: c.uniform.back ?? (c.uniform.bag ? null : 'backpackSchool') } as Partial<Worn>, hand: c.hand })) : ROWS_ALL;
 const CELLS: Cell[] = FACES ? CLOSE_CELLS : HELMETS ? [...CLOSE_CELLS, { label: 'замах', clip: 'idle', t: 0, dir: [0.8, 0.6], swing: true, head: 0.9 }] : KIT
   ? [
       { label: 'спереди', clip: 'idle', t: 0, dir: [0, 1] },
@@ -88,7 +91,7 @@ const CELLS: Cell[] = FACES ? CLOSE_CELLS : HELMETS ? [...CLOSE_CELLS, { label: 
       { label: 'лицо 3/4', clip: 'idle', t: 0, dir: [0.7, 0.71], head: 0.6 },
       { label: 'лицо сбоку', clip: 'idle', t: 0, dir: [1, 0], head: 0.6 },
     ]
-  : CLASS_MODE
+  : CLASS_MODE || HOLD
   ? [
       { label: 'спереди', clip: 'idle', t: 0, dir: [0, 1] },
       { label: 'сбоку', clip: 'idle', t: 0, dir: [1, 0] },

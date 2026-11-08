@@ -60,6 +60,42 @@ const grips: Plugin = {
   },
 };
 
+/**
+ * Dev only: POST /__gearfit with the fits as JSON writes src/data/gearFit.json (the gear editor's «Сохранить»,
+ * ?gearedit=<id>); like the grips, that write does not reload the editor.
+ */
+let gearFitSaved = 0;
+const gearFit: Plugin = {
+  name: 'dev-gearfit',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use('/__gearfit', (req, res) => {
+      if (req.method !== 'POST') {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body) as Record<string, unknown>;
+          const round = (_k: string, v: unknown) => (typeof v === 'number' ? Math.round(v * 100000) / 100000 : v);
+          gearFitSaved = Date.now();
+          writeFileSync('src/data/gearFit.json', `${JSON.stringify(data, round, 2)}\n`);
+          res.end('ok');
+        } catch (e) {
+          res.statusCode = 400;
+          res.end(String(e));
+        }
+      });
+    });
+  },
+  handleHotUpdate(ctx) {
+    if (ctx.file.endsWith('src/data/gearFit.json') && Date.now() - gearFitSaved < 3000) return [];
+  },
+};
+
 export default defineConfig({
   // Relative paths: Yandex/VK serve the build from an arbitrary sub-path inside an iframe.
   base: './',
@@ -71,5 +107,5 @@ export default defineConfig({
   // Module workers: the chunk worker imports three.js and the world generator.
   worker: { format: 'es' },
   server: { port: 5173, fs: { allow: [root, realRoot] } },
-  plugins: [shots, grips],
+  plugins: [shots, grips, gearFit],
 });

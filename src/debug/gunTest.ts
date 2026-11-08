@@ -345,6 +345,8 @@ export async function main(): Promise<number> {
       const l = gunLook(vm, id);
       const tag = `${id} ${ads ? 'sights' : 'hip'}`;
       check(Math.abs(l.roll) < 2, `${tag}: roll ${l.roll.toFixed(2)}° (< 2°)`);
+      if (ads) check(Math.abs(l.roll) < 1 && Math.abs(l.pitch) < 1, `${tag}: roll ${l.roll.toFixed(2)}°, pitch ${l.pitch.toFixed(2)}° (both < 1°)`);
+      check(l.nearCut === 0, `${tag}: arm triangles cut by the near plane in the frame ${l.nearCut} (nearest ${l.nearest} m)`);
       if (ads) check(l.handPx === 0, `${tag}: hand pixels in the middle circle (r ${HAND_CIRCLE.toFixed(0)} px at 1080p) ${l.handPx}`);
       check(l.palmBelow > 0.02, `${tag}: left palm ${(l.palmBelow * 100).toFixed(1)} cm under the bore axis`);
       if (!ads && GUNS[id].cls !== 'launcher') check(l.muzzle[0] > 0 && l.muzzle[1] < 0, `${tag}: muzzle in the lower right quarter (${l.muzzle.join(', ')})`);

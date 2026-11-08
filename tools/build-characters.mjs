@@ -5,7 +5,7 @@
  *   <body>.glb       the player's model, ~10k triangles, every skinned bone; the costumes (outfit_<class>_male.fbx,
  *                    texture embedded) → <class>_m
  *   <body>_lod1.glb  zombies and far figures: ~3k triangles, borders locked, fingers folded into the hands
- *   <body>_1024.webp, <body>_512.webp  the texture through the grim palette, alpha = skin mask
+ *   <body>_2048.webp, _1024, _512  the texture through the grim palette, alpha = skin mask (WebP q90)
  *   anims.glb        every clip on one skeleton: rotations of the needed bones, the hips' height in leg lengths
  * Bone names: mixamorig:<Name>. Usage: npm run characters
  */
@@ -22,6 +22,7 @@ import sharp from 'sharp';
 import { resolveObjectURL } from 'node:buffer';
 import { loadFbx } from './fbx-node.mjs';
 import { headSwap } from './head-swap.mjs';
+import { handFingers } from './hand-fingers.mjs';
 import { grim } from '../src/style/palette.ts';
 
 const ROOT = process.cwd();
@@ -84,9 +85,10 @@ async function texture(id, rgba, w, h) {
     // Never fully transparent: lossy WebP drops the colour under alpha 0 (the shader reads skin = (1 − a) · 2).
     out[i * 4 + 3] = 255 - Math.round(skinness(r, g, b) * 127);
   }
-  for (const size of [1024, 512]) {
+  // 2048: the player, the menu and the inventory (seen up close); 1024: zombies and LOD; 512: low. WebP q90.
+  for (const size of [2048, 1024, 512]) {
     const f = join(OUT, `${id}_${size}.webp`);
-    await sharp(out, { raw: { width: w, height: h, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).webp({ quality: 82, alphaQuality: 60 }).toFile(f);
+    await sharp(out, { raw: { width: w, height: h, channels: 4 } }).resize(size, size, { kernel: 'lanczos3' }).webp({ quality: 90, alphaQuality: 90 }).toFile(f);
     report.push(`${id}_${size}.webp ${(statSync(f).size / 1024).toFixed(0)} KB`);
   }
 }
@@ -284,6 +286,12 @@ for (const body of BODIES) {
     meta.swaps ??= {};
     meta.swaps[body.id] = sw.info;
     report.push(`${body.id}: голова ${body.donor} — ${JSON.stringify(sw.info)}`);
+    // Fingers: the donor's finger bones and weights on the costume's own hands (tools/hand-fingers.mjs).
+    const hf = handFingers({ geo, bones }, donors[body.donor]);
+    geo = hf.geo;
+    meta.fingers ??= {};
+    meta.fingers[body.id] = hf.info;
+    report.push(`${body.id}: пальцы — добавлено ${hf.info.added.length} костей, вершин ${hf.info.moved}, совмещение ${JSON.stringify(hf.info.err)}`);
   } else console.log(`${body.id}: нет ${body.donor} — голова своя`);
   await texture(body.id, rgba.data, rgba.w, rgba.h);
   geo = weld(geo);

@@ -41,9 +41,9 @@ const NAMES: Record<Sex, string[]> = {
 
 export function randomAppearance(rand: () => number = Math.random): Appearance {
   const sex: Sex = rand() < 0.5 ? 'male' : 'female';
-  const [lo, hi] = sex === 'male' ? [168, HEIGHT_RANGE[1]] : [HEIGHT_RANGE[0], 182];
+  // The height is not chosen (no setting in the editor): the model's own.
   const names = NAMES[sex];
-  return { name: names[Math.floor(rand() * names.length)], sex, height: Math.round(lo + rand() * (hi - lo)) };
+  return { name: names[Math.floor(rand() * names.length)], sex, height: BASE_LOOK[sex].height };
 }
 
 /** A saved look made safe (old saves' build, skin, hair… are dropped). */
@@ -53,6 +53,7 @@ export function sanitizeAppearance(a: Partial<Appearance> | undefined): Appearan
   return {
     name: typeof a?.name === 'string' && a.name.trim() ? a.name.trim().slice(0, 20) : d.name,
     sex,
-    height: typeof a?.height === 'number' ? Math.min(HEIGHT_RANGE[1], Math.max(HEIGHT_RANGE[0], a.height)) : d.height,
+    // No height setting any more: old saves' chosen height goes back to the model's own.
+    height: d.height,
   };
 }

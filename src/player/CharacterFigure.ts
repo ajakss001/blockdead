@@ -9,6 +9,9 @@ import { type ItemId, ITEMS, type WearSlot } from '../data/items';
 import type { Worn } from '../systems/Inventory';
 import { type Appearance, DEFAULT_APPEARANCE } from './appearance';
 import { buildHeldModel, HELD, type HeldId } from './held';
+import { gunRigData } from './gunPose';
+import { GunModel } from '../weapons/gunModel';
+import { GUN_IDS, type GunId } from '../weapons/guns';
 
 const NO_WORN: Worn = { outfit: null, head: null, face: null, mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
 
@@ -37,6 +40,8 @@ export class CharacterFigure {
   private body: BodyId | null = null;
   private readonly geometries: BufferGeometry[] = [];
   private readonly held = new Map<HeldId, Group>();
+  /** Guns in the right hand: the gun frame placed so its grip_main hand frame (data/grips.json) sits in the fist. */
+  private readonly guns = new Map<GunId, Group>();
   private readonly gear = new Map<string, Mesh>();
   private readonly hide = { value: 0 };
   private look: Appearance = { ...DEFAULT_APPEARANCE };
@@ -103,6 +108,11 @@ export class CharacterFigure {
     return h;
   }
 
+  private heldGun(): GunId | null {
+    const id = this.holding as GunId | null;
+    return id && GUN_IDS.includes(id) ? id : null;
+  }
+
   private boxWorn(): boolean {
     return wornGear(this.worn).some((g) => gearKind(g) === 'box');
   }
@@ -132,6 +142,14 @@ export class CharacterFigure {
     this.dress();
     const id = this.heldItem();
     for (const [hid, g] of this.held) g.visible = id === hid;
+    const gun = this.heldGun();
+    if (gun && !this.guns.has(gun)) {
+      const g = new Group();
+      g.add(new GunModel(gun).root);
+      this.guns.set(gun, g);
+      this.attach();
+    }
+    for (const [gid, g] of this.guns) g.visible = gun === gid;
     this.pose();
   }
 
@@ -153,7 +171,7 @@ export class CharacterFigure {
       const hand = gearKind(g) === 'box' && inHand;
       const key = hand ? `${g}:hand` : g;
       if (this.gear.has(key)) continue;
-      const mat = characterMaterial(bodyAsset(body), r.rig, { map: gearTexture(g) });
+      const mat = characterMaterial(bodyAsset(body), r.rig, { map: gearTexture(g), doubleSide: gearKind(g) === 'mask' });
       if (hand) {
         const hf = handFrame(r.rig, 'R');
         const b = hf && boxInHand(g);
@@ -228,6 +246,40 @@ export class CharacterFigure {
       g.quaternion.copy(hf.q);
       g.position.copy(hf.grip).sub(new Vector3(0, HELD[id].main.along, 0).applyQuaternion(hf.q));
     }
+    for (const [id, g] of this.guns) {
+      hand.add(g);
+      if (!hf) continue;
+      const d = gunRigData(id).main;
+      _m.compose(hf.grip, hf.q, _one).multiply(_m2.compose(d.at, d.q, _one).invert());
+      _m.decompose(g.position, g.quaternion, g.scale);
+    }
+  }
+
+  /**
+   * The held item turned the way it is carried at ease: a hand weapon's head forward and a little down from the
+   * lowered fist, a gun's barrel down. The turn is split as in the game's hands (CLAUDE.md): its twist about
+   * the forearm half on the forearm, half on the wrist, the rest bends the wrist.
+   */
+  private aim(item: Group, axis: Vector3, want: Vector3): void {
+    const r = this.rig!;
+    r.root.updateMatrixWorld(true);
+    const fore = r.bone('RightForeArm'), hand = r.bone('RightHand');
+    const cur = axis.clone().applyQuaternion(item.getWorldQuaternion(_q2)).normalize();
+    const to = want.clone().normalize().applyQuaternion(r.root.getWorldQuaternion(_q3));
+    const delta = new Quaternion().setFromUnitVectors(cur, to);
+    const along = hand.getWorldPosition(new Vector3()).sub(fore.getWorldPosition(new Vector3())).normalize();
+    const p = new Vector3(delta.x, delta.y, delta.z).projectOnVector(along);
+    const twist = new Quaternion(p.x, p.y, p.z, delta.w).normalize();
+    const swing = delta.clone().multiply(twist.clone().invert());
+    const half = new Quaternion().slerp(twist, 0.5);
+    const turn = (b: typeof hand, q: Quaternion) => {
+      const w = b.getWorldQuaternion(new Quaternion());
+      const pw = b.parent!.getWorldQuaternion(new Quaternion());
+      b.quaternion.copy(pw.invert().multiply(q).multiply(w));
+      r.root.updateMatrixWorld(true);
+    };
+    turn(fore, half);
+    turn(hand, swing.multiply(half));
   }
 
   private pose(): void {
@@ -245,9 +297,27 @@ export class CharacterFigure {
       // The right forearm brought forward a little: a held item clear of the leg (a toolbox just hangs).
       if (held) r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.5));
       r.root.updateMatrixWorld(true);
+      const melee = item && this.held.get(item);
+      if (melee) this.aim(melee, _y, _fwd);
+    }
+    const gun = this.heldGun();
+    const gg = gun && this.guns.get(gun);
+    if (gg && hr) {
+      for (const [i, q] of hr.poses[gripHands(gun, true, false).R]) r.bones[i].quaternion.copy(q);
+      r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.35));
+      this.aim(gg, _barrel, _down);
     }
   }
 }
 
 const _q = new Quaternion();
 const _x = new Vector3(1, 0, 0);
+const _y = new Vector3(0, 1, 0);
+const _barrel = new Vector3(0, 0, -1);
+const _fwd = new Vector3(0, -0.55, 1);
+const _down = new Vector3(0, -1, 0.12);
+const _q2 = new Quaternion();
+const _q3 = new Quaternion();
+const _m = new Matrix4();
+const _m2 = new Matrix4();
+const _one = new Vector3(1, 1, 1);

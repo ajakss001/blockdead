@@ -22,7 +22,7 @@ import { HAND_POSES, type HandPose } from '../characters/hands';
 import { basisQuat } from '../player/armRig';
 import { type Grip, GRIPS, gripsChanged, frameOf, quat, vec } from '../player/grips';
 import { gunRigData, keyQ } from '../player/gunPose';
-import { HELD, type HeldId } from '../player/held';
+import { heldConfig, type HeldId } from '../player/held';
 import { Viewmodel, type ViewmodelFrame } from '../player/Viewmodel';
 import { GUN_IDS, GUNS, type GunId } from '../weapons/guns';
 import { LIMITS } from './animCheck';
@@ -32,16 +32,18 @@ import { gunReference, meleeReference } from './gripReference';
  * The grip editor, ?gripedit=<item> (dev): the item and the arms in first person on a neutral background
  * (left, a cross marks the middle of the screen) and from outside (right, orbit with the mouse). Gizmos
  * move and turn the gun in the camera's space and each hand on it; for hand weapons the gun gizmo is the
- * rest / sprint pose and the hands slide along the handle and turn about it (sliders). Tabs: stance, sights,
+ * rest / sprint pose and the hands slide along the handle and turn about it (sliders); beside a one-handed
+ * weapon «Фонарик» moves the flashlight in the left hand (lit, its rest / sprint pose: grips.json → torch). Tabs: stance, sights,
  * sprint, reload. «Сохранить» writes src/data/grips.json (no code), «Сбросить» goes back to the last save,
  * «Эталон» puts the reference hold (debug/gripReference.ts). Readout: the wrists against their limits, the
  * hand gap from its socket, how much of the screen a hand takes.
  */
 
 type Tab = 'stance' | 'ads' | 'sprint' | 'reload';
-type Target = 'gun' | 'R' | 'L';
+/** torch: the flashlight in the left hand beside a one-handed weapon (its own pose, grips.json → torch). */
+type Target = 'gun' | 'R' | 'L' | 'torch';
 const TAB_NAMES: Record<Tab, string> = { stance: 'Стойка', ads: 'Прицел', sprint: 'Бег', reload: 'Перезарядка' };
-const MELEE: HeldId[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer'];
+const MELEE: (HeldId | 'fists')[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer', 'fists'];
 const ITEMS: string[] = [...GUN_IDS, ...MELEE];
 const DEG = 180 / Math.PI;
 
@@ -172,7 +174,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
   const grip = (): Grip => (GRIPS[id] ??= {});
 
   // ── The arms posed for the tab ──
-  const frame = (): ViewmodelFrame => ({ lookX: 0, lookY: 0, stepPhase: 0, speed: tab === 'sprint' ? 5.5 : 0, sprinting: tab === 'sprint', flashlightOn: false });
+  const frame = (): ViewmodelFrame => ({ lookX: 0, lookY: 0, stepPhase: 0, speed: tab === 'sprint' ? 5.5 : 0, sprinting: tab === 'sprint', flashlightOn: target === 'torch' });
   const settle = (n: number) => {
     const gv = vm.gunView;
     gv.ads = tab === 'ads';
@@ -224,8 +226,8 @@ export async function startGripEditor(first: string | null): Promise<void> {
       const h = target === 'R' ? d.main : d.off;
       return { at: h.at.clone().applyQuaternion(g.q).add(g.pos), q: g.q.clone().multiply(h.q) };
     }
-    if (target !== 'gun' || (tab !== 'stance' && tab !== 'sprint')) return null;
-    const k = HELD[id as HeldId].keys[tab === 'stance' ? 'idle' : 'sprint'];
+    if ((target !== 'gun' && target !== 'torch') || (tab !== 'stance' && tab !== 'sprint')) return null;
+    const k = heldConfig(target === 'torch' ? 'torch' : (id as HeldId | 'fists')).keys[tab === 'stance' ? 'idle' : 'sprint'];
     return { at: vec(k.at), q: basisQuat(vec(k.axis), vec(k.edge)) };
   }
 
@@ -247,9 +249,10 @@ export async function startGripEditor(first: string | null): Promise<void> {
         const q = inv.multiply(proxy.quaternion);
         G[target === 'R' ? 'main' : 'off'] = frameOf(at, q);
       }
-    } else if (target === 'gun') {
-      if (tab === 'stance') G.stance = f;
-      else if (tab === 'sprint') G.sprint = f;
+    } else if (target === 'gun' || target === 'torch') {
+      const T = target === 'torch' ? (GRIPS.torch ??= {}) : G;
+      if (tab === 'stance') T.stance = f;
+      else if (tab === 'sprint') T.sprint = f;
     }
     gripsChanged();
     settle(2);
@@ -294,12 +297,17 @@ export async function startGripEditor(first: string | null): Promise<void> {
     panel.append(el('h3', { textContent: 'Поза' }), tabs);
 
     const tg = el('div', { className: 'ge__row' });
-    const names: Record<Target, string> = { gun: gun ? 'Оружие' : 'Предмет', R: 'Правая кисть', L: 'Левая кисть' };
-    for (const t of ['gun', 'R', 'L'] as Target[]) {
-      const b = el<HTMLButtonElement>('button', { textContent: names[t], className: t === target ? 'on' : '', disabled: (!gun && t !== 'gun') || (t === 'L' && !gun && !HELD[id as HeldId].twoHanded) });
+    const names: Record<Target, string> = { gun: gun ? 'Оружие' : 'Предмет', R: 'Правая кисть', L: 'Левая кисть', torch: 'Фонарик' };
+    const oneHanded = !gun && !heldConfig(id as HeldId | 'fists').twoHanded;
+    if (target === 'torch' && !oneHanded) target = 'gun';
+    for (const t of (oneHanded ? ['gun', 'torch'] : ['gun', 'R', 'L']) as Target[]) {
+      const b = el<HTMLButtonElement>('button', { textContent: names[t], className: t === target ? 'on' : '', disabled: (!gun && (t === 'R' || t === 'L')) || (t === 'L' && !gun && !heldConfig(id as HeldId | 'fists').twoHanded) });
       b.onclick = () => {
+        const lit = (t === 'torch') !== (target === 'torch');
         target = t;
         build();
+        // The flashlight comes up lit (or goes down) when it is picked (or left).
+        if (lit) settle(60);
         placeProxy();
       };
       tg.append(b);
@@ -321,7 +329,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
     const hp = el('div');
     for (const side of ['R', 'L'] as const) {
       const s = el<HTMLSelectElement>('select');
-      const cur = grip().hands?.[side] ?? (gun ? (side === 'R' ? 'grip_trigger' : 'grip_support') : side === 'R' || HELD[id as HeldId].twoHanded ? 'grip_fist' : 'relaxed');
+      const cur = grip().hands?.[side] ?? (gun ? (side === 'R' ? 'grip_trigger' : 'grip_support') : side === 'R' || heldConfig(id as HeldId | 'fists').twoHanded ? 'grip_fist' : 'relaxed');
       for (const p of HAND_POSES) s.append(el('option', { value: p, textContent: p, selected: p === cur }));
       s.onchange = () => {
         const G = grip();
@@ -352,10 +360,10 @@ export async function startGripEditor(first: string | null): Promise<void> {
       panel.append(
         el('h3', { textContent: 'Прицел (мушка всегда в центре)' }),
         slider('от глаза, м', 0.05, 0.6, 0.005, () => grip().ads?.relief ?? d.cls.relief, (v) => (grip().ads = { ...grip().ads, relief: v })),
-        slider('глаз над целиком', -0.02, 0.06, 0.001, () => grip().ads?.drop ?? d.cls.adsDrop, (v) => (grip().ads = { ...grip().ads, drop: v })),
+        slider('щека на прикладе (плечи вверх), м', -0.02, 0.08, 0.001, () => grip().ads?.drop ?? d.cls.adsDrop, (v) => (grip().ads = { ...grip().ads, drop: v })),
       );
     } else {
-      const c = HELD[id as HeldId];
+      const c = heldConfig(id as HeldId | 'fists');
       const sock = (k: 'socketR' | 'socketL', base: { along: number; roll: number }) => () => (grip()[k] ??= { along: base.along, roll: base.roll });
       const R = sock('socketR', c.main);
       panel.append(
@@ -408,7 +416,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
   }
 
   function reference(x: string): Grip {
-    if (!isGunId(x)) return meleeReference(x as HeldId);
+    if (!isGunId(x)) return meleeReference(x as HeldId | 'fists');
     const g = gunReference(x);
     const keep = { id, tab, target };
     GRIPS[x] = g;

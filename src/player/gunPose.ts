@@ -110,8 +110,9 @@ export interface GunPoses {
   hip: V3;
   /** The hip aim converges with the crosshair this far ahead, m. */
   converge: number;
-  /** Rear sight this far from the eye in the sights, m; the eye this far over the sight line (the cheek on the stock). */
+  /** Rear sight this far from the eye in the sights, m. */
   relief: number;
+  /** The cheek on the stock in the sights: the head drops this far onto the gun, so the shoulders rise as much against the eye, m. */
   adsDrop: number;
   sprint: PoseKey;
   wall: PoseKey;
@@ -294,9 +295,10 @@ export function gunRigData(id: GunId): GunRigData {
   const hipAt = G.stance ? vec(G.stance.at) : v(cls.hip);
   const aimDir = new Vector3(0, 0, -cls.converge).sub(hipAt).normalize();
   const hipQ = G.stance ? quat(G.stance.q) : new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), aimDir);
-  // Sights: the line from the eye (`adsDrop` over the rear sight) through the front sight onto the view
-  // axis, the rear sight `relief` ahead: the front sight in the middle of the screen.
-  const eye = v(s.sightR).add(new Vector3(0, cls.adsDrop, 0));
+  // Sights: the eye level with the front sight, straight behind it — the barrel along the view, no tilt
+  // (CLAUDE.md: |pitch| < 1° in the sights), the rear sight `relief` ahead: the front sight in the middle of
+  // the screen.
+  const eye = new Vector3(s.sightF[0], s.sightF[1], s.sightR[2]);
   const sightF = v(s.sightF);
   const line = sightF.clone().sub(eye).normalize();
   const adsQ = new Quaternion().setFromUnitVectors(line, new Vector3(0, 0, -1));
@@ -365,6 +367,9 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   const P = d.cls;
   out.shoulderR.set(...P.shoulderR).lerp(_sh.set(...P.adsShoulderR), ads);
   out.shoulderL.set(...P.shoulderL).lerp(_sh.set(...P.adsShoulderL), ads);
+  // The cheek down on the stock: the shoulders up against the eye (the sight line stays level through it).
+  out.shoulderR.y += P.adsDrop * ads;
+  out.shoulderL.y += P.adsDrop * ads;
   at.lerp(d.adsAt, ads);
   q.slerp(d.adsQ, ads);
   at.y += d.cls.crouch * inp.crouch * (1 - ads);

@@ -22,7 +22,7 @@ import {
   Vector3,
 } from 'three';
 import { BASE_BODIES, type BaseBody, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, type RigAsset } from '../characters/assets';
-import { coverBody, gearGeometry, gearReady, gearTexture, hideBits, loadGear } from '../characters/gear';
+import { coverBody, gearGeometry, gearKind, gearReady, gearTexture, hideBits, loadGear } from '../characters/gear';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import type { GearId } from '../data/items';
 import { createBones, RagdollPose, ragdollStart } from '../characters/rig';
@@ -343,7 +343,7 @@ class Layer {
     const geo = gearGeometry(body, g, 1, lens ? 'lens' : 'main');
     if (!geo) return null;
     const old = gl;
-    const look = lens ? { skin: this.tex, row: true, lens: LENS_TINT[g] ?? 0x1e1f1d } : { skin: this.tex, row: true, map: gearTexture(g) };
+    const look = lens ? { skin: this.tex, row: true, lens: LENS_TINT[g] ?? 0x1e1f1d } : { skin: this.tex, row: true, map: gearTexture(g, true), doubleSide: gearKind(g) === 'mask' };
     gl = new GearLayer(geo, characterMaterial(bodyAsset(body), this.k.rig, look), Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${key}`);
     if (old) {
       // Grown: the instances so far carried over.

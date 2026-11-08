@@ -165,7 +165,7 @@ export class Player {
   fixedUpdate(dt: number): void {
     const input = this.ctx.input;
     if (input.consumePressed('flashlight')) this.setFlashlight(!this.flashlightOn);
-    if (this.flashlightOn) {
+    if (this.flashlightOn && !this.viewmodel.lightBlocked) {
       this.battery = Math.max(0, this.battery - dt / BATTERY_LIFE);
       if (this.battery === 0) {
         this.setFlashlight(false);
@@ -330,7 +330,7 @@ export class Player {
 
   /** The flashlight is actually shining. */
   get lightOn(): boolean {
-    return this.flashlightOn && this.battery > 0;
+    return this.flashlightOn && this.battery > 0 && !this.viewmodel.lightBlocked;
   }
 
   rechargeBattery(amount: number): void {
@@ -346,6 +346,7 @@ export class Player {
       this.ctx.hud.toast('Нужны батарейки');
       return;
     }
+    if (on && this.viewmodel.lightBlocked) this.ctx.hud.toast('Руки на оружии: светит только подствольный фонарь');
     this.flashlightOn = on;
     this.dropT = 0;
     this.flickerT = 1;
@@ -363,7 +364,8 @@ export class Player {
       this.flashT -= dt;
       return this.flashT > 0 ? 0.1 : 0;
     }
-    if (!this.flashlightOn) return 0;
+    // A gun without the underbarrel flashlight: both hands on it, nothing shines (it comes back with the knife).
+    if (!this.flashlightOn || this.viewmodel.lightBlocked) return 0;
     const b = this.battery;
     const B = FLASHLIGHT.battery;
     let k = b >= B.dim ? 1 : 0.3 + (0.7 * b) / B.dim;

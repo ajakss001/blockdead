@@ -236,6 +236,11 @@ export const HELD: Readonly<Record<HeldId, HeldConfig>> = {
 /** Bare fists: an item without a model; the fist's grip axis is its handle. */
 export const FISTS: HeldConfig = { twoHanded: false, main: { along: 0, roll: 0 }, keys: FIST, head: [0, 0.05, 0], windup: 6 / 60, strike: 5 / 60, follow: 3 / 60, recover: 12 / 60, noise: 0.25, damage: [4, 7], reach: 1.1 };
 
+/** A held item's config: a HELD entry, or the bare fists. */
+export function heldConfig(id: HeldId | 'fists'): HeldConfig {
+  return id === 'fists' ? FISTS : (HELD[id] as HeldConfig);
+}
+
 /** Model of a held item in its grip frame (see HeldConfig). Geometries are collected for disposal. */
 export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
   const g = new Group();
@@ -275,7 +280,7 @@ export function buildHeldModel(id: HeldId, geos: BufferGeometry[]): Group {
 }
 
 // ── What the grip editor saved (data/grips.json) on top of the configs above. ──
-const ORIGINAL = new Map<HeldId, Pick<HeldConfig, 'main' | 'off' | 'keys'>>();
+const ORIGINAL = new Map<HeldId | 'fists', Pick<HeldConfig, 'main' | 'off' | 'keys'>>();
 const keyOf = (base: Key, f: GripFrame): Key => {
   const q = quat(f.q);
   const axis = new Vector3(0, 1, 0).applyQuaternion(q);
@@ -285,8 +290,9 @@ const keyOf = (base: Key, f: GripFrame): Key => {
 const same = (a: { along: number; roll: number }, b: { along: number; roll: number }) => Math.abs(a.along - b.along) < 1e-3 && Math.abs(a.roll - b.roll) < 1e-3;
 /** The configs as the file has them now (called again when the editor changes them). */
 export function applyHeldGrips(): void {
-  for (const id of Object.keys(HELD) as HeldId[]) {
-    const c = HELD[id] as HeldConfig;
+  // Bare fists too (their entry in the file is 'fists').
+  for (const id of [...Object.keys(HELD), 'fists'] as (HeldId | 'fists')[]) {
+    const c = heldConfig(id);
     if (!ORIGINAL.has(id)) ORIGINAL.set(id, { main: c.main, off: c.off, keys: c.keys });
     const o = ORIGINAL.get(id)!;
     const G = GRIPS[id] ?? {};
