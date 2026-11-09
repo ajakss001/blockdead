@@ -1,7 +1,7 @@
 import { CircleGeometry, Color, DirectionalLight, HemisphereLight, Mesh, MeshLambertMaterial, PerspectiveCamera, Quaternion, Scene, Vector3, WebGLRenderer } from 'three';
 import { BODY_IDS, type ClipId, loadBody, loadCharacters } from '../characters/assets';
 import { loadGear, loadGearMeta, wornGear } from '../characters/gear';
-import type { ItemId } from '../data/items';
+import { type ItemId, ITEMS } from '../data/items';
 import { baseLook } from '../player/appearance';
 import { CharacterFigure } from '../player/CharacterFigure';
 import { grim } from '../style/palette';
@@ -80,7 +80,9 @@ const DROP: Partial<Worn> = Object.fromEntries((QS.get('drop')?.split(',') ?? []
 const pick = (rows: Row[]) => (ROW_PICK ? rows.filter((r) => ROW_PICK.some((p) => r.name.includes(p))) : rows);
 /** ?hold=axe,bat,rifle_m4a1: a man holding each of them at ease (the menu's hold), front / side / back / close. */
 const HOLD = QS.get('hold')?.split(',') as ItemId[] | undefined;
-const HOLD_ROWS: Row[] = (HOLD ?? []).map((h) => ({ name: h, sex: 'male' as const, worn: {}, hand: h }));
+/** ?wear=outfitMilitary,helmetMilitary,…: what the ?hold= man wears (each item to its own slot). */
+const WEAR: Partial<Worn> = Object.fromEntries((QS.get('wear')?.split(',') ?? []).filter((w) => ITEMS[w as ItemId]?.wear).map((w) => [ITEMS[w as ItemId].wear!.slot, w]));
+const HOLD_ROWS: Row[] = (HOLD ?? []).map((h) => ({ name: h, sex: 'male' as const, worn: WEAR, hand: h }));
 const ROWS: Row[] = HOLD ? HOLD_ROWS : FACES ? pick(FACE_ROWS) : HELMETS ? pick(HELMET_ROWS) : KIT ? pick(KIT_ROWS) : CLASS_MODE ? CLASSES.filter((c) => !ONLY || ONLY.includes(c.id)).map((c) => ({ name: c.name, sex: 'male' as const, worn: { ...(c.uniform as Partial<Worn>), back: c.uniform.back ?? (c.uniform.bag ? null : 'backpackSchool') } as Partial<Worn>, hand: c.hand })) : ROWS_ALL;
 const CELLS: Cell[] = FACES ? CLOSE_CELLS : HELMETS ? [...CLOSE_CELLS, { label: 'замах', clip: 'idle', t: 0, dir: [0.8, 0.6], swing: true, head: 0.9 }] : KIT
   ? [

@@ -349,9 +349,12 @@ class PointGrid {
   }
 }
 
+const TOP_BINS = 36;
+const topBin = (dx: number, dz: number) => Math.min(TOP_BINS - 1, Math.floor(((Math.atan2(dz, dx) + Math.PI) / (2 * Math.PI)) * TOP_BINS));
+
 /** A piece's points at bind as fitted by build-gear and as moved by its hand fix (cached per fit). */
-const moved = new Map<string, { fit: string; raw: PointGrid; now: PointGrid; most: number }>();
-function movedPiece(body: BodyId, g: GearId): { raw: PointGrid; now: PointGrid; most: number } | null {
+const moved = new Map<string, { fit: string; raw: PointGrid; now: PointGrid; most: number; dy: number; top: Float32Array | null }>();
+function movedPiece(body: BodyId, g: GearId): { raw: PointGrid; now: PointGrid; most: number; dy: number; top: Float32Array | null } | null {
   if (!gearReady(body, g) || !hasBody(body)) return null;
   const f = fitOf(g, body)!;
   const key = `${body}:${g}`, sig = JSON.stringify(f);
@@ -365,9 +368,21 @@ function movedPiece(body: BodyId, g: GearId): { raw: PointGrid; now: PointGrid; 
   for (const p of parts) (raw.set(p.pos, at), nor.set(p.nor, at), (at += p.pos.length));
   const now = raw.slice();
   applyFit(now, nor, f, fitMatrix(f, boneBind(asset.lod0, gearFitBone(body, g)), fitPivot(f, gearMiddle(body, g))));
-  let most = 0;
-  for (let i = 0; i < raw.length; i += 3) most = Math.max(most, Math.hypot(now[i] - raw[i], now[i + 1] - raw[i + 1], now[i + 2] - raw[i + 2]));
-  const out = { fit: sig, raw: new PointGrid(raw), now: new PointGrid(now), most };
+  let most = 0, dy = 0;
+  for (let i = 0; i < raw.length; i += 3) (most = Math.max(most, Math.hypot(now[i] - raw[i], now[i + 1] - raw[i + 1], now[i + 2] - raw[i + 2]))), (dy += now[i + 1] - raw[i + 1]);
+  dy /= Math.max(1, raw.length / 3);
+  // A mask's upper edge round the head as moved (the highest point per 10° about the head's axis).
+  let top: Float32Array | null = null;
+  if (gearKind(g) === 'mask') {
+    const j = asset.lod0.bind[asset.lod0.index.get('Head') ?? 0].elements;
+    top = new Float32Array(TOP_BINS).fill(-Infinity);
+    for (let i = 0; i < now.length; i += 3) {
+      const b = topBin(now[i] - j[12], now[i + 2] - j[14]);
+      top[b] = Math.max(top[b], now[i + 1]);
+    }
+    top = Object.assign(top, { cx: j[12], cz: j[14] });
+  }
+  const out = { fit: sig, raw: new PointGrid(raw), now: new PointGrid(now), most, dy, top };
   moved.set(key, out);
   return out;
 }
@@ -394,7 +409,18 @@ function writeCover(body: BodyId, rig: RigAsset, bits: Uint16Array, f: Float32Ar
         continue;
       }
       if (mp.most < 0.002) continue;
+      // A helmet set lower than built: what was under it is under it still (the crown and the hair above the
+      // old rim are now nearer the top of the shell than the piece's points, but they would come out through it).
+      if (mp.dy < -0.002 && gearKind(g as GearId) === 'helmet') continue;
       const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+      // A mask moved or made smaller: the face above its new upper edge shows (no holes in the cheeks).
+      if (mp.top) {
+        const t = mp.top as Float32Array & { cx: number; cz: number };
+        if (y > t[topBin(x - t.cx, z - t.cz)] - 0.004) {
+          f[i] = f[i] & ~m;
+          continue;
+        }
+      }
       const d0 = mp.raw.nearest(x, y, z), d1 = mp.now.nearest(x, y, z);
       if (d0 === Infinity ? !(d1 < Infinity || mp.most < 0.01) : !(d1 <= d0 + 0.01)) f[i] = f[i] & ~m;
     }

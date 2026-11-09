@@ -54,7 +54,7 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.006
+   "eyeGap": 0.0222
   },
   "balaclava": {
    "tris": 1434
@@ -121,7 +121,7 @@
   },
   "goggles_tactical": {
    "scale": 0.228,
-   "eyeGap": 0.006
+   "eyeGap": 0.0223
   },
   "balaclava": {
    "tris": 1434
@@ -188,7 +188,7 @@
   },
   "goggles_tactical": {
    "scale": 0.223,
-   "eyeGap": 0.006
+   "eyeGap": 0.0243
   },
   "balaclava": {
    "tris": 1434
@@ -255,7 +255,7 @@
   },
   "goggles_tactical": {
    "scale": 0.226,
-   "eyeGap": 0.006
+   "eyeGap": 0.0221
   },
   "balaclava": {
    "tris": 1434
@@ -322,7 +322,7 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.006
+   "eyeGap": 0.0222
   },
   "balaclava": {
    "tris": 1434
@@ -389,7 +389,7 @@
   },
   "goggles_tactical": {
    "scale": 0.229,
-   "eyeGap": 0.006
+   "eyeGap": 0.0223
   },
   "balaclava": {
    "tris": 1434
@@ -456,7 +456,7 @@
   },
   "goggles_tactical": {
    "scale": 0.228,
-   "eyeGap": 0.006
+   "eyeGap": 0.0223
   },
   "balaclava": {
    "tris": 1434
@@ -523,7 +523,7 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.006
+   "eyeGap": 0.0222
   },
   "balaclava": {
    "tris": 1434
@@ -590,7 +590,7 @@
   },
   "goggles_tactical": {
    "scale": 0.217,
-   "eyeGap": 0.006
+   "eyeGap": 0.0213
   },
   "balaclava": {
    "tris": 1434

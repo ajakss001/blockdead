@@ -1226,8 +1226,8 @@ function fitMask(body, src, cfg) {
     // The bridge of the nose to under the chin; the loops back over the ears.
     (hi = hf.eyeY - 0.012), (lo = hf.chin - 0.035), (w = hf.faceW * 1.05), (d = (hf.zf - hf.cz) * 2.1), (zc = hf.cz + 0.01);
   } else {
-    // Round the neck up over the chin.
-    (hi = hf.chin + 0.03), (lo = neck.y - 0.08), (w = headW + 0.04), (d = headD + 0.02);
+    // Round the neck up over the chin, down onto the collar (a strip of bare neck showed between them).
+    (hi = hf.chin + 0.03), (lo = neck.y - 0.11), (w = headW + 0.04), (d = headD + 0.02);
   }
   const place = new Matrix4()
     .makeTranslation(hf.cx, (lo + hi) / 2, zc)
@@ -1329,7 +1329,10 @@ async function findLens(g, how) {
       const x = Math.round(((v.x - ox) / span) * R), y = Math.round(((v.y - oy) / span) * R);
       return x < 0 || y < 0 || x >= R || y >= R ? 0 : dist[y * R + x];
     };
-    for (let t = 0; t < n; t++) if (Math.min(...[0, 1, 2].map((k) => dAt(P(g.index[t * 3 + k])))) > inset * 1.3) lens[t] = 1;
+    // Only in the front of the frame: a strap going round behind the head is inside the window seen from the
+    // front too (it made the goggles' strap a lens, and the lens's depth pushed them 20 cm off the face).
+    const frontZ = b.max[2] - (b.max[2] - b.min[2]) * 0.3;
+    for (let t = 0; t < n; t++) if (Math.min(...[0, 1, 2].map((k) => P(g.index[t * 3 + k]).z)) > frontZ && Math.min(...[0, 1, 2].map((k) => dAt(P(g.index[t * 3 + k])))) > inset * 1.3) lens[t] = 1;
   }
   // Tidy: a triangle goes with most of its neighbours (by shared corner positions).
   const at = new Map();

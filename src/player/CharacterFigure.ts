@@ -11,7 +11,7 @@ import { type Appearance, DEFAULT_APPEARANCE } from './appearance';
 import { buildHeldModel, HELD, type HeldId } from './held';
 import { gunRigData } from './gunPose';
 import { GunModel } from '../weapons/gunModel';
-import { GUN_IDS, type GunId } from '../weapons/guns';
+import { GUN_IDS, GUNS, type GunId } from '../weapons/guns';
 
 const NO_WORN: Worn = { outfit: null, head: null, face: null, mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: null, bag: null };
 
@@ -245,6 +245,7 @@ export class CharacterFigure {
       if (!hf) continue;
       g.quaternion.copy(hf.q);
       g.position.copy(hf.grip).sub(new Vector3(0, HELD[id].main.along, 0).applyQuaternion(hf.q));
+      g.userData.rest = { p: g.position.clone(), q: g.quaternion.clone(), grip: hf.grip.clone() };
     }
     for (const [id, g] of this.guns) {
       hand.add(g);
@@ -252,6 +253,7 @@ export class CharacterFigure {
       const d = gunRigData(id).main;
       _m.compose(hf.grip, hf.q, _one).multiply(_m2.compose(d.at, d.q, _one).invert());
       _m.decompose(g.position, g.quaternion, g.scale);
+      g.userData.rest = { p: g.position.clone(), q: g.quaternion.clone(), grip: hf.grip.clone() };
     }
   }
 
@@ -262,6 +264,9 @@ export class CharacterFigure {
    */
   private aim(item: Group, axis: Vector3, want: Vector3): void {
     const r = this.rig!;
+    // From its place in the grip each time (the turn below is not added up frame after frame).
+    const rest = item.userData.rest as { p: Vector3; q: Quaternion; grip: Vector3 } | undefined;
+    if (rest) item.position.copy(rest.p), item.quaternion.copy(rest.q);
     r.root.updateMatrixWorld(true);
     const fore = r.bone('RightForeArm'), hand = r.bone('RightHand');
     const cur = axis.clone().applyQuaternion(item.getWorldQuaternion(_q2)).normalize();
@@ -271,7 +276,13 @@ export class CharacterFigure {
     const p = new Vector3(delta.x, delta.y, delta.z).projectOnVector(along);
     const twist = new Quaternion(p.x, p.y, p.z, delta.w).normalize();
     const swing = delta.clone().multiply(twist.clone().invert());
-    const half = new Quaternion().slerp(twist, 0.5);
+    // The arm takes only a part of it (the wrist's limits, CLAUDE.md: a hand at ease is not wrung): the twist up
+    // to 40°, the bend up to 30°; the rest turns the item in the hand.
+    const cap = (q: Quaternion, max: number) => {
+      const a = 2 * Math.acos(Math.min(1, Math.abs(q.w)));
+      return a <= max ? q : new Quaternion().slerp(q, max / a);
+    };
+    const half = new Quaternion().slerp(cap(twist, 0.7), 0.5);
     const turn = (b: typeof hand, q: Quaternion) => {
       const w = b.getWorldQuaternion(new Quaternion());
       const pw = b.parent!.getWorldQuaternion(new Quaternion());
@@ -279,7 +290,35 @@ export class CharacterFigure {
       r.root.updateMatrixWorld(true);
     };
     turn(fore, half);
-    turn(hand, swing.multiply(half));
+    turn(hand, cap(swing, 0.52).multiply(half));
+    // What is left: the item itself turned about its grip until its axis points where it should.
+    const now = axis.clone().applyQuaternion(item.getWorldQuaternion(_q2)).normalize();
+    const left = new Quaternion().setFromUnitVectors(now, to);
+    // That turn in the hand's frame, about the grip (the fist stays on the handle).
+    const pw = item.parent!.getWorldQuaternion(new Quaternion());
+    const local = pw.clone().invert().multiply(left).multiply(pw);
+    item.quaternion.premultiply(local);
+    if (rest) item.position.sub(rest.grip).applyQuaternion(local).add(rest.grip);
+    item.updateMatrixWorld(true);
+  }
+
+  /**
+   * The right forearm brought forward by `angle` (rad): turned in the world about the elbow's hinge (the forearm
+   * and the body's forward), not about the bone's own x (on these rigs that swung the hand out to the side).
+   */
+  private bendElbow(angle: number): void {
+    const r = this.rig!;
+    r.root.updateMatrixWorld(true);
+    const fore = r.bone('RightForeArm');
+    const dir = r.bone('RightHand').getWorldPosition(new Vector3()).sub(fore.getWorldPosition(new Vector3())).normalize();
+    const fwd = new Vector3(0, 0, 1).applyQuaternion(r.root.getWorldQuaternion(_q3));
+    const axis = dir.clone().cross(fwd);
+    if (axis.lengthSq() < 1e-6) return;
+    const q = new Quaternion().setFromAxisAngle(axis.normalize(), angle);
+    const w = fore.getWorldQuaternion(new Quaternion());
+    const pw = fore.parent!.getWorldQuaternion(new Quaternion());
+    fore.quaternion.copy(pw.invert().multiply(q).multiply(w));
+    r.root.updateMatrixWorld(true);
   }
 
   private pose(): void {
@@ -295,7 +334,7 @@ export class CharacterFigure {
     if (held || this.gear.has(`${this.worn.bag ? ITEMS[this.worn.bag].wear?.gear : ''}:hand`)) {
       if (hr) for (const [i, q] of hr.poses[held ? gripHands(item, false, false).R : 'grip_fist']) r.bones[i].quaternion.copy(q);
       // The right forearm brought forward a little: a held item clear of the leg (a toolbox just hangs).
-      if (held) r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.5));
+      if (held) this.bendElbow(0.5);
       r.root.updateMatrixWorld(true);
       const melee = item && this.held.get(item);
       if (melee) this.aim(melee, _y, _fwd);
@@ -304,18 +343,18 @@ export class CharacterFigure {
     const gg = gun && this.guns.get(gun);
     if (gg && hr) {
       for (const [i, q] of hr.poses[gripHands(gun, true, false).R]) r.bones[i].quaternion.copy(q);
-      r.bone('RightForeArm').quaternion.multiply(_q.setFromAxisAngle(_x, -0.35));
-      this.aim(gg, _barrel, _down);
+      this.bendElbow(0.35);
+      this.aim(gg, _barrel, GUNS[gun].cls === 'pistol' ? _down : _lowReady);
     }
   }
 }
 
-const _q = new Quaternion();
-const _x = new Vector3(1, 0, 0);
 const _y = new Vector3(0, 1, 0);
 const _barrel = new Vector3(0, 0, -1);
 const _fwd = new Vector3(0, -0.55, 1);
 const _down = new Vector3(0, -1, 0.12);
+/** A long gun (a rifle, the shotgun, the RPG) at ease: the muzzle forward and down, the stock behind the hip. */
+const _lowReady = new Vector3(0.12, -1, 0.85);
 const _q2 = new Quaternion();
 const _q3 = new Quaternion();
 const _m = new Matrix4();
