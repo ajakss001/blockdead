@@ -11,6 +11,9 @@
  * muzzle, eject (the port on the right), light (under the barrel), bolt (what the hand pulls), load (where
  * shells go in), mag: the box cut out as the magazine (and its top = the magazine socket).
  * parts: boxes cut out to move on their own (slide, pump, rocket).
+ * strip: boxes taken off the model (what blocks the sights): a triangle goes if its middle is in one, or any corner
+ *        is in one marked `all`. rail: a rail section built there (base x × y × z, teeth `pitch` apart up to `top`),
+ *        coloured as the model at `uv` (a point of its own rail).
  */
 type P = readonly [number, number];
 type Box = { readonly x: P; readonly y: P };
@@ -34,6 +37,8 @@ export interface GunHint {
   /** Pistols: the magazine rides up the grip along this line (bottom → top); it is not cut from the model. */
   magWell?: readonly [P, P];
   parts?: Readonly<Record<string, Box>>;
+  strip?: readonly (Box & { readonly all?: boolean })[];
+  rail?: { readonly x: P; readonly y: P; readonly z: P; readonly top: number; readonly pitch: number; readonly uv: P };
 }
 
 export const HINTS: Readonly<Record<string, GunHint>> = {
@@ -75,6 +80,9 @@ export const HINTS: Readonly<Record<string, GunHint>> = {
     light: [-0.16, 0.035],
     bolt: [0.09, 0.05],
     mag: { x: [0.008, 0.102], y: [-0.17, 0.024] },
+    // The rear sight (in the way in the sights) off, and its base; the top rail carried on over it.
+    strip: [{ x: [0.152, 0.232], y: [0.106, 0.2], all: true }, { x: [0.152, 0.22], y: [0.096, 0.2] }],
+    rail: { x: [0.15, 0.222], y: [0.086, 0.101], z: [-0.01, 0.018], top: 0.105, pitch: 0.02, uv: [0.11, 0.104] },
   },
   rifle_ak: {
     length: 0.88,

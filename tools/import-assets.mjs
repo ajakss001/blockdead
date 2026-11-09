@@ -178,6 +178,37 @@ async function write(id, parts) {
 }
 
 const tris = (g) => g.index.length / 3;
+/** A rail section (see GunHint.rail): a base box and teeth on it, coloured as the model's own rail at `uv`. */
+function addRail(g, r) {
+  // The texture point: the corner nearest the given point of the rail's top.
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < g.pos.length / 3; i++) {
+    const d = (g.pos[i * 3] - r.uv[0]) ** 2 + (g.pos[i * 3 + 1] - r.uv[1]) ** 2 + (g.pos[i * 3 + 2] - (r.z[0] + r.z[1]) / 2) ** 2;
+    if (d < bd) (bd = d), (best = i);
+  }
+  const u = [g.uv[best * 2], g.uv[best * 2 + 1]];
+  const P = [...g.pos], N = [...g.nor], U = [...g.uv], I = [...g.index];
+  const box = (x0, x1, y0, y1, z0, z1) => {
+    // Six faces, outward, counter-clockwise seen from outside.
+    const F = [
+      [[1, 0, 0], [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]]],
+      [[-1, 0, 0], [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]]],
+      [[0, 1, 0], [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]]],
+      [[0, -1, 0], [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]]],
+      [[0, 0, 1], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]]],
+      [[0, 0, -1], [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]]],
+    ];
+    for (const [n, q] of F) {
+      const b = P.length / 3;
+      for (const v of q) P.push(...v), N.push(...n), U.push(...u);
+      I.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+  };
+  box(r.x[0], r.x[1], r.y[0], r.y[1], r.z[0], r.z[1]);
+  const tooth = r.pitch * 0.55;
+  for (let x = r.x[0] + (r.pitch - tooth) / 2; x + tooth <= r.x[1] + 1e-6; x += r.pitch) box(x, x + tooth, r.y[1] - 0.001, r.top, r.z[0], r.z[1]);
+  return { ...g, pos: Float32Array.from(P), nor: Float32Array.from(N), uv: Float32Array.from(U), index: Uint32Array.from(I) };
+}
 const centroid = (g, t) => [0, 1, 2].map((a) => (g.pos[g.index[t] * 3 + a] + g.pos[g.index[t + 1] * 3 + a] + g.pos[g.index[t + 2] * 3 + a]) / 3);
 const inBox = (c, b) => c[0] >= b.x[0] && c[0] <= b.x[1] && c[1] >= b.y[0] && c[1] <= b.y[1];
 
@@ -188,7 +219,13 @@ for (const [id, h] of Object.entries(HINTS)) {
     console.log(`нет weapons/${id}.glb — заглушка в игре`);
     continue;
   }
-  const src = await read(file);
+  let src = await read(file);
+  // What blocks the sights off; the top rail carried on in its place.
+  if (h.strip) {
+    const corner = (t, b) => [0, 1, 2].some((c) => inBox([src.pos[src.index[t + c] * 3], src.pos[src.index[t + c] * 3 + 1]], b));
+    src = subset(src, (t) => !h.strip.some((b) => inBox(centroid(src, t), b) || (b.all && corner(t, b))));
+  }
+  if (h.rail) src = addRail(src, h.rail);
   // Cut in model units (the hints are in them): the magazine and the moving parts, the rest is the body.
   const boxes = { ...(h.mag ? { mag: h.mag } : {}), ...(h.parts ?? {}) };
   const owner = new Int8Array(src.index.length / 3).fill(-1);
