@@ -1,4 +1,4 @@
-import { CLASSES, type ClassId, classDef, OUTFIT_TINTS, STARTER_OUTFITS } from '../data/classes';
+import { CLASSES, type ClassId, classDef, STARTER_OUTFITS } from '../data/classes';
 import { classSkillText } from '../systems/Skills';
 import { TRAITS, type TraitId, traitDef, traitPointsLeft } from '../data/traits';
 import type { ItemId, WearSlot } from '../data/items';
@@ -95,7 +95,6 @@ export class CharacterEditor {
         this.choice.appearance = randomAppearance();
         this.choice.classId = CLASSES[Math.floor(Math.random() * CLASSES.length)].id;
         this.choice.outfit = Math.random() < 0.5 ? 'uniform' : 'casual';
-        this.choice.tint = OUTFIT_TINTS[Math.floor(Math.random() * OUTFIT_TINTS.length)];
         this.choice.traits = randomTraits(this.choice.classId);
         name.value = this.choice.appearance.name;
         this.renderBody();
@@ -210,8 +209,7 @@ export class CharacterEditor {
     // Two choices: the class's clothes, or everyday ones (a T-shirt, jeans, sneakers).
     const options: [string, string][] = [['uniform', 'Одежда класса'], ['casual', 'Обычная']];
     this.chips('Стартовая одежда', options, this.choice.outfit, (v) => (this.choice.outfit = v));
-    if (this.choice.outfit !== 'uniform') this.swatches('Цвет верха', OUTFIT_TINTS, this.choice.tint, (v) => (this.choice.tint = v));
-    else this.body.append(div('editor__note', 'Форма класса — свой цвет и защита. Её можно снять и найти другую одежду в мире.'));
+    if (this.choice.outfit === 'uniform') this.body.append(div('editor__note', 'Форма класса — свой цвет и защита. Её можно снять и найти другую одежду в мире.'));
   }
 
   private chips(title: string, options: [string, string][], current: string, set: (v: string) => void): void {
@@ -230,22 +228,6 @@ export class CharacterEditor {
     this.body.append(row);
   }
 
-  private swatches(title: string, colors: readonly number[], current: number, set: (v: number) => void): void {
-    const row = div('editor__row');
-    row.append(div('editor__label', title));
-    const list = div('editor__chips');
-    for (const c of colors) {
-      const b = button('', `editor__swatch${c === current ? ' on' : ''}`);
-      b.style.background = `#${c.toString(16).padStart(6, '0')}`;
-      b.addEventListener('click', () => {
-        set(c);
-        this.renderBody();
-      });
-      list.append(b);
-    }
-    row.append(list);
-    this.body.append(row);
-  }
 }
 
 function randomTraits(classId: ClassId): TraitId[] {
