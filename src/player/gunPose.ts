@@ -66,6 +66,8 @@ export interface GunPoseOut {
   magShown: boolean;
   magPos: Vector3;
   magQ: Quaternion;
+  /** The left hand on the bolt (working it): its own hand pose (grips → hands.bolt). */
+  onBolt: boolean;
   /** The moving parts, m back along the gun: the slide / bolt, the pump. */
   slide: number;
   pump: number;
@@ -124,6 +126,8 @@ export interface GunPoses {
   crouch: number;
   /** The pouch the left hand reaches for (camera space): new magazines, shells, the rocket. */
   pouch: V3;
+  /** A bolt rifle: the gun while the bolt is worked (the grip editor's «Затвор»; none — it stays as it is). */
+  cycle?: PoseKey;
   /** Hand rolls about their grip axes: right on the grip, left on its socket, on the magazine, the bolt, the port. */
   mainRoll: number;
   offRoll: number;
@@ -283,6 +287,7 @@ export function gunRigData(id: GunId): GunRigData {
   if (G.ads?.drop !== undefined) cls.adsDrop = G.ads.drop;
   if (G.sprint) cls.sprint = { at: G.sprint.at, turn: [0, 0, 0], q: G.sprint.q };
   if (G.reload) cls.reload = { at: G.reload.at, turn: [0, 0, 0], q: G.reload.q };
+  if (G.cycle) cls.cycle = { at: G.cycle.at, turn: [0, 0, 0], q: G.cycle.q };
   const main = G.main ? { at: vec(G.main.at), q: quat(G.main.q) } : handFrame(s.main, cls.mainRoll);
   let off: HandOnGun;
   if (G.off) off = { at: vec(G.off.at), q: quat(G.off.q) };
@@ -310,8 +315,9 @@ export function gunRigData(id: GunId): GunRigData {
     q: rolled(basisQuat(out.clone().negate(), new Vector3(0.45, 0, -1)), cls.magRoll),
   };
   // The bolt: a pistol's slide gripped from above at its back, thumb back; a rifle's handle from the side.
-  const bolt: HandOnGun =
-    g.cls === 'pistol'
+  const bolt: HandOnGun = G.bolt
+    ? { at: vec(G.bolt.at), q: quat(G.bolt.q) }
+    : g.cls === 'pistol'
       ? { at: v(s.sightR).add(new Vector3(0, -0.012, 0.01)), q: rolled(basisQuat(new Vector3(0, 0, 1), new Vector3(1, 0, 0)), cls.boltRoll) }
       : { at: v(s.bolt), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.3, 0.85, 0)), cls.boltRoll) };
   const load: HandOnGun = { at: v(s.load), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.2, 1, 0)), cls.loadRoll) };
@@ -386,6 +392,8 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   else if (a === 'loadOne') rw = 1;
   else if (a === 'loadEnd') rw = 1 - seg(k, 0, 1);
   blendKey(d, d.cls.reload, rw, at, q);
+  // A bolt rifle's own pose while the bolt is worked (as the hand reaches it, back as it lets go).
+  if (a === 'cycle' && g.action === 'bolt' && d.cls.cycle) blendKey(d, d.cls.cycle, seg(k, 0, 0.25) * (1 - seg(k, 0.6, 1)), at, q);
   if (a === 'inspect') {
     // Turned to look at its left side, then up at its right, back.
     const w1 = seg(k, 0, 0.25) * (1 - seg(k, 0.45, 0.6));
@@ -425,6 +433,7 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   if (g.cls === 'pistol') out.slide = inp.open ? 0.028 : 0.028 * blow;
   else if (g.action === 'auto') out.slide = 0.045 * blow;
   out.rocket = inp.chamber;
+  out.onBolt = false;
   out.magOnGun = true;
   out.magShown = true;
   out.left = 'gun';
@@ -590,6 +599,7 @@ function boltPath(d: GunRigData, k: number, at: Vector3, q: Quaternion, fromG: V
     between(_pose.at, _pose.q, _offG, _offQ, seg(k, rack + 0.05, end), out);
   }
   if (k >= b && k < rack + 0.05) out.slide = back;
+  out.onBolt = k >= a + (b - a) * 0.6 && k < rack + 0.1;
 }
 
 export function newGunPoseOut(): GunPoseOut {
@@ -605,6 +615,7 @@ export function newGunPoseOut(): GunPoseOut {
     magShown: true,
     magPos: new Vector3(),
     magQ: new Quaternion(),
+    onBolt: false,
     slide: 0,
     pump: 0,
     rocket: true,

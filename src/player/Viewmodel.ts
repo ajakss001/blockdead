@@ -651,7 +651,7 @@ export class Viewmodel {
     this.root.updateMatrixWorld(true);
     const hp = gripHands(id, true, true);
     this.arms.setPose(0, hp.R);
-    this.arms.setPose(1, out.left === 'gun' ? hp.L : out.left === 'none' ? 'relaxed' : 'grip_fist');
+    this.arms.setPose(1, out.left === 'gun' ? (out.onBolt ? hp.bolt : hp.L) : out.left === 'none' ? 'relaxed' : 'grip_fist');
     this.arms.update(0, this.uppers[0], rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], rig.left.pose.upperLen, this.armL, this.handL);
   }

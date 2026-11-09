@@ -20,6 +20,8 @@ export interface GripFrame {
 export interface GripHands {
   R?: HandPose;
   L?: HandPose;
+  /** The left hand on the bolt while it works it (a bolt rifle; the left's own pose if not set). */
+  bolt?: HandPose;
 }
 export interface GunGrip {
   hands?: GripHands;
@@ -30,6 +32,9 @@ export interface GunGrip {
   stance?: GripFrame;
   sprint?: GripFrame;
   reload?: GripFrame;
+  /** A bolt rifle: the left hand on the bolt (gun frame), the gun in camera space while the bolt is worked. */
+  bolt?: GripFrame;
+  cycle?: GripFrame;
   /** In the sights: the rear sight this far from the eye, the eye this far over it (m). */
   ads?: { relief?: number; drop?: number };
 }
@@ -54,10 +59,8 @@ export const frameOf = (at: Vector3, q: Quaternion): GripFrame => ({ at: [at.x, 
 /** The hand poses of an item (the defaults: a gun trigger + support, a hand weapon fists, the free hand relaxed). */
 export function gripHands(id: string | null, gun: boolean, twoHanded: boolean): Required<GripHands> {
   const h = (id && GRIPS[id]?.hands) || {};
-  return {
-    R: h.R ?? (gun ? 'grip_trigger' : 'grip_fist'),
-    L: h.L ?? (gun ? 'grip_support' : twoHanded ? 'grip_fist' : 'relaxed'),
-  };
+  const L = h.L ?? (gun ? 'grip_support' : twoHanded ? 'grip_fist' : 'relaxed');
+  return { R: h.R ?? (gun ? 'grip_trigger' : 'grip_fist'), L, bolt: h.bolt ?? L };
 }
 
 const listeners: (() => void)[] = [];
