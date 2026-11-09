@@ -54,10 +54,10 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.0222
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -121,10 +121,10 @@
   },
   "goggles_tactical": {
    "scale": 0.228,
-   "eyeGap": 0.0223
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -188,10 +188,10 @@
   },
   "goggles_tactical": {
    "scale": 0.223,
-   "eyeGap": 0.0243
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -255,10 +255,10 @@
   },
   "goggles_tactical": {
    "scale": 0.226,
-   "eyeGap": 0.0221
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -322,10 +322,10 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.0222
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -389,10 +389,10 @@
   },
   "goggles_tactical": {
    "scale": 0.229,
-   "eyeGap": 0.0223
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -456,10 +456,10 @@
   },
   "goggles_tactical": {
    "scale": 0.228,
-   "eyeGap": 0.0223
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -523,10 +523,10 @@
   },
   "goggles_tactical": {
    "scale": 0.227,
-   "eyeGap": 0.0222
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848
@@ -590,10 +590,10 @@
   },
   "goggles_tactical": {
    "scale": 0.217,
-   "eyeGap": 0.0213
+   "eyeGap": 0.006
   },
   "balaclava": {
-   "tris": 1434
+   "tris": 1379
   },
   "shemagh": {
    "tris": 848

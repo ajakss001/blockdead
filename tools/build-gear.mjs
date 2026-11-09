@@ -43,7 +43,9 @@ export const GEAR = {
   // goes as it comes (Meshy's are), only one over it is simplified (its borders and UV seams kept).
   // Helmets: fitted low and close to each head (fitHelmet), skinned on Head in the body's fit.
   helmet_military: { kind: 'helmet', tris: 2000 },
-  helmet_swat: { kind: 'helmet', tris: 2000 },
+  // The raised visor is thin: at 2000 faces it breaks into shards (the source's own count kept; measured and
+  // placed as at 2000, so the fit on the head and the hand fixes over it stay as they were).
+  helmet_swat: { kind: 'helmet', tris: 4800, measureTris: 2000 },
   helmet_firefighter: { kind: 'helmet', tris: 2000 },
   helmet_construction: { kind: 'helmet', tris: 2000 },
   // Vests as they come (≤ 5000): Meshy's baked vests have a UV island per triangle, and a simplifier with
@@ -58,7 +60,7 @@ export const GEAR = {
   // The face slot: glasses (lenses apart: their own dark see-through material in the game) and masks.
   glasses_ballistic: { kind: 'glasses', tris: 2000, lens: { by: 'color', sat: 48 } },
   goggles_tactical: { kind: 'glasses', tris: 2000, lens: { by: 'window', inset: 0.1 } },
-  balaclava: { kind: 'mask', tris: 2000, mask: 'head' },
+  balaclava: { kind: 'mask', tris: 2000, mask: 'head', cut: { light: 90 } },
   shemagh: { kind: 'mask', tris: 2000, mask: 'neck', standIn: shemaghStandIn },
   mask_half: { kind: 'mask', tris: 2000, mask: 'mouth' },
 };
@@ -502,9 +504,23 @@ for (const id of IDS) {
   const size = b.max.map((v, i) => v - b.min[i]);
   const real = cfg.kind === 'pack' ? cfg.height / size[1] : cfg.kind === 'bag' || cfg.kind === 'box' ? cfg.width / size[0] : 1;
   // Centred on its box, at real size (helmets and vests: unit, sized per body below).
-  const c = b.min.map((v, i) => (v + b.max[i]) / 2);
-  g = transform(g, new Matrix4().makeScale(real, real, real).multiply(new Matrix4().makeTranslation(-c[0], -c[1], -c[2])));
+  let c = b.min.map((v, i) => (v + b.max[i]) / 2);
+  // Measured on a coarser copy (`measureTris`): its box centres both, its inner profile places the piece.
+  const lo = cfg.measureTris && existsSync(join(IN, `${id}.glb`)) ? simplifyGear(await readGear(id), cfg.measureTris) : null;
+  if (lo) {
+    const bl = bounds(lo.pos);
+    c = bl.min.map((v, i) => (v + bl.max[i]) / 2);
+  }
+  const centre = new Matrix4().makeScale(real, real, real).multiply(new Matrix4().makeTranslation(-c[0], -c[1], -c[2]));
+  g = transform(g, centre);
+  if (lo) g.prof = innerProfile(transform(lo, centre));
   if (cfg.lens) g.lens = await findLens(g, cfg.lens);
+  // Light-textured faces cut out (the balaclava's pale eye band: the eyes show through the opening).
+  if (cfg.cut) {
+    const cut = await lightTris(g, cfg.cut.light);
+    g = splitTris(g, cut)[0];
+    report.push(`${id}: вырезано ${cut.reduce((a, x) => a + x, 0)} светлых граней`);
+  }
   pieces[id] = g;
   await texture(id, g.tex, g, cfg.kind === 'glasses' ? 62 : 140);
   const doc = new Document();
@@ -936,7 +952,7 @@ function transformN(g, m) {
  * The piece's vertices that `pick` takes laid onto the body (`offset` off the skin), the rest following them
  * smoothly; nothing left under the skin (nor nearer than `floor`). `region`: the body vertices it may lie on.
  */
-function wrapOnto(body, g, { pick = () => true, offset = 0.004, floor = offset * 0.6, centre, sigma = 0.012, region = null }) {
+function wrapOnto(body, g, { pick = () => true, offset = 0.004, floor = offset * 0.6, centre, sigma = 0.012, region = null, stay = () => false }) {
   const n = g.pos.length / 3;
   const { group, members } = positionGroups(g.pos);
   const together = (pos) => {
@@ -982,6 +998,7 @@ function wrapOnto(body, g, { pick = () => true, offset = 0.004, floor = offset *
   together(pos);
   for (let pass = 0; pass < 3; pass++) {
     for (let i = 0; i < n; i++) {
+      if (stay(i)) continue;
       const p = V(pos, i);
       const { d, s } = signed(body, p);
       if (s && d < floor && s.d < 0.06) setV(pos, i, s.p.clone().addScaledVector(s.n, floor));
@@ -1094,7 +1111,29 @@ function fitHelmet(body, src, cfg = {}) {
   const inv = place.clone().invert();
   // The model's own chin straps hang loose (as it lay): cut off, a strap laid under the chin instead.
   const strapY = prof.rimMin - 0.02;
-  const low = (i) => src.pos[i * 3 + 1] < strapY;
+  // A visor hanging in front is not a strap: in front (±60°) and out at the shell's own reach or beyond.
+  // Out: past the inside of the shell by 8% at its height, or (below the shell) at the front rim's reach.
+  const frontR = prof.at(Math.PI / 2, rimFront) || 0.3;
+  const out = (i, k) => {
+    const x = src.pos[i * 3] - prof.lcx, y = src.pos[i * 3 + 1], z = src.pos[i * 3 + 2] - prof.lcz;
+    const th = Math.atan2(z, x);
+    if (Math.abs(th - Math.PI / 2) > (Math.PI * 7) / 18) return false;
+    const a = prof.at(th, y), r = Math.hypot(x, z);
+    return a > 0 ? r > a * k : r > 0.9 * frontR;
+  };
+  // …and what joins it along its faces out to the shell's inside (its inner edge, its hinges).
+  const isVisor = new Uint8Array(src.pos.length / 3);
+  for (let i = 0; i < isVisor.length; i++) isVisor[i] = out(i, 1.08) ? 1 : 0;
+  for (let pass = 0; pass < 3; pass++) {
+    const add = [];
+    for (let t = 0; t < src.index.length; t += 3) {
+      const tri = [src.index[t], src.index[t + 1], src.index[t + 2]];
+      if (tri.some((i) => isVisor[i])) for (const i of tri) if (!isVisor[i] && out(i, 1.0)) add.push(i);
+    }
+    for (const i of add) isVisor[i] = 1;
+  }
+  const visor = (i) => isVisor[i] === 1;
+  const low = (i) => src.pos[i * 3 + 1] < strapY && !visor(i);
   const shellIdx = [], strapV = [];
   for (let t = 0; t < src.index.length; t += 3) {
     const tri = [src.index[t], src.index[t + 1], src.index[t + 2]];
@@ -1102,7 +1141,27 @@ function fitHelmet(body, src, cfg = {}) {
     else shellIdx.push(...tri);
   }
   let g = transformN({ ...src, index: Uint32Array.from(shellIdx) }, place);
-  g = wrapOnto(body, g, { pick: () => false, floor: 0.003, centre: () => new Vector3(hf.cx, hf.top - 0.08, hf.cz) });
+  const placed = g.pos;
+  // The visor rigid as modelled (not its points snapped out of the brow one by one: spikes) — moved as a whole
+  // by the mean shift of the shell's front round it.
+  g = wrapOnto(body, g, { pick: () => false, floor: 0.003, centre: () => new Vector3(hf.cx, hf.top - 0.08, hf.cz), stay: visor });
+  {
+    const shift = new Vector3();
+    let k = 0;
+    for (let i = 0; i < src.pos.length / 3; i++) {
+      if (visor(i)) continue;
+      const th = Math.atan2(src.pos[i * 3 + 2] - prof.lcz, src.pos[i * 3] - prof.lcx);
+      if (Math.abs(th - Math.PI / 2) > (Math.PI * 7) / 18 || src.pos[i * 3 + 1] < rimFront) continue;
+      shift.add(V(g.pos, i).sub(V(placed, i)));
+      k++;
+    }
+    if (k) {
+      shift.multiplyScalar(1 / k);
+      const pos = new Float32Array(g.pos);
+      for (let i = 0; i < src.pos.length / 3; i++) if (visor(i)) setV(pos, i, V(placed, i).add(shift));
+      g = { ...g, pos };
+    }
+  }
   g = { ...g, ...allTo(body, g.pos.length / 3, 'Head') };
   if (strapV.length > 30) {
     const at = (th, dy = 0) => {
@@ -1226,8 +1285,8 @@ function fitMask(body, src, cfg) {
     // The bridge of the nose to under the chin; the loops back over the ears.
     (hi = hf.eyeY - 0.012), (lo = hf.chin - 0.035), (w = hf.faceW * 1.05), (d = (hf.zf - hf.cz) * 2.1), (zc = hf.cz + 0.01);
   } else {
-    // Round the neck up over the chin, down onto the collar (a strip of bare neck showed between them).
-    (hi = hf.chin + 0.03), (lo = neck.y - 0.11), (w = headW + 0.04), (d = headD + 0.02);
+    // Round the neck up over the chin.
+    (hi = hf.chin + 0.03), (lo = neck.y - 0.08), (w = headW + 0.04), (d = headD + 0.02);
   }
   const place = new Matrix4()
     .makeTranslation(hf.cx, (lo + hi) / 2, zc)
@@ -1271,6 +1330,24 @@ function coveredBy(body, piece, keep) {
  * The lens triangles of a pair of glasses: by colour (tinted lenses in the texture) or, where the lens is the
  * frame's own colour, by place — the frontmost surface inside the frame's outline, `inset` in from it.
  */
+/** Triangles whose texture is light (mean of 4 samples' brightness ≥ `min`, 0–255). */
+async function lightTris(g, min) {
+  const n = g.index.length / 3;
+  const out = new Uint8Array(n);
+  const { data, info } = await sharp(Buffer.from(g.tex)).raw().toBuffer({ resolveWithObject: true });
+  for (let t = 0; t < n; t++) {
+    let l = 0;
+    for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]]) {
+      let u = 0, v = 0;
+      for (let k = 0; k < 3; k++) (u += w[k] * g.uv[g.index[t * 3 + k] * 2]), (v += w[k] * g.uv[g.index[t * 3 + k] * 2 + 1]);
+      const o = (Math.min(info.height - 1, Math.max(0, Math.floor(v * info.height))) * info.width + Math.min(info.width - 1, Math.max(0, Math.floor(u * info.width)))) * info.channels;
+      l += (data[o] * 0.3 + data[o + 1] * 0.59 + data[o + 2] * 0.11) / 4;
+    }
+    out[t] = l >= min ? 1 : 0;
+  }
+  return out;
+}
+
 async function findLens(g, how) {
   const n = g.index.length / 3;
   const lens = new Uint8Array(n);
@@ -1329,10 +1406,7 @@ async function findLens(g, how) {
       const x = Math.round(((v.x - ox) / span) * R), y = Math.round(((v.y - oy) / span) * R);
       return x < 0 || y < 0 || x >= R || y >= R ? 0 : dist[y * R + x];
     };
-    // Only in the front of the frame: a strap going round behind the head is inside the window seen from the
-    // front too (it made the goggles' strap a lens, and the lens's depth pushed them 20 cm off the face).
-    const frontZ = b.max[2] - (b.max[2] - b.min[2]) * 0.3;
-    for (let t = 0; t < n; t++) if (Math.min(...[0, 1, 2].map((k) => P(g.index[t * 3 + k]).z)) > frontZ && Math.min(...[0, 1, 2].map((k) => dAt(P(g.index[t * 3 + k])))) > inset * 1.3) lens[t] = 1;
+    for (let t = 0; t < n; t++) if (Math.min(...[0, 1, 2].map((k) => dAt(P(g.index[t * 3 + k])))) > inset * 1.3) lens[t] = 1;
   }
   // Tidy: a triangle goes with most of its neighbours (by shared corner positions).
   const at = new Map();

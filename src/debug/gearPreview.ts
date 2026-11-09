@@ -75,6 +75,7 @@ const CELLS_ALL: Cell[] = [
   { label: 'замах топором', clip: 'idle', t: 0, dir: [0.8, 0.6], swing: true },
 ];
 const ROW_PICK = QS.get('row')?.split(',');
+const HOLES = QS.has('holes');
 /** ?drop=mask,face: those slots taken off every row (to see a piece of a kit alone). */
 const DROP: Partial<Worn> = Object.fromEntries((QS.get('drop')?.split(',') ?? []).map((k) => [k, null]));
 const pick = (rows: Row[]) => (ROW_PICK ? rows.filter((r) => ROW_PICK.some((p) => r.name.includes(p))) : rows);
@@ -121,6 +122,13 @@ for (const [ri, row] of ROWS.entries()) {
   sun.position.set(2, 4, 3);
   scene.add(hemi, sun, new Mesh(new CircleGeometry(1.2, 32).rotateX(-Math.PI / 2), new MeshLambertMaterial({ color: new Color(grim(0x5a574c)) })));
   applyStage({ scene, hemi, sun, toy: { bg: 0xe4e4e2, hemi: [0xffffff, 0x8a8a80, 1.6], sun: [0xffffff, 1.8] }, fog: 0.02 });
+  if (HOLES) {
+    // ?holes=1: bright light on a magenta ground: every hole in the body or the clothes a pink spot.
+    scene.background = new Color(0xff00ff);
+    scene.fog = null;
+    hemi.intensity = 3;
+    sun.intensity = 2.5;
+  }
   const f = new CharacterFigure();
   f.setAppearance({ ...baseLook(row.sex), height: row.sex === 'male' ? 180 : 168 });
   scene.add(f.root);

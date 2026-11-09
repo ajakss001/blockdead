@@ -126,7 +126,7 @@ export async function loadGear(body: BodyId, gear: readonly GearId[]): Promise<v
   if (!(await loadGearMeta())) return;
   await Promise.all([loadFit(body), ...gear.map(loadPiece)]);
   // A hand fix that moves one of these: the body's cover redone now that the piece is in (gearFit).
-  if (gear.some((g) => fitMoves(fitOf(g, body)))) recover(body);
+  if (gear.some((g) => fitMoves(fitOf(g, body)) || gearKind(g) === 'mask' || gearKind(g) === 'helmet')) recover(body);
 }
 
 export function gearReady(body: BodyId, g: GearId): boolean {
@@ -353,10 +353,12 @@ const TOP_BINS = 36;
 const topBin = (dx: number, dz: number) => Math.min(TOP_BINS - 1, Math.floor(((Math.atan2(dz, dx) + Math.PI) / (2 * Math.PI)) * TOP_BINS));
 
 /** A piece's points at bind as fitted by build-gear and as moved by its hand fix (cached per fit). */
-const moved = new Map<string, { fit: string; raw: PointGrid; now: PointGrid; most: number; dy: number; top: Float32Array | null }>();
-function movedPiece(body: BodyId, g: GearId): { raw: PointGrid; now: PointGrid; most: number; dy: number; top: Float32Array | null } | null {
+type Edge = Float32Array & { cx: number; cz: number };
+type Moved = { raw: PointGrid; now: PointGrid; most: number; dy: number; top: Edge | null; bot: Edge | null };
+const moved = new Map<string, Moved & { fit: string }>();
+function movedPiece(body: BodyId, g: GearId): Moved | null {
   if (!gearReady(body, g) || !hasBody(body)) return null;
-  const f = fitOf(g, body)!;
+  const f = fitOf(g, body) ?? {};
   const key = `${body}:${g}`, sig = JSON.stringify(f);
   const c = moved.get(key);
   if (c?.fit === sig) return c;
@@ -371,18 +373,25 @@ function movedPiece(body: BodyId, g: GearId): { raw: PointGrid; now: PointGrid; 
   let most = 0, dy = 0;
   for (let i = 0; i < raw.length; i += 3) (most = Math.max(most, Math.hypot(now[i] - raw[i], now[i + 1] - raw[i + 1], now[i + 2] - raw[i + 2]))), (dy += now[i + 1] - raw[i + 1]);
   dy /= Math.max(1, raw.length / 3);
-  // A mask's upper edge round the head as moved (the highest point per 10° about the head's axis).
-  let top: Float32Array | null = null;
-  if (gearKind(g) === 'mask') {
+  // A mask's upper and lower edges round the head as moved (the highest and the lowest point per 10° about
+  // the head's axis).
+  // A helmet's rim the same, but past its straps (the lowest tenth of its points per 10° left out).
+  let top: Edge | null = null, bot: Edge | null = null;
+  const kind = gearKind(g);
+  if (kind === 'mask' || kind === 'helmet') {
     const j = asset.lod0.bind[asset.lod0.index.get('Head') ?? 0].elements;
-    top = new Float32Array(TOP_BINS).fill(-Infinity);
-    for (let i = 0; i < now.length; i += 3) {
-      const b = topBin(now[i] - j[12], now[i + 2] - j[14]);
-      top[b] = Math.max(top[b], now[i + 1]);
+    top = Object.assign(new Float32Array(TOP_BINS).fill(-Infinity), { cx: j[12], cz: j[14] });
+    bot = Object.assign(new Float32Array(TOP_BINS).fill(Infinity), { cx: j[12], cz: j[14] });
+    const ys: number[][] = Array.from({ length: TOP_BINS }, () => []);
+    for (let i = 0; i < now.length; i += 3) ys[topBin(now[i] - j[12], now[i + 2] - j[14])].push(now[i + 1]);
+    for (let b = 0; b < TOP_BINS; b++) {
+      const l = ys[b].sort((a, c) => a - c);
+      if (!l.length) continue;
+      top[b] = l[l.length - 1];
+      bot[b] = l[kind === 'helmet' ? Math.floor(l.length * 0.1) : 0];
     }
-    top = Object.assign(top, { cx: j[12], cz: j[14] });
   }
-  const out = { fit: sig, raw: new PointGrid(raw), now: new PointGrid(now), most, dy, top };
+  const out = { fit: sig, raw: new PointGrid(raw), now: new PointGrid(now), most, dy, top, bot };
   moved.set(key, out);
   return out;
 }
@@ -409,22 +418,50 @@ function writeCover(body: BodyId, rig: RigAsset, bits: Uint16Array, f: Float32Ar
         continue;
       }
       if (mp.most < 0.002) continue;
-      // A helmet set lower than built: what was under it is under it still (the crown and the hair above the
-      // old rim are now nearer the top of the shell than the piece's points, but they would come out through it).
-      if (mp.dy < -0.002 && gearKind(g as GearId) === 'helmet') continue;
+      // A helmet: by its rim (below).
+      if (gearKind(g as GearId) === 'helmet') continue;
       const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
-      // A mask moved or made smaller: the face above its new upper edge shows (no holes in the cheeks).
-      if (mp.top) {
-        const t = mp.top as Float32Array & { cx: number; cz: number };
-        if (y > t[topBin(x - t.cx, z - t.cz)] - 0.004) {
-          f[i] = f[i] & ~m;
-          continue;
-        }
-      }
       const d0 = mp.raw.nearest(x, y, z), d1 = mp.now.nearest(x, y, z);
       if (d0 === Infinity ? !(d1 < Infinity || mp.most < 0.01) : !(d1 <= d0 + 0.01)) f[i] = f[i] & ~m;
     }
   }
+  // A mask or a helmet, fitted or not: the body shows above a mask's upper edge and below its lower one or a
+  // helmet's rim (no holes in the cheeks, round the collar or under the back of a helmet where the piece ends
+  // short of what it hides). Above the rim a helmet hides all it did as built (no hair through the crown).
+  for (const g of Object.keys(meta?.gear ?? {}) as GearId[]) {
+    const bit = meta?.gear[g]?.bit;
+    const kind = gearKind(g);
+    if (bit === undefined || (kind !== 'mask' && kind !== 'helmet')) continue;
+    const mp = movedPiece(body, g);
+    if (!mp?.top || !mp.bot) continue;
+    const m = 1 << bit, t = mp.top, b = mp.bot;
+    for (let i = 0; i < n; i++) {
+      if (!(f[i] & m)) continue;
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+      const k = topBin(x - t.cx, z - t.cz);
+      if ((kind === 'mask' && y > t[k] - 0.004) || y < b[k] + 0.004) f[i] = f[i] & ~m;
+    }
+  }
+  // A vest, a pack, a bag: its hidden patch one ring of vertices smaller (the triangles at its edge drawn — a
+  // strap narrower than the faces under it leaves no hole; a little of the shirt at the edge may show).
+  const ring = ringsOf(rig);
+  if (ring)
+    for (const g of Object.keys(meta?.gear ?? {}) as GearId[]) {
+      const bit = meta?.gear[g]?.bit;
+      const kind = gearKind(g);
+      if (bit === undefined || !(kind === 'vest' || kind === 'pack' || kind === 'bag' || kind === 'box')) continue;
+      const m = 1 << bit;
+      const edge: number[] = [];
+      for (let i = 0; i < n; i++) {
+        if (!(f[i] & m)) continue;
+        for (let k = ring.start[i]; k < ring.start[i + 1]; k++)
+          if (!(f[ring.list[k]] & m)) {
+            edge.push(i);
+            break;
+          }
+      }
+      for (const i of edge) f[i] = f[i] & ~m;
+    }
   let clear: Map<string, number> | null = null;
   for (const [g, per] of Object.entries(GEAR_FIT)) {
     const show = per?.[body]?.show;
@@ -443,6 +480,30 @@ function writeCover(body: BodyId, rig: RigAsset, bits: Uint16Array, f: Float32Ar
     if (c) f[i] = f[i] & ~c;
   }
   return f;
+}
+
+/** Each vertex's neighbours along the body's triangles (CSR: `list[start[i]..start[i+1]]`), cached per rig. */
+const rings = new WeakMap<RigAsset, { start: Uint32Array; list: Uint32Array }>();
+function ringsOf(rig: RigAsset): { start: Uint32Array; list: Uint32Array } | null {
+  const c = rings.get(rig);
+  if (c) return c;
+  const idx = rig.geometry.getIndex();
+  if (!idx) return null;
+  const n = rig.geometry.getAttribute('position').count;
+  const sets: Set<number>[] = Array.from({ length: n }, () => new Set());
+  for (let t = 0; t + 2 < idx.count; t += 3) {
+    const a = idx.getX(t), b = idx.getX(t + 1), d = idx.getX(t + 2);
+    sets[a].add(b).add(d);
+    sets[b].add(a).add(d);
+    sets[d].add(a).add(b);
+  }
+  const start = new Uint32Array(n + 1);
+  for (let i = 0; i < n; i++) start[i + 1] = start[i] + sets[i].size;
+  const list = new Uint32Array(start[n]);
+  for (let i = 0; i < n; i++) list.set([...sets[i]], start[i]);
+  const out = { start, list };
+  rings.set(rig, out);
+  return out;
 }
 
 /**
