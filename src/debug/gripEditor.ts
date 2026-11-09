@@ -24,6 +24,7 @@ import { type Grip, GRIPS, gripsChanged, frameOf, quat, vec } from '../player/gr
 import { gunRigData, keyQ } from '../player/gunPose';
 import { heldConfig, type HeldId } from '../player/held';
 import { swingTime } from '../player/armRig';
+import { BODY_IDS, type BodyId, bodyAsset, loadBody } from '../characters/assets';
 import type { GunAction } from '../weapons/gunState';
 import { Viewmodel, type ViewmodelFrame } from '../player/Viewmodel';
 import { GUN_IDS, GUNS, type GunId } from '../weapons/guns';
@@ -50,6 +51,18 @@ const TAB_NAMES: Record<Tab, string> = { stance: 'Стойка', ads: 'Приц�
 const MELEE: (HeldId | 'fists')[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer', 'fists'];
 const ITEMS: string[] = [...GUN_IDS, ...MELEE];
 const DEG = 180 / Math.PI;
+/** The arms' costume (the game's sleeves and arm lengths): ?gripedit=<item>&body=<id>. */
+const BODY_NAMES: Record<BodyId, string> = {
+  male: 'Без костюма (м)',
+  female: 'Без костюма (ж)',
+  swat_m: 'Спецназ (SWAT)',
+  military_m: 'Военный',
+  police_m: 'Полицейский',
+  firefighter_m: 'Пожарный',
+  doctor_m: 'Врач',
+  mechanic_m: 'Механик',
+  builder_m: 'Строитель',
+};
 
 interface VmInternals {
   gunPose: { pos: Vector3; q: Quaternion };
@@ -116,7 +129,15 @@ export async function startGripEditor(first: string | null): Promise<void> {
   bg.background = new Color(0x5e6366);
 
   const vm = new Viewmodel();
-  vm.setBody('male', 1);
+  let body: BodyId = 'male';
+  /** The arms in a costume, at the game's size for it (a man 180 cm, a woman 170). */
+  const setArms = async (b: BodyId): Promise<void> => {
+    if (!(await loadBody(b))) return;
+    body = b;
+    vm.setBody(b, (b === 'female' ? 1.7 : 1.8) / bodyAsset(b).height);
+  };
+  vm.setBody('male', 1.8 / bodyAsset('male').height);
+  const firstBody = new URLSearchParams(location.search).get('body') as BodyId | null;
   vm.setAspect(16 / 9);
   vm.setDaylight(1);
   const vi = vm as unknown as VmInternals;
@@ -388,10 +409,21 @@ export async function startGripEditor(first: string | null): Promise<void> {
     for (const x of ITEMS) sel.append(el('option', { value: x, textContent: isGunId(x) ? `${GUNS[x].name} (${x})` : x, selected: x === id }));
     sel.onchange = () => {
       id = sel.value;
-      history.replaceState(null, '', `?gripedit=${id}`);
+      history.replaceState(null, '', `?gripedit=${id}${body === 'male' ? '' : `&body=${body}`}`);
       equip();
     };
     panel.append(el('h3', { textContent: 'Предмет' }), el('div', { className: 'ge__row' }, sel));
+    // The costume: its sleeves and arm lengths (the grips are the gun's, the same in every costume).
+    const bs = el<HTMLSelectElement>('select');
+    for (const b of BODY_IDS) bs.append(el('option', { value: b, textContent: BODY_NAMES[b] ?? b, selected: b === body }));
+    bs.onchange = () =>
+      void setArms(bs.value as BodyId).then(() => {
+        history.replaceState(null, '', `?gripedit=${id}${body === 'male' ? '' : `&body=${body}`}`);
+        settle(60);
+        placeProxy();
+        updateOut();
+      });
+    panel.append(el('h3', { textContent: 'Костюм' }), el('div', { className: 'ge__row' }, bs));
 
     const tabs = el('div', { className: 'ge__row' });
     for (const t of Object.keys(TAB_NAMES) as Tab[]) {
@@ -733,6 +765,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
   vm.scene.add(...helpers);
   addEventListener('resize', size);
   size();
+  if (firstBody && (BODY_IDS as readonly string[]).includes(firstBody)) await setArms(firstBody);
   equip();
   const tick = () => {
     if (!playStep()) settle(1);
