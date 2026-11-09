@@ -263,6 +263,16 @@ export interface GunRigData {
   adsAt: Vector3;
   /** How far the magazine slides out before it leaves the well, m. */
   magPull: number;
+  /** The editor's keys of the moves, by action, in time order. */
+  keys: Partial<Record<GunAction, MoveKey[]>>;
+}
+
+/** A move's key compiled: the gun (camera space), the left hand (gun frame). */
+export interface MoveKey {
+  k: number;
+  span: number;
+  gun: HandOnGun | null;
+  L: HandOnGun | null;
 }
 
 const rigs = new Map<GunId, GunRigData>();
@@ -321,7 +331,12 @@ export function gunRigData(id: GunId): GunRigData {
       ? { at: v(s.sightR).add(new Vector3(0, -0.012, 0.01)), q: rolled(basisQuat(new Vector3(0, 0, 1), new Vector3(1, 0, 0)), cls.boltRoll) }
       : { at: v(s.bolt), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.3, 0.85, 0)), cls.boltRoll) };
   const load: HandOnGun = { at: v(s.load), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.2, 1, 0)), cls.loadRoll) };
-  r = { id, s, cls, main, off, magHold, bolt, load, hipQ, hipAt, adsQ, adsAt, magPull: g.cls === 'pistol' ? 0.1 : 0.13 };
+  const keys: Partial<Record<GunAction, MoveKey[]>> = {};
+  for (const [a, list] of Object.entries(G.keys ?? {}))
+    keys[a as GunAction] = [...list]
+      .sort((x, y) => x.k - y.k)
+      .map((x) => ({ k: x.k, span: x.span ?? 0.15, gun: x.gun ? { at: vec(x.gun.at), q: quat(x.gun.q) } : null, L: x.L ? { at: vec(x.L.at), q: quat(x.L.q) } : null }));
+  r = { id, s, cls, main, off, magHold, bolt, load, hipQ, hipAt, adsQ, adsAt, magPull: g.cls === 'pistol' ? 0.1 : 0.13, keys };
   rigs.set(id, r);
   return r;
 }
@@ -420,6 +435,10 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   // Put away / drawn: down out of the frame.
   blendKey(d, d.cls.lowered, easeInOutSine(clamp(inp.lower, 0, 1)), at, q);
 
+  // The editor's keys of this move: the gun.
+  const keys = d.keys[a];
+  if (keys) keyed(keys, k, 'gun', at, q);
+
   // Right hand: always on the grip.
   onGun(at, q, d.main, out.rightGrip, out.rightQ);
   out.rollR = P.adsMainRoll * ads;
@@ -443,8 +462,68 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   out.rollL = P.adsOffRoll * ads;
   if (out.rollL) out.leftQ.multiply(_q.setFromAxisAngle(_a.set(0, 1, 0), out.rollL));
   magSeated(d, at, q, out);
-  if (!reloading && !(a === 'cycle' && g.action === 'bolt')) return;
-  leftPath(d, g.feed, a, k, at, q, out);
+  if (reloading || (a === 'cycle' && g.action === 'bolt')) leftPath(d, g.feed, a, k, at, q, out);
+  // The keys: the left hand (what it holds goes with it).
+  if (keys) keyLeft(keys, k, at, q, out);
+}
+
+const _kA = { at: new Vector3(), q: new Quaternion() };
+const _kB = { at: new Vector3(), q: new Quaternion() };
+const _kG = new Vector3();
+const _kQ = new Quaternion();
+const _kD = new Quaternion();
+
+/** A key's weight at k: a smooth bump over its span, never past the neighbouring keys (two in a row add up to 1). */
+function keyW(keys: MoveKey[], i: number, k: number): number {
+  const c = keys[i];
+  const prev = i > 0 ? c.k - keys[i - 1].k : Infinity, next = i < keys.length - 1 ? keys[i + 1].k - c.k : Infinity;
+  const span = Math.max(1e-4, Math.min(c.span, k < c.k ? prev : next));
+  const x = 1 - Math.abs(k - c.k) / span;
+  return x <= 0 ? 0 : x * x * (3 - 2 * x);
+}
+
+/** The keyed frame of a part at k (the active keys mixed) and its total weight; 0 if none. */
+function keyMix(keys: MoveKey[], k: number, part: 'gun' | 'L', out: { at: Vector3; q: Quaternion }): number {
+  let total = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const f = keys[i][part];
+    if (!f) continue;
+    const w = keyW(keys, i, k);
+    if (w <= 0) continue;
+    if (total === 0) {
+      out.at.copy(f.at);
+      out.q.copy(f.q);
+    } else {
+      out.at.lerp(f.at, w / (total + w));
+      out.q.slerp(f.q, w / (total + w));
+    }
+    total += w;
+  }
+  return Math.min(1, total);
+}
+
+function keyed(keys: MoveKey[], k: number, part: 'gun', at: Vector3, q: Quaternion): void {
+  const w = keyMix(keys, k, part, _kA);
+  if (w <= 0) return;
+  at.lerp(_kA.at, w);
+  q.slerp(_kA.q, w);
+}
+
+function keyLeft(keys: MoveKey[], k: number, at: Vector3, q: Quaternion, out: GunPoseOut): void {
+  const w = keyMix(keys, k, 'L', _kB);
+  if (w <= 0) return;
+  // The key's hand on the gun as posed now (gun frame → camera).
+  onGun(at, q, _kB, _kG, _kQ);
+  const g0 = _p.copy(out.leftGrip);
+  const q0 = _q2.copy(out.leftQ);
+  out.leftGrip.lerp(_kG, w);
+  out.leftQ.slerp(_kQ, w);
+  // The magazine / shell / rocket in the hand moves with it.
+  if (out.left !== 'gun' && out.left !== 'none' && !out.magOnGun) {
+    _kD.copy(out.leftQ).multiply(q0.invert());
+    out.magPos.sub(g0).applyQuaternion(_kD).add(out.leftGrip);
+    out.magQ.premultiply(_kD);
+  }
 }
 
 function magSeated(d: GunRigData, at: Vector3, q: Quaternion, out: GunPoseOut): void {

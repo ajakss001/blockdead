@@ -23,6 +23,17 @@ export interface GripHands {
   /** The left hand on the bolt while it works it (a bolt rifle; the left's own pose if not set). */
   bolt?: HandPose;
 }
+/**
+ * A key of a gun's move (grip editor «Кадры»): at `k` (share of the move's time) the gun (camera space) and / or
+ * the left hand (gun frame) are exactly here, faded in and out over `span` either side (no further than the
+ * neighbouring keys).
+ */
+export interface GunKey {
+  k: number;
+  span?: number;
+  gun?: GripFrame;
+  L?: GripFrame;
+}
 export interface GunGrip {
   hands?: GripHands;
   /** The right / left hand on the gun (gun frame: the grip at the origin, the barrel −Z). */
@@ -35,6 +46,8 @@ export interface GunGrip {
   /** A bolt rifle: the left hand on the bolt (gun frame), the gun in camera space while the bolt is worked. */
   bolt?: GripFrame;
   cycle?: GripFrame;
+  /** Keys of the moves by action (reload, loadOne, bash, …). */
+  keys?: Record<string, GunKey[]>;
   /** In the sights: the rear sight this far from the eye, the eye this far over it (m). */
   ads?: { relief?: number; drop?: number };
 }

@@ -20,7 +20,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { HAND_POSES, type HandPose } from '../characters/hands';
 import { basisQuat } from '../player/armRig';
-import { type Grip, GRIPS, gripsChanged, frameOf, quat, vec } from '../player/grips';
+import { type Grip, type GunKey, GRIPS, gripsChanged, frameOf, quat, vec } from '../player/grips';
 import { gunRigData, keyQ } from '../player/gunPose';
 import { heldConfig, type HeldId } from '../player/held';
 import { swingTime } from '../player/armRig';
@@ -41,13 +41,15 @@ import { gunReference, meleeReference } from './gripReference';
  * «Эталон» puts the reference hold (debug/gripReference.ts). Readout: the wrists against their limits, the
  * hand gap from its socket, how much of the screen a hand takes. «Анимации» plays the item's moves in real time
  * (a shot with its recoil, the bolt / pump, reloads, the sights, sprint, inspect, the butt, put away and drawn;
- * a hand weapon's swing) — one or all in a row, with the grips as edited.
+ * a hand weapon's swing) — one or all in a row, with the grips as edited. «Кадры»: any moment of a gun's move
+ * (reload, a round, the butt, …) — the gun and the hands put there make a key of that move only (grips.json →
+ * keys), faded in and out over its «плавность»; the rest of the move and the other poses stay as they were.
  */
 
-type Tab = 'stance' | 'ads' | 'sprint' | 'reload' | 'bolt';
+type Tab = 'stance' | 'ads' | 'sprint' | 'reload' | 'bolt' | 'keys';
 /** torch: the flashlight in the left hand beside a one-handed weapon (its own pose, grips.json → torch). */
 type Target = 'gun' | 'R' | 'L' | 'torch';
-const TAB_NAMES: Record<Tab, string> = { stance: 'Стойка', ads: 'Прицел', sprint: 'Бег', reload: 'Перезарядка', bolt: 'Затвор' };
+const TAB_NAMES: Record<Tab, string> = { stance: 'Стойка', ads: 'Прицел', sprint: 'Бег', reload: 'Перезарядка', bolt: 'Затвор', keys: 'Кадры' };
 const MELEE: (HeldId | 'fists')[] = ['axe', 'bat', 'crowbar', 'knife', 'hammer', 'fists'];
 const ITEMS: string[] = [...GUN_IDS, ...MELEE];
 const DEG = 180 / Math.PI;
@@ -65,7 +67,7 @@ const BODY_NAMES: Record<BodyId, string> = {
 };
 
 interface VmInternals {
-  gunPose: { pos: Vector3; q: Quaternion };
+  gunPose: { pos: Vector3; q: Quaternion; rightGrip: Vector3; rightQ: Quaternion; leftGrip: Vector3; leftQ: Quaternion };
   armR: Object3D;
   armL: Object3D;
   handR: Object3D;
@@ -87,6 +89,9 @@ body{margin:0;background:#2a2c2b;color:#d6d4ca;font:13px system-ui,sans-serif;ov
 .ge__panel{padding:10px;overflow:auto;background:#222423;border-left:1px solid #444}
 .ge__panel h3{margin:12px 0 6px;font-size:12px;text-transform:uppercase;color:#9a988e}
 .ge__row{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+.ge__line{position:relative;padding-top:12px;margin-bottom:6px}.ge__line input{width:100%;margin:0}
+.ge__mark{position:absolute;top:0;width:9px;height:11px;margin-left:-4px;background:#8e8c82;clip-path:polygon(0 0,100% 0,50% 100%);cursor:pointer}.ge__mark.on{background:#c9a24a}
+.ge__hint{font-size:12px;opacity:.75;margin-bottom:6px}
 .ge button,.ge select{background:#3a3c3a;color:#d6d4ca;border:1px solid #555;border-radius:3px;padding:4px 8px;font:inherit;cursor:pointer}
 .ge button.on{background:#6b7a5a;border-color:#8a9a72}
 .ge button:disabled{opacity:.35;cursor:default}
@@ -200,6 +205,43 @@ export async function startGripEditor(first: string | null): Promise<void> {
   const boltGun = (x: string) => isGunId(x) && GUNS[x].action === 'bolt';
   const grip = (): Grip => (GRIPS[id] ??= {});
 
+  // ── «Кадры»: a moment of a gun's move ──
+  const ACT_NAMES: Partial<Record<GunAction, string>> = {
+    reload: 'Перезарядка',
+    reloadEmpty: 'Перезарядка с пустого',
+    loadStart: 'Зарядка: начало',
+    loadOne: 'Патрон',
+    loadEnd: 'Зарядка: конец',
+    cycle: 'Затвор / помпа',
+    mode: 'Режим огня',
+    inspect: 'Осмотр',
+    bash: 'Удар прикладом',
+    draw: 'Достать',
+    holster: 'Убрать',
+  };
+  const DEF_TIME: Partial<Record<GunAction, number>> = { reload: 2, reloadEmpty: 2.5, loadStart: 0.4, loadOne: 0.5, loadEnd: 0.4, cycle: 0.6, mode: 0.3, inspect: 3, bash: 0.7, draw: 0.6, holster: 0.5 };
+  /** The gun's moves that can be keyed. */
+  const keyActions = (): GunAction[] => {
+    if (!isGunId(id)) return [];
+    const g = GUNS[id];
+    const out: GunAction[] = g.feed === 'mag' ? ['reload', 'reloadEmpty'] : g.feed === 'rocket' ? ['reload'] : ['loadStart', 'loadOne', 'loadEnd'];
+    if (g.action === 'bolt' || g.action === 'pump') out.push('cycle');
+    if (g.modes.length > 1) out.push('mode');
+    out.push('bash', 'inspect', 'draw', 'holster');
+    return out;
+  };
+  const actTime = (a: GunAction): number => {
+    const T = isGunId(id) ? (GUNS[id].times as unknown as Record<string, number | undefined>) : {};
+    const t = T[a];
+    return t && t > 0 ? t : (DEF_TIME[a] ?? 0.5);
+  };
+  let keyAct: GunAction = 'reload';
+  let keyK = 0.5;
+  /** The move's keys (grips.json), in time order. */
+  const keyList = (): GunKey[] => grip().keys?.[keyAct] ?? [];
+  /** The key at the moment (within 2% of the move), if any. */
+  const keyAt = (): GunKey | undefined => keyList().find((x) => Math.abs(x.k - keyK) < 0.02);
+
   // ── The arms posed for the tab ──
   const frame = (): ViewmodelFrame => ({ lookX: 0, lookY: 0, stepPhase: 0, speed: tab === 'sprint' ? 5.5 : 0, sprinting: tab === 'sprint', flashlightOn: target === 'torch' });
   const settle = (n: number) => {
@@ -208,7 +250,12 @@ export async function startGripEditor(first: string | null): Promise<void> {
     gv.wall = 0;
     gv.wallDist = 99;
     gv.chamber = true;
-    if (isGunId(id) && tab === 'bolt') {
+    if (isGunId(id) && tab === 'keys') {
+      gv.action = keyAct;
+      gv.duration = actTime(keyAct);
+      gv.t = gv.duration * keyK;
+      gv.chamber = keyAct !== 'reloadEmpty' && !(keyAct === 'reload' && GUNS[id].feed === 'rocket');
+    } else if (isGunId(id) && tab === 'bolt') {
       // The hand on the bolt, before it pulls it back.
       gv.action = 'cycle';
       gv.duration = GUNS[id].times.cycle ?? 0.5;
@@ -344,6 +391,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
     if (isGunId(id)) {
       const d = gunRigData(id);
       if (target === 'gun') {
+        if (tab === 'keys') return { at: vi.gunPose.pos.clone(), q: vi.gunPose.q.clone() };
         if (tab === 'stance') return { at: d.hipAt.clone(), q: d.hipQ.clone() };
         if (tab === 'sprint' || tab === 'reload') {
           const k = d.cls[tab];
@@ -353,6 +401,11 @@ export async function startGripEditor(first: string | null): Promise<void> {
         return null;
       }
       const g = vi.gunPose;
+      if (tab === 'keys') {
+        // As posed at this moment (the keys in).
+        if (target === 'R') return { at: g.rightGrip.clone(), q: g.rightQ.clone() };
+        return { at: g.leftGrip.clone(), q: g.leftQ.clone() };
+      }
       const h = target === 'R' ? d.main : tab === 'bolt' ? d.bolt : d.off;
       return { at: h.at.clone().applyQuaternion(g.q).add(g.pos), q: g.q.clone().multiply(h.q) };
     }
@@ -366,7 +419,29 @@ export async function startGripEditor(first: string | null): Promise<void> {
     const G = grip();
     proxy.updateMatrixWorld(true);
     const f = frameOf(proxy.position, proxy.quaternion);
-    if (isGunId(id)) {
+    if (isGunId(id) && tab === 'keys') {
+      // A key of this move at this moment (made if there is none).
+      const all = (G.keys ??= {});
+      const list = (all[keyAct] ??= []);
+      let key = keyAt();
+      if (!key) {
+        key = { k: Math.round(keyK * 1000) / 1000 };
+        list.push(key);
+        list.sort((x, y) => x.k - y.k);
+        keyK = key.k;
+      }
+      const g = vi.gunPose;
+      if (target === 'gun') key.gun = f;
+      else if (target === 'R') {
+        // The gun follows the right hand: gun = hand × main⁻¹.
+        const d = gunRigData(id);
+        const q = proxy.quaternion.clone().multiply(d.main.q.clone().invert());
+        key.gun = frameOf(proxy.position.clone().sub(d.main.at.clone().applyQuaternion(q)), q);
+      } else {
+        const inv = g.q.clone().invert();
+        key.L = frameOf(proxy.position.clone().sub(g.pos).applyQuaternion(inv), inv.multiply(proxy.quaternion));
+      }
+    } else if (isGunId(id)) {
       if (target === 'gun') {
         if (tab === 'stance') G.stance = f;
         else if (tab === 'sprint') G.sprint = f;
@@ -402,6 +477,110 @@ export async function startGripEditor(first: string | null): Promise<void> {
     msg.textContent = t;
   };
 
+  /** «Кадры»: the move, the moment on its timeline, its keys. */
+  function keysPanel(): void {
+    const acts = keyActions();
+    if (!acts.includes(keyAct)) keyAct = acts[0];
+    const refresh = (n = 30) => {
+      settle(n);
+      placeProxy();
+      updateOut();
+    };
+    const go = (k: number) => {
+      keyK = Math.min(1, Math.max(0, k));
+      // Onto a key close by, so it is edited exactly where it is.
+      const near = keyList().find((x) => Math.abs(x.k - keyK) < 0.02);
+      if (near) keyK = near.k;
+      build();
+      refresh();
+    };
+    const as = el<HTMLSelectElement>('select');
+    for (const a of acts) {
+      const n = grip().keys?.[a]?.length ?? 0;
+      as.append(el('option', { value: a, textContent: `${ACT_NAMES[a] ?? a}${n ? ` · ключей ${n}` : ''}`, selected: a === keyAct }));
+    }
+    as.onchange = () => {
+      keyAct = as.value as GunAction;
+      keyK = keyList()[0]?.k ?? 0.5;
+      build();
+      refresh(60);
+    };
+    const dur = actTime(keyAct);
+    const when = (k: number) => `${Math.round(k * 100)}% · ${(k * dur).toFixed(2)} с`;
+    // The timeline: the moment and the keys on it (click a mark to go to it).
+    const line = el('div', { className: 'ge__line' });
+    const r = el<HTMLInputElement>('input', { type: 'range', min: '0', max: '1', step: '0.005', value: String(keyK) });
+    const val = el('span', { textContent: when(keyK) });
+    r.oninput = () => {
+      keyK = Number(r.value);
+      val.textContent = when(keyK);
+      refresh(20);
+    };
+    r.onchange = () => go(Number(r.value));
+    const list = keyList();
+    for (const x of list) {
+      const m = el('div', { className: `ge__mark${Math.abs(x.k - keyK) < 0.02 ? ' on' : ''}`, title: `${Math.round(x.k * 100)}%${x.gun ? ' оружие' : ''}${x.L ? ' левая' : ''}` });
+      m.style.left = `calc(7px + (100% - 14px) * ${x.k})`;
+      m.onclick = () => go(x.k);
+      line.append(m);
+    }
+    line.append(r);
+    const prev = el<HTMLButtonElement>('button', { textContent: '◀ ключ', disabled: !list.some((x) => x.k < keyK - 1e-4) });
+    const next = el<HTMLButtonElement>('button', { textContent: 'ключ ▶', disabled: !list.some((x) => x.k > keyK + 1e-4) });
+    prev.onclick = () => go([...list].reverse().find((x) => x.k < keyK - 1e-4)!.k);
+    next.onclick = () => go(list.find((x) => x.k > keyK + 1e-4)!.k);
+    const key = keyAt();
+    const drop = () => {
+      const all = grip().keys!;
+      all[keyAct] = list.filter((x) => x !== key);
+      if (!all[keyAct]!.length) delete all[keyAct];
+      if (!Object.keys(all).length) delete grip().keys;
+      gripsChanged();
+      build();
+      refresh();
+      say('Ключ удалён (не сохранено)');
+    };
+    const del = el<HTMLButtonElement>('button', { textContent: 'Удалить ключ', disabled: !key });
+    del.onclick = drop;
+    const part = (p: 'gun' | 'L', name: string) => {
+      const b = el<HTMLButtonElement>('button', { textContent: `без ${name}`, disabled: !key?.[p], title: `Ключ не трогает ${name}` });
+      b.onclick = () => {
+        delete key![p];
+        if (!key!.gun && !key!.L) return drop();
+        gripsChanged();
+        build();
+        refresh();
+      };
+      return b;
+    };
+    const playIt = el('button', { textContent: '▶ Проиграть' });
+    playIt.onclick = () => {
+      play = { list: [{ name: ACT_NAMES[keyAct] ?? keyAct, dur, action: keyAct }], i: 0, t: 0, loop: false };
+      playLast = performance.now();
+      say(playLabel());
+    };
+    const what = key ? [key.gun && 'оружие (с правой)', key.L && 'левая'].filter(Boolean).join(', ') || '—' : '';
+    panel.append(
+      el('h3', { textContent: 'Кадр движения' }),
+      el('div', { className: 'ge__row' }, as, playIt),
+      el('label', {}, 'момент ', val),
+      line,
+      el('div', { className: 'ge__row' }, prev, next, del),
+      el('div', { className: 'ge__row' }, part('gun', 'оружия'), part('L', 'левой')),
+      el('div', { className: 'ge__hint', textContent: key ? `Ключ ${Math.round(key.k * 100)}%: ${what}` : 'Здесь ключа нет: сдвиньте оружие или кисть — появится ключ этого момента (только этого движения)' }),
+    );
+    if (key) {
+      const sp = el<HTMLInputElement>('input', { type: 'range', min: '0.02', max: '0.6', step: '0.01', value: String(key.span ?? 0.15) });
+      const sv = el('span', { textContent: `${Math.round((key.span ?? 0.15) * 100)}%` });
+      sp.oninput = () => {
+        key.span = Number(sp.value);
+        sv.textContent = `${Math.round(key.span * 100)}%`;
+        gripsChanged();
+      };
+      panel.append(el('label', { title: 'Сколько движения до и после ключа он набирает и отпускает силу' }, 'плавность ', sp, sv));
+    }
+  }
+
   function build(): void {
     panel.replaceChildren();
     const gun = isGunId(id);
@@ -427,7 +606,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
 
     const tabs = el('div', { className: 'ge__row' });
     for (const t of Object.keys(TAB_NAMES) as Tab[]) {
-      const b = el<HTMLButtonElement>('button', { textContent: TAB_NAMES[t], className: t === tab ? 'on' : '', disabled: (!gun && (t === 'ads' || t === 'reload')) || (t === 'bolt' && !boltGun(id)) });
+      const b = el<HTMLButtonElement>('button', { textContent: TAB_NAMES[t], className: t === tab ? 'on' : '', disabled: (!gun && (t === 'ads' || t === 'reload' || t === 'keys')) || (t === 'bolt' && !boltGun(id)) });
       b.onclick = () => {
         tab = t;
         build();
@@ -466,6 +645,7 @@ export async function startGripEditor(first: string | null): Promise<void> {
     rt.onclick = () => mode('rotate');
     mode(gizmo.mode === 'rotate' ? 'rotate' : 'translate');
     panel.append(el('h3', { textContent: 'Что двигать (gizmo)' }), tg, el('div', { className: 'ge__row' }, mv, rt));
+    if (gun && tab === 'keys') keysPanel();
 
     // Hand poses.
     const hp = el('div');
@@ -715,7 +895,8 @@ export async function startGripEditor(first: string | null): Promise<void> {
 
   function equip(): void {
     vm.equip(id as never);
-    tab = (!isGunId(id) && (tab === 'ads' || tab === 'reload')) || (tab === 'bolt' && !boltGun(id)) ? 'stance' : tab;
+    tab = (!isGunId(id) && (tab === 'ads' || tab === 'reload' || tab === 'keys')) || (tab === 'bolt' && !boltGun(id)) ? 'stance' : tab;
+    if (isGunId(id) && !keyActions().includes(keyAct)) keyAct = keyActions()[0];
     if (!isGunId(id)) target = 'gun';
     build();
     settle(150);
@@ -792,6 +973,20 @@ export async function startGripEditor(first: string | null): Promise<void> {
         equip();
         settle(120);
         render();
+      },
+      /** «Кадры»: go to a moment of a move. */
+      moment: (a: GunAction, k: number) => {
+        keyAct = a;
+        keyK = k;
+        build();
+        settle(60);
+        placeProxy();
+      },
+      /** Move the gizmo's thing by (x, y, z) m, as a drag would. */
+      nudge: (x: number, y: number, z: number) => {
+        proxy.position.add(new Vector3(x, y, z));
+        writeBack();
+        placeProxy();
       },
       reference: (x: string) => {
         GRIPS[x] = reference(x);
