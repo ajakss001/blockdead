@@ -348,21 +348,21 @@ body {
   right: calc(env(safe-area-inset-right, 0px) + 8px);
   z-index: 2;
   display: flex;
-  gap: 4px;
-  padding: 3px 5px;
+  gap: 3px;
+  padding: 2px 4px;
   background: rgba(8, 9, 11, 0.35);
 }
-.stat { position: relative; width: 38px; height: 38px; opacity: 0.55; transition: opacity 0.4s; }
+.stat { position: relative; width: 26px; height: 26px; opacity: 0.55; transition: opacity 0.4s; }
 .stat--warn { opacity: 0.95; }
 .stat--critical { animation: stat-blink 0.8s steps(2, jump-none) infinite; }
 .stat[hidden] { display: none; }
-.stat__img { position: absolute; left: 0; bottom: 0; width: 38px; height: 38px; image-rendering: pixelated; }
+.stat__img { position: absolute; left: 0; bottom: 0; width: 26px; height: 26px; image-rendering: pixelated; }
 .stat__fill { position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; }
 .stat--wound { position: relative; opacity: 1; animation: stat-blink 1.2s steps(2, jump-none) infinite; }
 @keyframes stat-blink { from { opacity: 1; } to { opacity: 0.25; } }
 @media (max-height: 430px) {
-  .stats { top: calc(env(safe-area-inset-top, 0px) + 5px); right: calc(env(safe-area-inset-right, 0px) + 6px); gap: 3px; }
-  .stat, .stat__img { width: 30px; height: 30px; }
+  .stats { top: calc(env(safe-area-inset-top, 0px) + 5px); right: calc(env(safe-area-inset-right, 0px) + 6px); gap: 2px; }
+  .stat, .stat__img { width: 20px; height: 20px; }
 }
 .action {
   position: absolute;
