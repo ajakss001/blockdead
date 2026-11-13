@@ -433,14 +433,19 @@ export class WorldScene implements IScene {
       hurtPlayer: (hp, _fx, _fz, cause) => this.hurt(hp, cause, true),
       placeAt: () => this.echoPlace(),
       onDropLoot: (bot) => {
+        const rd = bot.ragdoll;
+        const pelvis = rd ? rd.poses[PART.pelvis].p : bot.pos;
+        const box = rd
+          ? bodyBox(rd)
+          : ([bot.pos.x, bot.pos.y + 0.22, bot.pos.z, 0.75, 0.32, 0.55, bot.yaw] as [number, number, number, number, number, number, number]);
         const ref: ContainerRef = {
           id: BANDIT_BODY_ID + bot.id,
           type: 'bodyTwin',
-          x: bot.pos.x,
-          z: bot.pos.z,
-          y: bot.pos.y,
-          zone: this.chunks.zoneAt(bot.pos.x, bot.pos.z),
-          box: [bot.pos.x, bot.pos.y + 0.18, bot.pos.z, 0.7, 0.25, 0.45, bot.yaw],
+          x: pelvis.x,
+          z: pelvis.z,
+          y: pelvis.y,
+          zone: this.chunks.zoneAt(pelvis.x, pelvis.z),
+          box,
         };
         this.containers.addLoose(ref, bot.loot);
       },

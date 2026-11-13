@@ -294,6 +294,10 @@ export class Bandits {
         if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) {
           this.applyRagdollPose(b);
         }
+        if (!b.lootDropped && (!b.ragdoll || b.ragdoll.asleep || b.deadT > 2.0)) {
+          b.lootDropped = true;
+          this.w.onDropLoot?.(b);
+        }
         if (b.deadT > CORPSE_LIFE || distSq > DESPAWN_DIST * DESPAWN_DIST) {
           this.removeAt(i);
         }
@@ -533,7 +537,7 @@ export class Bandits {
       b.state = 'dead';
       b.deadT = 0;
       this.becomeRagdoll(b, fromX, fromZ);
-      if (!b.lootDropped) {
+      if (!b.ragdoll && !b.lootDropped) {
         b.lootDropped = true;
         this.w.onDropLoot?.(b);
       }
@@ -1070,7 +1074,6 @@ export class Bandits {
     this.spawnTracer(ox, oy, oz, _to.x, _to.y, _to.z, Math.min(hitDist, 32));
     b.recoilKick = 1;
     sfx.gunShot(GUN_SOUND[gId], b.pos, false, this.w.placeAt(b.pos.x, b.pos.z));
-    this.w.noise(b.pos.x, b.pos.y, b.pos.z, Math.min(40, g.noise * 0.7));
 
     b.ammoInMag--;
     b.burstLeft--;
