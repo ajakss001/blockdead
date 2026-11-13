@@ -3,6 +3,7 @@ import {
   Group,
   LinearMipmapLinearFilter,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   Object3D,
   PerspectiveCamera,
@@ -16,6 +17,7 @@ import {
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { sfx } from '../audio/Sound';
+import { VehicleAudio } from '../audio/VehicleAudio';
 import { tr } from '../core/i18n';
 import { clamp, damp } from '../core/math';
 import type { InputManager } from '../input/InputManager';
@@ -53,6 +55,24 @@ export interface CarState {
   smokeT: number;
   stallT: number;
   group: Group;
+  rig?: CarRig;
+}
+
+interface CarRig {
+  bodyPivot: Group;
+  steerFL: Group;
+  steerFR: Group;
+  wheelFL: Object3D;
+  wheelFR: Object3D;
+  wheelRL: Object3D;
+  wheelRR: Object3D;
+  headMat: MeshBasicMaterial;
+  brakeMat: MeshBasicMaterial;
+  wheelSpin: number;
+  bodyPitch: number;
+  bodyRoll: number;
+  exhaustT: number;
+  skidT: number;
 }
 
 export interface CarSave {
@@ -151,6 +171,7 @@ export class Vehicles {
   private readonly loading = new Set<VehicleKind>();
   private readonly hitCooldown = new Map<number, number>();
   private readonly poiSpawned = new Set<string>();
+  private readonly audio = new VehicleAudio();
   private headLightL: SpotLight;
   private headLightR: SpotLight;
   private headTargetL: Object3D;
@@ -194,8 +215,8 @@ export class Vehicles {
     const texLoader = new TextureLoader();
 
     Promise.all([
-      gltfLoader.loadAsync(`${base}.glb?v=3`),
-      texLoader.loadAsync(`${base}.webp?v=3`).then((t: Texture) => {
+      gltfLoader.loadAsync(`${base}.glb?v=4`),
+      texLoader.loadAsync(`${base}.webp?v=4`).then((t: Texture) => {
         t.colorSpace = SRGBColorSpace;
         t.flipY = false;
         t.minFilter = LinearMipmapLinearFilter;
@@ -230,10 +251,69 @@ export class Vehicles {
     while (car.group.children.length > 0) {
       car.group.remove(car.group.children[0]);
     }
+    car.rig = undefined;
     const tpl = this.templates.get(car.kind);
     if (tpl) {
       const clone = tpl.clone(true);
-      car.group.add(clone);
+      const bodyObj = clone.getObjectByName('body');
+      const wFL = clone.getObjectByName('wheelFL');
+      const wFR = clone.getObjectByName('wheelFR');
+      const wRL = clone.getObjectByName('wheelRL');
+      const wRR = clone.getObjectByName('wheelRR');
+
+      if (bodyObj && wFL && wFR && wRL && wRR) {
+        const bodyPivot = new Group();
+        bodyPivot.add(bodyObj);
+
+        // Glowing headlight & taillight lenses attached to bodyPivot so they pitch/roll with the chassis
+        const spec = VEHICLE_SPECS[car.kind];
+        const headMat = new MeshBasicMaterial({ color: 0x33302a });
+        const brakeMat = new MeshBasicMaterial({ color: 0x3a0e0e });
+        const lensGeo = new BoxGeometry(0.28, 0.13, 0.06);
+        const lampY = car.kind === 'suv' ? 0.94 : 0.72;
+        const lampX = spec.halfW * 0.66;
+
+        for (const s of [-1, 1]) {
+          const hl = new Mesh(lensGeo, headMat);
+          hl.position.set(s * lampX, lampY, -spec.halfL * 0.98);
+          bodyPivot.add(hl);
+
+          const tl = new Mesh(lensGeo, brakeMat);
+          tl.position.set(s * lampX, lampY + 0.04, spec.halfL * 0.97);
+          bodyPivot.add(tl);
+        }
+
+        // Front steering pivots
+        const steerFL = new Group();
+        steerFL.position.copy(wFL.position);
+        wFL.position.set(0, 0, 0);
+        steerFL.add(wFL);
+
+        const steerFR = new Group();
+        steerFR.position.copy(wFR.position);
+        wFR.position.set(0, 0, 0);
+        steerFR.add(wFR);
+
+        car.group.add(bodyPivot, steerFL, steerFR, wRL, wRR);
+        car.rig = {
+          bodyPivot,
+          steerFL,
+          steerFR,
+          wheelFL: wFL,
+          wheelFR: wFR,
+          wheelRL: wRL,
+          wheelRR: wRR,
+          headMat,
+          brakeMat,
+          wheelSpin: 0,
+          bodyPitch: 0,
+          bodyRoll: 0,
+          exhaustT: 0,
+          skidT: 0,
+        };
+      } else {
+        car.group.add(clone);
+      }
       return;
     }
     // Lightweight fallback proxy while GLB finishes loading
@@ -485,7 +565,7 @@ export class Vehicles {
     this.activeCar = car;
     this.camYawOffset = 0;
     this.camPitchOffset = 0.22;
-    sfx.item('invOpen');
+    this.audio.playDoor();
     if (car.hasKey || car.hotwired) {
       this.tryStartEngine(car, true);
     } else {
@@ -512,7 +592,7 @@ export class Vehicles {
     }
     car.speed = 0;
     this.activeCar = null;
-    sfx.item('invClose');
+    this.audio.playDoor();
 
     // Left side of the car (-cos(yaw), +sin(yaw))
     const leftX = -Math.cos(car.yaw);
@@ -562,23 +642,23 @@ export class Vehicles {
     // Cranking costs a bit of battery
     car.battery = Math.max(0, car.battery - 0.015);
     if (car.fuel <= 0.005) {
-      sfx.item('click');
+      this.audio.playStarter(false);
       this.hooks.toast(tr('Бак пуст! Заправьте машину из канистры.', 'Fuel tank is empty! Refuel with a jerrycan.'), 2400);
       return false;
     }
     if (car.engine <= 0.06) {
-      sfx.item('weapon');
+      this.audio.playStarter(false);
       this.hooks.toast(tr('Двигатель разбит! Нужен ремонт запчастями под капотом.', 'Engine destroyed! Repair with engine parts under the hood.'), 2600);
       return false;
     }
     // Low engine condition may fail to catch on first try
     if (car.engine < 0.28 && Math.random() > car.engine * 2.6) {
-      sfx.item('weapon');
+      this.audio.playStarter(false);
       this.hooks.toast(tr('Стартер чихает — двигатель сильно изношен!', 'Starter sputters — engine is heavily worn!'), 1800);
       return false;
     }
     car.engineOn = true;
-    sfx.item('move');
+    this.audio.playStarter(true);
     this.hooks.noise(car.x, car.y, car.z, 32);
     return true;
   }
@@ -598,7 +678,7 @@ export class Vehicles {
     const car = this.activeCar;
     if (!car) return;
     if (car.battery <= 0.02) return;
-    sfx.street('squeak', { x: car.x, y: car.y + 1.0, z: car.z });
+    this.audio.playHorn(car.kind === 'suv');
     this.hooks.noise(car.x, car.y, car.z, 115);
     this.hooks.toast(tr('Сигнал клаксона разнёсся по кварталу!', 'Car horn echoed across the block!'), 1500);
   }
@@ -703,7 +783,23 @@ export class Vehicles {
     }
 
     const car = this.activeCar;
-    if (!car) return;
+    if (!car) {
+      this.audio.update({
+        active: false,
+        engineOn: false,
+        speed: 0,
+        maxSpeed: 1,
+        throttle: 0,
+        steer: 0,
+        braking: false,
+        engineHealth: 1,
+        isSuv: false,
+        onRoad: true,
+      });
+      this.resolvePlayerParkedCollision(playerPos);
+      this.updateParkedLightMaterials();
+      return;
+    }
 
     const spec = VEHICLE_SPECS[car.kind];
     const throttle = input.moveY; // W = +1, S = -1
@@ -853,6 +949,116 @@ export class Vehicles {
     car.group.rotation.y = car.yaw;
     playerPos.set(car.x, car.y, car.z);
     playerPrevPos.set(car.x, car.y, car.z);
+
+    // Braking state, procedural vehicle audio, wheel/suspension animation & particles
+    const braking = handbrake || (throttle < -0.05 && car.speed > 0.4) || (throttle > 0.05 && car.speed < -0.4);
+    this.audio.update({
+      active: true,
+      engineOn: car.engineOn,
+      speed: car.speed,
+      maxSpeed: spec.maxSpeed,
+      throttle,
+      steer: car.steer,
+      braking,
+      engineHealth: car.engine,
+      isSuv: car.kind === 'suv',
+      onRoad,
+    });
+
+    if (car.rig) {
+      const rig = car.rig;
+      const wheelRadius = car.kind === 'suv' ? 0.45 : 0.33;
+      rig.wheelSpin -= (car.speed / wheelRadius) * dt;
+      rig.steerFL.rotation.y = car.steer * 0.46;
+      rig.steerFR.rotation.y = car.steer * 0.46;
+      rig.wheelFL.rotation.x = rig.wheelSpin;
+      rig.wheelFR.rotation.x = rig.wheelSpin;
+      rig.wheelRL.rotation.x = rig.wheelSpin;
+      rig.wheelRR.rotation.x = rig.wheelSpin;
+
+      const targetPitch =
+        handbrake && Math.abs(car.speed) > 1
+          ? -0.032 * Math.sign(car.speed)
+          : throttle * (car.engineOn ? 0.022 : 0) * (car.speed >= -0.2 ? 1 : -1);
+      const targetRoll = -car.steer * clamp(Math.abs(car.speed) / spec.maxSpeed, 0, 1) * 0.045;
+      rig.bodyPitch = damp(rig.bodyPitch, targetPitch, 9, dt);
+      rig.bodyRoll = damp(rig.bodyRoll, targetRoll, 9, dt);
+      const idleVib = car.engineOn ? Math.sin(performance.now() * 0.048) * 0.0022 : 0;
+      rig.bodyPivot.rotation.set(rig.bodyPitch, 0, rig.bodyRoll);
+      rig.bodyPivot.position.y = idleVib;
+
+      const hasPower = car.battery > 0.02;
+      rig.headMat.color.setHex(car.lightsOn && hasPower ? 0xfff4d0 : 0x33302a);
+      rig.brakeMat.color.setHex(braking ? 0xff2820 : car.lightsOn && hasPower ? 0x991814 : 0x3a0e0e);
+
+      const rightX = Math.cos(car.yaw);
+      const rightZ = -Math.sin(car.yaw);
+      if (car.engineOn) {
+        rig.exhaustT -= dt;
+        if (rig.exhaustT <= 0) {
+          rig.exhaustT = 0.18 - clamp(Math.abs(throttle), 0, 1) * 0.1;
+          _probe.set(
+            car.x - fwdX * spec.halfL - rightX * 0.55,
+            car.y + 0.25,
+            car.z - fwdZ * spec.halfL - rightZ * 0.55,
+          );
+          this.particles.burst(_probe, 1, 0.28);
+        }
+      }
+      if (braking && Math.abs(car.speed) > 5) {
+        rig.skidT -= dt;
+        if (rig.skidT <= 0) {
+          rig.skidT = 0.06;
+          const rearX = car.x - fwdX * (spec.halfL * 0.62);
+          const rearZ = car.z - fwdZ * (spec.halfL * 0.62);
+          _probe.set(rearX - rightX * spec.halfW * 0.65, car.y + 0.08, rearZ - rightZ * spec.halfW * 0.65);
+          this.particles.burst(_probe, 2, 0.45);
+          _probe.set(rearX + rightX * spec.halfW * 0.65, car.y + 0.08, rearZ + rightZ * spec.halfW * 0.65);
+          this.particles.burst(_probe, 2, 0.45);
+        }
+      }
+    }
+  }
+
+  private resolvePlayerParkedCollision(playerPos: Vector3): void {
+    const playerR = 0.38;
+    for (const c of this.cars) {
+      if (Math.abs(playerPos.y - c.y) > 2.2) continue;
+      const spec = VEHICLE_SPECS[c.kind];
+      const dx = playerPos.x - c.x;
+      const dz = playerPos.z - c.z;
+      if (dx * dx + dz * dz > (spec.halfL + 1.5) ** 2) continue;
+      const fwdX = -Math.sin(c.yaw);
+      const fwdZ = -Math.cos(c.yaw);
+      const rightX = Math.cos(c.yaw);
+      const rightZ = -Math.sin(c.yaw);
+      const localF = dx * fwdX + dz * fwdZ;
+      const localR = dx * rightX + dz * rightZ;
+      const extF = spec.halfL + playerR;
+      const extR = spec.halfW + playerR;
+      if (Math.abs(localF) < extF && Math.abs(localR) < extR) {
+        const penF = extF - Math.abs(localF);
+        const penR = extR - Math.abs(localR);
+        if (penR < penF) {
+          const signR = localR >= 0 ? 1 : -1;
+          playerPos.x += rightX * penR * signR;
+          playerPos.z += rightZ * penR * signR;
+        } else {
+          const signF = localF >= 0 ? 1 : -1;
+          playerPos.x += fwdX * penF * signF;
+          playerPos.z += fwdZ * penF * signF;
+        }
+      }
+    }
+  }
+
+  private updateParkedLightMaterials(): void {
+    for (const c of this.cars) {
+      if (!c.rig) continue;
+      const on = c.lightsOn && c.battery > 0.02;
+      c.rig.headMat.color.setHex(on ? 0xfff4d0 : 0x33302a);
+      c.rig.brakeMat.color.setHex(on ? 0x991814 : 0x3a0e0e);
+    }
   }
 
   private ramZombies(car: CarState, spec: VehicleSpec, fwdX: number, fwdZ: number): void {
@@ -1006,6 +1212,7 @@ export class Vehicles {
   }
 
   dispose(): void {
+    this.audio.dispose();
     this.group.removeFromParent();
     this.headLightL.removeFromParent();
     this.headLightR.removeFromParent();
