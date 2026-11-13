@@ -108,8 +108,11 @@ const _m = new Matrix4();
 const _m2 = new Matrix4();
 const _one = new Vector3(1, 1, 1);
 const _up = new Vector3(0, 1, 0);
+const _barrel = new Vector3(0, 0, -1);
 const _q = new Quaternion();
 const _q2 = new Quaternion();
+const _q3 = new Quaternion();
+const _q4 = new Quaternion();
 
 interface Tracer {
   mesh: Mesh;
@@ -150,6 +153,10 @@ export interface Bandit extends BanditTarget {
   reactT: number;
   meleeCd: number;
   aiming: number;
+  aimBlend: number;
+  aimPitch: number;
+  recoilKick: number;
+  swingT: number;
   patrolYaw: number;
   patrolT: number;
   investigateX: number;
@@ -253,7 +260,9 @@ export class Bandits {
       b.fireCd = Math.max(0, b.fireCd - dt);
       b.meleeCd = Math.max(0, b.meleeCd - dt);
       b.burstPause = Math.max(0, b.burstPause - dt);
-      b.aiming = Math.max(0, b.aiming - dt * 2.5);
+      b.aiming = Math.max(0, b.aiming - dt * 1.4);
+      b.recoilKick *= Math.exp(-dt * 14);
+      b.swingT = Math.max(0, b.swingT - dt * 3.6);
       if (b.reloadT > 0) {
         b.reloadT -= dt;
         if (b.reloadT <= 0) {
@@ -282,6 +291,7 @@ export class Bandits {
         const zd = Math.hypot(zdx, zdz) || 1;
         b.yaw = Math.atan2(zdx, zdz);
         if (b.isGun) {
+          b.aimPitch = Math.max(-0.45, Math.min(0.45, (nearZombie.pos.y - b.pos.y) / zd));
           if (zd < 5.5) {
             this.stepBandit(b, -zdx / zd, -zdz / zd, 2.5 * dt);
             moveSpeed = 2.5;
@@ -298,6 +308,7 @@ export class Bandits {
             moveSpeed = 3.8;
           } else if (b.meleeCd <= 0) {
             b.meleeCd = 0.95;
+            b.swingT = 1;
             this.w.zombies.hit(nearZombie, 26, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
             sfx.swing('heavy', 0.25, b.pos);
           }
@@ -306,6 +317,7 @@ export class Bandits {
         // Priority 2: engage the player
         b.aiming = 1;
         b.yaw = Math.atan2(dx, dz);
+        b.aimPitch = Math.max(-0.45, Math.min(0.45, (py - b.pos.y) / (dist || 1)));
         b.investigateX = px;
         b.investigateZ = pz;
         b.investigateT = 8;
@@ -337,6 +349,7 @@ export class Bandits {
             moveSpeed = 4.25;
           } else if (b.meleeCd <= 0) {
             b.meleeCd = 1.05 + Math.random() * 0.25;
+            b.swingT = 1;
             sfx.swing('heavy', 0.3, b.pos);
             if (!inCar) {
               this.w.hurtPlayer(12 + Math.random() * 7, b.pos.x, b.pos.z, 'Нападение бандита');
@@ -540,6 +553,10 @@ export class Bandits {
         reactT: 0.65,
         meleeCd: 0,
         aiming: 0,
+        aimBlend: 0,
+        aimPitch: 0,
+        recoilKick: 0,
+        swingT: 0,
         patrolYaw: Math.random() * Math.PI * 2,
         patrolT: 2 + Math.random() * 3,
         investigateX: rx,
@@ -607,6 +624,11 @@ export class Bandits {
         const d = gunRigData(gid).main;
         _m.compose(hf.grip, hf.q, _one).multiply(_m2.compose(d.at, d.q, _one).invert());
         _m.decompose(gunModel.root.position, gunModel.root.quaternion, gunModel.root.scale);
+        gunModel.root.userData.rest = {
+          p: gunModel.root.position.clone(),
+          q: gunModel.root.quaternion.clone(),
+          grip: hf.grip.clone(),
+        };
       }
       heldObj = gunModel.root;
     } else if (b.weapon in HELD) {
@@ -616,6 +638,11 @@ export class Bandits {
       if (hf) {
         heldObj.quaternion.copy(hf.q);
         heldObj.position.copy(hf.grip).sub(new Vector3(0, HELD[hid].main.along, 0).applyQuaternion(hf.q));
+        heldObj.userData.rest = {
+          p: heldObj.position.clone(),
+          q: heldObj.quaternion.clone(),
+          grip: hf.grip.clone(),
+        };
       }
     }
 
@@ -687,31 +714,88 @@ export class Bandits {
 
     v.rig.mixer.update(dt);
 
-    // Pose right hand grip & raise arm forward when aiming/fighting.
+    // Smoothly blend aiming stance (0 = relaxed/patrol, 1 = aiming/fighting).
+    const wantAim = b.aiming > 0.05 ? 1 : 0;
+    b.aimBlend += (wantAim - b.aimBlend) * (1 - Math.exp(-dt * 8));
+
+    // Pose right & left hand grip.
     const hr = handFrame(v.rig.rig, 'R');
     if (hr) {
       const gripName = b.isGun ? gripHands(b.weapon as GunId, true, false).R : gripHands(b.weapon as HeldId, false, false).R;
       for (const [idx, q] of hr.poses[gripName]) v.rig.bones[idx].quaternion.copy(q);
     }
-    if (b.aiming > 0.05) {
-      this.bendElbow(v.rig, 0.35 + 0.65 * b.aiming);
+
+    // Reset held item to hand rest pose before applying aiming rotation.
+    const rest = v.heldObj?.userData.rest as { p: Vector3; q: Quaternion; grip: Vector3 } | undefined;
+    if (v.heldObj && rest) {
+      v.heldObj.position.copy(rest.p);
+      v.heldObj.quaternion.copy(rest.q);
+    }
+
+    if (b.aimBlend > 0.02) {
+      v.rig.root.updateMatrixWorld(true);
+      const rootQ = v.rig.root.getWorldQuaternion(_q3);
+      const pitch = b.aimPitch + b.recoilKick * 0.22;
+
+      if (b.isGun) {
+        const isLong = GUNS[b.weapon as GunId].cls === 'long';
+        if (isLong) {
+          // Two-handed rifle/shotgun stance: right arm holds grip near shoulder, left arm supports handguard.
+          this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.28, -0.18 + pitch * 0.6, 0.94, rootQ, b.aimBlend);
+          this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.34, 0.24 + pitch, 0.91, rootQ, b.aimBlend);
+          this.pointBone(v.rig, 'LeftArm', 'LeftForeArm', 0.24, -0.16 + pitch * 0.6, 0.95, rootQ, b.aimBlend);
+          this.pointBone(v.rig, 'LeftForeArm', 'LeftHand', -0.22, 0.22 + pitch, 0.95, rootQ, b.aimBlend);
+        } else {
+          // Pistol stance: right arm extended forward at chest/eye level.
+          this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.06, -0.05 + pitch * 0.7, 0.99, rootQ, b.aimBlend);
+          this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.08, 0.12 + pitch, 0.99, rootQ, b.aimBlend);
+        }
+
+        // Aim the gun barrel straight toward the target.
+        if (v.gunModel) {
+          v.rig.root.updateMatrixWorld(true);
+          const item = v.gunModel.root;
+          const nowDir = _v1.copy(_barrel).applyQuaternion(item.getWorldQuaternion(_q)).normalize();
+          const wantDir = _v2.set(0, Math.sin(pitch) + 0.03, Math.cos(pitch)).applyQuaternion(rootQ).normalize();
+          const worldTurn = _q2.setFromUnitVectors(nowDir, wantDir);
+          const parentW = item.parent!.getWorldQuaternion(_q4);
+          const localTurn = _q.copy(parentW).invert().multiply(worldTurn).multiply(parentW);
+          _q4.identity().slerp(localTurn, b.aimBlend);
+          item.quaternion.premultiply(_q4);
+          if (rest) item.position.sub(rest.grip).applyQuaternion(_q4).add(rest.grip);
+        }
+      } else {
+        // Melee combat stance + swing animation.
+        const swingPhase = b.swingT > 0 ? Math.sin(b.swingT * Math.PI) : 0;
+        const swingPitch = -0.35 + swingPhase * 1.15;
+        this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.15, 0.1 + swingPitch * 0.5, 0.96, rootQ, b.aimBlend);
+        this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.12, 0.35 + swingPitch, 0.92, rootQ, b.aimBlend);
+      }
     }
   }
 
-  private bendElbow(r: CharacterRig, angle: number): void {
-    r.root.updateMatrixWorld(true);
-    const fore = r.bone('RightForeArm');
-    const hand = r.bone('RightHand');
-    const pFore = fore.getWorldPosition(_v1);
-    const pHand = hand.getWorldPosition(_v2);
-    const dir = pHand.sub(pFore).normalize();
-    const fwd = _to.set(0, 0, 1).applyQuaternion(r.root.getWorldQuaternion(_q));
-    const axis = dir.cross(fwd);
-    if (axis.lengthSq() < 1e-6) return;
-    _q2.setFromAxisAngle(axis.normalize(), angle);
-    const w = fore.getWorldQuaternion(_q);
-    const pw = fore.parent!.getWorldQuaternion(new Quaternion());
-    fore.quaternion.copy(pw.invert().multiply(_q2).multiply(w));
+  private pointBone(
+    r: CharacterRig,
+    boneName: string,
+    childName: string,
+    lx: number,
+    ly: number,
+    lz: number,
+    rootQ: Quaternion,
+    blend: number,
+  ): void {
+    const bone = r.bone(boneName);
+    const child = r.bone(childName);
+    const pA = bone.getWorldPosition(_v1);
+    const pB = child.getWorldPosition(_v2);
+    const curDir = pB.sub(pA).normalize();
+    if (curDir.lengthSq() < 1e-6) return;
+    const wantDir = _to.set(lx, ly, lz).normalize().applyQuaternion(rootQ);
+    const turn = _q2.setFromUnitVectors(curDir, wantDir);
+    _q4.identity().slerp(turn, blend);
+    const w = bone.getWorldQuaternion(_q);
+    const pw = bone.parent!.getWorldQuaternion(new Quaternion());
+    bone.quaternion.copy(pw.invert().multiply(_q4).multiply(w));
     r.root.updateMatrixWorld(true);
   }
 
@@ -856,6 +940,7 @@ export class Bandits {
     }
 
     this.spawnTracer(ox, oy, oz, _to.x, _to.y, _to.z, Math.min(hitDist, 32));
+    b.recoilKick = 1;
     sfx.gunShot(GUN_SOUND[gId], b.pos, false, this.w.placeAt(b.pos.x, b.pos.z));
     this.w.noise(b.pos.x, b.pos.y, b.pos.z, Math.min(40, g.noise * 0.7));
 
