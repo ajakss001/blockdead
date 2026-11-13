@@ -193,6 +193,16 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       }
       break;
     }
+    case 'shadow': {
+      // Soft contact shadow for static vehicles and large props (zero extra draw calls).
+      const grad = g.createRadialGradient(c, c, size * 0.14, c, c, size * 0.48);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.88)');
+      grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.52)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, size, size);
+      break;
+    }
   }
   return canvas;
 }

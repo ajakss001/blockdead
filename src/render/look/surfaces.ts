@@ -37,10 +37,11 @@ export type Surface =
   | 'decalBiohazard'
   | 'decalSheen'
   | 'decalFoam'
-  | 'decalEvacuate';
+  | 'decalEvacuate'
+  | 'decalShadow';
 
 /** Alpha-cut overlays drawn on top of other surfaces. */
-export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate';
+export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate' | 'shadow';
 
 export interface SurfaceSpec {
   kind: GrungeKind;
@@ -102,6 +103,7 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   decalSheen: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.15, metalness: 0.3, tile: 1, decal: 'sheen', castShadow: false },
   decalFoam: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'foam', castShadow: false },
   decalEvacuate: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'evacuate', castShadow: false },
+  decalShadow: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'shadow', castShadow: false },
 };
 
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];

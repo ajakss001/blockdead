@@ -213,11 +213,13 @@ function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
   const sz = along === 'x' ? 1.1 : 1.8;
   b.block(DUMPSTER, x, 0.12, z, sx, 1.18, sz, 'metal', true);
   b.block(0x2a3a2a, x - 0.04, 1.3, z - 0.04, sx + 0.08, 0.06, sz + 0.08, 'metal');
+  b.batch.addShadow(_m.makeTranslation(x + sx / 2, PAVE.plaza, z + sz / 2), sx * 1.25, sz * 1.25, 0.025);
 }
 
 /** A pallet with a stack of crates on it (sometimes searchable). */
 function crates(b: Builder, x: number, z: number, rand: Rand): void {
   b.block(0x6a5a40, x, 0, z, 1.0, 0.14, 1.0, 'wood', true);
+  b.batch.addShadow(_m.makeTranslation(x + 0.5, PAVE.plaza, z + 0.5), 1.35, 1.35, 0.025);
   const h = 1 + Math.floor(rand() * 2);
   for (let k = 0; k < h; k++) b.block(PAL.crate, x + 0.08 + (rand() - 0.5) * 0.1, 0.14 + k * 0.62, z + 0.08, 0.84, 0.6, 0.84, 'wood');
   if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);

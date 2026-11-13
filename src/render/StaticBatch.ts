@@ -1,6 +1,14 @@
-import { BufferAttribute, type BufferGeometry, Color, type ColorRepresentation, type Matrix4 } from 'three';
+import { BufferAttribute, type BufferGeometry, Color, type ColorRepresentation, Matrix4, PlaneGeometry } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { type Bucket, bucketOf, MODEL_LAYER_BASE, type Surface, SURFACES, surfaceLayer } from './look/surfaces';
+
+const _shadowLocal = new Matrix4();
+const _shadowWorld = new Matrix4();
+let _shadowQuad: PlaneGeometry | null = null;
+function shadowQuad(): PlaneGeometry {
+  if (!_shadowQuad) _shadowQuad = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  return _shadowQuad;
+}
 
 /**
  * Per-vertex color modifier, called with world position and the triangle normal.
@@ -104,6 +112,14 @@ export class StaticBatch {
     const list = this.parts.get('cast');
     if (list) list.push(g);
     else this.parts.set('cast', [g]);
+  }
+
+  /** Soft ground contact shadow under a static model or prop, merged into the chunk's glass/decal draw call. */
+  addShadow(matrix: Matrix4, w: number, l: number, y = 0.025, cx = 0, cz = 0): void {
+    _shadowLocal.makeScale(w, 1, l);
+    _shadowLocal.setPosition(cx, y, cz);
+    _shadowWorld.multiplyMatrices(matrix, _shadowLocal);
+    this.add(shadowQuad(), 0xffffff, _shadowWorld, 'decalShadow');
   }
 
   get partCount(): number {

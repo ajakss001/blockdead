@@ -748,6 +748,7 @@ export function tree(b: Builder, x: number, y: number, z: number, scale: number,
 export function plantTree(b: Builder, x: number, y: number, z: number, s: number, yaw: number, species: number): void {
   const conifer = species === TREE.spruce || species === TREE.pine;
   b.life(LIFE.tree, x, y, z, Math.sin(yaw), Math.cos(yaw), (conifer ? 2.4 : 3) * s, s, spotHash(x, z, 31), species);
+  b.batch.addShadow(new Matrix4().makeTranslation(x, y, z), (conifer ? 2.6 : 3.1) * s, (conifer ? 2.6 : 3.1) * s, 0.025);
   const t = (conifer ? 0.16 : 0.2) * s;
   b.colliders.addBox(x - t, z - t, x + t, z + t);
   if (!conifer && spotHash(x, z, 35) < 0.3) {

@@ -477,7 +477,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
             _m.compose(_p.set(x, y + w * 0.6, z), _q.setFromAxisAngle(_y, a + seed), _s.set(w * 1.3, w * 1.8, 1));
             glow(7, phase, 4, 1);
           }
-          _m.compose(_p.set(x, this.groundAt(x, z) + 0.04, z), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(7, 7, 1));
+          _m.compose(_p.set(x, this.groundAt(x, z) + 0.014, z), _q.setFromAxisAngle(_x, -Math.PI / 2), _s.set(7, 7, 1));
           glow(8, phase, 4, 0.5);
           this.fires.push(x, y + 0.6 + w * 0.4, z, w, phase);
         } else if (kind === LIFE.beacon && g + 2 < GLOW_CAP) {

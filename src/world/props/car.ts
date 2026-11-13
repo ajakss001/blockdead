@@ -250,10 +250,8 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     }
   }
 
-  // Dark patch under the car: cheap contact shadow so it sits on the road instead of hovering.
-  const under = new BoxGeometry(LENGTH * 0.92, 0.004, WIDTH * 0.96);
-  geos.push(under);
-  add(under, 0x0d0d0c, 'asphalt', _local.makeTranslation(0, 0.004, 0));
+  // Soft contact shadow under the car: baked into the chunk's decal batch (zero extra draw calls).
+  batch.addShadow(car, LENGTH * 1.12, WIDTH * 1.24, 0.025);
 
   for (const g of geos) g.dispose();
 
@@ -294,6 +292,9 @@ export function placeModel(batch: StaticBatch, m: ModelInfo, matrix: Matrix4, pa
   batch.addModel(modelGeometry(library!, m), m.layer, matrix, paint, roughness, metalness, tint);
   const glass = modelGlass(library!, m);
   if (glass) batch.add(glass, 0x2a3036, matrix, 'carGlass');
+  if (m.size[0] > 0.25 && m.size[2] > 0.25) {
+    batch.addShadow(matrix, m.size[0] * 1.14, m.size[2] * 1.22, 0.025, m.min[0] + m.size[0] / 2, m.min[2] + m.size[2] / 2);
+  }
 }
 
 /** Greenhouse faces split into a grid of cells; inner cells are glass, the frame is painted pillars. */
