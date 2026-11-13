@@ -36,9 +36,13 @@ interface StatView {
   root: HTMLDivElement;
   fill: HTMLDivElement;
   img: HTMLImageElement;
+  ring: SVGCircleElement;
   fillKey: number;
   colorKey: string;
 }
+
+const RING_R = 15;
+const RING_C = 2 * Math.PI * RING_R;
 
 /**
  * Zomboid-style HUD: a compact row of pixel-art indicators in the top-right corner (clear of the
@@ -50,6 +54,7 @@ export class Hud {
   private readonly stats = document.createElement('div');
   private readonly views = new Map<StatId, StatView>();
   private readonly wound = document.createElement('img');
+  private woundBadge!: HTMLDivElement;
   private readonly action = document.createElement('div');
   private readonly actionLabel = document.createElement('div');
   private readonly actionFill = document.createElement('div');
@@ -66,6 +71,26 @@ export class Hud {
       const root = document.createElement('div');
       root.className = 'stat';
       root.title = tr(label[0], label[1]);
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 36 36');
+      svg.setAttribute('class', 'stat__ring');
+      const track = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      track.setAttribute('cx', '18');
+      track.setAttribute('cy', '18');
+      track.setAttribute('r', String(RING_R));
+      track.setAttribute('class', 'stat__ring-track');
+      const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      ring.setAttribute('cx', '18');
+      ring.setAttribute('cy', '18');
+      ring.setAttribute('r', String(RING_R));
+      ring.setAttribute('class', 'stat__ring-fill');
+      ring.style.strokeDasharray = `${RING_C.toFixed(2)}`;
+      ring.style.strokeDashoffset = '0';
+      svg.append(track, ring);
+
+      const iconWrap = document.createElement('div');
+      iconWrap.className = 'stat__icon';
       const base = document.createElement('img');
       base.className = 'stat__img';
       base.src = statIcon(id, DIM);
@@ -76,16 +101,22 @@ export class Hud {
       img.className = 'stat__img';
       img.alt = tr(label[0], label[1]);
       fill.append(img);
-      root.append(base, fill);
+      iconWrap.append(base, fill);
+
+      root.append(svg, iconWrap);
       this.stats.append(root);
-      this.views.set(id, { root, fill, img, fillKey: -1, colorKey: '' });
+      this.views.set(id, { root, fill, img, ring, fillKey: -1, colorKey: '' });
       this.setStat(id, 1, 0);
     }
-    this.wound.className = 'stat stat__img stat--wound';
+    this.wound.className = 'stat__wound-img';
+    const woundBadge = document.createElement('div');
+    woundBadge.className = 'stat stat--wound';
     this.wound.src = statIcon('wound', 0xf0382e);
     this.wound.title = tr('Рана — нужна перевязка', 'Wound — needs bandage');
-    this.wound.hidden = true;
-    this.stats.append(this.wound);
+    woundBadge.hidden = true;
+    woundBadge.append(this.wound);
+    this.woundBadge = woundBadge;
+    this.stats.append(woundBadge);
     onLangChange(() => {
       for (const { id, label } of STATS) {
         const v = this.views.get(id);
@@ -124,7 +155,7 @@ export class Hud {
     this.stamina.classList.toggle('low', key < 25);
   }
 
-  /** value: 0..1 how much is left; color fills from bottom over gray base, dims slightly as it depletes, 3 blinks. */
+  /** value: 0..1 how much is left; AAA radial ring + bottom-up color fill over gray base. */
   setStat(id: StatId, value: number, severity: Severity, tint: Tint = 'normal'): void {
     const v = this.views.get(id)!;
     const clamped = Math.min(1, Math.max(0, value));
@@ -132,11 +163,12 @@ export class Hud {
     const fillKey = Math.round(clamped * 24);
     if (fillKey !== v.fillKey) {
       v.fillKey = fillKey;
-      // Whole pixels of the 24-px icon, so the level reads as pixel art too.
+      // Whole pixels of the 24-px icon, so the level reads as crisp pixel art too.
       v.fill.style.height = `${(fillKey / 24) * 100}%`;
+      v.ring.style.strokeDashoffset = (RING_C * (1 - clamped)).toFixed(2);
     }
     if (severity < 3) {
-      v.root.style.opacity = (0.52 + 0.48 * clamped).toFixed(2);
+      v.root.style.opacity = (0.72 + 0.28 * clamped).toFixed(2);
     } else {
       v.root.style.opacity = '';
     }
@@ -146,14 +178,15 @@ export class Hud {
     if (colorKey !== v.colorKey) {
       v.colorKey = colorKey;
       v.img.src = statIcon(id, color);
+      v.ring.style.stroke = `#${color.toString(16).padStart(6, '0')}`;
       v.root.classList.toggle('stat--warn', severity > 0);
       v.root.classList.toggle('stat--critical', severity === 3);
     }
   }
 
   setWound(on: boolean): void {
-    if (this.wound.hidden === !on) return;
-    this.wound.hidden = !on;
+    if (this.woundBadge.hidden === !on) return;
+    this.woundBadge.hidden = !on;
   }
 
   /** Context hint under the crosshair ("E — Обыскать: Холодильник"); null hides it. */
