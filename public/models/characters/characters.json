@@ -62,6 +62,20 @@
    "tris": 9998,
    "lod1": 2995,
    "lod1Error": 0.006
+  },
+  "juggernaut_m": {
+   "leg": 0.793,
+   "height": 2.15,
+   "tris": 4176,
+   "lod1": 4176,
+   "lod1Error": 0.01
+  },
+  "patientZero_m": {
+   "leg": 0.7674,
+   "height": 1.96,
+   "tris": 4198,
+   "lod1": 4198,
+   "lod1Error": 0.01
   }
  },
  "clips": {

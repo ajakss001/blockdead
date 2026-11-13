@@ -1071,8 +1071,21 @@ export async function loadItemIcons(): Promise<void> {
   }
 }
 
+const CUSTOM_ITEM_ICONS = new Set<ItemId>([
+  'carKey',
+  'jerrycan',
+  'carBattery',
+  'engineParts',
+  'carTire',
+  'wrench',
+  'storyScanner',
+  'storySample',
+  'storyTransponder',
+]);
+
 /** Data URL of the item's icon: the drawn one if there is, else the 16×16 code one (cached). */
 export function itemIcon(id: ItemId): string {
+  if (CUSTOM_ITEM_ICONS.has(id)) return `${import.meta.env.BASE_URL}icons/items/${id}.png`;
   const drawn = sheetIcons.get(id);
   if (drawn) return drawn;
   let url = iconCache.get(id);

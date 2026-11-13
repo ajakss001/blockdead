@@ -32,7 +32,7 @@ const POSES: { clip: ClipId; name: string }[] = [
   { clip: 'zombie_walk', name: 'зомби' },
 ];
 const BONES = ['', 'Head', 'Neck', 'Spine2', 'Spine1', 'Spine', 'Hips'];
-const BODY_NAMES: Record<BodyId, string> = { male: 'мужчина', female: 'женщина', swat_m: 'SWAT', military_m: 'военный', police_m: 'полицейский', firefighter_m: 'пожарный', doctor_m: 'врач', mechanic_m: 'механик', builder_m: 'строитель' };
+const BODY_NAMES: Record<BodyId, string> = { male: 'мужчина', female: 'женщина', swat_m: 'SWAT', military_m: 'военный', police_m: 'полицейский', firefighter_m: 'пожарный', doctor_m: 'врач', mechanic_m: 'механик', builder_m: 'строитель', juggernaut_m: 'громила', patientZero_m: 'пациент 0' };
 const DEG = 180 / Math.PI;
 const FACE_KINDS = ['glasses', 'mask'];
 

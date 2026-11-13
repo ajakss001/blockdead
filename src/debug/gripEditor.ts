@@ -64,6 +64,8 @@ const BODY_NAMES: Record<BodyId, string> = {
   doctor_m: 'Врач',
   mechanic_m: 'Механик',
   builder_m: 'Строитель',
+  juggernaut_m: 'Громила',
+  patientZero_m: 'Пациент 0',
 };
 
 interface VmInternals {

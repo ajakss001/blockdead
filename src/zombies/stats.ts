@@ -3,7 +3,7 @@
  * the far crowd's colours, what their bodies hold. Speed and health are factors on the one-armed worker
  * (1.1 m/s following, 100 HP). The models themselves: src/zombies/types/*.ts.
  */
-export const MODEL_KINDS = ['worker', 'medic', 'soldier', 'police', 'firefighter', 'office', 'grandma', 'jogger', 'chef', 'courier', 'builder', 'tourist', 'survivorM', 'survivorF'] as const;
+export const MODEL_KINDS = ['worker', 'medic', 'soldier', 'police', 'firefighter', 'office', 'grandma', 'jogger', 'chef', 'courier', 'builder', 'tourist', 'survivorM', 'survivorF', 'patientZero', 'juggernaut'] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];
 
 export type BodyLoot = 'bodyZombie' | 'bodyMilitary' | 'bodyPolice' | 'bodyMedic' | 'bodyFire';
@@ -38,6 +38,9 @@ export const ZOMBIE_STATS: Record<ModelKind, KindStats> = {
   // A dead player risen (types/survivor.ts): their tee and jeans.
   survivorM: { speed: 1.1, hp: 1, height: 1.78, headFwd: 0.1, colors: [0x8c9a84, 0xdcddd8, 0x8a8e88], loot: 'bodyZombie' },
   survivorF: { speed: 1.15, hp: 0.9, height: 1.66, female: true, headFwd: 0.08, colors: [0x8c9a84, 0xe2e2de, 0x9ca286], loot: 'bodyZombie' },
+  // Bosses: Patient Zero (Helios Lab) and Military Juggernaut (Airport finale).
+  patientZero: { speed: 1.25, hp: 4.5, height: 1.96, headFwd: 0.08, colors: [0x7a8274, 0x7a7252, 0x5a5642], loot: 'bodyMedic' },
+  juggernaut: { speed: 0.95, hp: 6.5, height: 2.15, headFwd: 0.05, colors: [0x7a8274, 0x3e4232, 0x383c30], loot: 'bodyMilitary' },
 };
 
 export const isModelKind = (k: string): k is ModelKind => k in ZOMBIE_STATS;

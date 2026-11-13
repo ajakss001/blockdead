@@ -1031,3 +1031,279 @@ body {
 .inv__mod-empty { font-size: 11px; color: #6c685e; }
 /* Touch: the fire buttons hold the bottom-right corner; the count sits above them. */
 .gunhud--touch { bottom: calc(env(safe-area-inset-bottom, 0px) + 172px); }
+
+/* Project Zomboid-style Car Dashboard & Vehicle Mechanics Modal (ui/CarHud.ts) */
+.car-dash {
+  position: absolute;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 480px;
+  max-width: min(94vw, 660px);
+  padding: 8px 12px;
+  background: rgba(16, 17, 16, 0.9);
+  border: 1px solid rgba(145, 136, 114, 0.42);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  color: #dcd4c0;
+  font: 12px/1.25 system-ui, sans-serif;
+  pointer-events: auto;
+}
+.car-dash[hidden] { display: none; }
+.car-dash__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid rgba(130, 122, 102, 0.25);
+  padding-bottom: 5px;
+}
+.car-dash__title {
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e4d8b4;
+}
+.car-dash__actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.car-dash__btn {
+  padding: 3px 7px;
+  background: rgba(38, 36, 32, 0.88);
+  border: 1px solid rgba(136, 128, 108, 0.4);
+  border-radius: 3px;
+  color: #d6ceba;
+  font: 600 11px monospace;
+  cursor: pointer;
+}
+.car-dash__btn:hover { border-color: #c8b47a; color: #fff; }
+.car-dash__btn.on { background: rgba(54, 78, 48, 0.78); border-color: #8ab878; color: #e8f6e2; }
+.car-dash__btn--warn { background: rgba(88, 56, 30, 0.82); border-color: #d49452; color: #f6dec0; }
+.car-dash__btn--exit { background: rgba(74, 36, 34, 0.82); border-color: #c46c64; color: #f4d2ce; }
+.car-dash__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.car-dash__speed {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  background: rgba(8, 9, 8, 0.78);
+  border: 1px solid rgba(110, 104, 88, 0.35);
+  padding: 4px 10px;
+  border-radius: 3px;
+}
+.car-dash__gear {
+  font: 700 14px monospace;
+  color: #d8a248;
+  margin-right: 3px;
+}
+.car-dash__kmh {
+  font: 700 22px/1 monospace;
+  color: #e8f0d8;
+  letter-spacing: 1px;
+}
+.car-dash__unit {
+  font: 10px monospace;
+  color: #969080;
+}
+.car-dash__fuel {
+  flex: 1;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.car-dash__fuel-head {
+  display: flex;
+  justify-content: space-between;
+  font: 600 10px monospace;
+  color: #b4ac98;
+}
+.car-dash__fuel-track {
+  height: 7px;
+  background: rgba(10, 10, 10, 0.85);
+  border: 1px solid rgba(120, 114, 98, 0.38);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.car-dash__fuel-fill {
+  height: 100%;
+  transition: width 0.2s;
+}
+.car-dash__fuel-fill.ok { background: #7aa868; }
+.car-dash__fuel-fill.warn { background: #d29b46; }
+.car-dash__fuel-fill.crit { background: #c45448; }
+.car-dash__lamps {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.car-dash__lamp {
+  padding: 4px 7px;
+  border-radius: 3px;
+  font: 700 11px monospace;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.car-dash__lamp.ok { background: rgba(44, 68, 42, 0.75); border-color: #6ea264; color: #d8f0d2; }
+.car-dash__lamp.warn { background: rgba(84, 62, 26, 0.8); border-color: #cfa04a; color: #f6e2b6; }
+.car-dash__lamp.crit { background: rgba(88, 32, 28, 0.85); border-color: #cc5c52; color: #fad0cc; }
+.car-dash__lamp.lit { background: rgba(82, 74, 32, 0.82); border-color: #e0c862; color: #fff4c2; }
+.car-dash__lamp.off { background: rgba(28, 28, 26, 0.7); border-color: rgba(110, 104, 90, 0.35); color: #8c8678; }
+
+.car-mech {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 7, 8, 0.78);
+  padding: 16px;
+  pointer-events: auto;
+}
+.car-mech[hidden] { display: none; }
+.car-mech__card {
+  width: min(94vw, 560px);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #181715;
+  border: 1px solid #5c5649;
+  border-radius: 5px;
+  padding: 16px;
+  color: #dcd4c0;
+  font: 13px/1.35 system-ui, sans-serif;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.8);
+}
+.car-mech__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(140, 130, 110, 0.25);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+.car-mech__sub {
+  font: 600 10px monospace;
+  letter-spacing: 0.12em;
+  color: #c89a58;
+}
+.car-mech__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ece4d0;
+}
+.car-mech__close {
+  padding: 6px 12px;
+  background: #2c2924;
+  border: 1px solid #686050;
+  color: #dcd4c0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.car-mech__ignition {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(32, 30, 27, 0.8);
+  border: 1px solid rgba(140, 130, 110, 0.28);
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+.car-mech__ignition-text { flex: 1; }
+.car-mech__ignition-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.car-mech__badge.ok {
+  font-weight: 700;
+  color: #82b874;
+  font-size: 16px;
+  padding: 0 6px;
+}
+.car-mech__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.car-mech__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: rgba(28, 26, 24, 0.72);
+  border: 1px solid rgba(130, 122, 104, 0.22);
+  border-radius: 4px;
+}
+.car-mech__icon {
+  width: 38px;
+  height: 38px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+.car-mech__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.car-mech__row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.car-mech__part-name {
+  font-weight: 600;
+  color: #e6dec8;
+}
+.car-mech__pct { font: 700 12px monospace; }
+.car-mech__pct.ok { color: #84b876; }
+.car-mech__pct.warn { color: #d8a248; }
+.car-mech__pct.crit { color: #d26256; }
+.car-mech__bar {
+  height: 6px;
+  background: #0d0d0c;
+  border: 1px solid rgba(120, 112, 96, 0.35);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.car-mech__bar-fill { height: 100%; }
+.car-mech__bar-fill.ok { background: #7aa868; }
+.car-mech__bar-fill.warn { background: #d29b46; }
+.car-mech__bar-fill.crit { background: #c45448; }
+.car-mech__part-desc { font-size: 11px; color: #9c9484; }
+.car-mech__part-req { font: 11px monospace; color: #b8ae98; }
+.car-mech__btn {
+  padding: 6px 10px;
+  background: #364832;
+  border: 1px solid #6c9264;
+  color: #e8f2e4;
+  border-radius: 3px;
+  font: 600 12px system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.car-mech__btn:disabled {
+  background: #282623;
+  border-color: #4a463e;
+  color: #787266;
+  cursor: default;
+  opacity: 0.6;
+}
+.car-mech__btn--warn {
+  background: #543820;
+  border-color: #b87e44;
+  color: #f4dec4;
+}
+

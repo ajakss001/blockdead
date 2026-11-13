@@ -37,6 +37,8 @@ const NAMES: Record<ModelKind, string> = {
   tourist: 'Турист',
   survivorM: 'Выживший',
   survivorF: 'Выжившая',
+  patientZero: 'Пациент Ноль',
+  juggernaut: 'Громила',
 };
 
 const BODY_HEIGHT: Record<'male' | 'female', number> = { male: 1.8, female: 1.7 };
@@ -76,6 +78,8 @@ const ZOMBIE_NAMES: Readonly<Record<ModelKind, [string, string]>> = {
   tourist: ['Турист', 'Tourist'],
   survivorM: ['Выживший', 'Survivor'],
   survivorF: ['Выжившая', 'Survivor'],
+  patientZero: ['Пациент Ноль', 'Patient Zero'],
+  juggernaut: ['Громила', 'Juggernaut'],
 };
 
 registerDataLocalizer((lang) => {

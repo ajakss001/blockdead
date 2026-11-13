@@ -119,6 +119,13 @@ export type ItemId =
   | 'storyScanner'
   | 'storySample'
   | 'storyTransponder'
+  // Vehicle parts, fuel and tools.
+  | 'carKey'
+  | 'jerrycan'
+  | 'carBattery'
+  | 'engineParts'
+  | 'carTire'
+  | 'wrench'
   // Firearms, their ammunition, spare magazines and modules (weapons/guns).
   | GunId
   | AmmoId
@@ -339,6 +346,12 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   storyScanner: { name: 'Полицейский дешифратор', kind: 'tool', weight: 0.15, stack: 1, note: 'Протокол «Рассвет»: источник заражения — НИИ «Гелиос». Координаты занесены на карту.' },
   storySample: { name: 'Контейнер «Гелиос-0»', kind: 'tool', weight: 0.25, stack: 1, note: 'Криокапсула с нулевым штаммом и журналом изолятора. Нужна группе эвакуации.' },
   storyTransponder: { name: 'Военный транспондер', kind: 'tool', weight: 0.2, stack: 1, note: 'Передатчик дальней связи. Позволяет вызвать борт эвакуации на взлётной полосе Аэропорта.' },
+  carKey: { name: 'Ключ от машины', kind: 'tool', weight: 0.03, stack: 4, note: 'Ключ зажигания с брелоком. Заводит подходящий автомобиль без взлома проводки.' },
+  jerrycan: { name: 'Канистра бензина', kind: 'tool', weight: 3.5, stack: 2, note: 'Стальная канистра с топливом (+45% бака автомобиля).' },
+  carBattery: { name: 'Автомобильный аккумулятор', kind: 'tool', weight: 4.0, stack: 1, note: 'Свинцово-кислотный АКБ 12V. Нужен для запуска стартера и работы фар.' },
+  engineParts: { name: 'Запчасти двигателя', kind: 'material', weight: 1.2, stack: 5, note: 'Поршни, свечи и ремни для ремонта двигателя (нужен гаечный ключ).' },
+  carTire: { name: 'Автомобильное колесо', kind: 'material', weight: 4.5, stack: 2, note: 'Запасное колесо в сборе. Восстанавливает ходовую часть и сцепление автомобиля.' },
+  wrench: { name: 'Гаечный ключ', kind: 'tool', weight: 0.9, stack: 1, note: 'Тяжёлый разводной ключ для ремонта двигателя и ходовой части машины.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
@@ -700,6 +713,48 @@ const ITEM_TEXT: Readonly<Record<Exclude<ItemId, GunId | AmmoId | MagId | ModId>
     note: [
       'Передатчик дальней связи. Позволяет вызвать борт эвакуации на взлётной полосе Аэропорта.',
       'Long-range beacon key. Calls the extraction chopper at the Airport runway.',
+    ],
+  },
+  carKey: {
+    name: ['Ключ от машины', 'Car key'],
+    note: [
+      'Ключ зажигания с брелоком. Заводит подходящий автомобиль без взлома проводки.',
+      'Ignition key with fob. Starts a matching vehicle without hotwiring.',
+    ],
+  },
+  jerrycan: {
+    name: ['Канистра бензина', 'Gasoline jerrycan'],
+    note: [
+      'Стальная канистра с топливом (+45% бака автомобиля).',
+      'Steel fuel jerrycan (+45% vehicle fuel tank).',
+    ],
+  },
+  carBattery: {
+    name: ['Автомобильный аккумулятор', 'Car battery'],
+    note: [
+      'Свинцово-кислотный АКБ 12V. Нужен для запуска стартера и работы фар.',
+      '12V lead-acid battery. Required for the starter motor and headlights.',
+    ],
+  },
+  engineParts: {
+    name: ['Запчасти двигателя', 'Engine parts'],
+    note: [
+      'Поршни, свечи и ремни для ремонта двигателя (нужен гаечный ключ).',
+      'Pistons, spark plugs and belts for engine repair (requires a wrench).',
+    ],
+  },
+  carTire: {
+    name: ['Автомобильное колесо', 'Car tire'],
+    note: [
+      'Запасное колесо в сборе. Восстанавливает ходовую часть и сцепление автомобиля.',
+      'Spare wheel assembly. Restores vehicle tires and traction.',
+    ],
+  },
+  wrench: {
+    name: ['Гаечный ключ', 'Wrench'],
+    note: [
+      'Тяжёлый разводной ключ для ремонта двигателя и ходовой части машины.',
+      'Heavy adjustable wrench for repairing vehicle engines and tires.',
     ],
   },
   scrubsTop: { name: ['Медицинская рубашка', 'Scrub top'] },

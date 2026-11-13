@@ -25,8 +25,8 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
  */
 
 export type BaseBody = 'male' | 'female';
-export type CostumeId = 'swat' | 'military' | 'police' | 'firefighter' | 'doctor' | 'mechanic' | 'builder';
-export const COSTUMES: readonly CostumeId[] = ['swat', 'military', 'police', 'firefighter', 'doctor', 'mechanic', 'builder'];
+export type CostumeId = 'swat' | 'military' | 'police' | 'firefighter' | 'doctor' | 'mechanic' | 'builder' | 'patientZero' | 'juggernaut';
+export const COSTUMES: readonly CostumeId[] = ['swat', 'military', 'police', 'firefighter', 'doctor', 'mechanic', 'builder', 'patientZero', 'juggernaut'];
 /** A costume on a body: '<costume>_m' (the women's costumes are to come: '<costume>_f'). */
 export type CostumeBody = `${CostumeId}_m`;
 export type BodyId = BaseBody | CostumeBody;

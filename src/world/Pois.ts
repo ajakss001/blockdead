@@ -65,5 +65,12 @@ export class Pois {
       // the kind's clothes and loot (zombies/stats.ts).
       this.zombies.spawnAt(wx, wz, Math.random() < 0.3 ? 'wander' : 'idle');
     }
+    if (s.kind === 'lab') {
+      const [bx, bz] = siteToWorld(s, 0, -12);
+      this.zombies.spawnAt(bx, bz, 'idle', 'patientZero');
+    } else if (s.kind === 'base' || s.kind === 'airport') {
+      const [bx, bz] = siteToWorld(s, 0, 2);
+      this.zombies.spawnAt(bx, bz, 'wander', 'juggernaut');
+    }
   }
 }

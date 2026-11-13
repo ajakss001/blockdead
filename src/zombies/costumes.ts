@@ -17,6 +17,8 @@ const BY_KIND: Partial<Record<ModelKind, [CostumeId, number][]>> = {
   medic: [['doctor', 0.5]],
   worker: [['mechanic', 0.6]],
   builder: [['builder', 0.85]],
+  patientZero: [['patientZero', 1]],
+  juggernaut: [['juggernaut', 1]],
 };
 
 const ANY: readonly CostumeId[] = ['police', 'military', 'firefighter', 'doctor', 'mechanic', 'builder', 'swat'];

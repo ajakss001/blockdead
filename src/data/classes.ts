@@ -134,11 +134,11 @@ export const CLASSES: readonly ClassDef[] = [
     id: 'mechanic',
     name: 'Механик',
     about: 'Чинил машины. Знает, где в них что лежит.',
-    pros: ['Багажники вдвое быстрее', 'Обыск на 10% быстрее', 'Молоток и скотч'],
+    pros: ['Багажники вдвое быстрее', 'Обыск на 10% быстрее', 'Гаечный ключ, запчасти и скотч'],
     cons: ['Тревога +10%'],
     mods: { carSearch: 0.5, searchSpeed: 0.9, anxiety: 1.1 },
     uniform: { outfit: 'outfitMechanic', hands: 'workGloves', bag: 'toolboxMechanic' },
-    items: [['tape', 2], ['water', 1]],
+    items: [['wrench', 1], ['engineParts', 1], ['tape', 2], ['water', 1]],
     hand: 'hammer',
   },
   {

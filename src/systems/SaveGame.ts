@@ -10,6 +10,7 @@ import type { IPlatform } from '../platform/IPlatform';
 import type { SurvivalState } from './Survival';
 import type { MetaData, SkillXp } from './Skills';
 import type { StorySave } from './Story';
+import type { CarSave } from './Vehicles';
 
 const VERSION = 1;
 
@@ -53,6 +54,8 @@ export interface SaveV1 {
   base?: Placed[];
   /** Story mode progress ("Protocol Dawn"). */
   story?: StorySave;
+  /** Drivable vehicles and their condition (fuel, battery, engine, tires, keys). */
+  cars?: CarSave[];
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

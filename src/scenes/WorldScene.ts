@@ -55,6 +55,8 @@ import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
 import { StorySystem } from '../systems/Story';
+import { Vehicles } from '../systems/Vehicles';
+import { CarHud } from '../ui/CarHud';
 import { type BodyPart, PART_NAMES, Survival } from '../systems/Survival';
 import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
@@ -247,6 +249,8 @@ export class WorldScene implements IScene {
   private sleeping: { bed: boolean; el: HTMLDivElement } | null = null;
   private saves!: SaveGame;
   private story!: StorySystem;
+  private vehicles!: Vehicles;
+  private carHud!: CarHud;
   private interiors!: Interiors;
   private doors!: Doors;
   private saveT = 0;
@@ -461,9 +465,46 @@ export class WorldScene implements IScene {
           const r = 28 + Math.random() * 14;
           this.zombies.spawnAt(wx + Math.cos(a) * r, wz + Math.sin(a) * r, 'chase');
         }
+        // Spawn a Juggernaut boss on the first wave and mid-holdout wave
+        if (this.story.holdTimer > 76 || Math.abs(this.story.holdTimer - 42) < 7) {
+          const ba = Math.random() * Math.PI * 2;
+          this.zombies.spawnAt(wx + Math.cos(ba) * 32, wz + Math.sin(ba) * 32, 'chase', 'juggernaut');
+          this.ctx.hud.toast(
+            tr('К полосе прорывается заражённый Громила!', 'An infected Juggernaut is breaching the runway!'),
+            3200,
+          );
+        }
       },
       isLabPowered: (lx, lz) => this.powered.has(blockKey(lx, lz)),
     });
+    this.vehicles = new Vehicles(
+      this.scene,
+      this.world,
+      this.layout,
+      this.inventory,
+      this.zombies,
+      this.particles,
+      {
+        toast: (t, ms) => this.ctx.hud.toast(t, ms),
+        noise: (nx, ny, nz, r) => {
+          this.zombies.noiseAt(nx, ny, nz, r);
+          this.hordes.hear(nx, nz, r);
+        },
+        onKill: () => {
+          this.skills.kills++;
+        },
+        onOpenMechanics: (car) => this.carHud.openMechanics(car),
+        isMechanic: () => this.classId === 'mechanic',
+      },
+    );
+    this.carHud = new CarHud(
+      ctx,
+      this.vehicles,
+      this.inventory,
+      () => this.exitVehicle(),
+      () => void this.save(),
+      document.getElementById('ui')!,
+    );
     const origPanelOpen = this.panel.open.bind(this.panel);
     this.panel.open = (ref) => {
       if (ref) {
@@ -718,6 +759,7 @@ export class WorldScene implements IScene {
     }
     const { x, z } = c.position;
     this.story.init(x, z, save?.story);
+    this.vehicles.init(x, z, save?.cars);
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
     await done;
@@ -760,6 +802,18 @@ export class WorldScene implements IScene {
     };
   }
 
+  private exitVehicle(): void {
+    const c = this.player.controller;
+    const out = this.vehicles.exit(c.position, c.prevPosition);
+    if (!out) return;
+    c.yaw = out.yaw;
+    if (!this.dead) {
+      this.player.viewmodel.scene.visible = true;
+      this.player.body.root.visible = true;
+    }
+    this.save();
+  }
+
   fixedUpdate(dt: number): void {
     const c = this.player.controller;
     if (this.debugSpawnT > 0 && (this.debugSpawnT -= dt) <= 0) this.debugKey();
@@ -767,13 +821,31 @@ export class WorldScene implements IScene {
       const f = new Vector3(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
       this.die(tr('Отладка', 'Debug'), c.position.clone().addScaledVector(f, 1));
     }
-    c.canSprint = this.survival.canSprint;
-    c.sprintFactor = this.survival.sprintFactor;
-    c.jumpFactor = this.survival.jumpFactor;
-    // Tired: the swing is slower.
-    this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
-    if (!this.dead) this.player.fixedUpdate(dt);
-    if (!this.dead) this.firearms.fixedUpdate(dt);
+    const inCar = !this.dead && !!this.vehicles.activeCar;
+    if (inCar) {
+      this.player.viewmodel.scene.visible = false;
+      this.player.body.root.visible = false;
+      this.player.flashlight.intensity = 0;
+      if (this.ctx.input.consumePressed('use')) {
+        this.exitVehicle();
+      } else {
+        if (this.ctx.input.consumePressed('flashlight')) this.vehicles.toggleLights();
+        this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
+      }
+    } else {
+      if (!this.dead) {
+        this.player.viewmodel.scene.visible = true;
+        this.player.body.root.visible = true;
+      }
+      c.canSprint = this.survival.canSprint;
+      c.sprintFactor = this.survival.sprintFactor;
+      c.jumpFactor = this.survival.jumpFactor;
+      // Tired: the swing is slower.
+      this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
+      if (!this.dead) this.player.fixedUpdate(dt);
+      if (!this.dead) this.firearms.fixedUpdate(dt);
+      this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
+    }
     this.hitFromT += dt;
     for (let i = this.carFires.length - 1; i >= 0; i--) {
       const f = this.carFires[i];
@@ -801,7 +873,15 @@ export class WorldScene implements IScene {
     const near = (z: { pos: Vector3 }) => (z.pos.x - c.position.x) ** 2 + (z.pos.z - c.position.z) ** 2;
     this.zombies.sounds.sort((a, b) => near(a.z) - near(b.z));
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
-    for (const a of this.zombies.attacks) this.bitten(a.damage, a.from.pos, this.zombies.attacks.length);
+    for (const a of this.zombies.attacks) {
+      if (this.vehicles.activeCar) {
+        if (Math.abs(this.vehicles.activeCar.speed) < 2.2) {
+          this.bitten(a.damage * 0.35, a.from.pos, this.zombies.attacks.length);
+        }
+      } else {
+        this.bitten(a.damage, a.from.pos, this.zombies.attacks.length);
+      }
+    }
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
     // The dead go limp: a ragdoll each, from the pose they died in.
     for (const z of this.zombies.died) this.zombieRagdoll(z);
@@ -829,19 +909,27 @@ export class WorldScene implements IScene {
       }
       const type = ZOMBIE_STATS[z.kind].loot;
       const ref = { id: ZOMBIE_BODY_ID + z.id, type, x: z.pos.x, z: z.pos.z, y: z.pos.y, zone: this.chunks.zoneAt(z.pos.x, z.pos.z), box };
-      this.containers.addLoose(ref, rollLoot(this.layout.seed, ref.id, type, ref.zone));
+      const loot = rollLoot(this.layout.seed, ref.id, type, ref.zone);
+      if (z.kind === 'patientZero') {
+        loot.unshift({ id: 'storySample', count: 1 }, { id: 'serumG7', count: 1 });
+      } else if (z.kind === 'juggernaut') {
+        loot.unshift({ id: 'antibiotics', count: 2 }, { id: 'ammo_556', count: 30 });
+      }
+      this.containers.addLoose(ref, loot);
     }
-    // Zombies are solid to the player (and the walls still win).
-    for (const z of this.zombies.list) {
-      if (z.state === 'dead' || Math.abs(z.pos.y - c.position.y) > 1.2) continue;
-      const dx = c.position.x - z.pos.x;
-      const dz = c.position.z - z.pos.z;
-      const d = Math.hypot(dx, dz);
-      const min = 0.3 + 0.32;
-      if (d < min && d > 1e-4) {
-        c.position.x += (dx / d) * (min - d);
-        c.position.z += (dz / d) * (min - d);
-        this.world.resolveCircle(c.position, 0.3);
+    // Zombies are solid to the player when on foot (and the walls still win).
+    if (!this.vehicles.activeCar) {
+      for (const z of this.zombies.list) {
+        if (z.state === 'dead' || Math.abs(z.pos.y - c.position.y) > 1.2) continue;
+        const dx = c.position.x - z.pos.x;
+        const dz = c.position.z - z.pos.z;
+        const d = Math.hypot(dx, dz);
+        const min = 0.3 + 0.32;
+        if (d < min && d > 1e-4) {
+          c.position.x += (dx / d) * (min - d);
+          c.position.z += (dz / d) * (min - d);
+          this.world.resolveCircle(c.position, 0.3);
+        }
       }
     }
     this.twinsNear(c.position);
@@ -860,7 +948,7 @@ export class WorldScene implements IScene {
     this.stepN = n;
     if (c.jumped) sfx.jump(feet);
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
-    if (!this.dead) this.interaction.fixedUpdate(dt);
+    if (!this.dead && !this.vehicles.activeCar) this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
     this.updateGrid();
     // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
@@ -902,6 +990,7 @@ export class WorldScene implements IScene {
       this.survival.pushStats(this.ctx.hud, this.player.battery);
       if (!this.dead) {
         this.ctx.hud.setStory(this.story.update(0.25, c.position.x, c.position.z, c.yaw));
+        this.vehicles.ensurePoiCars(c.position.x, c.position.z);
       }
     }
   }
@@ -909,8 +998,14 @@ export class WorldScene implements IScene {
   /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
-    // The survivor's body, arms and light move by world time: frozen on pause like everything else.
-    this.player.render(alpha, gameDt);
+    // The survivor's body, arms and light move by world time (or the active vehicle camera when driving).
+    if (this.vehicles.activeCar && !this.dead) {
+      this.vehicles.render(frameDt, this.camera, this.ctx.input);
+    } else {
+      this.player.render(alpha, gameDt);
+      this.vehicles.render(frameDt, this.camera, this.ctx.input);
+    }
+    this.carHud.update();
     this.firearms.render(gameDt);
     {
       const fa = this.firearms;
@@ -1103,6 +1198,7 @@ export class WorldScene implements IScene {
       map: this.mapMemory.serialize(),
       base: this.base.serialize(),
       story: this.story.serialize(),
+      cars: this.vehicles.serialize(),
     });
   }
 
@@ -1401,6 +1497,20 @@ export class WorldScene implements IScene {
     this.doors.releaseLock('labPower', i * CHUNK, j * CHUNK, (i + 1) * CHUNK, (j + 1) * CHUNK);
     this.labLights();
     this.story.onPowerLab(x, z);
+    const site = this.layout.poi(i, j);
+    if (site && site.kind === 'lab') {
+      const [bx, bz] = siteToWorld(site, 0, -12);
+      const hasBoss = this.zombies.list.some(
+        (z) => z.state !== 'dead' && z.kind === 'patientZero' && Math.hypot(z.pos.x - bx, z.pos.z - bz) < 55,
+      );
+      if (!hasBoss) {
+        this.zombies.spawnAt(bx, bz, 'chase', 'patientZero');
+      }
+      this.ctx.hud.toast(
+        tr('Внимание: из изолятора вырвался Пациент Ноль!', 'Warning: Patient Zero broke out of containment!'),
+        3600,
+      );
+    }
     this.save();
   }
 
@@ -1559,6 +1669,8 @@ export class WorldScene implements IScene {
   private spotHere(): { text: string; act: boolean; run(): void } | null {
     const eye = this.camera.getWorldPosition(_so);
     const dir = this.camera.getWorldDirection(_sd);
+    const carSpot = this.vehicles.spotAt(eye, dir);
+    if (carSpot) return carSpot;
     const inv = this.inventory;
     const hud = this.ctx.hud;
     // The built thing nearest the line of sight, within 2 m.
@@ -1956,6 +2068,8 @@ export class WorldScene implements IScene {
   dispose(): void {
     this.firearms.dispose();
     this.gunHud.dispose();
+    this.carHud.dispose();
+    this.vehicles.dispose();
     this.models.dispose();
     this.baseProps.dispose();
     this.particles.dispose();
