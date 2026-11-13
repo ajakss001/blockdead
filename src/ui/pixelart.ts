@@ -913,30 +913,117 @@ const STAT_DRAW: Record<StatIcon, (s: Sprite, c: number, d: number) => void> = {
   },
 };
 
+const STAT_IDS: readonly StatIcon[] = ['health', 'hunger', 'thirst', 'energy', 'warmth', 'calm', 'battery', 'sick', 'wound'];
+const statImages = new Map<StatIcon, ImageData>();
 const statCache = new Map<string, string>();
+export const STAT_DIM_COLOR = 0x55574f;
 
-/** Data URL of a 16×16 HUD indicator in the given color (cached per color). */
+/** Data URL of a 24×24 HUD indicator in the given color (cached per color). */
 export function statIcon(id: StatIcon, color: number): string {
   const key = `${id}:${color}`;
   let url = statCache.get(key);
   if (!url) {
-    const s = new Sprite(16, 16);
-    STAT_DRAW[id](s, color, shadeRGB(color, 0.55));
-    s.finish(0x0c0a08);
-    url = s.toDataURL();
+    const src = statImages.get(id);
+    if (src) {
+      url = tintStatImage(id, src, color);
+    } else {
+      const s = new Sprite(16, 16);
+      STAT_DRAW[id](s, color, shadeRGB(color, 0.55));
+      s.finish(0x0c0a08);
+      url = s.toDataURL();
+    }
     statCache.set(key, url);
   }
   return url;
+}
+
+function tintStatImage(id: StatIcon, src: ImageData, color: number): string {
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const g = c.getContext('2d')!;
+  const out = g.createImageData(src.width, src.height);
+  const tr = (color >> 16) & 255;
+  const tg = (color >> 8) & 255;
+  const tb = color & 255;
+  const isDim = color === STAT_DIM_COLOR;
+
+  for (let i = 0; i < src.data.length; i += 4) {
+    const a = src.data[i + 3];
+    if (a === 0) continue;
+    const r = src.data[i];
+    const gr = src.data[i + 1];
+    const b = src.data[i + 2];
+    const lum = (0.299 * r + 0.587 * gr + 0.114 * b) / 255;
+
+    // Keep the dark pixel-art outline intact.
+    if (r < 55 && gr < 55 && b < 55) {
+      out.data[i] = r;
+      out.data[i + 1] = gr;
+      out.data[i + 2] = b;
+      out.data[i + 3] = a;
+      continue;
+    }
+
+    if (id === 'wound' && !isDim) {
+      // Keep the bandage cream & crimson blood spot colors.
+      out.data[i] = r;
+      out.data[i + 1] = gr;
+      out.data[i + 2] = b;
+      out.data[i + 3] = a;
+      continue;
+    }
+
+    if (isDim) {
+      const v = Math.round(lum * 115);
+      out.data[i] = v;
+      out.data[i + 1] = v;
+      out.data[i + 2] = Math.min(255, Math.round(v * 0.96));
+      out.data[i + 3] = a;
+      continue;
+    }
+
+    // Map sprite shading (typically ~0.25..0.85 lum) onto rich thematic color with highlights.
+    const k = Math.min(1.25, 0.35 + lum * 1.15);
+    out.data[i] = Math.min(255, Math.round(tr * k));
+    out.data[i + 1] = Math.min(255, Math.round(tg * k));
+    out.data[i + 2] = Math.min(255, Math.round(tb * k));
+    out.data[i + 3] = a;
+  }
+  g.putImageData(out, 0, 0);
+  return c.toDataURL();
 }
 
 const iconCache = new Map<ItemId, string>();
 /** Drawn icons (public/icons/items.png, tools/build-icons.ts): 32×32, they win over the code ones. */
 const sheetIcons = new Map<string, string>();
 
+async function loadStatIcons(base: string): Promise<void> {
+  await Promise.all(
+    STAT_IDS.map(async (id) => {
+      try {
+        const img = new Image();
+        img.src = `${base}stats/${id}.png`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const g = c.getContext('2d')!;
+        g.drawImage(img, 0, 0);
+        statImages.set(id, g.getImageData(0, 0, c.width, c.height));
+      } catch {
+        // Fallback to procedural icon if missing.
+      }
+    }),
+  );
+  statCache.clear();
+}
+
 /** Loads the drawn icons once at boot; no atlas (or an error) leaves the code icons. */
 export async function loadItemIcons(): Promise<void> {
+  const base = `${import.meta.env.BASE_URL}icons/`;
+  await loadStatIcons(base);
   try {
-    const base = `${import.meta.env.BASE_URL}icons/`;
     const res = await fetch(`${base}items.json`);
     if (!res.ok) return;
     const meta = (await res.json()) as { cell: number; ids: Record<string, number> };

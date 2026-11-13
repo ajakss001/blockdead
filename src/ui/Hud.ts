@@ -1,5 +1,5 @@
 import { onLangChange, tr } from '../core/i18n';
-import { type StatIcon, statIcon } from './pixelart';
+import { STAT_DIM_COLOR, type StatIcon, statIcon } from './pixelart';
 
 /** Meters on the HUD; each is 0..1 where 1 = fine ("how much is left"). */
 export type StatId = Exclude<StatIcon, 'wound'>;
@@ -19,12 +19,18 @@ const STATS: { id: StatId; label: [string, string] }[] = [
   { id: 'sick', label: ['Заражение', 'Infection'] },
 ];
 
-/** Muted lo-fi palette: severity reads by hue, nothing screams like a mobile-game button. */
-const PALETTE: Record<Tint, readonly number[]> = {
-  normal: [0xa3ab96, 0xc8a050, 0xc8783a, 0xd8602e],
-  cold: [0xa3ab96, 0x86a4c0, 0x6a92c8, 0x5a84d8],
+/** Thematic colors per stat: full = rich natural color, depleting reveals gray underneath. */
+const STAT_COLORS: Record<StatId, { normal: number; critical: number; cold?: number }> = {
+  health: { normal: 0xd44038, critical: 0xf5382e },
+  hunger: { normal: 0xd4964a, critical: 0xd8602e },
+  thirst: { normal: 0x3e8ed0, critical: 0x56aaf5 },
+  energy: { normal: 0x8e86d0, critical: 0xc8783a },
+  warmth: { normal: 0xd6843c, critical: 0xd8602e, cold: 0x5ca4e8 },
+  calm: { normal: 0x5eb068, critical: 0xd8602e },
+  battery: { normal: 0xe0bc48, critical: 0xd8602e },
+  sick: { normal: 0xaec640, critical: 0xd8602e },
 };
-const DIM = 0x55574f;
+const DIM = STAT_DIM_COLOR;
 
 interface StatView {
   root: HTMLDivElement;
@@ -76,7 +82,7 @@ export class Hud {
       this.setStat(id, 1, 0);
     }
     this.wound.className = 'stat stat__img stat--wound';
-    this.wound.src = statIcon('wound', PALETTE.normal[3]);
+    this.wound.src = statIcon('wound', 0xf0382e);
     this.wound.title = tr('Рана — нужна перевязка', 'Wound — needs bandage');
     this.wound.hidden = true;
     this.stats.append(this.wound);
@@ -118,20 +124,28 @@ export class Hud {
     this.stamina.classList.toggle('low', key < 25);
   }
 
-  /** value: 0..1 how much is left; severity picks the color, 3 blinks. */
+  /** value: 0..1 how much is left; color fills from bottom over gray base, dims slightly as it depletes, 3 blinks. */
   setStat(id: StatId, value: number, severity: Severity, tint: Tint = 'normal'): void {
     const v = this.views.get(id)!;
-    if (id === 'sick') v.root.hidden = severity === 0 && value >= 0.99;
-    const fillKey = Math.round(Math.min(1, Math.max(0, value)) * 16);
+    const clamped = Math.min(1, Math.max(0, value));
+    if (id === 'sick') v.root.hidden = severity === 0 && clamped >= 0.99;
+    const fillKey = Math.round(clamped * 24);
     if (fillKey !== v.fillKey) {
       v.fillKey = fillKey;
-      // Whole pixels of the 16-px icon, so the level reads as pixel art too.
-      v.fill.style.height = `${(fillKey / 16) * 100}%`;
+      // Whole pixels of the 24-px icon, so the level reads as pixel art too.
+      v.fill.style.height = `${(fillKey / 24) * 100}%`;
     }
-    const colorKey = `${tint}${severity}`;
+    if (severity < 3) {
+      v.root.style.opacity = (0.52 + 0.48 * clamped).toFixed(2);
+    } else {
+      v.root.style.opacity = '';
+    }
+    const colors = STAT_COLORS[id];
+    const color = tint === 'cold' && colors.cold ? colors.cold : severity === 3 ? colors.critical : colors.normal;
+    const colorKey = `${tint}${severity}:${color}`;
     if (colorKey !== v.colorKey) {
       v.colorKey = colorKey;
-      v.img.src = statIcon(id, PALETTE[tint][severity]);
+      v.img.src = statIcon(id, color);
       v.root.classList.toggle('stat--warn', severity > 0);
       v.root.classList.toggle('stat--critical', severity === 3);
     }
