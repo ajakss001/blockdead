@@ -159,7 +159,7 @@ export class Ragdoll {
     const parts = bodyParts(shape);
     this.world = new World({ gravity: new Vec3(0, -9.82, 0) });
     this.world.allowSleep = false;
-    (this.world.solver as unknown as { iterations: number }).iterations = 14;
+    (this.world.solver as unknown as { iterations: number }).iterations = 8;
     // Stiff contacts: a limb landing hard does not sink into the floor or a wall.
     this.world.defaultContactMaterial.contactEquationStiffness = 1e8;
     this.world.defaultContactMaterial.contactEquationRelaxation = 2.5;
@@ -364,7 +364,7 @@ export class Ragdoll {
  */
 export class Ragdolls {
   readonly list: { rd: Ragdoll; player: boolean; born: number }[] = [];
-  limit = 4;
+  limit = 3;
   private acc = 0;
   private time = 0;
 

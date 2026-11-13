@@ -1201,6 +1201,7 @@ export class Vehicles {
     for (const z of this.zombies.list) {
       if (z.state === 'dead') continue;
       for (const c of this.cars) {
+        if (Math.abs(z.pos.x - c.x) > 5 || Math.abs(z.pos.z - c.z) > 5) continue;
         this.pushCircleOutOfCar(z.pos, 0.34, c);
       }
     }
@@ -1213,9 +1214,10 @@ export class Vehicles {
 
     for (const z of this.zombies.list) {
       if (z.state === 'dead' || this.hitCooldown.has(z.id)) continue;
-      if (Math.abs(z.pos.y - car.y) > 1.5) continue;
       const dx = z.pos.x - car.x;
       const dz = z.pos.z - car.z;
+      if (dx > 5 || dx < -5 || dz > 5 || dz < -5) continue;
+      if (Math.abs(z.pos.y - car.y) > 1.5) continue;
       const localFwd = dx * fwdX + dz * fwdZ;
       const localRight = dx * rightX + dz * rightZ;
 

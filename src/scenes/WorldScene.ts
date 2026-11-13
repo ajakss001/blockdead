@@ -1308,7 +1308,7 @@ export class WorldScene implements IScene {
     const start = z.death && this.models.deathStart(z);
     if (!start) return;
     const boxes: StaticBox[] = [];
-    this.world.boxesNear(z.pos.x, z.pos.z, 2.6, (b) => boxes.push(b));
+    this.world.boxesNear(z.pos.x, z.pos.z, 1.6, (b) => boxes.push(b));
     const rd = zombieRagdoll(z, start, boxes);
     this.ragdolls.add(rd);
     this.corpseRd.set(z, rd);

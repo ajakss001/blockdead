@@ -282,13 +282,17 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
 
   /** Fires burning (x, y, z, size, phase): the nearest get the real lights. */
   private readonly fires: number[] = [];
-  private fireLightCap = 0;
   private fireLightList: PointLight[] = [];
 
-  /** At most this many real lights for fires (made the first time a fire is near: no shader rebuild before). */
+  /** At most this many real lights for fires (pre-added to the scene at intensity 0 so WebGL never recompiles shaders mid-frame). */
   set fireLights(n: number) {
-    this.fireLightCap = n;
     while (this.fireLightList.length > n) this.scene.remove(this.fireLightList.pop()!);
+    while (this.fireLightList.length < n) {
+      const l = new PointLight(0xff8a3a, 0, 16, 1.6);
+      l.castShadow = false;
+      this.scene.add(l);
+      this.fireLightList.push(l);
+    }
   }
 
   private updateFireLights(player: Vector3): void {
@@ -299,12 +303,6 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
       if (d < FIRE_LIGHT_RANGE) near.push([d, i]);
     }
     near.sort((a, b) => a[0] - b[0]);
-    while (this.fireLightList.length < Math.min(this.fireLightCap, near.length)) {
-      const l = new PointLight(0xff8a3a, 0, 16, 1.6);
-      l.castShadow = false;
-      this.scene.add(l);
-      this.fireLightList.push(l);
-    }
     this.fireLightList.forEach((l, n) => {
       const hit = near[n];
       if (!hit) {
