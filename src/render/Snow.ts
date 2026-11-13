@@ -48,8 +48,10 @@ export class Snow {
     scene.add(this.mesh);
   }
 
+  density = 1;
+
   update(time: number, snow: number, camera: Vector3, windX: number, windZ: number, show: boolean): void {
-    const n = Math.floor(N * snow);
+    const n = Math.floor(N * snow * this.density);
     this.mesh.visible = show && n > 0;
     if (!this.mesh.visible) return;
     this.mesh.geometry.setDrawRange(0, n * 6);

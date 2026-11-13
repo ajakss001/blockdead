@@ -249,28 +249,28 @@ body {
 .touch__stick::before {
   content: '';
   position: absolute;
-  width: 84px;
-  height: 84px;
+  width: 98px;
+  height: 98px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 1px solid rgba(190, 182, 166, 0.32);
-  background: rgba(20, 20, 22, 0.22);
+  border: 1.5px solid rgba(190, 182, 166, 0.36);
+  background: rgba(20, 20, 22, 0.25);
 }
 .touch__knob {
   position: absolute;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 1px solid rgba(205, 198, 184, 0.35);
-  background: rgba(190, 182, 166, 0.32);
+  border: 1.5px solid rgba(205, 198, 184, 0.45);
+  background: rgba(190, 182, 166, 0.36);
 }
 .touch__bar {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 6px);
-  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: calc(env(safe-area-inset-left, 0px) + 10px);
   display: flex;
-  gap: 4px;
+  gap: 8px;
   pointer-events: none;
 }
 .touch__buttons {
@@ -284,36 +284,52 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1px solid rgba(190, 182, 166, 0.28);
-  background: rgba(20, 20, 22, 0.32);
-  color: rgba(205, 198, 184, 0.82);
-  font: 500 10px system-ui, sans-serif;
+  border: 1.5px solid rgba(190, 182, 166, 0.34);
+  background: rgba(20, 20, 22, 0.42);
+  color: rgba(225, 218, 204, 0.92);
+  font: 600 11px system-ui, sans-serif;
   padding: 0;
   pointer-events: auto;
   touch-action: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.touch__btn svg { width: 54%; height: 54%; pointer-events: none; }
+.touch__badge {
+  position: absolute;
+  bottom: -4px;
+  right: -2px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(20, 20, 22, 0.92);
+  border: 1px solid rgba(215, 195, 140, 0.65);
+  color: #f3e8ce;
+  font: 700 10px/16px system-ui, sans-serif;
+  text-align: center;
 }
 .touch__btn[hidden] { display: none !important; }
 .touch__pill {
   position: static;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 4px;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  background: rgba(16, 17, 19, 0.45);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  background: rgba(16, 17, 19, 0.56);
 }
-.touch__btn.on { background: rgba(120, 104, 70, 0.42); border-color: rgba(190, 168, 120, 0.65); color: rgba(235, 224, 198, 0.95); }
+.touch__pill svg { width: 22px; height: 22px; }
+.touch__btn.on { background: rgba(120, 104, 70, 0.48); border-color: rgba(215, 190, 130, 0.78); color: rgba(245, 236, 214, 0.98); }
 .touch__btn--attack {
-  width: 56px;
-  height: 56px;
-  right: calc(env(safe-area-inset-right, 0px) + 14px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
-  font-size: 11px;
-  font-weight: 600;
+  width: 72px;
+  height: 72px;
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  border-color: rgba(220, 140, 110, 0.55);
+  background: rgba(70, 28, 24, 0.48);
 }
-.touch__btn--sprint { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 78px); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); }
-.touch__btn--crouch { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 78px); }
-.touch__btn--jump { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 68px); bottom: calc(env(safe-area-inset-bottom, 0px) + 64px); }
+.touch__btn--sprint { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 98px); bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); }
+.touch__btn--crouch { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 16px); bottom: calc(env(safe-area-inset-bottom, 0px) + 98px); }
+.touch__btn--jump { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 84px); bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); }
 
 /* Compact debug on phones: bottom-left, one line, never intercepts touches. */
 #ui > .debug--compact {
@@ -329,14 +345,13 @@ body {
 .debug--compact pre { margin: 0; }
 
 .touch__btn--use {
-  width: 44px;
-  height: 44px;
-  right: calc(env(safe-area-inset-right, 0px) + 126px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
-  border-color: rgba(200, 180, 122, 0.55);
-  background: rgba(60, 52, 36, 0.45);
+  width: 56px;
+  height: 56px;
+  right: calc(env(safe-area-inset-right, 0px) + 160px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  border-color: rgba(200, 180, 122, 0.62);
+  background: rgba(60, 52, 36, 0.52);
   color: #e8dec6;
-  font-size: 10px;
 }
 
 /* Zomboid HUD: a row of pixel-art indicators, top right, clear of the phone buttons. */
@@ -1023,8 +1038,8 @@ body {
 .quickslots--touch { top: calc(env(safe-area-inset-top, 0px) + 5px); bottom: auto; left: 50%; transform: translateX(-50%); }
 .touch__btn--gun { display: none; }
 .touch--gun .touch__btn--gun { display: flex; }
-.touch__btn--reload { width: 38px; height: 38px; right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 126px); font-size: 9px; }
-.touch__btn--aim { width: 38px; height: 38px; right: calc(env(safe-area-inset-right, 0px) + 60px); bottom: calc(env(safe-area-inset-bottom, 0px) + 114px); font-size: 9px; }
+.touch__btn--reload { width: 48px; height: 48px; right: calc(env(safe-area-inset-right, 0px) + 16px); bottom: calc(env(safe-area-inset-bottom, 0px) + 160px); }
+.touch__btn--aim { width: 48px; height: 48px; right: calc(env(safe-area-inset-right, 0px) + 74px); bottom: calc(env(safe-area-inset-bottom, 0px) + 142px); }
 .inv__mods { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .inv__mod { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .inv__mod-slot { min-width: 64px; font-size: 11px; color: #8a8478; }

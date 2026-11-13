@@ -167,8 +167,12 @@ export class GunHud {
     root?.classList.toggle('touch--gun', !!f.gun);
     const fire = document.querySelector<HTMLElement>('.touch__btn--attack');
     if (fire) {
-      const t = f.gun ? `${tr('Огонь', 'Fire')} ${f.gun.mag}` : tr('Атака', 'Attack');
-      if (fire.textContent !== t) fire.textContent = t;
+      const badge = fire.querySelector<HTMLElement>('.touch__badge');
+      if (badge) {
+        const t = f.gun ? String(f.gun.mag) : '';
+        if (badge.textContent !== t) badge.textContent = t;
+        badge.hidden = !f.gun;
+      }
     }
   }
 

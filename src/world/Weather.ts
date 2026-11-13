@@ -61,6 +61,10 @@ export class Weather {
    * `outdoors`: under the open sky (rain shows, beads on the lens); `lookUp`: the camera's pitch (drops
    * only land when you look out level or up).
    */
+  setSnowDensity(k: number): void {
+    this.snowMesh.density = Math.max(0.15, Math.min(1, k));
+  }
+
   update(dt: number, camera: Vector3, windX: number, windZ: number, outdoors: boolean, lookUp: number, paused: boolean): void {
     this.drops.style.display = paused ? 'none' : '';
     if (paused) return;

@@ -2157,6 +2157,10 @@ export class WorldScene implements IScene {
     this.chunks.radius = preset.chunkRadius;
     this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
     this.models.configure(preset.level);
+    const isLow = preset.level === 'low';
+    this.vehicles?.setLowQuality(isLow);
+    this.bandits?.setMaxActive(isLow ? 2 : 4);
+    this.weather?.setSnowDensity(isLow ? 0.36 : 1.0);
   }
 
   private resize(width: number, height: number): void {

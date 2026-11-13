@@ -220,6 +220,16 @@ export class Vehicles {
   private brakeLightL: PointLight;
   private brakeLightR: PointLight;
   private isBraking = false;
+  private lowQuality = false;
+
+  setLowQuality(low: boolean): void {
+    this.lowQuality = low;
+    if (low) {
+      this.headLightL.castShadow = false;
+      this.headBounceLight.intensity = 0;
+      this.brakeLightR.intensity = 0;
+    }
+  }
 
   constructor(
     private readonly scene: Scene,
@@ -240,8 +250,8 @@ export class Vehicles {
 
     // Dual headlights moved to whichever car is currently active or has lights on
     const mask = beamMask();
-    this.headLightL = new SpotLight(0xfff0cc, 0, 58, 0.58, 0.68, 1.35);
-    this.headLightR = new SpotLight(0xfff0cc, 0, 58, 0.58, 0.68, 1.35);
+    this.headLightL = new SpotLight(0xfff0cc, 0, 58, 0.64, 0.76, 1.35);
+    this.headLightR = new SpotLight(0xfff0cc, 0, 58, 0.64, 0.76, 1.35);
     this.headLightL.map = mask;
     this.headLightR.map = mask;
     this.headLightL.shadow.mapSize.set(512, 512);
@@ -1421,23 +1431,23 @@ export class Vehicles {
       const fwdZ = -Math.cos(litCar.yaw);
       const rightX = Math.cos(litCar.yaw);
       const rightZ = -Math.sin(litCar.yaw);
-      const h = litCar.kind === 'suv' ? 0.96 : 0.72;
-      const w = litCar.kind === 'suv' ? 0.74 : 0.72;
-      const front = litCar.kind === 'suv' ? 2.42 : 2.32;
+      const h = litCar.kind === 'suv' ? 0.90 : 0.70;
+      const w = litCar.kind === 'suv' ? 0.70 : 0.68;
+      const front = litCar.kind === 'suv' ? 2.12 : 2.02;
 
       const power = litCar.battery < 0.2 ? 42 * (litCar.battery / 0.2) : 48;
       this.headLightL.intensity = power;
       this.headLightR.intensity = power;
-      this.headLightL.castShadow = power > 1;
+      this.headLightL.castShadow = !this.lowQuality && power > 1;
 
       this.headLightL.position.set(litCar.x + fwdX * front - rightX * w, litCar.y + h, litCar.z + fwdZ * front - rightZ * w);
       this.headLightR.position.set(litCar.x + fwdX * front + rightX * w, litCar.y + h, litCar.z + fwdZ * front + rightZ * w);
 
-      this.headTargetL.position.set(litCar.x + fwdX * (front + 24) - rightX * w * 0.7, litCar.y + 0.35, litCar.z + fwdZ * (front + 24) - rightZ * w * 0.7);
-      this.headTargetR.position.set(litCar.x + fwdX * (front + 24) + rightX * w * 0.7, litCar.y + 0.35, litCar.z + fwdZ * (front + 24) + rightZ * w * 0.7);
+      this.headTargetL.position.set(litCar.x + fwdX * (front + 15) - rightX * w * 0.65, litCar.y + 0.12, litCar.z + fwdZ * (front + 15) - rightZ * w * 0.65);
+      this.headTargetR.position.set(litCar.x + fwdX * (front + 15) + rightX * w * 0.65, litCar.y + 0.12, litCar.z + fwdZ * (front + 15) + rightZ * w * 0.65);
 
-      this.headBounceLight.position.set(litCar.x + fwdX * (front + 7.5), litCar.y + 1.1, litCar.z + fwdZ * (front + 7.5));
-      this.headBounceLight.intensity = power * 0.14;
+      this.headBounceLight.position.set(litCar.x + fwdX * (front + 2.8), litCar.y + 0.75, litCar.z + fwdZ * (front + 2.8));
+      this.headBounceLight.intensity = this.lowQuality ? 0 : power * 0.15;
     }
 
     const brakeCar = this.activeCar ?? litCar;
@@ -1450,10 +1460,16 @@ export class Vehicles {
       const w = brakeCar.kind === 'suv' ? 0.82 : 0.78;
       const h = brakeCar.kind === 'suv' ? 0.82 : 0.74;
       const intensity = this.isBraking && brakeCar === this.activeCar ? 2.1 : 0.65;
-      this.brakeLightL.position.set(brakeCar.x - fwdX * rear - rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear - rightZ * w);
-      this.brakeLightR.position.set(brakeCar.x - fwdX * rear + rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear + rightZ * w);
-      this.brakeLightL.intensity = intensity;
-      this.brakeLightR.intensity = intensity;
+      if (this.lowQuality) {
+        this.brakeLightL.position.set(brakeCar.x - fwdX * rear, brakeCar.y + h, brakeCar.z - fwdZ * rear);
+        this.brakeLightL.intensity = intensity;
+        this.brakeLightR.intensity = 0;
+      } else {
+        this.brakeLightL.position.set(brakeCar.x - fwdX * rear - rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear - rightZ * w);
+        this.brakeLightR.position.set(brakeCar.x - fwdX * rear + rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear + rightZ * w);
+        this.brakeLightL.intensity = intensity;
+        this.brakeLightR.intensity = intensity;
+      }
     } else {
       this.brakeLightL.intensity = 0;
       this.brakeLightR.intensity = 0;

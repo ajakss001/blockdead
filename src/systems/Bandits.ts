@@ -155,22 +155,27 @@ export class Bandits {
   readonly list: Bandit[] = [];
   private nextId = 1;
   private spawnCd = 4;
+  private maxActive = MAX_ACTIVE;
   private readonly tracers: Tracer[] = [];
   private readonly tracerGeo = new BoxGeometry(0.025, 0.025, 1);
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
   constructor(private readonly w: BanditWorld) {}
 
+  setMaxActive(n: number): void {
+    this.maxActive = Math.max(1, n);
+  }
+
   update(dt: number, px: number, py: number, pz: number, playerDead: boolean, inCar: boolean): void {
     this.updateTracers(dt);
 
-    // Spawn bandits up to MAX_ACTIVE around the player.
+    // Spawn bandits up to maxActive around the player.
     this.spawnCd -= dt;
     let aliveCount = 0;
     for (const b of this.list) if (b.state !== 'dead') aliveCount++;
-    if (this.spawnCd <= 0 && aliveCount < MAX_ACTIVE) {
+    if (this.spawnCd <= 0 && aliveCount < this.maxActive) {
       this.trySpawnAround(px, pz);
-      this.spawnCd = 5 + Math.random() * 5;
+      this.spawnCd = (this.maxActive <= 2 ? 9 : 5) + Math.random() * 5;
     }
 
     for (let i = this.list.length - 1; i >= 0; i--) {
