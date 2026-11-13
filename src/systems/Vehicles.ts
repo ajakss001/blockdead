@@ -1,9 +1,6 @@
 import {
-  AdditiveBlending,
   BoxGeometry,
   CanvasTexture,
-  CylinderGeometry,
-  DoubleSide,
   Group,
   LinearMipmapLinearFilter,
   Mesh,
@@ -27,6 +24,7 @@ import { VehicleAudio } from '../audio/VehicleAudio';
 import { tr } from '../core/i18n';
 import { clamp, damp } from '../core/math';
 import type { InputManager } from '../input/InputManager';
+import { beamMask } from '../items/flashlight';
 import type { Particles } from '../render/Particles';
 import type { CollisionWorld } from '../world/CollisionWorld';
 import { CHUNK, ROAD_HALF, type WorldLayout } from '../world/gen/layout';
@@ -156,8 +154,6 @@ const _probe = new Vector3();
 
 let _shadowGeo: PlaneGeometry | null = null;
 let _shadowMat: MeshBasicMaterial | null = null;
-let _beamGeo: CylinderGeometry | null = null;
-let _beamMat: MeshBasicMaterial | null = null;
 
 function contactShadowGeo(): PlaneGeometry {
   if (!_shadowGeo) {
@@ -191,41 +187,6 @@ function contactShadowMat(): MeshBasicMaterial {
   return _shadowMat;
 }
 
-function headBeamGeo(): CylinderGeometry {
-  if (!_beamGeo) {
-    _beamGeo = new CylinderGeometry(0.14, 1.35, 10, 14, 1, true);
-    _beamGeo.rotateX(Math.PI / 2);
-    _beamGeo.translate(0, 0, -5);
-  }
-  return _beamGeo;
-}
-
-function headBeamMat(): MeshBasicMaterial {
-  if (!_beamMat) {
-    const c = document.createElement('canvas');
-    c.width = 32;
-    c.height = 128;
-    const g = c.getContext('2d')!;
-    const grad = g.createLinearGradient(0, 0, 0, 128);
-    grad.addColorStop(0, 'rgba(255,244,214,0.22)');
-    grad.addColorStop(0.15, 'rgba(255,244,214,0.28)');
-    grad.addColorStop(0.6, 'rgba(255,244,214,0.07)');
-    grad.addColorStop(1, 'rgba(255,244,214,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 32, 128);
-    const tex = new CanvasTexture(c);
-    _beamMat = new MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      opacity: 0.32,
-      depthWrite: false,
-      blending: AdditiveBlending,
-      side: DoubleSide,
-    });
-  }
-  return _beamMat;
-}
-
 /**
  * Project Zomboid-style drivable vehicles (Sedan & 4x4 SUV).
  * Supports entering/exiting, ignition keys & hotwiring, fuel consumption, battery drain,
@@ -254,8 +215,6 @@ export class Vehicles {
   private headTargetL: Object3D;
   private headTargetR: Object3D;
   private headBounceLight: PointLight;
-  private headBeamL: Mesh;
-  private headBeamR: Mesh;
   private brakeLightL: PointLight;
   private brakeLightR: PointLight;
   private isBraking = false;
@@ -278,30 +237,31 @@ export class Vehicles {
     this.scene.add(this.group);
 
     // Dual headlights moved to whichever car is currently active or has lights on
-    this.headLightL = new SpotLight(0xfff1cc, 0, 34, 0.56, 0.45, 1.5);
-    this.headLightR = new SpotLight(0xfff1cc, 0, 34, 0.56, 0.45, 1.5);
+    const mask = beamMask();
+    this.headLightL = new SpotLight(0xfff0cc, 0, 58, 0.58, 0.68, 1.35);
+    this.headLightR = new SpotLight(0xfff0cc, 0, 58, 0.58, 0.68, 1.35);
+    this.headLightL.map = mask;
+    this.headLightR.map = mask;
+    this.headLightL.shadow.mapSize.set(512, 512);
+    this.headLightL.shadow.bias = -0.0005;
+    this.headLightL.shadow.normalBias = 0.04;
+    this.headLightL.shadow.camera.near = 0.45;
+    this.headLightL.shadow.camera.far = 50;
+    this.headLightR.castShadow = false;
     this.headTargetL = new Object3D();
     this.headTargetR = new Object3D();
     this.headLightL.target = this.headTargetL;
     this.headLightR.target = this.headTargetR;
     this.brakeLightL = new PointLight(0xff2218, 0, 4.2, 2);
     this.brakeLightR = new PointLight(0xff2218, 0, 4.2, 2);
-    this.headBounceLight = new PointLight(0xfff1cc, 0, 14, 1.7);
+    this.headBounceLight = new PointLight(0xffe8b8, 0, 20, 1.4);
     this.headBounceLight.castShadow = false;
-    this.headBeamL = new Mesh(headBeamGeo(), headBeamMat());
-    this.headBeamR = new Mesh(headBeamGeo(), headBeamMat());
-    this.headBeamL.visible = false;
-    this.headBeamR.visible = false;
-    this.headBeamL.renderOrder = 3;
-    this.headBeamR.renderOrder = 3;
     this.scene.add(
       this.headLightL,
       this.headLightR,
       this.headTargetL,
       this.headTargetR,
       this.headBounceLight,
-      this.headBeamL,
-      this.headBeamR,
       this.brakeLightL,
       this.brakeLightR,
     );
@@ -1392,9 +1352,8 @@ export class Vehicles {
     if (!litCar) {
       this.headLightL.intensity = 0;
       this.headLightR.intensity = 0;
+      this.headLightL.castShadow = false;
       this.headBounceLight.intensity = 0;
-      this.headBeamL.visible = false;
-      this.headBeamR.visible = false;
     } else {
       const fwdX = -Math.sin(litCar.yaw);
       const fwdZ = -Math.cos(litCar.yaw);
@@ -1402,30 +1361,21 @@ export class Vehicles {
       const rightZ = -Math.sin(litCar.yaw);
       const h = litCar.kind === 'suv' ? 0.96 : 0.72;
       const w = litCar.kind === 'suv' ? 0.74 : 0.72;
-      const front = litCar.kind === 'suv' ? 2.24 : 2.16;
+      const front = litCar.kind === 'suv' ? 2.42 : 2.32;
 
-      const power = litCar.battery < 0.2 ? 3.5 * (litCar.battery / 0.2) : 4.2;
+      const power = litCar.battery < 0.2 ? 42 * (litCar.battery / 0.2) : 48;
       this.headLightL.intensity = power;
       this.headLightR.intensity = power;
+      this.headLightL.castShadow = power > 1;
 
       this.headLightL.position.set(litCar.x + fwdX * front - rightX * w, litCar.y + h, litCar.z + fwdZ * front - rightZ * w);
       this.headLightR.position.set(litCar.x + fwdX * front + rightX * w, litCar.y + h, litCar.z + fwdZ * front + rightZ * w);
 
-      this.headTargetL.position.set(litCar.x + fwdX * (front + 16) - rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) - rightZ * w * 0.8);
-      this.headTargetR.position.set(litCar.x + fwdX * (front + 16) + rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) + rightZ * w * 0.8);
+      this.headTargetL.position.set(litCar.x + fwdX * (front + 24) - rightX * w * 0.7, litCar.y + 0.35, litCar.z + fwdZ * (front + 24) - rightZ * w * 0.7);
+      this.headTargetR.position.set(litCar.x + fwdX * (front + 24) + rightX * w * 0.7, litCar.y + 0.35, litCar.z + fwdZ * (front + 24) + rightZ * w * 0.7);
 
-      this.headBounceLight.position.set(litCar.x + fwdX * (front + 5.5), litCar.y + 0.85, litCar.z + fwdZ * (front + 5.5));
-      this.headBounceLight.intensity = power * 0.42;
-
-      const showBeam = power > 0.2;
-      this.headBeamL.visible = showBeam;
-      this.headBeamR.visible = showBeam;
-      if (showBeam) {
-        this.headBeamL.position.copy(this.headLightL.position);
-        this.headBeamR.position.copy(this.headLightR.position);
-        this.headBeamL.rotation.set(-0.07, litCar.yaw, 0, 'YXZ');
-        this.headBeamR.rotation.set(-0.07, litCar.yaw, 0, 'YXZ');
-      }
+      this.headBounceLight.position.set(litCar.x + fwdX * (front + 7.5), litCar.y + 1.1, litCar.z + fwdZ * (front + 7.5));
+      this.headBounceLight.intensity = power * 0.14;
     }
 
     const brakeCar = this.activeCar ?? litCar;
@@ -1457,8 +1407,6 @@ export class Vehicles {
     this.headTargetR.removeFromParent();
     this.headBounceLight.removeFromParent();
     this.headBounceLight.dispose();
-    this.headBeamL.removeFromParent();
-    this.headBeamR.removeFromParent();
     this.brakeLightL.removeFromParent();
     this.brakeLightR.removeFromParent();
   }
