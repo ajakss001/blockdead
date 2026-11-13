@@ -217,8 +217,8 @@ export class Vehicles {
     const texLoader = new TextureLoader();
 
     Promise.all([
-      gltfLoader.loadAsync(`${base}.glb?v=5`),
-      texLoader.loadAsync(`${base}.webp?v=5`).then((t: Texture) => {
+      gltfLoader.loadAsync(`${base}.glb?v=6`),
+      texLoader.loadAsync(`${base}.webp?v=6`).then((t: Texture) => {
         t.colorSpace = SRGBColorSpace;
         t.flipY = false;
         t.minFilter = LinearMipmapLinearFilter;
