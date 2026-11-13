@@ -2,7 +2,7 @@ import {
   AdditiveBlending,
   BoxGeometry,
   CanvasTexture,
-  ConeGeometry,
+  CylinderGeometry,
   DoubleSide,
   Group,
   LinearMipmapLinearFilter,
@@ -156,7 +156,7 @@ const _probe = new Vector3();
 
 let _shadowGeo: PlaneGeometry | null = null;
 let _shadowMat: MeshBasicMaterial | null = null;
-let _beamGeo: ConeGeometry | null = null;
+let _beamGeo: CylinderGeometry | null = null;
 let _beamMat: MeshBasicMaterial | null = null;
 
 function contactShadowGeo(): PlaneGeometry {
@@ -191,11 +191,11 @@ function contactShadowMat(): MeshBasicMaterial {
   return _shadowMat;
 }
 
-function headBeamGeo(): ConeGeometry {
+function headBeamGeo(): CylinderGeometry {
   if (!_beamGeo) {
-    _beamGeo = new ConeGeometry(1.15, 11, 14, 1, true);
-    _beamGeo.rotateX(-Math.PI / 2);
-    _beamGeo.translate(0, 0, -5.5);
+    _beamGeo = new CylinderGeometry(0.14, 1.35, 10, 14, 1, true);
+    _beamGeo.rotateX(Math.PI / 2);
+    _beamGeo.translate(0, 0, -5);
   }
   return _beamGeo;
 }
@@ -207,8 +207,9 @@ function headBeamMat(): MeshBasicMaterial {
     c.height = 128;
     const g = c.getContext('2d')!;
     const grad = g.createLinearGradient(0, 0, 0, 128);
-    grad.addColorStop(0, 'rgba(255,244,214,0.34)');
-    grad.addColorStop(0.35, 'rgba(255,244,214,0.12)');
+    grad.addColorStop(0, 'rgba(255,244,214,0.22)');
+    grad.addColorStop(0.15, 'rgba(255,244,214,0.28)');
+    grad.addColorStop(0.6, 'rgba(255,244,214,0.07)');
     grad.addColorStop(1, 'rgba(255,244,214,0)');
     g.fillStyle = grad;
     g.fillRect(0, 0, 32, 128);
@@ -216,7 +217,7 @@ function headBeamMat(): MeshBasicMaterial {
     _beamMat = new MeshBasicMaterial({
       map: tex,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.32,
       depthWrite: false,
       blending: AdditiveBlending,
       side: DoubleSide,
