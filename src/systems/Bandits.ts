@@ -21,12 +21,12 @@ import { sfx, type EchoPlace, type GunSound } from '../audio/Sound';
 import { type BodyId, bodyAsset, bodyNow, type ClipId, loadBody } from '../characters/assets';
 import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
 import { handFrame } from '../characters/hands';
-import { characterMaterial } from '../characters/material';
+import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig, RagdollPose, stand } from '../characters/rig';
 import { type ItemId, ITEMS } from '../data/items';
 import { type Ragdoll, type StaticBox } from '../physics/ragdoll';
 import { BASE_LOOK, type Appearance, type Sex } from '../player/appearance';
-import { figureScale } from '../player/CharacterFigure';
+import { bodyFor, figureScale } from '../player/CharacterFigure';
 import { playerRagdoll } from '../player/deathBody';
 import { gripHands } from '../player/grips';
 import { gunRigData } from '../player/gunPose';
@@ -98,15 +98,16 @@ const FACTION_OUTFITS: Record<FactionId, readonly Worn[]> = {
   scavs: [
     { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
     { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: 'workGloves', legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
-    { outfit: null, head: null, face: 'glassesBallistic', mask: null, torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
-    { outfit: null, head: null, face: null, mask: 'maskHalf', torso: 'tshirt', vest: null, hands: null, legs: 'slacks', feet: 'sneakers', back: null, bag: null },
+    { outfit: 'outfitMechanic', head: null, face: 'glassesBallistic', mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: 'backpackSchool', bag: null },
+    { outfit: null, head: null, face: null, mask: 'maskHalf', torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
   ],
   pmc: [
-    { outfit: null, head: null, face: 'gogglesTactical', mask: 'balaclava', torso: 'militaryJacket', vest: 'vestMilitary', hands: 'tacticalGloves', legs: 'militaryPants', feet: 'combatBoots', back: null, bag: null },
-    { outfit: null, head: null, face: null, mask: 'balaclava', torso: 'leatherJacket', vest: 'vestSwat', hands: 'tacticalGloves', legs: 'cargoPants', feet: 'combatBoots', back: null, bag: null },
+    { outfit: 'outfitMilitary', head: null, face: null, mask: 'balaclava', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: null, back: null, bag: null },
+    { outfit: 'outfitSwat', head: null, face: 'gogglesTactical', mask: null, torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: null, back: null, bag: null },
+    { outfit: 'outfitPolice', head: null, face: null, mask: 'shemagh', torso: null, vest: 'vestMilitary', hands: null, legs: null, feet: null, back: null, bag: null },
   ],
   snipers: [
-    { outfit: null, head: null, face: 'gogglesTactical', mask: 'shemagh', torso: 'militaryJacket', vest: 'vestMilitary', hands: 'tacticalGloves', legs: 'militaryPants', feet: 'combatBoots', back: null, bag: null },
+    { outfit: 'outfitMilitary', head: null, face: null, mask: 'balaclava', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: null, back: null, bag: null },
   ],
 };
 
@@ -238,9 +239,13 @@ export class Bandits {
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
   constructor(private readonly w: BanditWorld) {
-    // Preload male/female skeletal rigs so bandits spawn smoothly with animations.
+    // Preload male/female and faction costume rigs so bandits spawn smoothly with outfits.
     void loadBody('male');
     void loadBody('female');
+    void loadBody(bodyFor({ sex: 'male' }, 'outfitMilitary'));
+    void loadBody(bodyFor({ sex: 'male' }, 'outfitSwat'));
+    void loadBody(bodyFor({ sex: 'male' }, 'outfitPolice'));
+    void loadBody(bodyFor({ sex: 'male' }, 'outfitMechanic'));
   }
 
   setMaxActive(n: number): void {
@@ -711,9 +716,10 @@ export class Bandits {
   }
 
   private buildVisual(b: Bandit): void {
-    const body: BodyId = b.look.sex;
-    if (!bodyNow(body)) {
-      void loadBody(body).then(() => {
+    const wantBody = bodyFor(b.look, b.worn.outfit);
+    const body = bodyNow(wantBody);
+    if (body !== wantBody) {
+      void loadBody(wantBody).then(() => {
         if (!this.disposed && b.state !== 'dead' && !b.visual && this.list.includes(b)) {
           this.buildVisual(b);
         }
@@ -814,6 +820,15 @@ export class Bandits {
       m.castShadow = true;
       v.rig.mesh.add(m);
       v.gear.set(g, m);
+      const lg = gearGeometry(v.body, g, 0, 'lens');
+      if (lg && !v.gear.has(`${g}:lens`)) {
+        const l = new SkinnedMesh(lg, characterMaterial(bodyAsset(v.body), v.rig.rig, { lens: LENS_TINT[g] ?? 0x1e1f1d }));
+        l.bind(v.rig.mesh.skeleton, v.rig.mesh.bindMatrix);
+        l.frustumCulled = false;
+        l.renderOrder = 2;
+        v.rig.mesh.add(l);
+        v.gear.set(`${g}:lens`, l);
+      }
     }
     v.hide.value = hideBits(want);
     if (missing) {
@@ -939,6 +954,14 @@ export class Bandits {
       return;
     }
 
+    // Detach held weapon from the hand and drop it flat beside the body so it never clips through the head.
+    if (v.heldObj) {
+      v.heldObj.removeFromParent();
+      v.heldObj.position.set(b.pos.x + Math.cos(b.yaw) * 0.45, b.pos.y + 0.05, b.pos.z - Math.sin(b.yaw) * 0.45);
+      v.heldObj.rotation.set(Math.PI / 2, b.yaw + 0.4, 0);
+      this.w.scene.add(v.heldObj);
+    }
+
     // Transfer rig from b.root to world space (RagdollPose drives bones in world space).
     const rig = v.rig;
     b.root.updateMatrixWorld(true);
@@ -982,6 +1005,7 @@ export class Bandits {
     if (b.ragdoll) this.w.removeRagdoll(b.ragdoll);
     this.w.scene.remove(b.root);
     if (b.visual) {
+      if (b.visual.heldObj) b.visual.heldObj.removeFromParent();
       this.w.scene.remove(b.visual.rig.root);
       for (const m of b.visual.gear.values()) {
         m.removeFromParent();
