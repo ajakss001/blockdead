@@ -1133,18 +1133,37 @@ export class Vehicles {
       );
       camera.lookAt(car.x + fwdX * 2.4, targetY, car.z + fwdZ * 2.4);
     } else {
-      // 1st-person hood/windshield view
+      // 1st-person hood view (positioned just ahead of the windshield so the solid cabin roof never clips the camera)
       const carFwdX = -Math.sin(car.yaw);
       const carFwdZ = -Math.cos(car.yaw);
       const rightX = Math.cos(car.yaw);
       const rightZ = -Math.sin(car.yaw);
-      const eyeH = car.kind === 'suv' ? 1.52 : 1.26;
+      const fwdDist = car.kind === 'suv' ? 1.15 : 1.05;
+      const eyeH = car.kind === 'suv' ? 1.42 : 1.24;
       camera.position.set(
-        car.x + carFwdX * 0.25 - rightX * 0.35,
+        car.x + carFwdX * fwdDist - rightX * 0.32,
         car.y + eyeH,
-        car.z + carFwdZ * 0.25 - rightZ * 0.35,
+        car.z + carFwdZ * fwdDist - rightZ * 0.32,
       );
       camera.rotation.set(-this.camPitchOffset * 0.6, viewYaw, 0, 'YXZ');
+    }
+  }
+
+  /** Called when a zombie strikes the occupied vehicle instead of the player inside. */
+  damageActiveCar(damage: number, fromPos: Vector3): void {
+    const car = this.activeCar;
+    if (!car) return;
+    car.engine = Math.max(0, car.engine - damage * 0.0018);
+    sfx.hit('metal', { x: fromPos.x, y: car.y + 0.7, z: fromPos.z }, 0.72);
+    if (car.rig) {
+      const rightX = Math.cos(car.yaw);
+      const rightZ = -Math.sin(car.yaw);
+      const side = (fromPos.x - car.x) * rightX + (fromPos.z - car.z) * rightZ;
+      car.rig.bodyRoll += (side >= 0 ? 1 : -1) * 0.04;
+    }
+    if (car.engine < 0.08 && car.engineOn) {
+      car.engineOn = false;
+      this.hooks.toast(tr('Зомби разбили двигатель!', 'Zombies wrecked the engine!'), 2200);
     }
   }
 

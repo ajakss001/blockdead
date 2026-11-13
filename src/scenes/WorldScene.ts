@@ -520,7 +520,7 @@ export class WorldScene implements IScene {
         memory: this.mapMemory,
         player: () => {
           const pc = this.player.controller;
-          return { x: pc.position.x, z: pc.position.z, yaw: pc.yaw };
+          return { x: pc.position.x, z: pc.position.z, yaw: this.vehicles.activeCar ? this.vehicles.activeCar.yaw : pc.yaw };
         },
         questTarget: () => {
           const t = this.story.target;
@@ -831,6 +831,7 @@ export class WorldScene implements IScene {
       } else {
         if (this.ctx.input.consumePressed('flashlight')) this.vehicles.toggleLights();
         this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
+        if (this.vehicles.activeCar) c.yaw = this.vehicles.activeCar.yaw;
       }
     } else {
       if (!this.dead) {
@@ -875,8 +876,8 @@ export class WorldScene implements IScene {
     for (const { z, kind } of this.zombies.sounds) sfx.zombie(kind, { x: z.pos.x, y: z.pos.y + 1.5, z: z.pos.z }, z.pitch);
     for (const a of this.zombies.attacks) {
       if (this.vehicles.activeCar) {
-        if (Math.abs(this.vehicles.activeCar.speed) < 2.2) {
-          this.bitten(a.damage * 0.35, a.from.pos, this.zombies.attacks.length);
+        if (Math.abs(this.vehicles.activeCar.speed) < 2.5) {
+          this.vehicles.damageActiveCar(a.damage, a.from.pos);
         }
       } else {
         this.bitten(a.damage, a.from.pos, this.zombies.attacks.length);
