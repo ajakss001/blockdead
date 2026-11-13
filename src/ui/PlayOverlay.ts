@@ -2,6 +2,7 @@ import { langToggle, onLangChange, tr } from '../core/i18n';
 import type { GameContext } from '../GameContext';
 import type { KeyboardMouseInput } from '../input/KeyboardMouseInput';
 import { openCredits } from './CreditsScreen';
+import { qualityControl } from './QualityControl';
 import { volumeControl } from './VolumeControl';
 
 const CONTROLS: readonly [[string, string], [string, string]][] = [
@@ -75,7 +76,7 @@ export class PlayOverlay {
     };
     syncText();
     onLangChange(syncText);
-    this.root.append(title, list, this.hint, volumeControl(), langToggle(), credits);
+    this.root.append(title, list, this.hint, qualityControl(this.ctx), volumeControl(), langToggle(), credits);
     this.soft.className = 'soft-hint';
     this.soft.hidden = true;
     parent.append(this.root, this.soft);

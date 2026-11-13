@@ -10,6 +10,7 @@ import type { Appearance } from '../player/appearance';
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
 import { openCredits } from './CreditsScreen';
+import { qualityControl } from './QualityControl';
 import { volumeControl } from './VolumeControl';
 import { itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
@@ -228,6 +229,7 @@ export class InventoryPanel {
       bar,
       el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} ${unit} (${tr('без лимита', 'no limit')})` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} ${unit}`),
       craftBtn,
+      qualityControl(this.ctx, 'inv__quality'),
       volumeControl('inv__volume'),
       langToggle('inv__lang'),
       ...(this.host.newCharacter ? [fresh] : []),

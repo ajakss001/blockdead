@@ -1,4 +1,4 @@
-import { Color, type Mesh, Object3D, type PerspectiveCamera, Quaternion, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
+import { Color, type Mesh, Object3D, type PerspectiveCamera, PointLight, Quaternion, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
 import { FLASHLIGHT } from '../items/config';
 import { beamMask } from '../items/flashlight';
 import { type HitMaterial, sfx, type SwingKind } from '../audio/Sound';
@@ -80,6 +80,7 @@ export class Player {
   /** A dead battery still gives a weak flash when pressed: seconds left of it. */
   private flashT = 0;
   private readonly lightTarget: Object3D;
+  private readonly bounceLight: PointLight;
   /** The beam's direction in the world: it trails the camera a little (the light is in a hand). */
   private readonly beam = new Vector3();
   private beamSet = false;
@@ -116,6 +117,7 @@ export class Player {
     this.viewmodel.scene.visible = false;
     this.body.root.visible = false;
     this.flashlight.intensity = 0;
+    this.bounceLight.intensity = 0;
   }
 
   /** A blow taken: the camera jolts. */
@@ -158,6 +160,9 @@ export class Player {
     this.flashlight.shadow.camera.far = f.distance;
     camera.add(this.flashlight, target);
     if (!camera.parent) scene.add(camera);
+    this.bounceLight = new PointLight(f.color, 0, 9.5, 1.8);
+    this.bounceLight.castShadow = false;
+    scene.add(this.bounceLight);
 
     this.applyQuality(ctx.quality.preset);
     this.unsubs.push(ctx.events.on('quality:changed', () => this.applyQuality(ctx.quality.preset)));
@@ -328,6 +333,8 @@ export class Player {
     this.body.dispose();
     this.viewmodel.dispose();
     this.flashlight.dispose();
+    this.bounceLight.removeFromParent();
+    this.bounceLight.dispose();
   }
 
   /** Render the shadow map once (used during loading to compile its shaders off-screen). */
@@ -412,6 +419,20 @@ export class Player {
       this.beamSet = true;
     } else this.beam.lerp(_ld, 1 - Math.exp(-12 * dt)).normalize();
     this.lightTarget.position.copy(this.beam).applyQuaternion(_q.invert()).multiplyScalar(6).add(_lp);
+    if (level <= 0.02) {
+      this.bounceLight.intensity = 0;
+      return;
+    }
+    this.camera.getWorldPosition(_o);
+    const hit = this.world.rayHit(_o.x, _o.y, _o.z, this.beam.x, this.beam.y, this.beam.z, 12);
+    if (hit < 11.8) {
+      const d = Math.max(0.25, hit - 0.35);
+      this.bounceLight.position.set(_o.x + this.beam.x * d, _o.y + this.beam.y * d, _o.z + this.beam.z * d);
+      this.bounceLight.color.copy(L.color);
+      this.bounceLight.intensity = 1.25 * level * (1 - hit / 14);
+    } else {
+      this.bounceLight.intensity = 0;
+    }
   }
 
 

@@ -1,11 +1,17 @@
 import {
+  AdditiveBlending,
   BoxGeometry,
+  CanvasTexture,
+  ConeGeometry,
+  DoubleSide,
   Group,
   LinearMipmapLinearFilter,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   Object3D,
   PerspectiveCamera,
+  PlaneGeometry,
   PointLight,
   Scene,
   SpotLight,
@@ -148,6 +154,77 @@ const _smokePos = new Vector3();
 const _hitPos = new Vector3();
 const _probe = new Vector3();
 
+let _shadowGeo: PlaneGeometry | null = null;
+let _shadowMat: MeshBasicMaterial | null = null;
+let _beamGeo: ConeGeometry | null = null;
+let _beamMat: MeshBasicMaterial | null = null;
+
+function contactShadowGeo(): PlaneGeometry {
+  if (!_shadowGeo) {
+    _shadowGeo = new PlaneGeometry(1, 1);
+    _shadowGeo.rotateX(-Math.PI / 2);
+  }
+  return _shadowGeo;
+}
+
+function contactShadowMat(): MeshBasicMaterial {
+  if (!_shadowMat) {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(64, 64, 12, 64, 64, 62);
+    grad.addColorStop(0, 'rgba(0,0,0,0.78)');
+    grad.addColorStop(0.55, 'rgba(0,0,0,0.42)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const tex = new CanvasTexture(c);
+    _shadowMat = new MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    });
+  }
+  return _shadowMat;
+}
+
+function headBeamGeo(): ConeGeometry {
+  if (!_beamGeo) {
+    _beamGeo = new ConeGeometry(1.15, 11, 14, 1, true);
+    _beamGeo.rotateX(-Math.PI / 2);
+    _beamGeo.translate(0, 0, -5.5);
+  }
+  return _beamGeo;
+}
+
+function headBeamMat(): MeshBasicMaterial {
+  if (!_beamMat) {
+    const c = document.createElement('canvas');
+    c.width = 32;
+    c.height = 128;
+    const g = c.getContext('2d')!;
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, 'rgba(255,244,214,0.34)');
+    grad.addColorStop(0.35, 'rgba(255,244,214,0.12)');
+    grad.addColorStop(1, 'rgba(255,244,214,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 32, 128);
+    const tex = new CanvasTexture(c);
+    _beamMat = new MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      blending: AdditiveBlending,
+      side: DoubleSide,
+    });
+  }
+  return _beamMat;
+}
+
 /**
  * Project Zomboid-style drivable vehicles (Sedan & 4x4 SUV).
  * Supports entering/exiting, ignition keys & hotwiring, fuel consumption, battery drain,
@@ -175,6 +252,9 @@ export class Vehicles {
   private headLightR: SpotLight;
   private headTargetL: Object3D;
   private headTargetR: Object3D;
+  private headBounceLight: PointLight;
+  private headBeamL: Mesh;
+  private headBeamR: Mesh;
   private brakeLightL: PointLight;
   private brakeLightR: PointLight;
   private isBraking = false;
@@ -205,11 +285,22 @@ export class Vehicles {
     this.headLightR.target = this.headTargetR;
     this.brakeLightL = new PointLight(0xff2218, 0, 4.2, 2);
     this.brakeLightR = new PointLight(0xff2218, 0, 4.2, 2);
+    this.headBounceLight = new PointLight(0xfff1cc, 0, 14, 1.7);
+    this.headBounceLight.castShadow = false;
+    this.headBeamL = new Mesh(headBeamGeo(), headBeamMat());
+    this.headBeamR = new Mesh(headBeamGeo(), headBeamMat());
+    this.headBeamL.visible = false;
+    this.headBeamR.visible = false;
+    this.headBeamL.renderOrder = 3;
+    this.headBeamR.renderOrder = 3;
     this.scene.add(
       this.headLightL,
       this.headLightR,
       this.headTargetL,
       this.headTargetR,
+      this.headBounceLight,
+      this.headBeamL,
+      this.headBeamR,
       this.brakeLightL,
       this.brakeLightR,
     );
@@ -263,6 +354,12 @@ export class Vehicles {
       car.group.remove(car.group.children[0]);
     }
     car.rig = undefined;
+    const cspec = VEHICLE_SPECS[car.kind];
+    const shadow = new Mesh(contactShadowGeo(), contactShadowMat());
+    shadow.scale.set(cspec.halfW * 2.5, 1, cspec.halfL * 2.35);
+    shadow.position.y = 0.03;
+    shadow.renderOrder = 1;
+    car.group.add(shadow);
     const tpl = this.templates.get(car.kind);
     if (tpl) {
       const clone = tpl.clone(true);
@@ -1294,6 +1391,9 @@ export class Vehicles {
     if (!litCar) {
       this.headLightL.intensity = 0;
       this.headLightR.intensity = 0;
+      this.headBounceLight.intensity = 0;
+      this.headBeamL.visible = false;
+      this.headBeamR.visible = false;
     } else {
       const fwdX = -Math.sin(litCar.yaw);
       const fwdZ = -Math.cos(litCar.yaw);
@@ -1312,6 +1412,19 @@ export class Vehicles {
 
       this.headTargetL.position.set(litCar.x + fwdX * (front + 16) - rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) - rightZ * w * 0.8);
       this.headTargetR.position.set(litCar.x + fwdX * (front + 16) + rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) + rightZ * w * 0.8);
+
+      this.headBounceLight.position.set(litCar.x + fwdX * (front + 5.5), litCar.y + 0.85, litCar.z + fwdZ * (front + 5.5));
+      this.headBounceLight.intensity = power * 0.42;
+
+      const showBeam = power > 0.2;
+      this.headBeamL.visible = showBeam;
+      this.headBeamR.visible = showBeam;
+      if (showBeam) {
+        this.headBeamL.position.copy(this.headLightL.position);
+        this.headBeamR.position.copy(this.headLightR.position);
+        this.headBeamL.rotation.set(-0.07, litCar.yaw, 0, 'YXZ');
+        this.headBeamR.rotation.set(-0.07, litCar.yaw, 0, 'YXZ');
+      }
     }
 
     const brakeCar = this.activeCar ?? litCar;
@@ -1341,6 +1454,10 @@ export class Vehicles {
     this.headLightR.removeFromParent();
     this.headTargetL.removeFromParent();
     this.headTargetR.removeFromParent();
+    this.headBounceLight.removeFromParent();
+    this.headBounceLight.dispose();
+    this.headBeamL.removeFromParent();
+    this.headBeamR.removeFromParent();
     this.brakeLightL.removeFromParent();
     this.brakeLightR.removeFromParent();
   }
