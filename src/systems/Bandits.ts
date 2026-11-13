@@ -1,24 +1,40 @@
 /**
- * Hostile living survivor bots (bandits): armed with firearms or melee weapons and carrying
- * player-like supplies (food, water, bandages, ammo). Light-to-medium aim difficulty with
- * reaction delay, fair spread, burst pauses, and reload windows.
+ * Hostile living survivor bots (bandits): full Mixamo skeletal rig with AnimationMixer gaits,
+ * worn gear meshes, held 3D weapons, physical Ragdoll on death, and AI that prioritizes nearby
+ * zombies first and the player second. Light-to-medium aim difficulty.
  */
 
 import {
+  type AnimationAction,
   BoxGeometry,
-  type Group,
+  type BufferGeometry,
+  Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
+  Quaternion,
   type Scene,
+  SkinnedMesh,
   Vector3,
 } from 'three';
 import { sfx, type EchoPlace, type GunSound } from '../audio/Sound';
+import { type BodyId, bodyAsset, bodyNow, type ClipId, loadBody } from '../characters/assets';
+import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
+import { handFrame } from '../characters/hands';
+import { characterMaterial } from '../characters/material';
+import { CharacterRig, RagdollPose, stand } from '../characters/rig';
 import { type ItemId, ITEMS } from '../data/items';
+import { type Ragdoll, type StaticBox } from '../physics/ragdoll';
 import { BASE_LOOK, type Appearance, type Sex } from '../player/appearance';
-import { CharacterFigure } from '../player/CharacterFigure';
+import { figureScale } from '../player/CharacterFigure';
+import { playerRagdoll } from '../player/deathBody';
+import { gripHands } from '../player/grips';
+import { gunRigData } from '../player/gunPose';
+import { buildHeldModel, HELD, type HeldId } from '../player/held';
+import { GunModel } from '../weapons/gunModel';
 import { GUNS, type GunId } from '../weapons/guns';
 import type { Worn } from './Inventory';
-import type { ZombieSim } from './zombies';
+import type { BanditTarget, ZombieSim } from './zombies';
 
 export interface BanditLootItem {
   id: ItemId;
@@ -33,6 +49,9 @@ export interface BanditWorld {
   groundY(x: number, z: number): number;
   resolveCircle(pos: Vector3, r: number): void;
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number): number;
+  boxesNear(x: number, z: number, r: number, out: StaticBox[]): void;
+  addRagdoll(rd: Ragdoll): void;
+  removeRagdoll(rd: Ragdoll): void;
   zombies: ZombieSim;
   noise(x: number, y: number, z: number, r: number): void;
   hurtPlayer(hp: number, fromX: number, fromZ: number, cause: string): void;
@@ -71,8 +90,8 @@ const GUN_SOUND: Record<BanditGunId, GunSound> = {
 };
 
 const BANDIT_OUTFITS: readonly Worn[] = [
-  { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
-  { outfit: null, head: null, face: null, mask: 'balaclava', torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
+  { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
+  { outfit: null, head: null, face: null, mask: 'balaclava', torso: 'leatherJacket', vest: 'vestMilitary', hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
   { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: null, legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
 ];
 
@@ -85,19 +104,41 @@ const CORPSE_LIFE = 95;
 const _v1 = new Vector3();
 const _v2 = new Vector3();
 const _to = new Vector3();
+const _m = new Matrix4();
+const _m2 = new Matrix4();
+const _one = new Vector3(1, 1, 1);
+const _up = new Vector3(0, 1, 0);
+const _q = new Quaternion();
+const _q2 = new Quaternion();
 
 interface Tracer {
   mesh: Mesh;
   life: number;
 }
 
-export interface Bandit {
+interface BanditRigVisual {
+  body: BodyId;
+  scale: number;
+  rig: CharacterRig;
+  gaits: { idle: AnimationAction; walk: AnimationAction; run: AnimationAction };
+  weights: { idle: number; walk: number; run: number };
+  gear: Map<string, SkinnedMesh>;
+  hide: { value: number };
+  heldObj: Group | null;
+  gunModel: GunModel | null;
+  geos: BufferGeometry[];
+}
+
+export interface Bandit extends BanditTarget {
   id: number;
   pos: Vector3;
+  vel: Vector3;
   yaw: number;
   hp: number;
   maxHp: number;
   state: 'patrol' | 'combat' | 'dead';
+  look: Appearance;
+  worn: Worn;
   weapon: ItemId;
   isGun: boolean;
   ammoInMag: number;
@@ -108,7 +149,7 @@ export interface Bandit {
   reloadT: number;
   reactT: number;
   meleeCd: number;
-  animT: number;
+  aiming: number;
   patrolYaw: number;
   patrolT: number;
   investigateX: number;
@@ -116,8 +157,12 @@ export interface Bandit {
   investigateT: number;
   deadT: number;
   loot: BanditLootItem[];
-  figure: CharacterFigure;
+  root: Group;
+  visual: BanditRigVisual | null;
+  ragdoll: Ragdoll | null;
+  ragdollPose: RagdollPose | null;
   lootDropped: boolean;
+  hit(dmg: number, fromX: number, fromZ: number, head?: boolean): boolean;
 }
 
 function randomLook(): Appearance {
@@ -156,11 +201,16 @@ export class Bandits {
   private nextId = 1;
   private spawnCd = 4;
   private maxActive = MAX_ACTIVE;
+  private disposed = false;
   private readonly tracers: Tracer[] = [];
   private readonly tracerGeo = new BoxGeometry(0.025, 0.025, 1);
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
-  constructor(private readonly w: BanditWorld) {}
+  constructor(private readonly w: BanditWorld) {
+    // Preload male/female skeletal rigs so bandits spawn smoothly with animations.
+    void loadBody('male');
+    void loadBody('female');
+  }
 
   setMaxActive(n: number): void {
     this.maxActive = Math.max(1, n);
@@ -169,7 +219,6 @@ export class Bandits {
   update(dt: number, px: number, py: number, pz: number, playerDead: boolean, inCar: boolean): void {
     this.updateTracers(dt);
 
-    // Spawn bandits up to maxActive around the player.
     this.spawnCd -= dt;
     let aliveCount = 0;
     for (const b of this.list) if (b.state !== 'dead') aliveCount++;
@@ -186,6 +235,9 @@ export class Bandits {
 
       if (b.state === 'dead') {
         b.deadT += dt;
+        if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) {
+          this.applyRagdollPose(b);
+        }
         if (b.deadT > CORPSE_LIFE || distSq > DESPAWN_DIST * DESPAWN_DIST) {
           this.removeAt(i);
         }
@@ -201,6 +253,7 @@ export class Bandits {
       b.fireCd = Math.max(0, b.fireCd - dt);
       b.meleeCd = Math.max(0, b.meleeCd - dt);
       b.burstPause = Math.max(0, b.burstPause - dt);
+      b.aiming = Math.max(0, b.aiming - dt * 2.5);
       if (b.reloadT > 0) {
         b.reloadT -= dt;
         if (b.reloadT <= 0) {
@@ -209,34 +262,49 @@ export class Bandits {
         }
       }
 
-      // Check self-defense against a close zombie first.
-      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.z, 4.5);
-
+      // Priority 1: nearest visible zombie within 14 m.
+      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14);
       const canSeePlayer = !playerDead && dist < 38 && this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.35, pz);
       if (canSeePlayer && b.state !== 'combat') {
         b.state = 'combat';
-        b.reactT = 0.55 + Math.random() * 0.35; // Fair reaction delay (light-medium difficulty)
+        b.reactT = 0.55 + Math.random() * 0.35;
       }
 
-      let moving = false;
-      let running = false;
+      const prevX = b.pos.x;
+      const prevZ = b.pos.z;
+      let moveSpeed = 0;
 
       if (nearZombie) {
+        // Fight zombies first
+        b.aiming = 1;
         const zdx = nearZombie.pos.x - b.pos.x;
         const zdz = nearZombie.pos.z - b.pos.z;
         const zd = Math.hypot(zdx, zdz) || 1;
         b.yaw = Math.atan2(zdx, zdz);
-        if (b.isGun && zd > 1.8 && b.fireCd <= 0 && b.reloadT <= 0) {
-          this.shootAt(b, nearZombie.pos.x, nearZombie.pos.y + 1.25, nearZombie.pos.z, false);
-        } else if (zd <= 1.9 && b.meleeCd <= 0) {
-          b.meleeCd = 0.95;
-          this.w.zombies.hit(nearZombie, 24, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
-          sfx.swing('heavy', 0.25, b.pos);
-        } else if (zd > 1.6) {
-          this.stepBandit(b, zdx / zd, zdz / zd, 3.2 * dt);
-          moving = true;
+        if (b.isGun) {
+          if (zd < 5.5) {
+            this.stepBandit(b, -zdx / zd, -zdz / zd, 2.5 * dt);
+            moveSpeed = 2.5;
+          } else if (zd > 11) {
+            this.stepBandit(b, zdx / zd, zdz / zd, 3.0 * dt);
+            moveSpeed = 3.0;
+          }
+          if (b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0) {
+            this.shootAt(b, nearZombie.pos.x, nearZombie.pos.y + 1.25, nearZombie.pos.z, false);
+          }
+        } else {
+          if (zd > 1.75) {
+            this.stepBandit(b, zdx / zd, zdz / zd, 3.8 * dt);
+            moveSpeed = 3.8;
+          } else if (b.meleeCd <= 0) {
+            b.meleeCd = 0.95;
+            this.w.zombies.hit(nearZombie, 26, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
+            sfx.swing('heavy', 0.25, b.pos);
+          }
         }
       } else if (b.state === 'combat' && !playerDead) {
+        // Priority 2: engage the player
+        b.aiming = 1;
         b.yaw = Math.atan2(dx, dz);
         b.investigateX = px;
         b.investigateZ = pz;
@@ -248,28 +316,25 @@ export class Bandits {
           const desiredMin = inCar ? 11 : 10;
           const desiredMax = 24;
           if (!canSeePlayer || dist > desiredMax) {
-            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), 3.6 * dt);
-            moving = true;
-            running = dist > 20;
+            const spd = dist > 20 ? 3.8 : 2.9;
+            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), spd * dt);
+            moveSpeed = spd;
           } else if (dist < desiredMin) {
             this.stepBandit(b, -dx / (dist || 1), -dz / (dist || 1), 2.1 * dt);
-            moving = true;
+            moveSpeed = 2.1;
           } else {
-            // Light strafing while shooting
-            const strafe = Math.sin(b.id * 1.7 + b.animT * 0.9);
+            const strafe = Math.sin(b.id * 1.7 + this.w.zombies.list.length * 0.01);
             this.stepBandit(b, (-dz / (dist || 1)) * strafe, (dx / (dist || 1)) * strafe, 1.4 * dt);
-            moving = true;
+            moveSpeed = 1.4;
           }
 
           if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 36) {
             this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true);
           }
         } else {
-          // Melee bandit closes in to strike
           if (dist > 1.65) {
-            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), 4.35 * dt);
-            moving = true;
-            running = true;
+            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), 4.25 * dt);
+            moveSpeed = 4.25;
           } else if (b.meleeCd <= 0) {
             b.meleeCd = 1.05 + Math.random() * 0.25;
             sfx.swing('heavy', 0.3, b.pos);
@@ -289,7 +354,7 @@ export class Bandits {
           if (idist > 2.2) {
             b.yaw = Math.atan2(idx, idz);
             this.stepBandit(b, idx / idist, idz / idist, 2.3 * dt);
-            moving = true;
+            moveSpeed = 2.3;
           }
         } else {
           b.patrolT -= dt;
@@ -299,17 +364,19 @@ export class Bandits {
           }
           b.yaw = b.patrolYaw;
           this.stepBandit(b, Math.sin(b.yaw), Math.cos(b.yaw), 1.55 * dt);
-          moving = true;
+          moveSpeed = 1.55;
         }
       }
 
       if (b.investigateT > 0 && !canSeePlayer) b.investigateT -= dt;
 
-      b.animT += dt * (running ? 1.35 : 1);
-      b.figure.setPose(running ? 'running' : moving ? 'walking' : 'idle', b.animT);
-      const root = b.figure.root;
-      root.position.copy(b.pos);
-      root.rotation.set(0, b.yaw, 0);
+      if (dt > 1e-4) {
+        b.vel.set((b.pos.x - prevX) / dt, 0, (b.pos.z - prevZ) / dt);
+      }
+
+      b.root.position.copy(b.pos);
+      b.root.rotation.set(0, b.yaw, 0);
+      this.animateRig(b, dt, moveSpeed);
     }
   }
 
@@ -334,7 +401,6 @@ export class Bandits {
     let bestT = maxDist;
     for (const b of this.list) {
       if (b.state === 'dead') continue;
-      // Capsule-like check from feet (y) to head top (y + 1.78)
       const cx = b.pos.x;
       const cz = b.pos.z;
       const ox = o.x - cx;
@@ -361,7 +427,7 @@ export class Bandits {
   }
 
   /** Apply damage to a bandit. Returns true if killed. */
-  hit(b: Bandit, dmg: number, fromX: number, fromZ: number, head: boolean): boolean {
+  hit(b: Bandit, dmg: number, fromX: number, fromZ: number, head = false): boolean {
     if (b.state === 'dead') return false;
     b.hp -= dmg;
     b.state = 'combat';
@@ -372,10 +438,7 @@ export class Bandits {
       b.hp = 0;
       b.state = 'dead';
       b.deadT = 0;
-      b.figure.setPose('idle', 0);
-      const root = b.figure.root;
-      root.rotation.set(-Math.PI / 2, b.yaw, 0);
-      root.position.set(b.pos.x, b.pos.y + 0.14, b.pos.z);
+      this.becomeRagdoll(b, fromX, fromZ);
       if (!b.lootDropped) {
         b.lootDropped = true;
         this.w.onDropLoot?.(b);
@@ -422,6 +485,7 @@ export class Bandits {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (let i = this.list.length - 1; i >= 0; i--) this.removeAt(i);
     for (const t of this.tracers) this.w.scene.remove(t.mesh);
     this.tracers.length = 0;
@@ -448,22 +512,23 @@ export class Bandits {
         ? BANDIT_GUNS[Math.floor(Math.random() * BANDIT_GUNS.length)]
         : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
       const magCap = isGun ? GUNS[weapon as BanditGunId].capacity : 1;
+      const look = randomLook();
+      const worn = BANDIT_OUTFITS[Math.floor(Math.random() * BANDIT_OUTFITS.length)];
 
-      const figure = new CharacterFigure();
-      figure.setAppearance(randomLook(), null);
-      const outfit = BANDIT_OUTFITS[Math.floor(Math.random() * BANDIT_OUTFITS.length)];
-      figure.setOutfit(outfit, weapon);
-      figure.setPose('idle', 0);
-      figure.root.position.set(rx, sy, rz);
-      this.w.scene.add(figure.root);
+      const root = new Group();
+      root.position.set(rx, sy, rz);
+      this.w.scene.add(root);
 
-      this.list.push({
+      const bot: Bandit = {
         id: this.nextId++,
         pos: new Vector3(rx, sy, rz),
+        vel: new Vector3(),
         yaw: Math.random() * Math.PI * 2,
         hp: 95,
         maxHp: 95,
         state: 'patrol',
+        look,
+        worn,
         weapon,
         isGun,
         ammoInMag: magCap,
@@ -474,7 +539,7 @@ export class Bandits {
         reloadT: 0,
         reactT: 0.65,
         meleeCd: 0,
-        animT: Math.random() * 6,
+        aiming: 0,
         patrolYaw: Math.random() * Math.PI * 2,
         patrolT: 2 + Math.random() * 3,
         investigateX: rx,
@@ -482,18 +547,234 @@ export class Bandits {
         investigateT: 0,
         deadT: 0,
         loot: createBanditLoot(weapon, isGun),
-        figure,
+        root,
+        visual: null,
+        ragdoll: null,
+        ragdollPose: null,
         lootDropped: false,
+        hit: (dmg, fx, fz, head = false) => this.hit(bot, dmg, fx, fz, head),
+      };
+
+      this.buildVisual(bot);
+      this.list.push(bot);
+      return;
+    }
+  }
+
+  private buildVisual(b: Bandit): void {
+    const body: BodyId = b.look.sex;
+    if (!bodyNow(body)) {
+      void loadBody(body).then(() => {
+        if (!this.disposed && b.state !== 'dead' && !b.visual && this.list.includes(b)) {
+          this.buildVisual(b);
+        }
       });
       return;
+    }
+
+    coverBody(body);
+    const scale = figureScale(b.look, body);
+    const hide = { value: 0 };
+    const rig = new CharacterRig(body, 0, { cover: true, hide });
+    rig.root.scale.setScalar(scale);
+    rig.mesh.castShadow = true;
+    b.root.add(rig.root);
+
+    const walkClip: ClipId = body === 'female' ? 'walking_female' : 'walking';
+    const gaits = {
+      idle: rig.action('idle'),
+      walk: rig.action(walkClip),
+      run: rig.action('running'),
+    };
+    gaits.idle.play();
+    gaits.walk.play();
+    gaits.run.play();
+    gaits.idle.setEffectiveWeight(1);
+    gaits.walk.setEffectiveWeight(0);
+    gaits.run.setEffectiveWeight(0);
+
+    const geos: BufferGeometry[] = [];
+    let heldObj: Group | null = null;
+    let gunModel: GunModel | null = null;
+    const hand = rig.socket('hand');
+    const hf = handFrame(rig.rig, 'R');
+
+    if (b.isGun) {
+      const gid = b.weapon as GunId;
+      gunModel = new GunModel(gid);
+      hand.add(gunModel.root);
+      if (hf) {
+        const d = gunRigData(gid).main;
+        _m.compose(hf.grip, hf.q, _one).multiply(_m2.compose(d.at, d.q, _one).invert());
+        _m.decompose(gunModel.root.position, gunModel.root.quaternion, gunModel.root.scale);
+      }
+      heldObj = gunModel.root;
+    } else if (b.weapon in HELD) {
+      const hid = b.weapon as HeldId;
+      heldObj = buildHeldModel(hid, geos);
+      hand.add(heldObj);
+      if (hf) {
+        heldObj.quaternion.copy(hf.q);
+        heldObj.position.copy(hf.grip).sub(new Vector3(0, HELD[hid].main.along, 0).applyQuaternion(hf.q));
+      }
+    }
+
+    const visual: BanditRigVisual = {
+      body,
+      scale,
+      rig,
+      gaits,
+      weights: { idle: 1, walk: 0, run: 0 },
+      gear: new Map(),
+      hide,
+      heldObj,
+      gunModel,
+      geos,
+    };
+    b.visual = visual;
+    this.dressVisual(b, visual);
+  }
+
+  private dressVisual(b: Bandit, v: BanditRigVisual): void {
+    const want = wornGear(b.worn);
+    let missing = false;
+    for (const g of want) {
+      if (gearKind(g) === 'box' || v.gear.has(g)) continue;
+      const geo = gearGeometry(v.body, g, 0);
+      if (!geo) {
+        missing = true;
+        continue;
+      }
+      const mat = characterMaterial(bodyAsset(v.body), v.rig.rig, {
+        map: gearTexture(g),
+        doubleSide: gearKind(g) === 'mask',
+      });
+      const m = new SkinnedMesh(geo, mat);
+      m.bind(v.rig.mesh.skeleton, v.rig.mesh.bindMatrix);
+      m.frustumCulled = false;
+      m.castShadow = true;
+      v.rig.mesh.add(m);
+      v.gear.set(g, m);
+    }
+    v.hide.value = hideBits(want);
+    if (missing) {
+      void loadGear(v.body, want).then(() => {
+        if (!this.disposed && b.visual === v && b.state !== 'dead') {
+          coverBody(v.body);
+          this.dressVisual(b, v);
+        }
+      });
+    }
+  }
+
+  private animateRig(b: Bandit, dt: number, speed: number): void {
+    const v = b.visual;
+    if (!v) return;
+    const targetIdle = speed < 0.25 ? 1 : 0;
+    const targetRun = speed > 3.2 ? 1 : 0;
+    const targetWalk = speed >= 0.25 && speed <= 3.2 ? 1 : 0;
+
+    const k = 1 - Math.exp(-dt * 9);
+    v.weights.idle += (targetIdle - v.weights.idle) * k;
+    v.weights.walk += (targetWalk - v.weights.walk) * k;
+    v.weights.run += (targetRun - v.weights.run) * k;
+
+    v.gaits.idle.setEffectiveWeight(v.weights.idle);
+    v.gaits.walk.setEffectiveWeight(v.weights.walk);
+    v.gaits.run.setEffectiveWeight(v.weights.run);
+    v.gaits.walk.setEffectiveTimeScale(speed > 0.25 ? Math.max(0.75, speed / 1.8) : 1);
+    v.gaits.run.setEffectiveTimeScale(speed > 3.2 ? Math.max(0.85, speed / 4.2) : 1);
+
+    v.rig.mixer.update(dt);
+
+    // Pose right hand grip & raise arm forward when aiming/fighting.
+    const hr = handFrame(v.rig.rig, 'R');
+    if (hr) {
+      const gripName = b.isGun ? gripHands(b.weapon as GunId, true, false).R : gripHands(b.weapon as HeldId, false, false).R;
+      for (const [idx, q] of hr.poses[gripName]) v.rig.bones[idx].quaternion.copy(q);
+    }
+    if (b.aiming > 0.05) {
+      this.bendElbow(v.rig, 0.35 + 0.65 * b.aiming);
+    }
+  }
+
+  private bendElbow(r: CharacterRig, angle: number): void {
+    r.root.updateMatrixWorld(true);
+    const fore = r.bone('RightForeArm');
+    const hand = r.bone('RightHand');
+    const pFore = fore.getWorldPosition(_v1);
+    const pHand = hand.getWorldPosition(_v2);
+    const dir = pHand.sub(pFore).normalize();
+    const fwd = _to.set(0, 0, 1).applyQuaternion(r.root.getWorldQuaternion(_q));
+    const axis = dir.cross(fwd);
+    if (axis.lengthSq() < 1e-6) return;
+    _q2.setFromAxisAngle(axis.normalize(), angle);
+    const w = fore.getWorldQuaternion(_q);
+    const pw = fore.parent!.getWorldQuaternion(new Quaternion());
+    fore.quaternion.copy(pw.invert().multiply(_q2).multiply(w));
+    r.root.updateMatrixWorld(true);
+  }
+
+  private becomeRagdoll(b: Bandit, fromX: number, fromZ: number): void {
+    const v = b.visual;
+    if (!v) {
+      b.root.rotation.set(-Math.PI / 2, b.yaw, 0);
+      b.root.position.set(b.pos.x, b.pos.y + 0.14, b.pos.z);
+      return;
+    }
+
+    // Transfer rig from b.root to world space (RagdollPose drives bones in world space).
+    const rig = v.rig;
+    b.root.updateMatrixWorld(true);
+    const world = rig.bones.map((bone) => bone.matrixWorld.clone());
+
+    rig.root.removeFromParent();
+    rig.root.position.set(0, 0, 0);
+    rig.root.rotation.set(0, 0, 0);
+    rig.root.scale.set(1, 1, 1);
+    rig.root.updateMatrixWorld(true);
+    for (const bone of rig.bones) bone.matrixAutoUpdate = true;
+    this.w.scene.add(rig.root);
+
+    const st = stand(v.body, 0);
+    const boxes: StaticBox[] = [];
+    this.w.boxesNear(b.pos.x, b.pos.z, 1.8, boxes);
+    const killer = new Vector3(fromX, b.pos.y, fromZ);
+    const rd = playerRagdoll(b.pos, b.yaw + Math.PI, v.scale, b.vel, killer, boxes, Math.random, st.shape);
+    const pose = new RagdollPose(v.body, 0, rig.rig, world, rd, v.scale);
+    this.w.addRagdoll(rd);
+    b.ragdoll = rd;
+    b.ragdollPose = pose;
+    this.applyRagdollPose(b);
+  }
+
+  private applyRagdollPose(b: Bandit): void {
+    if (!b.ragdollPose || !b.visual) return;
+    const w = b.ragdollPose.update();
+    const bones = b.visual.rig.bones;
+    const parents = b.visual.rig.rig.parents;
+    for (let k = 0; k < w.length; k++) {
+      const p = parents[k];
+      const local = p < 0 ? _m.copy(w[k]) : _m.copy(w[p]).invert().multiply(w[k]);
+      local.decompose(bones[k].position, bones[k].quaternion, bones[k].scale);
     }
   }
 
   private removeAt(i: number): void {
     const b = this.list[i];
     if (b.state === 'dead') this.w.onRemoveCorpse?.(b);
-    this.w.scene.remove(b.figure.root);
-    b.figure.dispose();
+    if (b.ragdoll) this.w.removeRagdoll(b.ragdoll);
+    this.w.scene.remove(b.root);
+    if (b.visual) {
+      this.w.scene.remove(b.visual.rig.root);
+      for (const m of b.visual.gear.values()) {
+        m.removeFromParent();
+        (m.material as { dispose(): void }).dispose();
+      }
+      b.visual.gear.clear();
+      for (const g of b.visual.geos) g.dispose();
+      b.visual.rig.dispose();
+    }
     this.list.splice(i, 1);
   }
 
@@ -513,13 +794,13 @@ export class Bandits {
     return hit < 0 || hit > len - 0.35;
   }
 
-  private findNearestZombie(x: number, z: number, radius: number) {
+  private findNearestZombie(x: number, y: number, z: number, radius: number) {
     let best = null;
     let bestD2 = radius * radius;
     for (const zmb of this.w.zombies.list) {
-      if (zmb.state === 'dead') continue;
+      if (zmb.state === 'dead' || Math.abs(zmb.pos.y - y) > 2.5) continue;
       const d2 = (zmb.pos.x - x) ** 2 + (zmb.pos.z - z) ** 2;
-      if (d2 < bestD2) {
+      if (d2 < bestD2 && this.hasLineOfSight(x, y + 1.45, z, zmb.pos.x, zmb.pos.y + 1.2, zmb.pos.z)) {
         bestD2 = d2;
         best = zmb;
       }
@@ -538,7 +819,6 @@ export class Bandits {
     const targetDist = _to.length() || 1;
     _to.divideScalar(targetDist);
 
-    // Light-to-medium spread (0.11..0.17 rad ~ 6.5-10 deg)
     const spread = gId === 'shotgun_pump' ? 0.16 : 0.125;
     _to.x += (Math.random() - 0.5) * spread;
     _to.y += (Math.random() - 0.5) * spread * 0.65;
@@ -551,7 +831,6 @@ export class Bandits {
 
     let hitDist = maxTrace;
     if (targetIsPlayer) {
-      // Ray-sphere check against player's torso/head
       const px = tx;
       const py = ty - 0.15;
       const pz = tz;
@@ -563,7 +842,7 @@ export class Bandits {
         const d2 = ex * ex + ey * ey + ez * ez - proj * proj;
         if (d2 < 0.36 * 0.36) {
           hitDist = proj;
-          const rawDmg = (g.damage[0] + g.damage[1]) * 0.22; // Fair bot damage
+          const rawDmg = (g.damage[0] + g.damage[1]) * 0.22;
           this.w.hurtPlayer(Math.max(5, Math.min(18, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита');
         }
       }
@@ -571,7 +850,7 @@ export class Bandits {
       const zh = this.w.zombies.hitTest(_v2.set(ox, oy, oz), _to, maxTrace, 0.05);
       if (zh) {
         hitDist = zh.dist;
-        const dmg = g.damage[0] * 0.7;
+        const dmg = g.damage[0] * 0.85;
         this.w.zombies.hit(zh.zombie, dmg, ox, oz, zh.head, zh.point);
       }
     }
@@ -614,4 +893,5 @@ export class Bandits {
   }
 }
 
+export { _up };
 export type { Group };

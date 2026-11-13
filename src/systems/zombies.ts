@@ -106,6 +106,12 @@ export interface ZombieWorld {
   kindAt?(x: number, z: number, y: number, pick: number): ModelKind;
 }
 
+export interface BanditTarget {
+  pos: Vector3;
+  state: string;
+  hit(dmg: number, fromX: number, fromZ: number): void;
+}
+
 export interface PlayerSense {
   pos: Vector3;
   eye: number;
@@ -113,6 +119,7 @@ export interface PlayerSense {
   crouched: boolean;
   lit: number;
   daylight: number;
+  bandits?: readonly BanditTarget[];
 }
 
 export type ZombieSound = 'moan' | 'rasp' | 'teeth' | 'step' | 'alarm' | 'bang' | 'crack' | 'hit' | 'die' | 'swing';
@@ -339,13 +346,17 @@ export class ZombieSim {
       if (z.shake > 0) z.shake -= dt;
       if (z.limp > 0) z.limp -= dt;
       const dist = Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z);
-      if (this.time >= z.nextThink) {
+      const nb = this.nearestBandit(z, p, dist);
+      if (nb) {
+        z.target.copy(nb.b.pos);
+        if (z.state !== 'stagger' && z.state !== 'attack' && z.state !== 'bang') z.state = 'chase';
+      } else if (this.time >= z.nextThink) {
         const step = dist < T.nearThink ? dt : 1 / T.farHz;
         this.think(z, p, dist, step);
         z.nextThink = this.time + step - 1e-6;
       }
-      this.act(z, p, dist, dt);
-      this.move(z, dt, dist);
+      this.act(z, p, dist, dt, nb);
+      this.move(z, dt, nb ? Math.min(dist, nb.dist) : dist);
       if (z.groanCd > 0) z.groanCd -= dt;
       this.ambient(z, dist);
     }
@@ -490,15 +501,34 @@ export class ZombieSim {
 
   // ── Actions: attacking, doors, getting hit ──────────────────────────────────────────────────────
 
-  private act(z: Zombie, p: PlayerSense, dist: number, dt: number): void {
+  private nearestBandit(z: Zombie, p: PlayerSense, playerDist: number): { b: BanditTarget; dist: number } | null {
+    const list = p.bandits;
+    if (!list || list.length === 0) return null;
+    const range = Math.min(18, this.sightRange(p) + 4);
+    let best: BanditTarget | null = null;
+    let bestD = range;
+    for (const b of list) {
+      if (b.state === 'dead' || Math.abs(b.pos.y - z.pos.y) > 2.5) continue;
+      const d = Math.hypot(b.pos.x - z.pos.x, b.pos.z - z.pos.z);
+      if (d < bestD && d < playerDist + 1.5) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best ? { b: best, dist: bestD } : null;
+  }
+
+  private act(z: Zombie, p: PlayerSense, dist: number, dt: number, nb: { b: BanditTarget; dist: number } | null): void {
     if (z.swing > 0) z.swing -= dt;
     if (z.state === 'stagger') {
       z.timer -= dt;
       if (z.timer <= 0) z.state = z.awareness >= 1 ? 'chase' : 'investigate';
       return;
     }
-    // Attack: close, sees the player, on the same level.
-    if (z.state === 'chase' && dist < T.reach && Math.abs(p.pos.y - z.pos.y) < 1 && z.swing <= 0) {
+    const targetDist = nb ? nb.dist : dist;
+    const targetY = nb ? nb.b.pos.y : p.pos.y;
+    // Attack: close, sees the target, on the same level.
+    if (z.state === 'chase' && targetDist < T.reach && Math.abs(targetY - z.pos.y) < 1 && z.swing <= 0) {
       z.state = 'attack';
       z.timer = T.windup;
       this.sounds.push({ z, kind: 'swing' });
@@ -506,7 +536,12 @@ export class ZombieSim {
     if (z.state === 'attack') {
       z.timer -= dt;
       if (z.timer <= 0) {
-        if (dist < T.reach + 0.2 && Math.abs(p.pos.y - z.pos.y) < 1) this.attacks.push({ damage: T.damage[0] + this.rnd() * (T.damage[1] - T.damage[0]), from: z });
+        const dmg = T.damage[0] + this.rnd() * (T.damage[1] - T.damage[0]);
+        if (nb && nb.dist < T.reach + 0.25 && Math.abs(nb.b.pos.y - z.pos.y) < 1) {
+          nb.b.hit(dmg, z.pos.x, z.pos.z);
+        } else if (dist < T.reach + 0.2 && Math.abs(p.pos.y - z.pos.y) < 1) {
+          this.attacks.push({ damage: dmg, from: z });
+        }
         z.swing = T.cooldown;
         z.state = 'chase';
       }

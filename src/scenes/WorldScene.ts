@@ -420,6 +420,9 @@ export class WorldScene implements IScene {
       groundY: (x, z) => layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
+      boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
+      addRagdoll: (rd) => this.ragdolls.add(rd),
+      removeRagdoll: (rd) => this.ragdolls.remove(rd),
       zombies: this.zombies,
       noise: (x, y, z, r) => {
         this.zombies.noiseAt(x, y, z, r);
@@ -899,6 +902,7 @@ export class WorldScene implements IScene {
     _zs.lit = this.player.lightOn ? 0.7 : 0;
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
+    _zs.bandits = this.bandits.list;
     this.zombies.update(dt, _zs, _zView);
     this.bandits.update(dt, c.position.x, c.position.y, c.position.z, this.dead, !!this.vehicles.activeCar);
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
