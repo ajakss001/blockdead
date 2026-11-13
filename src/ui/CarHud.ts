@@ -30,7 +30,6 @@ export class CarHud {
   private readonly btnHotwire: HTMLButtonElement;
   private readonly btnHorn: HTMLButtonElement;
   private readonly btnMech: HTMLButtonElement;
-  private readonly btnCam: HTMLButtonElement;
   private readonly btnExit: HTMLButtonElement;
 
   private readonly modal: HTMLDivElement;
@@ -58,7 +57,6 @@ export class CarHud {
           <button type="button" class="car-dash__btn car-dash__btn--warn" data-act="hotwire"></button>
           <button type="button" class="car-dash__btn" data-act="horn"></button>
           <button type="button" class="car-dash__btn" data-act="mech"></button>
-          <button type="button" class="car-dash__btn" data-act="cam"></button>
           <button type="button" class="car-dash__btn car-dash__btn--exit" data-act="exit"></button>
         </div>
       </div>
@@ -99,7 +97,6 @@ export class CarHud {
     this.btnHotwire = this.dash.querySelector('[data-act="hotwire"]')!;
     this.btnHorn = this.dash.querySelector('[data-act="horn"]')!;
     this.btnMech = this.dash.querySelector('[data-act="mech"]')!;
-    this.btnCam = this.dash.querySelector('[data-act="cam"]')!;
     this.btnExit = this.dash.querySelector('[data-act="exit"]')!;
 
     this.btnKey.addEventListener('click', () => this.vehicles.toggleIgnition());
@@ -110,7 +107,6 @@ export class CarHud {
     this.btnMech.addEventListener('click', () => {
       if (this.vehicles.activeCar) this.openMechanics(this.vehicles.activeCar);
     });
-    this.btnCam.addEventListener('click', () => this.vehicles.toggleCameraMode());
     this.btnExit.addEventListener('click', () => this.onExitRequest());
 
     this.indEngine.addEventListener('click', () => this.vehicles.activeCar && this.openMechanics(this.vehicles.activeCar));
@@ -145,8 +141,6 @@ export class CarHud {
         if (this.vehicles.hotwireActiveCar()) this.onSave();
       } else if (e.code === 'KeyH') {
         this.vehicles.honkHorn();
-      } else if (e.code === 'KeyV') {
-        this.vehicles.toggleCameraMode();
       } else if (e.code === 'KeyR') {
         this.openMechanics(this.vehicles.activeCar);
       }
@@ -385,9 +379,6 @@ export class CarHud {
     this.btnHotwire.textContent = tr('Взлом проводов [K]', 'Hotwire [K]');
     this.btnHorn.textContent = tr('Сигнал [H]', 'Horn [H]');
     this.btnMech.textContent = tr('Капот [R]', 'Hood [R]');
-    this.btnCam.textContent = this.vehicles.thirdPerson
-      ? tr('Вид: 3-е лицо [V]', 'Cam: 3rd [V]')
-      : tr('Вид: Кабина [V]', 'Cam: 1st [V]');
     this.btnExit.textContent = tr('Выйти [E]', 'Exit [E]');
   }
 

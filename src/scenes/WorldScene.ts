@@ -40,6 +40,7 @@ import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../play
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
 import { Firearms } from '../systems/Firearms';
+import { BANDIT_BODY_ID, Bandits } from '../systems/Bandits';
 import { GunHud } from '../ui/GunHud';
 import { isGun } from '../weapons/guns';
 import type { EchoPlace } from '../audio/Sound';
@@ -250,6 +251,7 @@ export class WorldScene implements IScene {
   private saves!: SaveGame;
   private story!: StorySystem;
   private vehicles!: Vehicles;
+  private bandits!: Bandits;
   private carHud!: CarHud;
   private interiors!: Interiors;
   private doors!: Doors;
@@ -413,6 +415,33 @@ export class WorldScene implements IScene {
     this.scene.add(this.baseProps.group);
     this.doors = new Doors(this.scene, this.world);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
+    this.bandits = new Bandits({
+      scene: this.scene,
+      groundY: (x, z) => layout.walkHeightAt(x, z),
+      resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
+      rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
+      zombies: this.zombies,
+      noise: (x, y, z, r) => {
+        this.zombies.noiseAt(x, y, z, r);
+        this.hordes.hear(x, z, r);
+        this.bandits.onNoise(x, z, r);
+      },
+      hurtPlayer: (hp, _fx, _fz, cause) => this.hurt(hp, cause, true),
+      placeAt: () => this.echoPlace(),
+      onDropLoot: (bot) => {
+        const ref: ContainerRef = {
+          id: BANDIT_BODY_ID + bot.id,
+          type: 'bodyTwin',
+          x: bot.pos.x,
+          z: bot.pos.z,
+          y: bot.pos.y,
+          zone: this.chunks.zoneAt(bot.pos.x, bot.pos.z),
+          box: [bot.pos.x, bot.pos.y + 0.18, bot.pos.z, 0.7, 0.25, 0.45, bot.yaw],
+        };
+        this.containers.addLoose(ref, bot.loot);
+      },
+      onRemoveCorpse: (bot) => this.containers.removeLoose(BANDIT_BODY_ID + bot.id),
+    });
     this.chunks.onChunkLoaded = (key, data) => {
       this.containers.addChunk(key, data.zone, data.containers);
       this.interiors.addChunk(key, data.buildings);
@@ -602,7 +631,9 @@ export class WorldScene implements IScene {
       noise: (x, y, z, r) => {
         this.zombies.noiseAt(x, y, z, r);
         this.hordes.hear(x, z, r);
+        this.bandits.onNoise(x, z, r);
       },
+      bandits: this.bandits,
       groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       hurtSelf: (hp) => this.hurt(hp, tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'), true),
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
@@ -869,6 +900,11 @@ export class WorldScene implements IScene {
     _zs.daylight = this.clock.daylight;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     this.zombies.update(dt, _zs, _zView);
+    this.bandits.update(dt, c.position.x, c.position.y, c.position.z, this.dead, !!this.vehicles.activeCar);
+    if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
+      const car = this.vehicles.activeCar;
+      this.bandits.ramByCar(car.x, car.z, Math.sin(car.yaw) * car.speed, Math.cos(car.yaw) * car.speed);
+    }
     this.updateHordes(dt);
     this.updateMap(dt);
     this.updateSleep(dt);
@@ -1271,7 +1307,21 @@ export class WorldScene implements IScene {
     if (!cfg || cfg.damage[1] <= 0) return false;
     const o = this.camera.getWorldPosition(_so);
     const d = this.camera.getWorldDirection(_sd);
+    const bHit = this.bandits.hitTest(o, d, cfg.reach);
     const res = this.zombies.hitTest(o, d, cfg.reach);
+    if (bHit && (!res || bHit.dist < res.dist)) {
+      const wall = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, bHit.dist);
+      if (wall >= 0 && wall < bHit.dist - 0.1) return false;
+      const strength = this.mods().strength * this.skills.damage(item);
+      const dmg = blowDamage(cfg.damage, strength, bHit.head, Math.random());
+      const killed = this.bandits.hit(bHit.bot, dmg, o.x, o.z, bHit.head);
+      this.skills.add(weaponSkill(item), XP.hit + (killed ? XP.kill : 0));
+      if (killed) this.skills.kills++;
+      sfx.strike(STRIKE_SOUND[item] ?? 'blunt', bHit.point, bHit.head, killed);
+      this.particles.burst(bHit.point, bHit.head ? 14 : 10);
+      this.weaponBlow();
+      return true;
+    }
     if (!res) return false;
     const wall = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, res.dist);
     if (wall >= 0 && wall < res.dist - 0.1) return false;
@@ -2072,6 +2122,7 @@ export class WorldScene implements IScene {
 
   dispose(): void {
     this.firearms.dispose();
+    this.bandits.dispose();
     this.gunHud.dispose();
     this.carHud.dispose();
     this.vehicles.dispose();

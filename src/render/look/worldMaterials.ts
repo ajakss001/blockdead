@@ -75,6 +75,15 @@ const cutUniforms = {
   uCutTop: { value: new Array<number>(MAX_CUTOUTS).fill(0) },
 };
 
+const snowUniform = {
+  uSnow: { value: 0.35 },
+};
+
+/** 0..1 snow accumulation on upward-facing outdoor world surfaces (ground, roofs, cars). */
+export function setSnowCover(v: number): void {
+  snowUniform.uSnow.value = Math.max(0, Math.min(1, v));
+}
+
 /**
  * Footprints of the buildings whose interiors are loaded: their intact windows become holes
  * (and the interior's glass panes show). Only chunk meshes switched to the castCut material pay
@@ -105,7 +114,7 @@ export function initWorldMaterials(model: LightingModel, anisotropy: number): vo
       // Window panes are seen from the street and from the rooms.
       m.side = DoubleSide;
     }
-    patch(m, texture!, model === 'standard', cutWindows);
+    patch(m, texture!, model === 'standard', cutWindows, kind === 'glass');
     return m;
   };
   materials = { cast: make('opaque'), flat: make('opaque'), glass: make('glass'), castCut: make('opaque', true) };
@@ -155,10 +164,11 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   return tex;
 }
 
-function patch(m: Material, tex: DataArrayTexture, standard: boolean, cutWindows: boolean): void {
+function patch(m: Material, tex: DataArrayTexture, standard: boolean, cutWindows: boolean, isGlass: boolean): void {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uSurfaces = { value: tex };
     shader.uniforms.uModels = modelAtlas;
+    if (!isGlass) Object.assign(shader.uniforms, snowUniform);
     if (cutWindows) Object.assign(shader.uniforms, cutUniforms);
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -170,12 +180,14 @@ attribute vec2 aPbr;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
+${!isGlass ? 'varying vec3 vSnowWorld;\nvarying vec3 vSnowNorm;' : ''}
 ${cutWindows ? 'varying vec3 vCutPos;' : ''}`,
       )
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vSurfUv = aSurfUv;
 vLayer = aLayer;
 vPbr = aPbr;
+${!isGlass ? 'vSnowWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvSnowNorm = normalize(mat3(modelMatrix) * objectNormal);' : ''}
 ${cutWindows ? 'vCutPos = (modelMatrix * vec4(transformed, 1.0)).xyz;' : ''}`);
     let frag = shader.fragmentShader
       .replace(
@@ -186,13 +198,14 @@ uniform mediump sampler2DArray uModels;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
+${!isGlass ? 'uniform float uSnow;\nvarying vec3 vSnowWorld;\nvarying vec3 vSnowNorm;' : ''}
 ${cutWindows ? `varying vec3 vCutPos;
 uniform vec4 uCutXZ[${MAX_CUTOUTS}];
 uniform float uCutTop[${MAX_CUTOUTS}];` : ''}`,
       )
       .replace(
         '#include <map_fragment>',
-        cutWindows
+        (cutWindows
             ? `vec4 texel = vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));
 // Intact window glass (alpha-marked) of a loaded building: a hole into the rooms behind.
 if (texel.a < 0.6) {
@@ -202,7 +215,16 @@ if (texel.a < 0.6) {
   }
 }
 diffuseColor.rgb *= texel.rgb;`
-            : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`,
+            : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`) +
+          (!isGlass
+            ? `
+if (uSnow > 0.01) {
+  float snowUp = smoothstep(0.45, 0.78, normalize(vSnowNorm).y);
+  float snowNoise = 0.76 + 0.24 * sin(vSnowWorld.x * 0.27 + vSnowWorld.z * 0.19) * cos(vSnowWorld.z * 0.23 - vSnowWorld.x * 0.11);
+  float snowMask = clamp(snowUp * uSnow * snowNoise, 0.0, 0.9);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.89, 0.95), snowMask);
+}`
+            : ''),
       );
     if (standard) {
       frag = frag
@@ -211,5 +233,5 @@ diffuseColor.rgb *= texel.rgb;`
     }
     shader.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `world-surfaces-${standard ? 'pbr' : 'lambert'}${cutWindows ? '-cut' : ''}`;
+  m.customProgramCacheKey = () => `world-surfaces-${standard ? 'pbr' : 'lambert'}${cutWindows ? '-cut' : ''}${isGlass ? '-glass' : '-snow'}`;
 }

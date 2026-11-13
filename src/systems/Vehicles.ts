@@ -58,6 +58,9 @@ export interface CarState {
   /** Internal cooldown so a zombie isn't hit twice in the same 0.35s window */
   smokeT: number;
   stallT: number;
+  pushVx?: number;
+  pushVz?: number;
+  pushYaw?: number;
   group: Group;
   rig?: CarRig;
 }
@@ -197,8 +200,6 @@ export class Vehicles {
   readonly group = new Scene();
   readonly cars: CarState[] = [];
   activeCar: CarState | null = null;
-  /** True = 3rd-person chase cam; False = 1st-person hood/cabin cam */
-  thirdPerson = true;
   /** Camera orbit offset controlled by mouse while driving */
   private camYawOffset = 0;
   private camPitchOffset = 0.22;
@@ -210,6 +211,7 @@ export class Vehicles {
   private readonly poiSpawned = new Set<string>();
   private readonly roadChecked = new Set<string>();
   private readonly audio = new VehicleAudio();
+  private carHitCd = 0;
   private headLightL: SpotLight;
   private headLightR: SpotLight;
   private headTargetL: Object3D;
@@ -893,14 +895,46 @@ export class Vehicles {
 
   /** Step vehicle physics, fuel/battery/engine/tire simulation, world collisions, and zombie ramming. */
   fixedUpdate(dt: number, input: InputManager, playerPos: Vector3, playerPrevPos: Vector3): void {
+    this.carHitCd = Math.max(0, this.carHitCd - dt);
     // Decrement zombie hit cooldowns
     for (const [zid, t] of this.hitCooldown) {
       if (t - dt <= 0) this.hitCooldown.delete(zid);
       else this.hitCooldown.set(zid, t - dt);
     }
 
-    // Smoke & battery drain on all cars
+    // Smoke, battery drain & collision slide physics on all cars
     for (const car of this.cars) {
+      const pvx = car.pushVx ?? 0;
+      const pvz = car.pushVz ?? 0;
+      const pyaw = car.pushYaw ?? 0;
+      if (Math.abs(pvx) > 0.03 || Math.abs(pvz) > 0.03 || Math.abs(pyaw) > 0.01) {
+        const sp = VEHICLE_SPECS[car.kind];
+        car.x += pvx * dt;
+        car.z += pvz * dt;
+        car.yaw += pyaw * dt;
+        const r = sp.halfW * 0.94;
+        const ax = sp.halfL * 0.52;
+        const fx = -Math.sin(car.yaw);
+        const fz = -Math.cos(car.yaw);
+        _probe.set(car.x + fx * ax, car.y, car.z + fz * ax);
+        this.world.resolveCircle(_probe, r, 1.5);
+        const dxF = _probe.x - (car.x + fx * ax);
+        const dzF = _probe.z - (car.z + fz * ax);
+        _probe.set(car.x - fx * ax + dxF, car.y, car.z - fz * ax + dzF);
+        this.world.resolveCircle(_probe, r, 1.5);
+        car.x += dxF + (_probe.x - (car.x - fx * ax + dxF));
+        car.z += dzF + (_probe.z - (car.z - fz * ax + dzF));
+        car.y = this.layout.walkHeightAt(car.x, car.z);
+        car.group.position.set(car.x, car.y, car.z);
+        car.group.rotation.y = car.yaw;
+        const drag = Math.exp(-4.8 * dt);
+        car.pushVx = pvx * drag;
+        car.pushVz = pvz * drag;
+        car.pushYaw = pyaw * Math.exp(-6.0 * dt);
+        if (Math.abs(car.pushVx) <= 0.03) car.pushVx = 0;
+        if (Math.abs(car.pushVz) <= 0.03) car.pushVz = 0;
+        if (Math.abs(car.pushYaw) <= 0.01) car.pushYaw = 0;
+      }
       if (car.lightsOn) {
         if (!car.engineOn || Math.abs(car.speed) < 2) {
           car.battery = Math.max(0, car.battery - dt * 0.0022);
@@ -1189,7 +1223,55 @@ export class Vehicles {
 
   private resolveProbeAgainstOtherCars(probe: Vector3, radius: number, self: CarState): void {
     for (const other of this.cars) {
-      if (other !== self) this.pushCircleOutOfCar(probe, radius, other);
+      if (other === self) continue;
+      const beforeX = probe.x;
+      const beforeZ = probe.z;
+      this.pushCircleOutOfCar(probe, radius, other);
+      const dx = probe.x - beforeX;
+      const dz = probe.z - beforeZ;
+      if (dx * dx + dz * dz < 1e-6) continue;
+
+      // Split separation: push the struck car forward and keep only part of the pushback on self
+      const pushX = -dx * 0.62;
+      const pushZ = -dz * 0.62;
+      probe.x = beforeX + dx * 0.42;
+      probe.z = beforeZ + dz * 0.42;
+
+      const osp = VEHICLE_SPECS[other.kind];
+      const oAx = osp.halfL * 0.52;
+      const oR = osp.halfW * 0.94;
+      const ofx = -Math.sin(other.yaw);
+      const ofz = -Math.cos(other.yaw);
+      const targetX = other.x + pushX;
+      const targetZ = other.z + pushZ;
+      _smokePos.set(targetX + ofx * oAx, other.y, targetZ + ofz * oAx);
+      this.world.resolveCircle(_smokePos, oR, 1.5);
+      const odx = _smokePos.x - (targetX + ofx * oAx);
+      const odz = _smokePos.z - (targetZ + ofz * oAx);
+      other.x = targetX + odx;
+      other.z = targetZ + odz;
+      other.y = this.layout.walkHeightAt(other.x, other.z);
+      other.group.position.set(other.x, other.y, other.z);
+
+      const impact = Math.abs(self.speed);
+      if (impact > 1.4) {
+        const len = Math.hypot(dx, dz) || 1;
+        const nx = -dx / len;
+        const nz = -dz / len;
+        const impulse = Math.min(11, impact * 0.65);
+        other.pushVx = (other.pushVx ?? 0) + nx * impulse;
+        other.pushVz = (other.pushVz ?? 0) + nz * impulse;
+        const rx = beforeX - other.x;
+        const rz = beforeZ - other.z;
+        const torque = (rx * nz - rz * nx) * impulse * 0.28;
+        other.pushYaw = clamp((other.pushYaw ?? 0) + torque, -2.4, 2.4);
+        if (other.rig) other.rig.bodyRoll += clamp(torque * 0.06, -0.1, 0.1);
+        if (this.carHitCd <= 0 && impact > 2.4) {
+          this.carHitCd = 0.28;
+          sfx.hit('metal', { x: beforeX, y: other.y + 0.7, z: beforeZ }, Math.min(1, impact / 12));
+          this.hooks.noise(beforeX, other.y, beforeZ, Math.min(80, 20 + impact * 3.5));
+        }
+      }
     }
   }
 
@@ -1259,12 +1341,6 @@ export class Vehicles {
     this.world.resolveCircle(z.pos, 0.32, 1.6);
   }
 
-  /** Toggle between 3rd-person chase camera and 1st-person driver camera. */
-  toggleCameraMode(): void {
-    this.thirdPerson = !this.thirdPerson;
-    this.camYawOffset = 0;
-  }
-
   /** Update camera and headlights each rendered frame. */
   render(frameDt: number, camera: PerspectiveCamera, input: InputManager): void {
     this.updateHeadlights();
@@ -1290,41 +1366,25 @@ export class Vehicles {
     const fwdX = -Math.sin(viewYaw);
     const fwdZ = -Math.cos(viewYaw);
 
-    if (this.thirdPerson) {
-      const pitchCos = Math.cos(this.camPitchOffset);
-      const dist = spec.camDist * pitchCos;
-      const height = spec.camHeight + Math.sin(this.camPitchOffset) * 2.2;
-      const targetY = car.y + 1.15;
+    const pitchCos = Math.cos(this.camPitchOffset);
+    const dist = spec.camDist * pitchCos;
+    const height = spec.camHeight + Math.sin(this.camPitchOffset) * 2.2;
+    const targetY = car.y + 1.15;
 
-      // Raycast from car roof to desired camera position so camera doesn't clip behind walls
-      const rayDx = -fwdX;
-      const rayDy = (height - 1.15) / spec.camDist;
-      const rayDz = -fwdZ;
-      const len = Math.hypot(rayDx, rayDy, rayDz);
-      const hit = this.world.rayHit(car.x, targetY, car.z, rayDx / len, rayDy / len, rayDz / len, dist);
-      const safeDist = hit >= 0 ? Math.max(1.8, hit - 0.35) : dist;
+    // Raycast from car roof to desired camera position so camera doesn't clip behind walls
+    const rayDx = -fwdX;
+    const rayDy = (height - 1.15) / spec.camDist;
+    const rayDz = -fwdZ;
+    const len = Math.hypot(rayDx, rayDy, rayDz);
+    const hit = this.world.rayHit(car.x, targetY, car.z, rayDx / len, rayDy / len, rayDz / len, dist);
+    const safeDist = hit >= 0 ? Math.max(1.8, hit - 0.35) : dist;
 
-      camera.position.set(
-        car.x - fwdX * safeDist,
-        car.y + 1.15 + (height - 1.15) * (safeDist / Math.max(dist, 0.1)),
-        car.z - fwdZ * safeDist,
-      );
-      camera.lookAt(car.x + fwdX * 2.4, targetY, car.z + fwdZ * 2.4);
-    } else {
-      // 1st-person hood view (positioned just ahead of the windshield so the solid cabin roof never clips the camera)
-      const carFwdX = -Math.sin(car.yaw);
-      const carFwdZ = -Math.cos(car.yaw);
-      const rightX = Math.cos(car.yaw);
-      const rightZ = -Math.sin(car.yaw);
-      const fwdDist = car.kind === 'suv' ? 1.15 : 1.05;
-      const eyeH = car.kind === 'suv' ? 1.42 : 1.24;
-      camera.position.set(
-        car.x + carFwdX * fwdDist - rightX * 0.32,
-        car.y + eyeH,
-        car.z + carFwdZ * fwdDist - rightZ * 0.32,
-      );
-      camera.rotation.set(-this.camPitchOffset * 0.6, viewYaw, 0, 'YXZ');
-    }
+    camera.position.set(
+      car.x - fwdX * safeDist,
+      car.y + 1.15 + (height - 1.15) * (safeDist / Math.max(dist, 0.1)),
+      car.z - fwdZ * safeDist,
+    );
+    camera.lookAt(car.x + fwdX * 2.4, targetY, car.z + fwdZ * 2.4);
   }
 
   /** Called when a zombie strikes the occupied vehicle instead of the player inside. */
