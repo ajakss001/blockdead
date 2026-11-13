@@ -200,8 +200,8 @@ export class VehicleAudio {
     flt.frequency.value = 1650;
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.14, t + 0.015);
-    g.gain.setValueAtTime(0.14, t + 0.28);
+    g.gain.exponentialRampToValueAtTime(0.098, t + 0.015);
+    g.gain.setValueAtTime(0.098, t + 0.28);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
     flt.connect(g).connect(out);
 

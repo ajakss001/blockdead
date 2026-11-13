@@ -764,6 +764,10 @@ export class WorldScene implements IScene {
     await done;
     window.clearInterval(pump);
     this.vehicles.init(x, z, save?.cars);
+    const sp = new URLSearchParams(location.search);
+    if (sp.get('poi') === 'cars' || sp.has('car') || sp.has('cars')) {
+      this.vehicles.spawnTestCars(x, z, c.yaw);
+    }
   }
 
   /**

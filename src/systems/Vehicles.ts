@@ -169,6 +169,7 @@ export class Vehicles {
   private readonly loading = new Set<VehicleKind>();
   private readonly hitCooldown = new Map<number, number>();
   private readonly poiSpawned = new Set<string>();
+  private readonly roadChecked = new Set<string>();
   private readonly audio = new VehicleAudio();
   private headLightL: SpotLight;
   private headLightR: SpotLight;
@@ -405,21 +406,26 @@ export class Vehicles {
     return { x: cx, z: cz };
   }
 
-  /** Spawn deterministic vehicles near key POIs as the player explores the city. */
+  /** Spawn deterministic vehicles near key POIs and along city/suburb roads as the player explores. */
   ensurePoiCars(px: number, pz: number): void {
-    if (this.cars.length >= 12) return;
+    const maxCars = 36;
+    if (this.cars.length >= maxCars) return;
     const ci = Math.floor(px / CHUNK);
     const cj = Math.floor(pz / CHUNK);
     const pois: [PoiKind, VehicleKind, boolean][] = [
       ['police', 'sedan', false],
       ['gas', 'sedan', true],
+      ['hyper', 'sedan', false],
+      ['mall', 'suv', false],
+      ['plant', 'suv', true],
+      ['checkpoint', 'suv', false],
       ['lab', 'suv', false],
       ['base', 'suv', true],
       ['airport', 'suv', false],
     ];
     for (const [poiKind, carKind, withKey] of pois) {
-      if (this.cars.length >= 12) break;
-      const site = nearestPoi(this.layout, poiKind, ci, cj, 20);
+      if (this.cars.length >= maxCars) break;
+      const site = nearestPoi(this.layout, poiKind, ci, cj, 22);
       if (!site) continue;
       const key = `${site.i},${site.j}`;
       if (this.poiSpawned.has(key)) continue;
@@ -442,6 +448,89 @@ export class Vehicles {
         engine: 0.4 + (((h >> 16) & 0xff) / 255) * 0.5,
         tires: 0.45 + (((h >> 24) & 0xff) / 255) * 0.5,
         hasKey: withKey,
+        hotwired: false,
+        lightsOn: false,
+      });
+    }
+
+    this.ensureRoadCars(ci, cj, maxCars);
+  }
+
+  /** Spawn deterministic roadside sedans & SUVs across explored road chunks so cars appear naturally throughout the map. */
+  private ensureRoadCars(ci: number, cj: number, maxCars: number): void {
+    const r = 5;
+    for (let i = ci - r; i <= ci + r; i++) {
+      for (let j = cj - r; j <= cj + r; j++) {
+        if (this.cars.length >= maxCars) return;
+        const key = `${i},${j}`;
+        if (this.roadChecked.has(key)) continue;
+        this.roadChecked.add(key);
+
+        // Skip POI chunks (handled by ensurePoiCars) and immediate starter chunk (0, 0)
+        if ((i === 0 && j === 0) || this.layout.poi(i, j)) continue;
+
+        let h = ((i * 73856093) ^ (j * 19349663) ^ 0x9e3779b9) >>> 0;
+        h = (Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0);
+        // ~24% of chunks get a roadside drivable car
+        if ((h % 100) >= 24) continue;
+
+        const alongX = ((h >>> 8) & 1) === 0;
+        const side = ((h >>> 9) & 1) === 0 ? 1 : -1;
+        const wx = alongX ? i * CHUNK + (((h >>> 10) % 15) - 7) : i * CHUNK + side * 2.3;
+        const wz = alongX ? j * CHUNK + side * 2.3 : j * CHUNK + (((h >>> 10) % 15) - 7);
+
+        if (this.cars.some((c) => Math.hypot(c.x - wx, c.z - wz) < 48)) continue;
+
+        const carKind: VehicleKind = ((h >>> 14) % 10) < 4 ? 'suv' : 'sedan';
+        const yaw = alongX ? (side > 0 ? -Math.PI / 2 : Math.PI / 2) : (side > 0 ? 0 : Math.PI);
+        const spot = this.findFreeSpot(wx, wz, yaw, carKind);
+        if (this.cars.some((c) => Math.hypot(c.x - spot.x, c.z - spot.z) < 20)) continue;
+
+        this.spawnCar({
+          id: 200 + this.cars.length,
+          kind: carKind,
+          x: spot.x,
+          y: this.layout.walkHeightAt(spot.x, spot.z),
+          z: spot.z,
+          yaw,
+          fuel: 0.22 + ((h & 0xff) / 255) * 0.55,
+          battery: 0.35 + (((h >> 8) & 0xff) / 255) * 0.6,
+          engine: 0.45 + (((h >> 16) & 0xff) / 255) * 0.5,
+          tires: 0.5 + (((h >> 24) & 0xff) / 255) * 0.48,
+          hasKey: ((h >>> 20) % 10) < 3,
+          hotwired: false,
+          lightsOn: false,
+        });
+      }
+    }
+  }
+
+  /** Spawn a pristine Sedan + 4x4 SUV right in front of the player for quick testing (?poi=cars or ?car=1). */
+  spawnTestCars(px: number, pz: number, yaw: number): void {
+    const fwdX = -Math.sin(yaw);
+    const fwdZ = -Math.cos(yaw);
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const defs: [VehicleKind, number][] = [
+      ['sedan', -2.4],
+      ['suv', 2.4],
+    ];
+    for (const [kind, side] of defs) {
+      const tx = px + fwdX * 6.5 + rightX * side;
+      const tz = pz + fwdZ * 6.5 + rightZ * side;
+      const spot = this.findFreeSpot(tx, tz, yaw, kind);
+      this.spawnCar({
+        id: 900 + this.cars.length,
+        kind,
+        x: spot.x,
+        y: this.layout.walkHeightAt(spot.x, spot.z),
+        z: spot.z,
+        yaw,
+        fuel: 1,
+        battery: 1,
+        engine: 1,
+        tires: 1,
+        hasKey: true,
         hotwired: false,
         lightsOn: false,
       });

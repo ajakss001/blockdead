@@ -390,8 +390,8 @@ class Sound {
     lp.frequency.value = 2200;
     const env = ac.createGain();
     env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(0.12, t + 0.05);
-    env.gain.setValueAtTime(0.12, t + dur - 0.2);
+    env.gain.exponentialRampToValueAtTime(0.084, t + 0.05);
+    env.gain.setValueAtTime(0.084, t + dur - 0.2);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     osc.connect(gate).connect(lp).connect(env).connect(out);
     osc.start(t);
