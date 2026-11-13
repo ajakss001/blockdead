@@ -759,11 +759,11 @@ export class WorldScene implements IScene {
     }
     const { x, z } = c.position;
     this.story.init(x, z, save?.story);
-    this.vehicles.init(x, z, save?.cars);
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
     await done;
     window.clearInterval(pump);
+    this.vehicles.init(x, z, save?.cars);
   }
 
   /**

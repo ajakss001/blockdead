@@ -4,7 +4,6 @@ import {
   LinearMipmapLinearFilter,
   Mesh,
   MeshLambertMaterial,
-  MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
   Scene,
@@ -206,10 +205,9 @@ export class Vehicles {
     ])
       .then(([gltf, tex]) => {
         const root = gltf.scene;
-        const mat = new MeshStandardMaterial({
+        const mat = new MeshLambertMaterial({
           map: tex,
-          roughness: 0.72,
-          metalness: 0.18,
+          color: 0xffffff,
         });
         root.traverse((obj) => {
           if ((obj as Mesh).isMesh) {
@@ -255,12 +253,13 @@ export class Vehicles {
 
     if (saved && saved.length > 0) {
       for (const s of saved) {
+        const spot = this.findFreeSpot(s.x, s.z, s.yaw, s.kind);
         this.spawnCar({
           id: s.id,
           kind: s.kind,
-          x: s.x,
-          y: s.y,
-          z: s.z,
+          x: spot.x,
+          y: this.layout.walkHeightAt(spot.x, spot.z),
+          z: spot.z,
           yaw: s.yaw,
           fuel: s.fuel,
           battery: s.battery,
@@ -274,14 +273,15 @@ export class Vehicles {
       return;
     }
 
-    // Starter vehicles near downtown spawn (20, 0, 4.6) so player can test both right away:
+    // Starter vehicles near downtown spawn (20, 0, 4.6), placed in guaranteed obstacle-free road spots:
     // 1. 90s Sedan right on the road with key in ignition
+    const sedanSpot = this.findFreeSpot(14, 2.2, -Math.PI / 2, 'sedan');
     this.spawnCar({
       id: 1,
       kind: 'sedan',
-      x: 13.5,
-      y: this.layout.walkHeightAt(13.5, 2.2),
-      z: 2.2,
+      x: sedanSpot.x,
+      y: this.layout.walkHeightAt(sedanSpot.x, sedanSpot.z),
+      z: sedanSpot.z,
       yaw: -Math.PI / 2,
       fuel: 0.58,
       battery: 0.82,
@@ -292,13 +292,14 @@ export class Vehicles {
       lightsOn: false,
     });
 
-    // 2. 4x4 Off-Road SUV across the intersection (needs key or hotwiring, rugged condition)
+    // 2. 4x4 Off-Road SUV further down the road (needs key or hotwiring, rugged condition)
+    const suvSpot = this.findFreeSpot(28, -2.2, Math.PI / 2, 'suv');
     this.spawnCar({
       id: 2,
       kind: 'suv',
-      x: 27.5,
-      y: this.layout.walkHeightAt(27.5, -2.2),
-      z: -2.2,
+      x: suvSpot.x,
+      y: this.layout.walkHeightAt(suvSpot.x, suvSpot.z),
+      z: suvSpot.z,
       yaw: Math.PI / 2,
       fuel: 0.42,
       battery: 0.68,
@@ -310,6 +311,37 @@ export class Vehicles {
     });
 
     this.ensurePoiCars(px, pz);
+  }
+
+  /** Find an obstacle-free spot near (cx, cz) so a drivable car never overlaps a static parked car or building. */
+  private findFreeSpot(cx: number, cz: number, yaw: number, kind: VehicleKind): { x: number; z: number } {
+    const spec = VEHICLE_SPECS[kind];
+    const fwdX = -Math.sin(yaw);
+    const fwdZ = -Math.cos(yaw);
+    const offsets = [0, 4, -4, 8, -8, 12, -12, 16, -16, 20, -20];
+    const latOffsets = [0, 2.5, -2.5];
+
+    for (const lat of latOffsets) {
+      for (const along of offsets) {
+        const tx = cx + fwdX * along - fwdZ * lat;
+        const tz = cz + fwdZ * along + fwdX * lat;
+        if (this.cars.some((c) => Math.hypot(c.x - tx, c.z - tz) < 5.8)) continue;
+        const y = this.layout.walkHeightAt(tx, tz);
+        let blocked = false;
+        for (const t of [-1.4, 0, 1.4]) {
+          const px = tx + fwdX * t;
+          const pz = tz + fwdZ * t;
+          _probe.set(px, y, pz);
+          this.world.resolveCircle(_probe, spec.halfW + 0.25, 1.6);
+          if (Math.hypot(_probe.x - px, _probe.z - pz) > 0.05) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) return { x: tx, z: tz };
+      }
+    }
+    return { x: cx, z: cz };
   }
 
   /** Spawn deterministic vehicles near key POIs as the player explores the city. */
@@ -334,14 +366,16 @@ export class Vehicles {
       const depth = ((site.r & 1 ? (site.bw ?? 1) : (site.bd ?? 1)) * CHUNK) / 2;
       const [wx, wz] = siteToWorld(site, 6, depth - 2.2);
       if (this.cars.some((c) => Math.hypot(c.x - wx, c.z - wz) < 18)) continue;
+      const yaw = (site.r * Math.PI) / 2;
+      const spot = this.findFreeSpot(wx, wz, yaw, carKind);
       const h = ((site.i * 73856093) ^ (site.j * 19349663)) >>> 0;
       this.spawnCar({
         id: 100 + this.cars.length,
         kind: carKind,
-        x: wx,
-        y: this.layout.walkHeightAt(wx, wz),
-        z: wz,
-        yaw: (site.r * Math.PI) / 2,
+        x: spot.x,
+        y: this.layout.walkHeightAt(spot.x, spot.z),
+        z: spot.z,
+        yaw,
         fuel: 0.25 + ((h & 0xff) / 255) * 0.5,
         battery: 0.35 + (((h >> 8) & 0xff) / 255) * 0.55,
         engine: 0.4 + (((h >> 16) & 0xff) / 255) * 0.5,
