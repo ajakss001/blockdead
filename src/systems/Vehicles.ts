@@ -3,10 +3,10 @@ import {
   Group,
   LinearMipmapLinearFilter,
   Mesh,
-  MeshBasicMaterial,
   MeshLambertMaterial,
   Object3D,
   PerspectiveCamera,
+  PointLight,
   Scene,
   SpotLight,
   SRGBColorSpace,
@@ -66,8 +66,6 @@ interface CarRig {
   wheelFR: Object3D;
   wheelRL: Object3D;
   wheelRR: Object3D;
-  headMat: MeshBasicMaterial;
-  brakeMat: MeshBasicMaterial;
   wheelSpin: number;
   bodyPitch: number;
   bodyRoll: number;
@@ -176,6 +174,8 @@ export class Vehicles {
   private headLightR: SpotLight;
   private headTargetL: Object3D;
   private headTargetR: Object3D;
+  private brakeLight: PointLight;
+  private isBraking = false;
 
   constructor(
     private readonly scene: Scene,
@@ -201,7 +201,8 @@ export class Vehicles {
     this.headTargetR = new Object3D();
     this.headLightL.target = this.headTargetL;
     this.headLightR.target = this.headTargetR;
-    this.scene.add(this.headLightL, this.headLightR, this.headTargetL, this.headTargetR);
+    this.brakeLight = new PointLight(0xff2218, 0, 5.5, 2);
+    this.scene.add(this.headLightL, this.headLightR, this.headTargetL, this.headTargetR, this.brakeLight);
 
     this.loadModel('sedan');
     this.loadModel('suv');
@@ -215,8 +216,8 @@ export class Vehicles {
     const texLoader = new TextureLoader();
 
     Promise.all([
-      gltfLoader.loadAsync(`${base}.glb?v=4`),
-      texLoader.loadAsync(`${base}.webp?v=4`).then((t: Texture) => {
+      gltfLoader.loadAsync(`${base}.glb?v=5`),
+      texLoader.loadAsync(`${base}.webp?v=5`).then((t: Texture) => {
         t.colorSpace = SRGBColorSpace;
         t.flipY = false;
         t.minFilter = LinearMipmapLinearFilter;
@@ -265,24 +266,6 @@ export class Vehicles {
         const bodyPivot = new Group();
         bodyPivot.add(bodyObj);
 
-        // Glowing headlight & taillight lenses attached to bodyPivot so they pitch/roll with the chassis
-        const spec = VEHICLE_SPECS[car.kind];
-        const headMat = new MeshBasicMaterial({ color: 0x33302a });
-        const brakeMat = new MeshBasicMaterial({ color: 0x3a0e0e });
-        const lensGeo = new BoxGeometry(0.28, 0.13, 0.06);
-        const lampY = car.kind === 'suv' ? 0.94 : 0.72;
-        const lampX = spec.halfW * 0.66;
-
-        for (const s of [-1, 1]) {
-          const hl = new Mesh(lensGeo, headMat);
-          hl.position.set(s * lampX, lampY, -spec.halfL * 0.98);
-          bodyPivot.add(hl);
-
-          const tl = new Mesh(lensGeo, brakeMat);
-          tl.position.set(s * lampX, lampY + 0.04, spec.halfL * 0.97);
-          bodyPivot.add(tl);
-        }
-
         // Front steering pivots
         const steerFL = new Group();
         steerFL.position.copy(wFL.position);
@@ -303,8 +286,6 @@ export class Vehicles {
           wheelFR: wFR,
           wheelRL: wRL,
           wheelRR: wRR,
-          headMat,
-          brakeMat,
           wheelSpin: 0,
           bodyPitch: 0,
           bodyRoll: 0,
@@ -796,8 +777,8 @@ export class Vehicles {
         isSuv: false,
         onRoad: true,
       });
+      this.isBraking = false;
       this.resolvePlayerParkedCollision(playerPos);
-      this.updateParkedLightMaterials();
       return;
     }
 
@@ -952,6 +933,7 @@ export class Vehicles {
 
     // Braking state, procedural vehicle audio, wheel/suspension animation & particles
     const braking = handbrake || (throttle < -0.05 && car.speed > 0.4) || (throttle > 0.05 && car.speed < -0.4);
+    this.isBraking = braking;
     this.audio.update({
       active: true,
       engineOn: car.engineOn,
@@ -986,10 +968,6 @@ export class Vehicles {
       const idleVib = car.engineOn ? Math.sin(performance.now() * 0.048) * 0.0022 : 0;
       rig.bodyPivot.rotation.set(rig.bodyPitch, 0, rig.bodyRoll);
       rig.bodyPivot.position.y = idleVib;
-
-      const hasPower = car.battery > 0.02;
-      rig.headMat.color.setHex(car.lightsOn && hasPower ? 0xfff4d0 : 0x33302a);
-      rig.brakeMat.color.setHex(braking ? 0xff2820 : car.lightsOn && hasPower ? 0x991814 : 0x3a0e0e);
 
       const rightX = Math.cos(car.yaw);
       const rightZ = -Math.sin(car.yaw);
@@ -1049,15 +1027,6 @@ export class Vehicles {
           playerPos.z += fwdZ * penF * signF;
         }
       }
-    }
-  }
-
-  private updateParkedLightMaterials(): void {
-    for (const c of this.cars) {
-      if (!c.rig) continue;
-      const on = c.lightsOn && c.battery > 0.02;
-      c.rig.headMat.color.setHex(on ? 0xfff4d0 : 0x33302a);
-      c.rig.brakeMat.color.setHex(on ? 0x991814 : 0x3a0e0e);
     }
   }
 
@@ -1188,27 +1157,37 @@ export class Vehicles {
     if (!litCar) {
       this.headLightL.intensity = 0;
       this.headLightR.intensity = 0;
-      return;
+    } else {
+      const fwdX = -Math.sin(litCar.yaw);
+      const fwdZ = -Math.cos(litCar.yaw);
+      const rightX = Math.cos(litCar.yaw);
+      const rightZ = -Math.sin(litCar.yaw);
+      const h = litCar.kind === 'suv' ? 0.96 : 0.72;
+      const w = litCar.kind === 'suv' ? 0.74 : 0.72;
+      const front = litCar.kind === 'suv' ? 2.24 : 2.16;
+
+      const power = litCar.battery < 0.2 ? 3.5 * (litCar.battery / 0.2) : 4.2;
+      this.headLightL.intensity = power;
+      this.headLightR.intensity = power;
+
+      this.headLightL.position.set(litCar.x + fwdX * front - rightX * w, litCar.y + h, litCar.z + fwdZ * front - rightZ * w);
+      this.headLightR.position.set(litCar.x + fwdX * front + rightX * w, litCar.y + h, litCar.z + fwdZ * front + rightZ * w);
+
+      this.headTargetL.position.set(litCar.x + fwdX * (front + 16) - rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) - rightZ * w * 0.8);
+      this.headTargetR.position.set(litCar.x + fwdX * (front + 16) + rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) + rightZ * w * 0.8);
     }
 
-    const spec = VEHICLE_SPECS[litCar.kind];
-    const fwdX = -Math.sin(litCar.yaw);
-    const fwdZ = -Math.cos(litCar.yaw);
-    const rightX = Math.cos(litCar.yaw);
-    const rightZ = -Math.sin(litCar.yaw);
-    const h = litCar.kind === 'suv' ? 0.92 : 0.72;
-    const w = spec.halfW * 0.68;
-    const front = spec.halfL * 0.96;
-
-    const power = litCar.battery < 0.2 ? 3.5 * (litCar.battery / 0.2) : 4.2;
-    this.headLightL.intensity = power;
-    this.headLightR.intensity = power;
-
-    this.headLightL.position.set(litCar.x + fwdX * front - rightX * w, litCar.y + h, litCar.z + fwdZ * front - rightZ * w);
-    this.headLightR.position.set(litCar.x + fwdX * front + rightX * w, litCar.y + h, litCar.z + fwdZ * front + rightZ * w);
-
-    this.headTargetL.position.set(litCar.x + fwdX * (front + 16) - rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) - rightZ * w * 0.8);
-    this.headTargetR.position.set(litCar.x + fwdX * (front + 16) + rightX * w * 0.8, litCar.y + 0.15, litCar.z + fwdZ * (front + 16) + rightZ * w * 0.8);
+    const brakeCar = this.activeCar ?? litCar;
+    if (brakeCar && brakeCar.battery > 0.02 && (this.isBraking || brakeCar.lightsOn)) {
+      const fwdX = -Math.sin(brakeCar.yaw);
+      const fwdZ = -Math.cos(brakeCar.yaw);
+      const rear = brakeCar.kind === 'suv' ? 2.42 : 2.32;
+      const h = brakeCar.kind === 'suv' ? 0.98 : 0.78;
+      this.brakeLight.position.set(brakeCar.x - fwdX * rear, brakeCar.y + h, brakeCar.z - fwdZ * rear);
+      this.brakeLight.intensity = this.isBraking && brakeCar === this.activeCar ? 2.4 : 0.75;
+    } else {
+      this.brakeLight.intensity = 0;
+    }
   }
 
   dispose(): void {
@@ -1218,5 +1197,6 @@ export class Vehicles {
     this.headLightR.removeFromParent();
     this.headTargetL.removeFromParent();
     this.headTargetR.removeFromParent();
+    this.brakeLight.removeFromParent();
   }
 }
