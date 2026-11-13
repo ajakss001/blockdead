@@ -175,7 +175,8 @@ export class Vehicles {
   private headLightR: SpotLight;
   private headTargetL: Object3D;
   private headTargetR: Object3D;
-  private brakeLight: PointLight;
+  private brakeLightL: PointLight;
+  private brakeLightR: PointLight;
   private isBraking = false;
 
   constructor(
@@ -202,8 +203,16 @@ export class Vehicles {
     this.headTargetR = new Object3D();
     this.headLightL.target = this.headTargetL;
     this.headLightR.target = this.headTargetR;
-    this.brakeLight = new PointLight(0xff2218, 0, 5.5, 2);
-    this.scene.add(this.headLightL, this.headLightR, this.headTargetL, this.headTargetR, this.brakeLight);
+    this.brakeLightL = new PointLight(0xff2218, 0, 4.2, 2);
+    this.brakeLightR = new PointLight(0xff2218, 0, 4.2, 2);
+    this.scene.add(
+      this.headLightL,
+      this.headLightR,
+      this.headTargetL,
+      this.headTargetR,
+      this.brakeLightL,
+      this.brakeLightR,
+    );
 
     this.loadModel('sedan');
     this.loadModel('suv');
@@ -868,6 +877,7 @@ export class Vehicles {
       });
       this.isBraking = false;
       this.resolvePlayerParkedCollision(playerPos);
+      this.resolveZombiesCollision();
       return;
     }
 
@@ -960,16 +970,18 @@ export class Vehicles {
     const nextX = car.x + fwdX * car.speed * dt;
     const nextZ = car.z + fwdZ * car.speed * dt;
 
-    // Two-circle collision envelope (front & rear axle) against world buildings/walls/static props
+    // Two-circle collision envelope (front & rear axle) against world buildings/walls/static props & other drivable cars
     const axleOffset = spec.halfL * 0.52;
     const radius = spec.halfW * 0.94;
     _probe.set(nextX + fwdX * axleOffset, car.y, nextZ + fwdZ * axleOffset);
     this.world.resolveCircle(_probe, radius, 1.5);
+    this.resolveProbeAgainstOtherCars(_probe, radius, car);
     const dxF = _probe.x - (nextX + fwdX * axleOffset);
     const dzF = _probe.z - (nextZ + fwdZ * axleOffset);
 
     _probe.set(nextX - fwdX * axleOffset + dxF, car.y, nextZ - fwdZ * axleOffset + dzF);
     this.world.resolveCircle(_probe, radius, 1.5);
+    this.resolveProbeAgainstOtherCars(_probe, radius, car);
     const dxR = _probe.x - (nextX - fwdX * axleOffset + dxF);
     const dzR = _probe.z - (nextZ - fwdZ * axleOffset + dzF);
 
@@ -977,6 +989,7 @@ export class Vehicles {
     car.x = nextX + dxF + dxR;
     car.z = nextZ + dzF + dzR;
     car.y = this.layout.walkHeightAt(car.x, car.z);
+    this.resolveZombiesCollision();
 
     // Crash impact against solid wall/obstacle
     if (totalPush > 0.035 && Math.abs(car.speed) > 3.2) {
@@ -1087,34 +1100,50 @@ export class Vehicles {
     }
   }
 
+  private pushCircleOutOfCar(pos: Vector3, radius: number, c: CarState): void {
+    if (Math.abs(pos.y - c.y) > 2.2) return;
+    const spec = VEHICLE_SPECS[c.kind];
+    const dx = pos.x - c.x;
+    const dz = pos.z - c.z;
+    if (dx * dx + dz * dz > (spec.halfL + radius + 1.2) ** 2) return;
+    const fwdX = -Math.sin(c.yaw);
+    const fwdZ = -Math.cos(c.yaw);
+    const rightX = Math.cos(c.yaw);
+    const rightZ = -Math.sin(c.yaw);
+    const localF = dx * fwdX + dz * fwdZ;
+    const localR = dx * rightX + dz * rightZ;
+    const extF = spec.halfL + radius;
+    const extR = spec.halfW + radius;
+    if (Math.abs(localF) < extF && Math.abs(localR) < extR) {
+      const penF = extF - Math.abs(localF);
+      const penR = extR - Math.abs(localR);
+      if (penR < penF) {
+        const signR = localR >= 0 ? 1 : -1;
+        pos.x += rightX * penR * signR;
+        pos.z += rightZ * penR * signR;
+      } else {
+        const signF = localF >= 0 ? 1 : -1;
+        pos.x += fwdX * penF * signF;
+        pos.z += fwdZ * penF * signF;
+      }
+    }
+  }
+
+  private resolveProbeAgainstOtherCars(probe: Vector3, radius: number, self: CarState): void {
+    for (const other of this.cars) {
+      if (other !== self) this.pushCircleOutOfCar(probe, radius, other);
+    }
+  }
+
   private resolvePlayerParkedCollision(playerPos: Vector3): void {
-    const playerR = 0.38;
-    for (const c of this.cars) {
-      if (Math.abs(playerPos.y - c.y) > 2.2) continue;
-      const spec = VEHICLE_SPECS[c.kind];
-      const dx = playerPos.x - c.x;
-      const dz = playerPos.z - c.z;
-      if (dx * dx + dz * dz > (spec.halfL + 1.5) ** 2) continue;
-      const fwdX = -Math.sin(c.yaw);
-      const fwdZ = -Math.cos(c.yaw);
-      const rightX = Math.cos(c.yaw);
-      const rightZ = -Math.sin(c.yaw);
-      const localF = dx * fwdX + dz * fwdZ;
-      const localR = dx * rightX + dz * rightZ;
-      const extF = spec.halfL + playerR;
-      const extR = spec.halfW + playerR;
-      if (Math.abs(localF) < extF && Math.abs(localR) < extR) {
-        const penF = extF - Math.abs(localF);
-        const penR = extR - Math.abs(localR);
-        if (penR < penF) {
-          const signR = localR >= 0 ? 1 : -1;
-          playerPos.x += rightX * penR * signR;
-          playerPos.z += rightZ * penR * signR;
-        } else {
-          const signF = localF >= 0 ? 1 : -1;
-          playerPos.x += fwdX * penF * signF;
-          playerPos.z += fwdZ * penF * signF;
-        }
+    for (const c of this.cars) this.pushCircleOutOfCar(playerPos, 0.38, c);
+  }
+
+  private resolveZombiesCollision(): void {
+    for (const z of this.zombies.list) {
+      if (z.state === 'dead') continue;
+      for (const c of this.cars) {
+        this.pushCircleOutOfCar(z.pos, 0.34, c);
       }
     }
   }
@@ -1289,12 +1318,19 @@ export class Vehicles {
     if (brakeCar && brakeCar.battery > 0.02 && (this.isBraking || brakeCar.lightsOn)) {
       const fwdX = -Math.sin(brakeCar.yaw);
       const fwdZ = -Math.cos(brakeCar.yaw);
-      const rear = brakeCar.kind === 'suv' ? 2.42 : 2.32;
-      const h = brakeCar.kind === 'suv' ? 0.98 : 0.78;
-      this.brakeLight.position.set(brakeCar.x - fwdX * rear, brakeCar.y + h, brakeCar.z - fwdZ * rear);
-      this.brakeLight.intensity = this.isBraking && brakeCar === this.activeCar ? 2.4 : 0.75;
+      const rightX = Math.cos(brakeCar.yaw);
+      const rightZ = -Math.sin(brakeCar.yaw);
+      const rear = brakeCar.kind === 'suv' ? 2.34 : 2.26;
+      const w = brakeCar.kind === 'suv' ? 0.82 : 0.78;
+      const h = brakeCar.kind === 'suv' ? 0.82 : 0.74;
+      const intensity = this.isBraking && brakeCar === this.activeCar ? 2.1 : 0.65;
+      this.brakeLightL.position.set(brakeCar.x - fwdX * rear - rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear - rightZ * w);
+      this.brakeLightR.position.set(brakeCar.x - fwdX * rear + rightX * w, brakeCar.y + h, brakeCar.z - fwdZ * rear + rightZ * w);
+      this.brakeLightL.intensity = intensity;
+      this.brakeLightR.intensity = intensity;
     } else {
-      this.brakeLight.intensity = 0;
+      this.brakeLightL.intensity = 0;
+      this.brakeLightR.intensity = 0;
     }
   }
 
@@ -1305,6 +1341,7 @@ export class Vehicles {
     this.headLightR.removeFromParent();
     this.headTargetL.removeFromParent();
     this.headTargetR.removeFromParent();
-    this.brakeLight.removeFromParent();
+    this.brakeLightL.removeFromParent();
+    this.brakeLightR.removeFromParent();
   }
 }
