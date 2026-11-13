@@ -87,11 +87,6 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
       };
       buildHighriseShell(b, desc, rand);
       out.push(desc);
-      // Fire escape over the back courtyard on most towers.
-      if (rand() < 0.75) {
-        const u0 = x0 + 3 + Math.floor(rand() * Math.max(1, (w - 9) / 3)) * 3;
-        escapes.push({ axis: 'z', wall: south ? row.z1 : row.z0, outward: south ? 1 : -1, u0, storeys: Math.min(floors - 1, 6) });
-      }
     });
     sideAlley(b, xa + wW, xb, row, rand, built[1], escapes);
     eastGap(b, xb + wE, X1, row, rand);

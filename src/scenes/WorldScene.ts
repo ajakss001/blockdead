@@ -907,6 +907,7 @@ export class WorldScene implements IScene {
     _zs.crouched = c.crouched;
     _zs.lit = this.player.lightOn ? 0.7 : 0;
     _zs.daylight = this.clock.daylight;
+    _zs.fog = this.weather.fog;
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     _zs.bandits = this.bandits.list;
     this.zombies.update(dt, _zs, _zView);
@@ -920,6 +921,7 @@ export class WorldScene implements IScene {
       !!this.firearms.hud()?.reloading,
       c.velocity.x,
       c.velocity.z,
+      this.weather.fog,
     );
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
       const car = this.vehicles.activeCar;
@@ -1130,9 +1132,11 @@ export class WorldScene implements IScene {
     this.applyDaylight(this.clock.daylight);
     // Lightning lights the world for a moment; fog thickens at night and in the rain, clears slowly by day.
     this.ambient.intensity = this.ambientBase + this.weather.flash * 2.2;
-    const fogWant = (ATMO.night.fogNight + (1 - ATMO.night.fogNight) * this.clock.daylight) * (1 - (1 - ATMO.night.fogRain) * this.weather.rain);
+    const fogWant = (ATMO.night.fogNight + (1 - ATMO.night.fogNight) * this.clock.daylight) * (1 - (1 - ATMO.night.fogRain) * this.weather.rain) * (1 - 0.72 * this.weather.fog);
     this.fogK += (fogWant - this.fogK) * Math.min(1, gameDt / ATMO.night.fogLag);
-    (this.scene.fog as Fog).far = this.ctx.quality.preset.fogFar * this.fogK;
+    const sceneFog = this.scene.fog as Fog;
+    sceneFog.near = NIGHT.fogNear * (1 - 0.65 * this.weather.fog);
+    sceneFog.far = Math.max(15, this.ctx.quality.preset.fogFar * this.fogK);
     this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, gameDt * 1.5);
     (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
     this.landmarks.update(gameDt, this.camera.position, this.scene.fog as Fog);

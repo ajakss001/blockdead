@@ -217,15 +217,27 @@ export function bed(p: Place, rand: Rand, width = 1.5, messy = false): void {
   const L = 2.0;
   const wood = pick(rand, WOODS);
   const fabric = pick(rand, FABRICS);
-  p.box(wood, 0, 0, L / 2, width, 0.3, L);
-  p.box(0xa8a090, 0, 0.3, L / 2 + 0.02, width - 0.06, 0.16, L - 0.08, 'rubber');
-  p.box(wood, 0, 0, 0.03, width + 0.06, 0.95, 0.06);
-  p.box(0xbab4a6, 0, 0.46, 0.27, width * 0.75, 0.1, 0.34, 'rubber');
+  // Corner legs + raised frame rails.
+  for (const lx of [-width / 2 + 0.05, width / 2 - 0.05]) {
+    for (const lz of [0.05, L - 0.05]) p.box(wood, lx, 0, lz, 0.08, 0.32, 0.08);
+  }
+  p.box(wood, 0, 0.16, L / 2, width, 0.16, L - 0.04);
+  // Slatted headboard with top cap rail.
+  p.box(wood, -width / 2 + 0.04, 0.32, 0.04, 0.07, 0.68, 0.07);
+  p.box(wood, width / 2 - 0.04, 0.32, 0.04, 0.07, 0.68, 0.07);
+  p.box(wood, 0, 0.96, 0.04, width + 0.04, 0.06, 0.08);
+  for (let s = -2; s <= 2; s++) p.box(wood, (s * (width - 0.2)) / 5, 0.35, 0.04, 0.08, 0.6, 0.03);
+  // Mattress + two separate pillows.
+  p.box(0xa8a090, 0, 0.32, L / 2 + 0.02, width - 0.06, 0.17, L - 0.08, 'rubber');
+  const pw = width * 0.38;
+  p.box(0xc4beb0, -width * 0.23, 0.49, 0.28, pw, 0.09, 0.32, 'rubber');
+  p.box(0xbab4a6, width * 0.23, 0.49, 0.28, pw, 0.09, 0.32, 'rubber');
   if (messy) {
     // Sheets dragged half onto the floor.
-    p.rbox(fabric, width * 0.32, 0.36, L * 0.62, width * 0.9, 0.05, L * 0.62, 0.3, 0, -0.45, 'rubber');
+    p.rbox(fabric, width * 0.32, 0.38, L * 0.62, width * 0.9, 0.05, L * 0.62, 0.3, 0, -0.45, 'rubber');
   } else {
-    p.box(fabric, 0, 0.46, L * 0.63, width + 0.02, 0.06, L * 0.7, 'rubber');
+    p.box(fabric, 0, 0.49, L * 0.63, width + 0.02, 0.06, L * 0.7, 'rubber');
+    p.box(DARK, 0, 0.53, L * 0.86, width + 0.03, 0.03, 0.32, 'rubber');
   }
   p.solid(0, L / 2, width, L, 0.6);
   p.life(LIFE.bed, 0, 0.5, L / 2, 0, 0, 0);
@@ -251,10 +263,16 @@ export function nightstand(p: Place, rand: Rand, open = false): void {
 export function wardrobe(p: Place, rand: Rand, open = false): void {
   const wood = pick(rand, WOODS);
   if (!open) {
-    p.box(wood, 0, 0, 0.3, 1.2, 2.0, 0.6, 'wood', true);
-    p.box(DARK, 0, 0.1, 0.603, 0.015, 1.8, 0.008);
-    p.box(METAL, -0.06, 1.0, 0.61, 0.025, 0.18, 0.025, 'metal');
-    p.box(METAL, 0.06, 1.0, 0.61, 0.025, 0.18, 0.025, 'metal');
+    p.box(wood, 0, 0.06, 0.3, 1.2, 1.9, 0.58, 'wood', true);
+    p.box(DARK, 0, 0, 0.3, 1.16, 0.06, 0.54, 'wood');
+    p.box(wood, 0, 1.96, 0.31, 1.26, 0.05, 0.62, 'wood');
+    // Recessed door panel trims + metallic bar handles.
+    for (const sx of [-0.3, 0.3]) {
+      p.box(DARK, sx, 0.14, 0.595, 0.5, 1.72, 0.012);
+      p.box(wood, sx, 0.18, 0.6, 0.44, 1.64, 0.015);
+    }
+    p.box(METAL, -0.06, 1.0, 0.62, 0.02, 0.22, 0.025, 'metal');
+    p.box(METAL, 0.06, 1.0, 0.62, 0.02, 0.22, 0.025, 'metal');
   } else {
     p.box(wood, 0, 0, 0.02, 1.2, 2.0, 0.04);
     p.box(wood, -0.58, 0, 0.3, 0.04, 2.0, 0.6);
@@ -278,12 +296,27 @@ export function wardrobe(p: Place, rand: Rand, open = false): void {
 
 export function sofa(p: Place, rand: Rand, len = 2.0, messy = false): void {
   const fabric = pick(rand, FABRICS);
-  p.box(fabric, 0, 0, 0.45, len, 0.42, 0.9, 'rubber');
-  p.box(fabric, 0, 0.42, 0.11, len, 0.45, 0.22, 'rubber');
-  p.box(fabric, -len / 2 + 0.1, 0.42, 0.45, 0.2, 0.2, 0.9, 'rubber');
-  p.box(fabric, len / 2 - 0.1, 0.42, 0.45, 0.2, 0.2, 0.9, 'rubber');
-  if (messy) p.rbox(fabric, (rand() - 0.5) * len, 0.08, 1.3, 0.55, 0.16, 0.5, rand() * 3, 0.1, 0, 'rubber');
-  else p.box(fabric, -len / 4, 0.42, 0.5, len / 2 - 0.25, 0.1, 0.6, 'rubber');
+  const wood = pick(rand, WOODS);
+  for (const lx of [-len / 2 + 0.08, len / 2 - 0.08]) {
+    for (const lz of [0.1, 0.8]) p.box(wood, lx, 0, lz, 0.07, 0.08, 0.07);
+  }
+  p.box(fabric, 0, 0.08, 0.45, len, 0.24, 0.88, 'rubber');
+  p.box(fabric, 0, 0.32, 0.11, len, 0.52, 0.2, 'rubber');
+  // Armrests with rounded top caps.
+  for (const sx of [-len / 2 + 0.1, len / 2 - 0.1]) {
+    p.box(fabric, sx, 0.32, 0.47, 0.2, 0.24, 0.84, 'rubber');
+    p.box(fabric, sx, 0.56, 0.47, 0.18, 0.04, 0.82, 'rubber');
+  }
+  // Individual seat & back cushions.
+  const nCush = len >= 1.8 ? 3 : 2;
+  const cw = (len - 0.44) / nCush;
+  for (let i = 0; i < nCush; i++) {
+    const cx = -len / 2 + 0.22 + cw * (i + 0.5);
+    if (messy && i === 1) continue;
+    p.box(fabric, cx, 0.32, 0.51, cw - 0.03, 0.12, 0.62, 'rubber');
+    p.box(fabric, cx, 0.44, 0.24, cw - 0.04, 0.36, 0.12, 'rubber');
+  }
+  if (messy) p.rbox(fabric, (rand() - 0.5) * len, 0.08, 1.3, 0.55, 0.14, 0.52, rand() * 3, 0.1, 0, 'rubber');
   p.solid(0, 0.45, len, 0.9, 0.85);
 }
 
@@ -486,8 +519,15 @@ export function fridge(p: Place, rand: Rand, open = false): void {
 
 export function chair(p: Place, rand: Rand, color: number = pick(rand, WOODS)): void {
   p.box(color, 0, 0.43, 0, 0.42, 0.04, 0.42);
-  p.box(color, 0, 0.47, -0.19, 0.42, 0.45, 0.04);
+  p.box(pick(rand, FABRICS), 0, 0.47, 0.01, 0.36, 0.03, 0.36, 'rubber');
+  // Slatted backrest with side stiles and top rail.
+  p.box(color, -0.18, 0.47, -0.19, 0.04, 0.46, 0.04);
+  p.box(color, 0.18, 0.47, -0.19, 0.04, 0.46, 0.04);
+  p.box(color, 0, 0.89, -0.19, 0.4, 0.06, 0.04);
+  for (const sx of [-0.09, 0, 0.09]) p.box(color, sx, 0.52, -0.19, 0.035, 0.37, 0.025);
   for (const lx of [-0.18, 0.18]) for (const lz of [-0.18, 0.18]) p.box(color, lx, 0, lz, 0.035, 0.43, 0.035);
+  p.box(color, -0.18, 0.16, 0, 0.025, 0.025, 0.36);
+  p.box(color, 0.18, 0.16, 0, 0.025, 0.025, 0.36);
 }
 
 /** A chair knocked onto its back or side. */
@@ -524,11 +564,18 @@ export function diningTable(p: Place, rand: Rand, chairs = 4, messy = false): vo
 export function officeChair(p: Place, rand: Rand, down = false): void {
   const c = pick(rand, [0x2a2c30, 0x3a3e46, 0x4a3a3a]);
   const q = down ? p.tipped(rand() * 6, 0, Math.PI / 2, 0.3) : p;
-  q.box(0x2a2a2a, 0, 0.05, 0, 0.55, 0.03, 0.06, 'metal');
-  q.box(0x2a2a2a, 0, 0.05, 0, 0.06, 0.03, 0.55, 'metal');
+  q.box(0x2a2a2a, 0, 0.06, 0, 0.56, 0.03, 0.06, 'metal');
+  q.box(0x2a2a2a, 0, 0.06, 0, 0.06, 0.03, 0.56, 'metal');
+  for (const [wx, wz] of [[-0.26, 0], [0.26, 0], [0, -0.26], [0, 0.26]]) q.box(0x161616, wx, 0, wz, 0.04, 0.05, 0.04, 'rubber');
   q.box(0x3a3a3a, 0, 0.08, 0, 0.05, 0.36, 0.05, 'metal');
   q.box(c, 0, 0.44, 0, 0.46, 0.07, 0.46, 'rubber');
-  q.box(c, 0, 0.55, -0.22, 0.44, 0.5, 0.06, 'rubber');
+  // Armrests + contoured backrest with lumbar pad.
+  for (const sx of [-0.25, 0.25]) {
+    q.box(0x222222, sx, 0.46, 0, 0.03, 0.18, 0.04, 'metal');
+    q.box(0x1c1c1c, sx, 0.64, 0.02, 0.05, 0.03, 0.26, 'rubber');
+  }
+  q.box(0x282828, 0, 0.46, -0.24, 0.08, 0.2, 0.04, 'metal');
+  q.box(c, 0, 0.57, -0.22, 0.42, 0.5, 0.06, 'rubber');
 }
 
 /** Office desk with a CRT monitor and keyboard (monitor on the floor when `messy`). */

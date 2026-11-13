@@ -113,8 +113,22 @@ export class Doors {
     private readonly world: CollisionWorld,
   ) {
     const slab = (w: number, h: number, d: number, x: number, y: number, z = 0): BufferGeometry => new BoxGeometry(w, h, d).translate(x, y, z);
-    // Wooden leaf with a handle; hinge at x = 0, leaf along +X.
-    const wood = mergeGeometries([slab(LEAF_W, LEAF_H, 0.05, LEAF_W / 2, LEAF_H / 2), slab(0.04, 0.04, 0.14, LEAF_W - 0.1, 1.0)])!;
+    // Paneled wooden leaf with stiles, rails, raised panels, and lever handle; hinge at x = 0, leaf along +X.
+    const wood = mergeGeometries([
+      slab(LEAF_W, LEAF_H, 0.044, LEAF_W / 2, LEAF_H / 2),
+      // Outer stiles and horizontal rails.
+      slab(0.11, LEAF_H, 0.056, 0.055, LEAF_H / 2),
+      slab(0.11, LEAF_H, 0.056, LEAF_W - 0.055, LEAF_H / 2),
+      slab(LEAF_W, 0.14, 0.056, LEAF_W / 2, LEAF_H - 0.07),
+      slab(LEAF_W, 0.18, 0.056, LEAF_W / 2, 0.92),
+      slab(LEAF_W, 0.18, 0.056, LEAF_W / 2, 0.09),
+      // Raised inner upper and lower panels.
+      slab(LEAF_W - 0.3, 0.78, 0.052, LEAF_W / 2, 1.46),
+      slab(LEAF_W - 0.3, 0.56, 0.052, LEAF_W / 2, 0.52),
+      // Escutcheon plate & lever handle on both faces.
+      slab(0.045, 0.16, 0.075, LEAF_W - 0.09, 1.0),
+      slab(0.13, 0.024, 0.14, LEAF_W - 0.14, 1.02),
+    ])!;
     // Glass door: aluminium frame (stiles, rails, push bar) around a pane.
     const frame = mergeGeometries([
       slab(0.07, LEAF_H, 0.06, 0.035, LEAF_H / 2),

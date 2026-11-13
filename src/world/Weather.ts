@@ -17,9 +17,16 @@ export class Weather {
   /** Strength now 0..1, and where it is heading. */
   rain = 0;
   /** Snowfall strength 0..1 and accumulated snow cover on ground & roofs 0..1. */
-  snow = 0.72;
-  snowAccum = 0.35;
-  private snowTarget = 0.78;
+  snow = 0;
+  snowAccum = 0.15;
+  private snowTarget = 0;
+  private snowCheckT = 35;
+  private snowEndT = 0;
+  /** Fog density 0..1 (reduces player & AI visibility). */
+  fog = 0;
+  private fogTarget = 0;
+  private fogCheckT = 25;
+  private fogEndT = 0;
   private target = 0;
   private storm = false;
   /** Lightning flash 0..1 (the scene brightens the world with it). */
@@ -80,12 +87,33 @@ export class Weather {
       this.lastEnd = this.time;
     }
     this.rain += Math.sign(this.target - this.rain) * Math.min(Math.abs(this.target - this.rain), dt / 40);
-    // Gentle winter snowfall cycles and accumulates snow on ground, cars & roofs.
-    this.snowTarget = this.rain > 0.25 ? 0 : 0.68 + 0.22 * Math.sin(this.time * 0.015);
+    // Periodic snowfall weather event (not constant).
+    this.snowCheckT -= dt;
+    if (this.snowCheckT <= 0) {
+      this.snowCheckT = 50;
+      if (this.snowTarget === 0 && this.rain < 0.25 && Math.random() < 0.42) {
+        this.snowTarget = 0.55 + Math.random() * 0.45;
+        this.snowEndT = this.time + 75 + Math.random() * 105;
+      }
+    }
+    if (this.rain > 0.25 || (this.snowTarget > 0 && this.time > this.snowEndT)) this.snowTarget = 0;
     this.snow += Math.sign(this.snowTarget - this.snow) * Math.min(Math.abs(this.snowTarget - this.snow), dt / 18);
     if (this.snow > 0.1) this.snowAccum = Math.min(0.88, this.snowAccum + dt * 0.008 * this.snow);
     else if (this.rain > 0.2) this.snowAccum = Math.max(0, this.snowAccum - dt * 0.015 * this.rain);
+    else this.snowAccum = Math.max(0, this.snowAccum - dt * 0.0012);
     setSnowCover(this.snowAccum);
+
+    // Periodic fog weather event.
+    this.fogCheckT -= dt;
+    if (this.fogCheckT <= 0) {
+      this.fogCheckT = 45;
+      if (this.fogTarget === 0 && Math.random() < 0.38) {
+        this.fogTarget = 0.65 + Math.random() * 0.35;
+        this.fogEndT = this.time + 65 + Math.random() * 95;
+      }
+    }
+    if (this.fogTarget > 0 && this.time > this.fogEndT) this.fogTarget = 0;
+    this.fog += Math.sign(this.fogTarget - this.fog) * Math.min(Math.abs(this.fogTarget - this.fog), dt / 22);
 
     // Lightning: a flash, a flicker after it, the thunder a few seconds later (nearer — sooner, louder).
     if (this.storm && this.rain > 0.4) {

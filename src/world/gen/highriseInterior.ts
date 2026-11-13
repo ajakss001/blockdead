@@ -130,22 +130,25 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
 
 function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], powered: boolean, lit: LitUnit[]): void {
   // Front units between the facade and the corridor.
+  const skins = ['plaster', 'concrete', 'facadeBrick', 'wood'] as const;
+  const wallSkinA = skins[Math.abs(paperA) % skins.length];
+  const wallSkinB = skins[Math.abs(paperB) % skins.length];
   const width = L.ix1 - L.ix0;
   const n = Math.max(2, Math.floor(width / 6.5));
   const uw = width / n;
   for (let u = 0; u < n; u++) {
     const ux0 = L.ix0 + u * uw;
     const ux1 = ux0 + uw;
-    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - L.iz0, 'plaster');
+    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - L.iz0, wallSkinA);
     // Someone still lives in a lit unit (the random stream advances either way).
     const light = lit.find((l) => !l.back && l.u === u);
     const st0 = unitState(rs);
     const st = light ? 'lived' : st0;
     // Corridor wall with this unit's doorway.
     const gx = ux0 + uw / 2 - DOOR_W / 2;
-    b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, 'plaster');
-    b.blockY(paperB, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
-    b.blockY(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, 'plaster');
+    b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, wallSkinB);
+    b.blockY(paperB, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, wallSkinB);
+    b.blockY(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
       furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA, light);

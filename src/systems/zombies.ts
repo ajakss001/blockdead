@@ -119,6 +119,7 @@ export interface PlayerSense {
   crouched: boolean;
   lit: number;
   daylight: number;
+  fog?: number;
   bandits?: readonly BanditTarget[];
 }
 
@@ -454,7 +455,8 @@ export class ZombieSim {
 
   sightRange(p: PlayerSense): number {
     const base = T.sightNight + (T.sightDay - T.sightNight) * Math.max(p.daylight, p.lit);
-    return base * (p.crouched ? 0.6 : 1);
+    const fogFactor = 1 - 0.65 * (p.fog ?? 0);
+    return base * (p.crouched ? 0.6 : 1) * fogFactor;
   }
 
   /** In the view cone, in range, and a clear line from the eyes to the player's eyes. */

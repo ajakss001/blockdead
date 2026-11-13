@@ -80,10 +80,17 @@ export class Interiors {
     return out;
   }
 
-  /** Walkable height inside a high-rise, or null outside every footprint. */
+  /** Walkable height inside a high-rise or on its exterior fire escape, or null outside. */
   surfaceY(x: number, z: number, y: number): number | null {
     const b = this.buildingAt(x, z);
-    return b ? highriseSurfaceY(b, x, z, y) : null;
+    if (b) return highriseSurfaceY(b, x, z, y);
+    for (const d of this.buildings.values()) {
+      if (insideFootprint(d, x, z, 1.8)) {
+        const sy = highriseSurfaceY(d, x, z, y);
+        if (sy > 0.05) return sy;
+      }
+    }
+    return null;
   }
 
   update(dt: number, x: number, z: number, y = 0): void {

@@ -262,6 +262,7 @@ export class Bandits {
     playerReloading = false,
     playerVx = 0,
     playerVz = 0,
+    fog = 0,
   ): void {
     this.updateTracers(dt);
 
@@ -329,9 +330,10 @@ export class Bandits {
         }
       }
 
-      // Priority 1: nearest visible zombie within 14 m.
-      const sightRange = b.spawnKind === 'sniper' ? 56 : 38;
-      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14);
+      // Priority 1: nearest visible zombie within sight (reduced in fog).
+      const fogMul = 1 - 0.68 * fog;
+      const sightRange = (b.spawnKind === 'sniper' ? 56 : 38) * fogMul;
+      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14 * (1 - 0.45 * fog));
       const canSeePlayer = !playerDead && dist < sightRange && this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.35, pz);
       if (canSeePlayer && b.state !== 'combat') {
         b.state = 'combat';

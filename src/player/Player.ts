@@ -40,7 +40,6 @@ const MATERIAL: Partial<Record<Surface, HitMaterial>> = {
   rubber: 'soft',
 };
 const _o = new Vector3();
-const _eye = new Vector3();
 const _d = new Vector3();
 const _ray = new Raycaster();
 
@@ -273,35 +272,17 @@ export class Player {
     const amp = clamp(c.speed / SPEED_WALK, 0, 1.6);
     const cos = Math.cos(c.yaw);
     const sin = Math.sin(c.yaw);
-    // The body first: the camera sits in its head bone (the gait moves the head; looking down bends the
-    // back, which brings the eyes forward over the belly).
-    this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
-    const eye = this.body.eyePosition(_eye, frameDt);
-    // Crouching and standing up follow the controller's eye height (the collision's), the head's sway on top.
+    // Keep the body's third-person pose updated (for shadows / looking down at feet), shifted slightly
+    // behind the eye when crouched or looking down so the vest/chest never clips into the camera.
+    const backShift = crouchT * 0.22 + Math.max(0, -c.pitch - 0.35) * 0.14;
+    this.body.update(x + sin * backShift, y, z + cos * backShift, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
+    // Anchor the first-person camera directly to the smoothed controller position & eyeHeight so
+    // crouching never lags, jitters, or drops inside the character's own chest/floor.
     const baseY = y + c.eyeHeight(alpha);
-    eye.y = baseY + clamp(eye.y - (y + this.body.standEye(crouchT)), -0.12, 0.12);
-    // While crouched, nudge the camera slightly ahead of the leaning torso/backpack so they never clip the view.
-    if (crouchT > 0.01) {
-      const fwdPush = crouchT * 0.14;
-      eye.x += -sin * fwdPush;
-      eye.z += -cos * fwdPush;
-    }
-    // …never into a wall: the eyes only as far forward of the body's centre as there is room.
-    let ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
-    if (ahead > 0.02) {
-      const room = this.world.rayHit(x, baseY, z, -sin, 0, -cos, ahead + 0.2);
-      if (room >= 0) {
-        const fit = Math.max(0, room - 0.18);
-        if (fit < ahead) {
-          eye.x += sin * (ahead - fit);
-          eye.z += cos * (ahead - fit);
-          ahead = fit;
-        }
-      }
-    }
+    const bobY = c.airborne ? 0 : Math.sin(phase * 2) * 0.022 * amp * (1 - crouchT * 0.5);
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
-    this.camera.position.set(eye.x, eye.y - this.landDip, eye.z);
+    this.camera.position.set(x, baseY + bobY - this.landDip, z);
     this.shakeT = damp(this.shakeT, 0, 14, frameDt);
     const sh = this.shakeT * 0.02;
     this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp + (Math.random() - 0.5) * sh, 'YXZ');

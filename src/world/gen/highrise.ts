@@ -197,6 +197,33 @@ export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: num
     if (h <= reach && h > best) best = h;
   };
   const inCore = x >= L.cx0 && x <= L.cx1 && z >= L.cz0 && z <= L.cz1;
+  // Exterior fire escape along the back wall (L.z1 .. L.z1 + 1.4).
+  const feX0 = (L.x0 + L.x1) / 2 - 3.0;
+  const feX1 = feX0 + 6.0;
+  if (b.floors >= 2 && x >= feX0 - 0.1 && x <= feX1 + 0.1 && z >= L.z1 - 0.15 && z <= L.z1 + 1.5) {
+    const landW = 1.3;
+    const run = feX1 - feX0 - 2 * landW;
+    for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
+      if (k === b.floors) {
+        const oddTop = b.floors % 2 === 1;
+        if ((oddTop && x >= feX1 - landW - 0.1) || (!oddTop && x <= feX0 + landW + 0.1)) {
+          consider(b.floors * FLOOR_H);
+        }
+        continue;
+      }
+      const y0 = k * FLOOR_H;
+      if (k % 2 === 0) {
+        if (x <= feX0 + landW) consider(y0);
+        else if (x >= feX1 - landW) consider(y0 + FLOOR_H);
+        else consider(y0 + ((x - (feX0 + landW)) / run) * FLOOR_H);
+      } else {
+        if (x >= feX1 - landW) consider(y0);
+        else if (x <= feX0 + landW) consider(y0 + FLOOR_H);
+        else consider(y0 + ((feX1 - landW - x) / run) * FLOOR_H);
+      }
+    }
+    return best > -Infinity ? best : 0;
+  }
   for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
     const yk = k * FLOOR_H;
     if (!inCore) {
@@ -252,7 +279,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   const H = desc.floors * FLOOR_H;
   const top = H + 1.1; // parapet
   const f = desc.facade;
-  const tint = pick(rand, [0xd0ccc4, 0xc4c0b6, 0xbab4aa, 0xd4d0ca]);
+  const tint = pick(rand, [0xd0ccc4, 0xc4c0b6, 0xbab4aa, 0xd4d0ca, 0xc29e86, 0x9aa6ac, 0xa8b2a2, 0x8e8c88, 0xd8c8ae]);
 
   // Street level is planned first: the ground-floor front wall is built around its real openings.
   const d0 = L.doorX - ENTRANCE_W / 2;
@@ -281,7 +308,47 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     wx = o.x1;
   }
   if (L.x1 - wx > 0.01) b.block(tint, wx, 0, L.z0, L.x1 - wx, FLOOR_H, WALL, f, true);
-  b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
+  // Back wall up to roof, plus parapet with a doorway gap for the exterior fire escape.
+  const feX0 = (L.x0 + L.x1) / 2 - 3.0;
+  const feX1 = feX0 + 6.0;
+  const feLandW = 1.3;
+  if (desc.floors >= 2) {
+    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, true);
+    const gap0 = desc.floors % 2 === 1 ? feX1 - feLandW : feX0;
+    const gap1 = gap0 + feLandW;
+    if (gap0 > L.x0 + 0.05) b.block(tint, L.x0, H, L.z1 - WALL, gap0 - L.x0, top - H, WALL, f, true);
+    if (L.x1 > gap1 + 0.05) b.block(tint, gap1, H, L.z1 - WALL, L.x1 - gap1, top - H, WALL, f, true);
+    // Exterior working fire escape (ground to roof) along L.z1.
+    const feSteel = 0x34383d;
+    const feZ0 = L.z1;
+    const feD = 1.4;
+    const run = feX1 - feX0 - 2 * feLandW;
+    const steps = 10;
+    const stepW = run / steps;
+    const stepH = FLOOR_H / steps;
+    for (const px of [feX0 + 0.04, feX1 - 0.12]) {
+      for (const pz of [feZ0 + 0.04, feZ0 + feD - 0.12]) {
+        b.block(feSteel, px, 0, pz, 0.08, H + 1.0, 0.08, 'metal');
+      }
+    }
+    b.block(feSteel, feX0, 0.01, feZ0, feLandW, 0.04, feD, 'metal');
+    for (let k = 0; k < desc.floors; k++) {
+      const y0 = k * FLOOR_H;
+      const even = k % 2 === 0;
+      for (let s = 0; s < steps; s++) {
+        const sx = even ? feX0 + feLandW + s * stepW : feX1 - feLandW - (s + 1) * stepW;
+        b.block(feSteel, sx, y0 + (s + 1) * stepH - 0.06, feZ0 + 0.12, stepW + 0.02, 0.06, feD - 0.24, 'metal');
+      }
+      const lx = even ? feX1 - feLandW : feX0;
+      const ly = (k + 1) * FLOOR_H;
+      b.block(feSteel, lx, ly - 0.08, feZ0, feLandW, 0.08, feD, 'metal');
+      // Outer safety rails on landing.
+      b.block(feSteel, lx, ly + 0.88, feZ0 + feD - 0.05, feLandW, 0.05, 0.05, 'metal');
+      b.block(feSteel, even ? feX1 - 0.05 : feX0, ly + 0.88, feZ0, 0.05, 0.05, feD, 'metal');
+    }
+  } else {
+    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
+  }
   b.block(tint, L.x0, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
   b.block(tint, L.x1 - WALL, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
 
