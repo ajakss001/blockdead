@@ -286,14 +286,14 @@ body {
   border-radius: 50%;
   border: 1.5px solid rgba(190, 182, 166, 0.34);
   background: rgba(20, 20, 22, 0.42);
-  color: rgba(225, 218, 204, 0.92);
+  color: #efe8d8;
   font: 600 11px system-ui, sans-serif;
   padding: 0;
   pointer-events: auto;
   touch-action: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
-.touch__btn svg { width: 54%; height: 54%; pointer-events: none; }
+.touch__btn svg { width: 58%; height: 58%; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85)); }
 .touch__badge {
   position: absolute;
   bottom: -4px;

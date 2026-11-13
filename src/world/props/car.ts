@@ -138,8 +138,15 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
         .multiply(new Matrix4().makeRotationFromEuler(new Euler(o.flatTire ? -0.02 : 0, 0, o.flatTire ? -0.01 : 0)));
       placeModel(batch, m, matrix, m.tint ? paintFor(o.paint, rand) : null, dirt);
       if (containers) containers.push(trunkSpot(m, matrix, o.yaw));
-      // As tall as the car: the crosshair (and a climb) can go over it.
-      world.addOrientedBox(o.x, o.z, m.size[0] / 2, m.size[2] / 2, o.yaw, -0.5, m.size[1] + 0.05);
+      // Narrower footprint (mirrors/bumpers excluded) and split height (low hood/trunk vs cabin)
+      // so bullets fly cleanly over the hood/trunk and past the sides.
+      const hx = m.size[0] * 0.45;
+      const hz = m.size[2] * 0.41;
+      const hoodH = Math.min(0.92, m.size[1] * 0.62);
+      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
+      if (m.size[1] > hoodH + 0.15) {
+        world.addOrientedBox(o.x, o.z, hx * 0.48, hz * 0.86, o.yaw, hoodH, m.size[1] - 0.04);
+      }
       return;
     }
   }
@@ -261,8 +268,9 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     containers.push({ type: 'trunk', x: t.x, z: t.z, box: [t.x, t.y, t.z, 0.45, 0.36, WIDTH / 2 - 0.08, o.yaw] });
   }
 
-  // Collider: the body itself, rotated with the car (bumper to bumper, mirrors excluded), as tall as it.
-  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH, WIDTH / 2, o.yaw, -0.5, 1.5);
+  // Narrower footprint + split hood/cabin height so bullets pass over the hood/trunk and past the sides.
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.94, WIDTH * 0.44, o.yaw, -0.5, 0.92);
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.46, WIDTH * 0.38, o.yaw, 0.92, 1.44);
 }
 
 /**
