@@ -69,6 +69,17 @@ export class Interiors {
     return null;
   }
 
+  buildingsNear(x: number, z: number, radius: number): BuildingDesc[] {
+    const r2 = radius * radius;
+    const out: BuildingDesc[] = [];
+    for (const b of this.buildings.values()) {
+      const dx = b.cx - x;
+      const dz = b.cz - z;
+      if (dx * dx + dz * dz <= r2) out.push(b);
+    }
+    return out;
+  }
+
   /** Walkable height inside a high-rise, or null outside every footprint. */
   surfaceY(x: number, z: number, y: number): number | null {
     const b = this.buildingAt(x, z);

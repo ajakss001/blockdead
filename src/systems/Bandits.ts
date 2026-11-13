@@ -33,8 +33,12 @@ import { gunRigData } from '../player/gunPose';
 import { buildHeldModel, HELD, type HeldId } from '../player/held';
 import { GunModel } from '../weapons/gunModel';
 import { GUNS, type GunId } from '../weapons/guns';
+import { type BuildingDesc, FLOOR_H } from '../world/gen/highrise';
 import type { Worn } from './Inventory';
 import type { BanditTarget, ZombieSim } from './zombies';
+
+export type FactionId = 'scavs' | 'pmc' | 'snipers';
+export type SpawnKind = 'street' | 'indoor' | 'sniper';
 
 export interface BanditLootItem {
   id: ItemId;
@@ -46,10 +50,11 @@ export const BANDIT_BODY_ID = 700000;
 
 export interface BanditWorld {
   scene: Scene;
-  groundY(x: number, z: number): number;
+  groundY(x: number, z: number, y?: number): number;
   resolveCircle(pos: Vector3, r: number): void;
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number): number;
   boxesNear(x: number, z: number, r: number, out: StaticBox[]): void;
+  buildingsNear(x: number, z: number, r: number): BuildingDesc[];
   addRagdoll(rd: Ragdoll): void;
   removeRagdoll(rd: Ragdoll): void;
   zombies: ZombieSim;
@@ -89,16 +94,32 @@ const GUN_SOUND: Record<BanditGunId, GunSound> = {
   rifle_hunting: 'hunting',
 };
 
-const BANDIT_OUTFITS: readonly Worn[] = [
-  { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
-  { outfit: null, head: null, face: null, mask: 'balaclava', torso: 'leatherJacket', vest: 'vestMilitary', hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
-  { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: null, legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
-];
+const FACTION_OUTFITS: Record<FactionId, readonly Worn[]> = {
+  scavs: [
+    { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
+    { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: 'workGloves', legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
+    { outfit: null, head: null, face: 'glassesBallistic', mask: null, torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
+    { outfit: null, head: null, face: null, mask: 'maskHalf', torso: 'tshirt', vest: null, hands: null, legs: 'slacks', feet: 'sneakers', back: null, bag: null },
+  ],
+  pmc: [
+    { outfit: null, head: null, face: 'gogglesTactical', mask: 'balaclava', torso: 'militaryJacket', vest: 'vestMilitary', hands: 'tacticalGloves', legs: 'militaryPants', feet: 'combatBoots', back: null, bag: null },
+    { outfit: null, head: null, face: null, mask: 'balaclava', torso: 'leatherJacket', vest: 'vestSwat', hands: 'tacticalGloves', legs: 'cargoPants', feet: 'combatBoots', back: null, bag: null },
+  ],
+  snipers: [
+    { outfit: null, head: null, face: 'gogglesTactical', mask: 'shemagh', torso: 'militaryJacket', vest: 'vestMilitary', hands: 'tacticalGloves', legs: 'militaryPants', feet: 'combatBoots', back: null, bag: null },
+  ],
+};
+
+const FACTION_TINTS: Record<FactionId, readonly number[]> = {
+  scavs: [0x6e4f3a, 0x3f4e5e, 0x585346, 0x4b3b36, 0x3b4a3c, 0x62503c],
+  pmc: [0x3b4432, 0x2c302e, 0x454a3a, 0x25282c],
+  snipers: [0x3c4836, 0x2f362c],
+};
 
 const MAX_ACTIVE = 4;
-const SPAWN_MIN = 26;
-const SPAWN_MAX = 54;
-const DESPAWN_DIST = 88;
+const SPAWN_MIN = 34;
+const SPAWN_MAX = 64;
+const DESPAWN_DIST = 92;
 const CORPSE_LIFE = 95;
 
 const _v1 = new Vector3();
@@ -134,6 +155,8 @@ interface BanditRigVisual {
 
 export interface Bandit extends BanditTarget {
   id: number;
+  faction: FactionId;
+  spawnKind: SpawnKind;
   pos: Vector3;
   vel: Vector3;
   yaw: number;
@@ -142,6 +165,7 @@ export interface Bandit extends BanditTarget {
   state: 'patrol' | 'combat' | 'dead';
   look: Appearance;
   worn: Worn;
+  tint: number;
   weapon: ItemId;
   isGun: boolean;
   ammoInMag: number;
@@ -223,15 +247,40 @@ export class Bandits {
     this.maxActive = Math.max(1, n);
   }
 
-  update(dt: number, px: number, py: number, pz: number, playerDead: boolean, inCar: boolean): void {
+  update(
+    dt: number,
+    px: number,
+    py: number,
+    pz: number,
+    playerDead: boolean,
+    inCar: boolean,
+    playerReloading = false,
+    playerVx = 0,
+    playerVz = 0,
+  ): void {
     this.updateTracers(dt);
 
     this.spawnCd -= dt;
-    let aliveCount = 0;
-    for (const b of this.list) if (b.state !== 'dead') aliveCount++;
-    if (this.spawnCd <= 0 && aliveCount < this.maxActive) {
-      this.trySpawnAround(px, pz);
-      this.spawnCd = (this.maxActive <= 2 ? 9 : 5) + Math.random() * 5;
+    let aliveStreet = 0;
+    let aliveIndoor = 0;
+    let aliveSniper = 0;
+    for (const b of this.list) {
+      if (b.state === 'dead') continue;
+      if (b.spawnKind === 'street') aliveStreet++;
+      else if (b.spawnKind === 'indoor') aliveIndoor++;
+      else aliveSniper++;
+    }
+    const streetCap = this.maxActive <= 2 ? 1 : 2;
+    const indoorCap = this.maxActive <= 2 ? 1 : 2;
+    if (this.spawnCd <= 0) {
+      if (aliveIndoor < indoorCap && this.trySpawnIndoor(px, pz)) {
+        // Spawned indoor rat
+      } else if (aliveSniper < 1 && Math.random() < 0.18 && this.trySpawnSniper(px, pz)) {
+        // Rare rooftop sniper
+      } else if (aliveStreet < streetCap) {
+        this.trySpawnAround(px, pz);
+      }
+      this.spawnCd = (this.maxActive <= 2 ? 11 : 7) + Math.random() * 6;
     }
 
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -272,11 +321,12 @@ export class Bandits {
       }
 
       // Priority 1: nearest visible zombie within 14 m.
+      const sightRange = b.spawnKind === 'sniper' ? 56 : 38;
       const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14);
-      const canSeePlayer = !playerDead && dist < 38 && this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.35, pz);
+      const canSeePlayer = !playerDead && dist < sightRange && this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.35, pz);
       if (canSeePlayer && b.state !== 'combat') {
         b.state = 'combat';
-        b.reactT = 0.55 + Math.random() * 0.35;
+        b.reactT = b.faction === 'pmc' ? 0.45 + Math.random() * 0.25 : 0.55 + Math.random() * 0.35;
       }
 
       const prevX = b.pos.x;
@@ -314,38 +364,69 @@ export class Bandits {
           }
         }
       } else if (b.state === 'combat' && !playerDead) {
-        // Priority 2: engage the player
+        // Priority 2: Tarkov-like tactical AI vs player
         b.aiming = 1;
         b.yaw = Math.atan2(dx, dz);
-        b.aimPitch = Math.max(-0.45, Math.min(0.45, (py - b.pos.y) / (dist || 1)));
+        b.aimPitch = Math.max(-0.55, Math.min(0.55, (py - b.pos.y) / (dist || 1)));
         b.investigateX = px;
         b.investigateZ = pz;
-        b.investigateT = 8;
+        b.investigateT = 9;
+
+        const nx = dx / (dist || 1);
+        const nz = dz / (dist || 1);
+        const playerFleeing = dist > 9 && (playerVx * nx + playerVz * nz) > 2.0;
+        const shouldRetreat = b.hp < b.maxHp * 0.36 || (b.isGun && b.reloadT > 0);
 
         if (b.reactT > 0) {
           b.reactT -= dt;
+        } else if (b.spawnKind === 'sniper') {
+          // Rooftop snipers hold high ground and fire carefully
+          if (shouldRetreat && dist < 24) {
+            this.stepBandit(b, -nx, -nz, 1.8 * dt);
+            moveSpeed = 1.8;
+          }
+          if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
+            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true);
+          }
         } else if (b.isGun) {
-          const desiredMin = inCar ? 11 : 10;
-          const desiredMax = 24;
-          if (!canSeePlayer || dist > desiredMax) {
-            const spd = dist > 20 ? 3.8 : 2.9;
-            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), spd * dt);
-            moveSpeed = spd;
-          } else if (dist < desiredMin) {
-            this.stepBandit(b, -dx / (dist || 1), -dz / (dist || 1), 2.1 * dt);
-            moveSpeed = 2.1;
+          if (shouldRetreat) {
+            // Tactical retreat while reloading or badly hurt
+            this.stepBandit(b, -nx, -nz, 3.0 * dt);
+            moveSpeed = 3.0;
+          } else if (playerReloading && dist < 26 && !inCar) {
+            // Push aggressively when the player is reloading!
+            this.stepBandit(b, nx, nz, 3.85 * dt);
+            moveSpeed = 3.85;
+          } else if (playerFleeing && dist < 34) {
+            // Chase fleeing player
+            this.stepBandit(b, nx, nz, 4.1 * dt);
+            moveSpeed = 4.1;
           } else {
-            const strafe = Math.sin(b.id * 1.7 + this.w.zombies.list.length * 0.01);
-            this.stepBandit(b, (-dz / (dist || 1)) * strafe, (dx / (dist || 1)) * strafe, 1.4 * dt);
-            moveSpeed = 1.4;
+            const desiredMin = inCar ? 11 : 10;
+            const desiredMax = 24;
+            if (!canSeePlayer || dist > desiredMax) {
+              const spd = dist > 20 ? 3.8 : 2.9;
+              this.stepBandit(b, nx, nz, spd * dt);
+              moveSpeed = spd;
+            } else if (dist < desiredMin) {
+              this.stepBandit(b, -nx, -nz, 2.1 * dt);
+              moveSpeed = 2.1;
+            } else {
+              const strafe = Math.sin(b.id * 1.7 + this.w.zombies.list.length * 0.01);
+              this.stepBandit(b, -nz * strafe, nx * strafe, 1.4 * dt);
+              moveSpeed = 1.4;
+            }
           }
 
-          if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 36) {
+          if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 38) {
             this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true);
           }
         } else {
-          if (dist > 1.65) {
-            this.stepBandit(b, dx / (dist || 1), dz / (dist || 1), 4.25 * dt);
+          if (b.hp < b.maxHp * 0.25 && dist < 6) {
+            this.stepBandit(b, -nx, -nz, 3.6 * dt);
+            moveSpeed = 3.6;
+          } else if (dist > 1.65) {
+            this.stepBandit(b, nx, nz, 4.25 * dt);
             moveSpeed = 4.25;
           } else if (b.meleeCd <= 0) {
             b.meleeCd = 1.05 + Math.random() * 0.25;
@@ -521,27 +602,76 @@ export class Bandits {
       if (Math.hypot(rx - px, rz - pz) < SPAWN_MIN * 0.85) continue;
 
       const isGun = Math.random() < 0.7;
+      const faction: FactionId = Math.random() < 0.28 ? 'pmc' : 'scavs';
       const weapon: ItemId = isGun
-        ? BANDIT_GUNS[Math.floor(Math.random() * BANDIT_GUNS.length)]
+        ? (faction === 'pmc'
+            ? (Math.random() < 0.5 ? 'rifle_m4a1' : 'rifle_ak')
+            : BANDIT_GUNS[Math.floor(Math.random() * BANDIT_GUNS.length)])
         : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
+      this.spawnBot(rx, sy, rz, faction, 'street', weapon, isGun);
+      return;
+    }
+  }
+
+  private trySpawnIndoor(px: number, pz: number): boolean {
+    const blds = this.w.buildingsNear(px, pz, 55);
+    if (blds.length === 0) return false;
+    const bld = blds[Math.floor(Math.random() * blds.length)];
+    const floor = Math.floor(Math.random() * Math.min(2, bld.floors));
+    const sx = bld.cx + (Math.random() - 0.5) * Math.max(2, bld.w - 3.5);
+    const sz = bld.cz + (Math.random() - 0.5) * Math.max(2, bld.d - 3.5);
+    if (Math.hypot(sx - px, sz - pz) < 16) return false;
+    const sy = this.w.groundY(sx, sz, floor * FLOOR_H + 0.5);
+    _v1.set(sx, sy, sz);
+    this.w.resolveCircle(_v1, 0.45);
+    const isGun = Math.random() < 0.65;
+    const faction: FactionId = Math.random() < 0.25 ? 'pmc' : 'scavs';
+    const weapon: ItemId = isGun
+      ? (faction === 'pmc' ? (Math.random() < 0.5 ? 'rifle_m4a1' : 'rifle_ak') : (Math.random() < 0.5 ? 'pistol_g17' : 'shotgun_pump'))
+      : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
+    this.spawnBot(_v1.x, sy, _v1.z, faction, 'indoor', weapon, isGun);
+    return true;
+  }
+
+  private trySpawnSniper(px: number, pz: number): boolean {
+    const blds = this.w.buildingsNear(px, pz, 68).filter((b) => b.floors >= 2);
+    if (blds.length === 0) return false;
+    const bld = blds[Math.floor(Math.random() * blds.length)];
+    const roofY = bld.floors * FLOOR_H;
+    const edgeX = bld.cx + (Math.random() < 0.5 ? -1 : 1) * Math.max(1, bld.w * 0.35);
+    const edgeZ = bld.cz + (Math.random() < 0.5 ? -1 : 1) * Math.max(1, bld.d * 0.35);
+    const sy = this.w.groundY(edgeX, edgeZ, roofY + 0.5);
+    if (sy < FLOOR_H * 1.5) return false;
+    this.spawnBot(edgeX, sy, edgeZ, 'snipers', 'sniper', 'rifle_hunting', true);
+    return true;
+  }
+
+  private spawnBot(rx: number, sy: number, rz: number, faction: FactionId, spawnKind: SpawnKind, weapon: ItemId, isGun: boolean): void {
       const magCap = isGun ? GUNS[weapon as BanditGunId].capacity : 1;
       const look = randomLook();
-      const worn = BANDIT_OUTFITS[Math.floor(Math.random() * BANDIT_OUTFITS.length)];
+      const outfits = FACTION_OUTFITS[faction];
+      const worn = outfits[Math.floor(Math.random() * outfits.length)];
+      const tints = FACTION_TINTS[faction];
+      const tint = tints[Math.floor(Math.random() * tints.length)];
 
       const root = new Group();
       root.position.set(rx, sy, rz);
       this.w.scene.add(root);
 
+      const maxHp = faction === 'snipers' ? 125 : faction === 'pmc' ? 115 : 90;
       const bot: Bandit = {
         id: this.nextId++,
+        faction,
+        spawnKind,
         pos: new Vector3(rx, sy, rz),
         vel: new Vector3(),
         yaw: Math.random() * Math.PI * 2,
-        hp: 95,
-        maxHp: 95,
+        hp: maxHp,
+        maxHp,
         state: 'patrol',
         look,
         worn,
+        tint,
         weapon,
         isGun,
         ammoInMag: magCap,
@@ -574,8 +704,6 @@ export class Bandits {
 
       this.buildVisual(bot);
       this.list.push(bot);
-      return;
-    }
   }
 
   private buildVisual(b: Bandit): void {
@@ -866,7 +994,7 @@ export class Bandits {
     b.pos.x += nx * step;
     b.pos.z += nz * step;
     this.w.resolveCircle(b.pos, 0.34);
-    b.pos.y = this.w.groundY(b.pos.x, b.pos.z);
+    b.pos.y = this.w.groundY(b.pos.x, b.pos.z, b.pos.y);
   }
 
   private hasLineOfSight(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): boolean {

@@ -417,10 +417,11 @@ export class WorldScene implements IScene {
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
     this.bandits = new Bandits({
       scene: this.scene,
-      groundY: (x, z) => layout.walkHeightAt(x, z),
+      groundY: (x, z, y = 0) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
       boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
+      buildingsNear: (x, z, r) => this.interiors.buildingsNear(x, z, r),
       addRagdoll: (rd) => this.ragdolls.add(rd),
       removeRagdoll: (rd) => this.ragdolls.remove(rd),
       zombies: this.zombies,
@@ -904,7 +905,17 @@ export class WorldScene implements IScene {
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     _zs.bandits = this.bandits.list;
     this.zombies.update(dt, _zs, _zView);
-    this.bandits.update(dt, c.position.x, c.position.y, c.position.z, this.dead, !!this.vehicles.activeCar);
+    this.bandits.update(
+      dt,
+      c.position.x,
+      c.position.y,
+      c.position.z,
+      this.dead,
+      !!this.vehicles.activeCar,
+      !!this.firearms.hud()?.reloading,
+      c.velocity.x,
+      c.velocity.z,
+    );
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
       const car = this.vehicles.activeCar;
       this.bandits.ramByCar(car.x, car.z, Math.sin(car.yaw) * car.speed, Math.cos(car.yaw) * car.speed);
@@ -1529,7 +1540,24 @@ export class WorldScene implements IScene {
       kills: this.meta.kills + this.skills.kills,
     };
     const color = (slot: WearSlot) => { const id = inv.worn[slot]; return id ? (inv.wornTint[slot] ?? ITEMS[id].wear?.color ?? null) : null; };
-    this.twins.push({ id: 2_000_000_000 + Math.floor(Math.random() * 1e8), x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex), costume: this.look.sex === 'male' ? ((inv.worn.outfit && ITEMS[inv.worn.outfit].wear?.costume) ?? null) : null, gear: wornGear(inv.worn) });
+    const bodyId = 2_000_000_000 + Math.floor(Math.random() * 1e8);
+    if (this.survival.infection >= 1) {
+      // Only infection deaths turn into a wandering zombie twin.
+      this.twins.push({ id: bodyId, x: feet.x, y: feet.y, z: feet.z, colors: [color('torso') ?? 0x8a8478, color('legs') ?? 0x5a5448, 0x7a8274], items, kind: twinKind(inv.worn, this.classId, this.look.sex), costume: this.look.sex === 'male' ? ((inv.worn.outfit && ITEMS[inv.worn.outfit].wear?.costume) ?? null) : null, gear: wornGear(inv.worn) });
+    } else {
+      // Killed by bandits, wounds, or exhaustion: leave a lootable corpse right where the player died.
+      const ref: ContainerRef = {
+        id: bodyId,
+        type: 'bodyTwin',
+        x: feet.x,
+        z: feet.z,
+        y: feet.y,
+        zone: this.chunks.zoneAt(feet.x, feet.z),
+        box: [feet.x, feet.y + 0.2, feet.z, 0.7, 0.25, 0.45, c.yaw],
+      };
+      this.bodies.push(ref);
+      this.containers.addLoose(ref, items);
+    }
     this.save();
   }
 

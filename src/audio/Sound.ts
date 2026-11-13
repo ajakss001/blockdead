@@ -702,41 +702,72 @@ class Sound {
     else this.noiseHit(out, t, { type: 'bandpass', f: 400, f2: 900, q: 1, dur: dur * 1.4, peak: 0.12, attack: dur * 0.7 });
   }
 
+  private shotCurve: Float32Array<ArrayBuffer> | null = null;
+
+  private getShotCurve(): Float32Array<ArrayBuffer> {
+    if (this.shotCurve) return this.shotCurve;
+    const n = 256;
+    const c = new Float32Array(new ArrayBuffer(n * 4));
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      c[i] = ((3 + 12) * x * 20 * (Math.PI / 180)) / (Math.PI + 12 * Math.abs(x));
+    }
+    return (this.shotCurve = c);
+  }
+
   /**
-   * A shot: the crack of the report, its low boom and the mechanism; suppressed — a dull thud and the action
-   * loud in its own right. The place answers: indoors a dense short ring, a street one late slap off the
-   * far fronts, an alley a flutter between its walls. `self`: ours (no distance falloff, at the ear).
+   * A shot: punchy multi-layered report (crack, body blast, sub punch, bolt snap) with soft saturation
+   * and spatial echo tailored for indoor rooms, narrow alleys, or open streets.
    */
   gunShot(kind: GunSound, pos: Pos | null, suppressed: boolean, place: EchoPlace): void {
-    const v = this.voice(pos, 1.6, 6, true);
+    const v = this.voice(pos, 1.9, 6, true);
     if (!v) return;
     const [out, t] = v;
-    const big = kind === 'rpg' ? 1.6 : kind === 'shotgun' || kind === 'hunting' ? 1.25 : kind === 'rifle' || kind === 'ak' ? 1.1 : kind === 'pistol45' ? 0.95 : 0.85;
-    const low = kind === 'pistol' ? 170 : kind === 'pistol45' ? 130 : kind === 'shotgun' ? 95 : kind === 'rpg' ? 60 : kind === 'ak' ? 115 : 125;
+    const big = kind === 'rpg' ? 1.65 : kind === 'shotgun' || kind === 'hunting' ? 1.32 : kind === 'rifle' || kind === 'ak' ? 1.18 : kind === 'pistol45' ? 1.02 : 0.92;
+    const low = kind === 'pistol' ? 185 : kind === 'pistol45' ? 140 : kind === 'shotgun' ? 88 : kind === 'rpg' ? 56 : kind === 'ak' ? 105 : 118;
+
+    // Soft-clipping saturator gives gunfire real Call-of-Duty-style punch and transient weight.
+    const shaper = (out.context as AudioContext).createWaveShaper();
+    shaper.curve = this.getShotCurve();
+    shaper.oversample = '2x';
+    shaper.connect(out);
+
     if (suppressed) {
-      this.noiseHit(out, t, { type: 'lowpass', f: 900, f2: 300, dur: 0.09, peak: 0.45 * big });
-      this.noiseHit(out, t, { type: 'bandpass', f: 2200, q: 1.5, dur: 0.03, peak: 0.12 });
-      this.tone(out, t, { f: low * 1.4, f2: low * 0.8, dur: 0.08, peak: 0.12 });
+      this.noiseHit(shaper, t, { type: 'lowpass', f: 1050, f2: 260, dur: 0.09, peak: 0.55 * big });
+      this.noiseHit(shaper, t, { type: 'bandpass', f: 2500, q: 1.6, dur: 0.025, peak: 0.22 });
+      this.tone(shaper, t, { f: low * 1.4, f2: low * 0.75, dur: 0.08, peak: 0.18 });
+      this.noiseHit(shaper, t + 0.015, { type: 'bandpass', f: 3200, q: 3, dur: 0.02, peak: 0.16 });
     } else if (kind === 'rpg') {
-      this.noiseHit(out, t, { type: 'lowpass', f: 1800, f2: 200, dur: 0.6, peak: 0.95, attack: 0.01 });
-      this.noiseHit(out, t + 0.02, { type: 'bandpass', f: 600, f2: 2400, q: 0.8, dur: 1.1, peak: 0.35, attack: 0.08 });
-      this.tone(out, t, { f: 70, f2: 38, dur: 0.5, peak: 0.6 });
+      this.noiseHit(shaper, t, { type: 'lowpass', f: 2000, f2: 180, dur: 0.65, peak: 1.05, attack: 0.008 });
+      this.noiseHit(shaper, t + 0.02, { type: 'bandpass', f: 650, f2: 2400, q: 0.8, dur: 1.15, peak: 0.42, attack: 0.08 });
+      this.tone(shaper, t, { f: 75, f2: 34, dur: 0.55, peak: 0.72 });
     } else {
-      // The crack (supersonic, the muzzle blast), the boom, a tail.
-      this.noiseHit(out, t, { type: 'highpass', f: 1800, dur: 0.025, peak: 0.9 * big });
-      this.noiseHit(out, t, { type: 'lowpass', f: 2600, f2: 350, dur: 0.16 * big, peak: 0.85 * big });
-      this.tone(out, t, { f: low * 1.6, f2: low * 0.6, dur: 0.18 * big, peak: 0.55 * big });
-      this.noiseHit(out, t + 0.03, { type: 'bandpass', f: 700, q: 0.7, dur: 0.35 * big, peak: 0.18 * big, attack: 0.02 });
+      // 1) Supersonic muzzle crack (ultra-fast transient snap)
+      this.noiseHit(shaper, t, { type: 'highpass', f: 2300, dur: 0.022, peak: 1.15 * big });
+      // 2) Dense mid-range body blast
+      this.noiseHit(shaper, t, { type: 'lowpass', f: 3800, f2: 380, dur: 0.19 * big, peak: 0.98 * big });
+      this.noiseHit(shaper, t + 0.006, { type: 'bandpass', f: kind === 'ak' ? 920 : 1150, q: 0.85, dur: 0.15 * big, peak: 0.52 * big });
+      // 3) Chest-thump sub punch
+      this.tone(shaper, t, { f: low * 1.75, f2: Math.max(40, low * 0.42), dur: 0.19 * big, peak: 0.68 * big });
+      // 4) Crisp mechanical bolt / action snap right after ignition
+      this.noiseHit(shaper, t + 0.014, { type: 'bandpass', f: 3100, q: 2.8, dur: 0.022, peak: 0.24 * big });
     }
-    // The echo by place.
-    const e = suppressed ? 0.25 : 1;
+
+    // Spatial tail / reflections by environment.
+    const e = suppressed ? 0.22 : 1;
     if (place === 'indoor') {
-      for (let i = 0; i < 5; i++) this.noiseHit(out, t + 0.012 + i * 0.017, { type: 'lowpass', f: 2200 - i * 300, dur: 0.08, peak: (0.32 - i * 0.05) * big * e });
+      for (let i = 0; i < 6; i++) {
+        this.noiseHit(out, t + 0.01 + i * 0.014, { type: 'lowpass', f: 2500 - i * 310, dur: 0.075, peak: (0.36 - i * 0.048) * big * e });
+      }
+      this.noiseHit(out, t + 0.04, { type: 'lowpass', f: 780, f2: 240, dur: 0.42, peak: 0.28 * big * e, attack: 0.02 });
     } else if (place === 'alley') {
-      for (let i = 0; i < 6; i++) this.noiseHit(out, t + 0.06 + i * 0.075, { type: 'bandpass', f: 1300 - i * 120, q: 0.9, dur: 0.07, peak: (0.24 - i * 0.035) * big * e });
+      for (let i = 0; i < 6; i++) {
+        this.noiseHit(out, t + 0.045 + i * 0.055, { type: 'bandpass', f: 1450 - i * 150, q: 0.9, dur: 0.08, peak: (0.28 - i * 0.038) * big * e });
+      }
     } else {
-      this.noiseHit(out, t + 0.32 + Math.random() * 0.15, { type: 'lowpass', f: 900, dur: 0.5, peak: 0.2 * big * e, attack: 0.04 });
-      this.noiseHit(out, t + 0.75 + Math.random() * 0.3, { type: 'lowpass', f: 600, dur: 0.7, peak: 0.1 * big * e, attack: 0.06 });
+      this.noiseHit(out, t + 0.11, { type: 'lowpass', f: 1500, f2: 450, dur: 0.28, peak: 0.26 * big * e, attack: 0.015 });
+      this.noiseHit(out, t + 0.30 + Math.random() * 0.08, { type: 'lowpass', f: 920, f2: 280, dur: 0.48, peak: 0.22 * big * e, attack: 0.03 });
+      this.noiseHit(out, t + 0.68 + Math.random() * 0.18, { type: 'lowpass', f: 580, f2: 200, dur: 0.72, peak: 0.12 * big * e, attack: 0.05 });
     }
   }
 
