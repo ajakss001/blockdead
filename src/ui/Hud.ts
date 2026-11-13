@@ -1,4 +1,5 @@
 import { onLangChange, tr } from '../core/i18n';
+import type { StoryBriefing, StoryHudState } from '../systems/Story';
 import { STAT_DIM_COLOR, type StatIcon, statIcon } from './pixelart';
 
 /** Meters on the HUD; each is 0..1 where 1 = fine ("how much is left"). */
@@ -59,6 +60,14 @@ export class Hud {
   private readonly staminaFill = document.createElement('div');
   private staminaKey = -1;
   private toastTimer = 0;
+  /** Compact story objective tracker (top-left) and radio transmission banner (top-center). */
+  private readonly storyBox = document.createElement('div');
+  private readonly storyAct = document.createElement('div');
+  private readonly storyDist = document.createElement('span');
+  private readonly storyObj = document.createElement('div');
+  private storyKey = '';
+  private readonly briefing = document.createElement('div');
+  private briefingTimer = 0;
 
   constructor(parent: HTMLElement) {
     this.stats.className = 'stats';
@@ -111,7 +120,70 @@ export class Hud {
     this.stamina.className = 'stamina';
     this.staminaFill.className = 'stamina__fill';
     this.stamina.append(this.staminaFill);
-    parent.append(this.stats, this.action, this.prompt, this.stamina);
+
+    this.storyBox.className = 'story-tracker';
+    this.storyBox.hidden = true;
+    const head = document.createElement('div');
+    head.className = 'story-tracker__head';
+    this.storyAct.className = 'story-tracker__act';
+    this.storyDist.className = 'story-tracker__dist';
+    head.append(this.storyAct, this.storyDist);
+    this.storyObj.className = 'story-tracker__obj';
+    this.storyBox.append(head, this.storyObj);
+
+    this.briefing.className = 'story-briefing';
+    this.briefing.hidden = true;
+
+    parent.append(this.stats, this.storyBox, this.briefing, this.action, this.prompt, this.stamina);
+  }
+
+  /** Update the story tracker in the top-left corner (DOM updates only when text changes). */
+  setStory(state: StoryHudState): void {
+    const key = `${state.act}|${state.objective}|${state.distance}|${state.urgent ? 1 : 0}|${state.done ? 1 : 0}`;
+    if (key === this.storyKey) return;
+    this.storyKey = key;
+    this.storyBox.hidden = false;
+    this.storyAct.textContent = state.act;
+    this.storyDist.textContent = state.distance;
+    this.storyObj.textContent = state.objective;
+    this.storyBox.classList.toggle('story-tracker--urgent', !!state.urgent);
+    this.storyBox.classList.toggle('story-tracker--done', !!state.done);
+  }
+
+  /** Display a radio intercept / dossier transmission card without breaking pointer lock. */
+  showBriefing(b: StoryBriefing, ms = 14000): void {
+    window.clearTimeout(this.briefingTimer);
+    this.briefing.innerHTML = '';
+    const bar = document.createElement('div');
+    bar.className = 'story-briefing__bar';
+    const code = document.createElement('span');
+    code.className = 'story-briefing__code';
+    code.textContent = b.code;
+    const close = document.createElement('button');
+    close.className = 'story-briefing__close';
+    close.textContent = '✕';
+    close.addEventListener('click', () => {
+      this.briefing.hidden = true;
+    });
+    bar.append(code, close);
+    const title = document.createElement('div');
+    title.className = 'story-briefing__title';
+    title.textContent = b.title;
+    this.briefing.append(bar, title);
+    for (const line of b.body) {
+      const p = document.createElement('div');
+      p.className = 'story-briefing__p';
+      p.textContent = line;
+      this.briefing.append(p);
+    }
+    const foot = document.createElement('div');
+    foot.className = 'story-briefing__foot';
+    foot.textContent = b.footer;
+    this.briefing.append(foot);
+    this.briefing.hidden = false;
+    this.briefingTimer = window.setTimeout(() => {
+      this.briefing.hidden = true;
+    }, ms);
   }
 
   /** Stamina 0..1 (call every step; DOM only changes when the value does). */

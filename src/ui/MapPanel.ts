@@ -10,6 +10,8 @@ export interface MapHost {
   memory: MapMemory;
   /** Where the survivor stands and looks. */
   player(): { x: number; z: number; yaw: number };
+  /** Active story objective coordinates and label, if any. */
+  questTarget?(): { x: number; z: number; label: string } | null;
 }
 
 /** Faded paper-map colours (through the grim palette by eye: no bright spots). */
@@ -330,6 +332,35 @@ export class MapPanel {
       g.moveTo(sx + 7, sy - 7);
       g.lineTo(sx - 7, sy + 7);
       g.stroke();
+    }
+
+    // Active story objective marker (amber circle + target crosshair + label).
+    const qt = this.host.questTarget?.();
+    if (qt) {
+      const qx = X(qt.x);
+      const qy = Y(qt.z);
+      g.save();
+      g.strokeStyle = '#e0a844';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(qx, qy, 11, 0, Math.PI * 2);
+      g.stroke();
+      g.beginPath();
+      g.arc(qx, qy, 3.5, 0, Math.PI * 2);
+      g.fillStyle = '#e0a844';
+      g.fill();
+      g.font = '600 11px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'bottom';
+      const tw = g.measureText(qt.label).width;
+      g.fillStyle = 'rgba(18, 16, 12, 0.85)';
+      g.fillRect(qx - tw / 2 - 5, qy - 29, tw + 10, 16);
+      g.strokeStyle = 'rgba(224, 168, 68, 0.55)';
+      g.lineWidth = 1;
+      g.strokeRect(qx - tw / 2 - 5, qy - 29, tw + 10, 16);
+      g.fillStyle = '#f0c878';
+      g.fillText(qt.label, qx, qy - 15);
+      g.restore();
     }
 
     // The survivor: an arrow where they look (forward = (−sin yaw, −cos yaw)).

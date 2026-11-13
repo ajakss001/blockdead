@@ -54,6 +54,7 @@ import { GroundWeapons } from '../weapons/GroundWeapons';
 import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
+import { StorySystem } from '../systems/Story';
 import { type BodyPart, PART_NAMES, Survival } from '../systems/Survival';
 import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
@@ -245,6 +246,7 @@ export class WorldScene implements IScene {
   /** Asleep: in a bed or not, the overlay. */
   private sleeping: { bed: boolean; el: HTMLDivElement } | null = null;
   private saves!: SaveGame;
+  private story!: StorySystem;
   private interiors!: Interiors;
   private doors!: Doors;
   private saveT = 0;
@@ -447,6 +449,29 @@ export class WorldScene implements IScene {
       },
       document.getElementById('ui')!,
     );
+    this.story = new StorySystem(this.layout, this.mapMemory, this.inventory, this.containers, {
+      toast: (t, ms) => this.ctx.hud.toast(t, ms),
+      showBriefing: (b) => this.ctx.hud.showBriefing(b),
+      showVictory: () => this.showVictoryScreen(),
+      onWave: (wx, wz) => {
+        this.zombies.noiseAt(wx, 0, wz, 110);
+        this.hordes.hear(wx, wz, 160);
+        for (let k = 0; k < 3; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const r = 28 + Math.random() * 14;
+          this.zombies.spawnAt(wx + Math.cos(a) * r, wz + Math.sin(a) * r, 'chase');
+        }
+      },
+      isLabPowered: (lx, lz) => this.powered.has(blockKey(lx, lz)),
+    });
+    const origPanelOpen = this.panel.open.bind(this.panel);
+    this.panel.open = (ref) => {
+      if (ref) {
+        const p = this.player.controller.position;
+        this.story.onContainerSearch(ref, p.x, p.z);
+      }
+      origPanelOpen(ref);
+    };
     this.mapPanel = new MapPanel(
       ctx,
       {
@@ -455,6 +480,10 @@ export class WorldScene implements IScene {
         player: () => {
           const pc = this.player.controller;
           return { x: pc.position.x, z: pc.position.z, yaw: pc.yaw };
+        },
+        questTarget: () => {
+          const t = this.story.target;
+          return t ? { x: t.x, z: t.z, label: `${tr('Цель', 'Target')}: ${POI[t.kind].name}` } : null;
         },
       },
       document.getElementById('ui')!,
@@ -688,6 +717,7 @@ export class WorldScene implements IScene {
       }
     }
     const { x, z } = c.position;
+    this.story.init(x, z, save?.story);
     const done = this.chunks.whenLoaded(x, z, 1);
     const pump = window.setInterval(() => this.chunks.update(x, z, 0, 1), 16);
     await done;
@@ -870,6 +900,9 @@ export class WorldScene implements IScene {
     if (this.moodleT <= 0) {
       this.moodleT = 0.25;
       this.survival.pushStats(this.ctx.hud, this.player.battery);
+      if (!this.dead) {
+        this.ctx.hud.setStory(this.story.update(0.25, c.position.x, c.position.z, c.yaw));
+      }
     }
   }
 
@@ -1069,6 +1102,7 @@ export class WorldScene implements IScene {
       meta: this.meta,
       map: this.mapMemory.serialize(),
       base: this.base.serialize(),
+      story: this.story.serialize(),
     });
   }
 
@@ -1108,8 +1142,10 @@ export class WorldScene implements IScene {
     this.look = { ...choice.appearance };
     this.classId = choice.classId;
     this.traits = [...choice.traits];
-    // A new survivor doesn't know the city: a blank map.
+    // A new survivor doesn't know the city: a blank map, except the active story target.
     this.mapMemory.clear();
+    const p = this.player.controller.position;
+    this.story.init(p.x, p.z, this.story.serialize());
     const cls = classDef(choice.classId);
     const worn = choiceWorn(choice);
     this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
@@ -1364,6 +1400,7 @@ export class WorldScene implements IScene {
     const j = Math.floor(z / CHUNK);
     this.doors.releaseLock('labPower', i * CHUNK, j * CHUNK, (i + 1) * CHUNK, (j + 1) * CHUNK);
     this.labLights();
+    this.story.onPowerLab(x, z);
     this.save();
   }
 
@@ -1641,7 +1678,76 @@ export class WorldScene implements IScene {
     }
     if (this.atmo.bedNear(eye, dir))
       return { text: tr('Лечь спать', 'Go to sleep'), act: true, run: () => this.sleep(true) };
+    const storySpot = this.story.spotAt(eye.x, eye.z);
+    if (storySpot) return storySpot;
     return null;
+  }
+
+  /** Victory screen when the survivor completes Act IV ("Protocol Dawn") at the Airport. */
+  private showVictoryScreen(): void {
+    this.ctx.loop.pause('menu');
+    this.ctx.events.emit('ui:modal', { open: true });
+    if (document.pointerLockElement) document.exitPointerLock();
+    const minutes = Math.max(0, this.clock.minutes - this.bornAt);
+    const days = Math.floor(minutes / 1440);
+    const el = document.createElement('div');
+    el.className = 'victory-screen';
+    el.style.cssText =
+      'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(8,10,12,0.94);color:#d8d2c4;font:16px/1.45 system-ui,sans-serif;text-align:center;padding:20px';
+    const body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;max-width:540px';
+    const keepBtn = document.createElement('button');
+    keepBtn.style.cssText =
+      'margin-top:8px;padding:12px 24px;font:inherit;font-size:16px;background:#3e523a;color:#eee;border:1px solid #769c6e;border-radius:4px;cursor:pointer';
+    keepBtn.addEventListener('click', () => {
+      this.survival.health = 1;
+      this.survival.anxiety = 0;
+      el.remove();
+      this.ctx.loop.resume('menu');
+      this.ctx.events.emit('ui:modal', { open: false });
+      this.ctx.requestPointerLock();
+      this.save();
+    });
+    const ngBtn = document.createElement('button');
+    ngBtn.style.cssText =
+      'margin-top:8px;padding:12px 24px;font:inherit;font-size:16px;background:#3a3630;color:#eee;border:1px solid #6a6458;border-radius:4px;cursor:pointer';
+    ngBtn.addEventListener('click', async () => {
+      const life = Math.max(0, this.clock.minutes - this.bornAt);
+      this.meta = {
+        legacy: this.skills.bequeath(this.meta.legacy),
+        deaths: this.meta.deaths,
+        bestLife: Math.max(this.meta.bestLife, life),
+        kills: this.meta.kills + this.skills.kills,
+      };
+      this.dead = true;
+      await this.save();
+      location.reload();
+    });
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;justify-content:center';
+    row.append(keepBtn, ngBtn);
+    const toggle = langToggle();
+    toggle.style.marginTop = '6px';
+    const renderText = () => {
+      const title = tr('ПРОТОКОЛ «РАССВЕТ» ВЫПОЛНЕН', 'PROTOCOL "DAWN" COMPLETE');
+      const sub = tr(
+        'Эвакуационный борт сел на взлётную полосу. Контейнер «Гелиос-0» и журналы лаборатории переданы группе биозащиты — у тех, кто остался за периметром, появился шанс создать антидот.',
+        'The extraction chopper touched down on the runway. Container "Helios-0" and the laboratory logs were handed over to the bio-containment team — giving those beyond the perimeter a chance to synthesize an antidote.',
+      );
+      const stat = tr(
+        `Дней в карантине: ${days} · Убито заражённых: ${this.skills.kills}`,
+        `Days in quarantine: ${days} · Infected killed: ${this.skills.kills}`,
+      );
+      const tag = tr('БОРТ ЭВАКУАЦИИ // СЕКТОР ЧИСТ', 'EXTRACTION CHOPPER // SECTOR CLEAR');
+      body.innerHTML = `<div style="font-size:12px;letter-spacing:0.14em;color:#d8a248">${tag}</div><div style="font-size:30px;font-weight:700;letter-spacing:1.5px;color:#eee6d4">${title}</div><div style="opacity:.88">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.78;font-size:15px">${sub}</div><div style="opacity:.65;font-size:14px">${stat}</div>`;
+      keepBtn.textContent = tr('Остаться в городе (свободная игра)', 'Stay in the city (freeplay)');
+      ngBtn.textContent = tr('Эвакуироваться (новый выживший + наследие)', 'Evacuate (new survivor + legacy)');
+    };
+    renderText();
+    onLangChange(renderText);
+    el.append(body, row, toggle);
+    (document.getElementById('ui') ?? document.body).append(el);
+    this.save();
   }
 
   /** Puts what was built down in front of the survivor; an error, or null. */

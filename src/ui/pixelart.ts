@@ -637,6 +637,33 @@ const GUN_DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     s.rect(4, 4, 6, 2, G.blued); // rail clamp
     s.dot(6, 10, G.metal); // button
   },
+  storyScanner: (s) => {
+    s.rect(4, 3, 8, 11, 0x2c3a4a);
+    s.rect(5, 4, 6, 4, 0x4a8a68); // lit green screen
+    s.line(6, 6, 9, 5, 0x9ce6b8);
+    s.rect(5, 1, 1, 2, C.steel); // antenna
+    s.dot(5, 9, 0xd8a038);
+    s.dot(7, 9, C.tin);
+    s.dot(9, 9, C.tin);
+    s.rect(5, 11, 6, 1, C.steelDark);
+  },
+  storySample: (s) => {
+    s.rect(4, 2, 8, 2, C.steel); // cryo cap
+    s.rect(5, 4, 6, 9, 0x4888a8); // glass cylinder
+    s.rect(6, 5, 4, 7, 0x7ac8b0); // glowing bio sample
+    s.line(6, 4, 6, 12, 0xb8e6f0); // highlight
+    s.rect(4, 13, 8, 2, C.steel); // base
+    s.dot(8, 8, 0xd8602e); // biohazard core
+  },
+  storyTransponder: (s) => {
+    s.rect(3, 5, 10, 9, 0x4a5236); // olive military casing
+    s.rect(4, 6, 8, 7, 0x363c28);
+    s.rect(10, 1, 2, 4, C.steel); // heavy antenna
+    s.dot(11, 1, 0xe05838); // beacon tip
+    s.rect(5, 7, 4, 3, 0xc8963e); // amber frequency dial
+    s.dot(10, 8, 0x5eb068);
+    s.dot(10, 10, 0xd8602e);
+  },
 };
 
 // ── Clothing and gear (the pieces' own colours, already grim). ──

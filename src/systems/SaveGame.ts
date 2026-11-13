@@ -9,6 +9,7 @@ import type { InventoryData } from './Inventory';
 import type { IPlatform } from '../platform/IPlatform';
 import type { SurvivalState } from './Survival';
 import type { MetaData, SkillXp } from './Skills';
+import type { StorySave } from './Story';
 
 const VERSION = 1;
 
@@ -50,6 +51,8 @@ export interface SaveV1 {
   map?: MapSave;
   /** What the survivors built (the base stays when one dies). */
   base?: Placed[];
+  /** Story mode progress ("Protocol Dawn"). */
+  story?: StorySave;
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

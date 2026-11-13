@@ -115,6 +115,10 @@ export type ItemId =
   // Water at the base (stage 5.15): bottles to fill, rain water to boil.
   | 'emptyBottle'
   | 'dirtyWater'
+  // Story quest items ("Protocol Dawn").
+  | 'storyScanner'
+  | 'storySample'
+  | 'storyTransponder'
   // Firearms, their ammunition, spare magazines and modules (weapons/guns).
   | GunId
   | AmmoId
@@ -332,6 +336,9 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   campNote4: { name: 'Карта с пометками', kind: 'tool', weight: 0.05, stack: 1, note: 'Кружки вокруг аптеки и склада. Крест на заправке: «пусто». Стрелка на север: «эвакуация? проверить».' },
   ration: { name: 'Сухпаёк', kind: 'food', weight: 0.6, stack: 4, hunger: -0.5, thirst: 0.05, fatigue: -0.05, note: 'Армейский рацион на сутки: галеты, тушёнка, шоколад.' },
   serumG7: { name: 'Препарат Г-7', kind: 'medical', weight: 0.05, stack: 3, health: 0.3, cures: true, note: 'Экспериментальный. Останавливает заражение даже поздно.' },
+  storyScanner: { name: 'Полицейский дешифратор', kind: 'tool', weight: 0.15, stack: 1, note: 'Протокол «Рассвет»: источник заражения — НИИ «Гелиос». Координаты занесены на карту.' },
+  storySample: { name: 'Контейнер «Гелиос-0»', kind: 'tool', weight: 0.25, stack: 1, note: 'Криокапсула с нулевым штаммом и журналом изолятора. Нужна группе эвакуации.' },
+  storyTransponder: { name: 'Военный транспондер', kind: 'tool', weight: 0.2, stack: 1, note: 'Передатчик дальней связи. Позволяет вызвать борт эвакуации на взлётной полосе Аэропорта.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
@@ -673,6 +680,27 @@ const ITEM_TEXT: Readonly<Record<Exclude<ItemId, GunId | AmmoId | MagId | ModId>
   serumG7: {
     name: ['Препарат Г-7', 'Compound G-7'],
     note: ['Экспериментальный. Останавливает заражение даже поздно.', 'Experimental. Halts infection even at a late stage.'],
+  },
+  storyScanner: {
+    name: ['Полицейский дешифратор', 'Police decryptor'],
+    note: [
+      'Протокол «Рассвет»: источник заражения — НИИ «Гелиос». Координаты занесены на карту.',
+      'Protocol "Dawn": outbreak source is Helios Research Institute. Coordinates marked on map.',
+    ],
+  },
+  storySample: {
+    name: ['Контейнер «Гелиос-0»', 'Container "Helios-0"'],
+    note: [
+      'Криокапсула с нулевым штаммом и журналом изолятора. Нужна группе эвакуации.',
+      'Cryo-capsule with strain zero and containment logs. Required by the extraction team.',
+    ],
+  },
+  storyTransponder: {
+    name: ['Военный транспондер', 'Military transponder'],
+    note: [
+      'Передатчик дальней связи. Позволяет вызвать борт эвакуации на взлётной полосе Аэропорта.',
+      'Long-range beacon key. Calls the extraction chopper at the Airport runway.',
+    ],
   },
   scrubsTop: { name: ['Медицинская рубашка', 'Scrub top'] },
   scrubsPants: { name: ['Медицинские брюки', 'Scrub pants'] },

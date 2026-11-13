@@ -341,7 +341,115 @@ body {
 
 /* Zomboid HUD: a row of pixel-art indicators, top right, clear of the phone buttons. */
 #ui > .stats,
+#ui > .story-tracker,
 #ui > .action { pointer-events: none; }
+.story-tracker {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  z-index: 2;
+  max-width: 280px;
+  padding: 5px 8px;
+  background: rgba(10, 11, 13, 0.52);
+  border-left: 2px solid rgba(212, 160, 68, 0.75);
+  color: #d6cfc0;
+  font: 11px/1.3 system-ui, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.story-tracker[hidden] { display: none; }
+.story-tracker__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.story-tracker__act {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #dfb05c;
+}
+.story-tracker__dist {
+  font: 600 10px ui-monospace, Consolas, monospace;
+  color: #e8dec6;
+  white-space: nowrap;
+}
+.story-tracker__obj {
+  color: rgba(218, 212, 198, 0.9);
+}
+.story-tracker--urgent {
+  border-left-color: #e0523c;
+  background: rgba(28, 12, 10, 0.65);
+}
+.story-tracker--urgent .story-tracker__act { color: #f57058; }
+.story-tracker--done {
+  border-left-color: #6ab068;
+  opacity: 0.72;
+}
+.story-tracker--done .story-tracker__act { color: #84c880; }
+@media (pointer: coarse), (max-height: 430px) {
+  .story-tracker {
+    top: calc(env(safe-area-inset-top, 0px) + 34px);
+    max-width: 220px;
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+  .story-tracker__act { font-size: 8px; }
+}
+
+.story-briefing {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 44px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  width: min(460px, calc(100vw - 24px));
+  padding: 10px 14px;
+  background: rgba(14, 15, 16, 0.92);
+  border: 1px solid rgba(190, 164, 108, 0.45);
+  border-left: 3px solid #d8a248;
+  color: #dcd5c6;
+  font: 12px/1.42 system-ui, sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+}
+.story-briefing[hidden] { display: none; }
+.story-briefing__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+.story-briefing__code {
+  font: 600 10px ui-monospace, Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: #cfa04e;
+}
+.story-briefing__close {
+  background: none;
+  border: none;
+  color: rgba(210, 202, 188, 0.65);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.story-briefing__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ece4d2;
+  margin-bottom: 5px;
+}
+.story-briefing__p {
+  color: rgba(214, 206, 192, 0.88);
+  margin-bottom: 5px;
+}
+.story-briefing__foot {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(190, 180, 160, 0.16);
+  font-size: 11px;
+  color: #e2b86b;
+}
 .stats {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 6px);
