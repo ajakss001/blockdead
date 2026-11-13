@@ -1,3 +1,4 @@
+import { registerDataLocalizer, tr } from '../core/i18n';
 import { type ItemId, ITEMS } from '../data/items';
 import type { Inventory } from './Inventory';
 import type { PlacedKind } from './Base';
@@ -64,20 +65,25 @@ function have(inv: Inventory, need: ItemId | ItemId[], n: number): ItemId | null
 /** Why it can't be made now, or null. */
 export function blocker(r: Recipe, w: CraftWorld): string | null {
   const inv = w.inventory;
-  for (const [need, n] of r.needs) if (!have(inv, need, n)) return `нет: ${needName(need)}${n > 1 ? ` ×${n}` : ''}`;
-  if (r.tool && !r.tool.some((t) => inv.count(t) > 0 || inv.hand === t)) return `нужен ${r.tool.map((t) => ITEMS[t].name.toLowerCase()).join(' или ')}`;
-  if (r.kindle && inv.count('lighter') === 0 && inv.count('matches') === 0) return 'нужны спички или зажигалка';
-  if (r.fire && !w.nearFire()) return 'нужен горящий костёр рядом';
-  if (r.repair && (!inv.hand || !ITEMS[inv.hand].durability)) return 'возьмите оружие в руку';
-  if (r.repair && inv.handWear <= 0.01) return 'оружие и так целое';
-  if (r.gives && inv.room(r.gives[0]) < 1) return 'рюкзак переполнен';
+  for (const [need, n] of r.needs) {
+    if (!have(inv, need, n)) return `${tr('нет', 'missing')}: ${needName(need)}${n > 1 ? ` ×${n}` : ''}`;
+  }
+  if (r.tool && !r.tool.some((t) => inv.count(t) > 0 || inv.hand === t)) {
+    const tools = r.tool.map((t) => ITEMS[t].name.toLowerCase()).join(tr(' или ', ' or '));
+    return `${tr('нужен', 'need')} ${tools}`;
+  }
+  if (r.kindle && inv.count('lighter') === 0 && inv.count('matches') === 0) return tr('нужны спички или зажигалка', 'need matches or lighter');
+  if (r.fire && !w.nearFire()) return tr('нужен горящий костёр рядом', 'need a burning campfire nearby');
+  if (r.repair && (!inv.hand || !ITEMS[inv.hand].durability)) return tr('возьмите оружие в руку', 'equip a weapon in hand');
+  if (r.repair && inv.handWear <= 0.01) return tr('оружие и так целое', 'weapon is already intact');
+  if (r.gives && inv.room(r.gives[0]) < 1) return tr('рюкзак переполнен', 'backpack is full');
   return null;
 }
 
 /** Makes it: uses the parts up, gives the result. A message for the toast. */
 export function craft(r: Recipe, w: CraftWorld): { ok: boolean; text: string } {
   const why = blocker(r, w);
-  if (why) return { ok: false, text: `Нельзя: ${why}` };
+  if (why) return { ok: false, text: `${tr('Нельзя', 'Cannot craft')}: ${why}` };
   const inv = w.inventory;
   if (r.place) {
     const err = w.place(r.place);
@@ -88,11 +94,18 @@ export function craft(r: Recipe, w: CraftWorld): { ok: boolean; text: string } {
   if (r.repair) inv.handWear = Math.max(0, inv.handWear - r.repair);
   if (r.gives) inv.add(r.gives[0], r.gives[1]);
   if (r.xp) w.onXp(r.xp);
-  return { ok: true, text: r.gives ? `${ITEMS[r.gives[0]].name} ×${r.gives[1]}` : r.repair ? 'Рукоять обмотана' : `${r.name}: готово` };
+  return {
+    ok: true,
+    text: r.gives
+      ? `${ITEMS[r.gives[0]].name} ×${r.gives[1]}`
+      : r.repair
+        ? tr('Рукоять обмотана', 'Grip wrapped')
+        : `${r.name}: ${tr('готово', 'built')}`,
+  };
 }
 
 export function needName(need: ItemId | ItemId[]): string {
-  return Array.isArray(need) ? 'рубашка или футболка' : ITEMS[need].name.toLowerCase();
+  return Array.isArray(need) ? tr('рубашка или футболка', 'shirt or T-shirt') : ITEMS[need].name.toLowerCase();
 }
 
 /** Ingredient line with what is in the bag: "доска 1/2 · хлам 3/2". */
@@ -102,6 +115,56 @@ export function needsLine(r: Recipe, inv: Inventory): { text: string; ok: boolea
     return { text: `${needName(need)} ${Math.min(got, n)}/${n}`, ok: got >= n };
   });
   if (r.tool) out.push({ text: r.tool.map((t) => ITEMS[t].name.toLowerCase()).join(' / '), ok: r.tool.some((t) => inv.count(t) > 0 || inv.hand === t) });
-  if (r.kindle) out.push({ text: 'спички / зажигалка', ok: inv.count('lighter') + inv.count('matches') > 0 });
+  if (r.kindle) out.push({ text: tr('спички / зажигалка', 'matches / lighter'), ok: inv.count('lighter') + inv.count('matches') > 0 });
   return out;
 }
+
+const RECIPE_TEXT: Readonly<Record<string, { name: [string, string]; about: [string, string] }>> = {
+  rags: {
+    name: ['Порвать на тряпки', 'Tear into rags'],
+    about: ['Рубашка или футболка → 3 тряпки', 'Shirt or T-shirt → 3 rags'],
+  },
+  bandage: {
+    name: ['Прокипятить бинты', 'Boil bandages'],
+    about: ['2 тряпки → 2 бинта (у костра)', '2 rags → 2 bandages (by campfire)'],
+  },
+  boil: {
+    name: ['Вскипятить воду', 'Boil water'],
+    about: ['Дождевая вода → чистая (у костра)', 'Rainwater → clean water (by campfire)'],
+  },
+  repair: {
+    name: ['Обмотать рукоять', 'Wrap weapon grip'],
+    about: ['Скотч на оружие в руке: прочность +35%', 'Duct tape on held weapon: durability +35%'],
+  },
+  nails: {
+    name: ['Надёргать гвоздей', 'Pull nails from scrap'],
+    about: ['2 хлама → 5 гвоздей (молоток или монтировка)', '2 scrap → 5 nails (hammer or crowbar)'],
+  },
+  fire: {
+    name: ['Костёр', 'Campfire'],
+    about: ['Греет, светит, на нём кипятят. Горит ~4 ч, подбросить доску — ещё 3 ч', 'Warms, lights, boils water. Burns ~4 h, adding a plank adds 3 h'],
+  },
+  barrel: {
+    name: ['Сборник дождевой воды', 'Rain collector'],
+    about: ['Ставится снаружи, в дождь набирается вода', 'Placed outdoors, collects water in the rain'],
+  },
+  stash: {
+    name: ['Сундук', 'Storage chest'],
+    about: ['Сюда можно сложить вещи — они останутся', 'Store items here — they stay safe'],
+  },
+  trap: {
+    name: ['Растяжка с банками', 'Tin-can tripwire'],
+    about: ['Звенит, когда зомби задевает её, — и уводит их на звук', 'Rattles when a zombie trips it — drawing them toward the noise'],
+  },
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const r of RECIPES) {
+    const t = RECIPE_TEXT[r.id];
+    if (t) {
+      r.name = t.name[idx];
+      r.about = t.about[idx];
+    }
+  }
+});

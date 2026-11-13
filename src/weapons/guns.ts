@@ -8,6 +8,8 @@
  * the RPG ~120 — and the zombies come to it; ammunition is rare. Shooting is dangerous.
  */
 
+import { registerDataLocalizer } from '../core/i18n';
+
 export type GunId = 'pistol_g17' | 'pistol_m1911' | 'shotgun_pump' | 'rifle_m4a1' | 'rifle_ak' | 'rifle_hunting' | 'launcher_rpg';
 export const GUN_IDS: readonly GunId[] = ['pistol_g17', 'pistol_m1911', 'shotgun_pump', 'rifle_m4a1', 'rifle_ak', 'rifle_hunting', 'launcher_rpg'];
 
@@ -282,6 +284,67 @@ export const MAGS: Readonly<Record<MagId, { name: string; weight: number; gun: G
   mag_m4: { name: 'Магазин M4A1', weight: 0.12, gun: 'rifle_m4a1' },
   mag_ak: { name: 'Магазин AK', weight: 0.25, gun: 'rifle_ak' },
 };
+
+const GUN_NAMES: Readonly<Record<GunId, [string, string]>> = {
+  pistol_g17: ['G17', 'G17'],
+  pistol_m1911: ['M1911', 'M1911'],
+  shotgun_pump: ['Помповое ружьё', 'Pump shotgun'],
+  rifle_m4a1: ['M4A1', 'M4A1'],
+  rifle_ak: ['AK', 'AK'],
+  rifle_hunting: ['Охотничий карабин', 'Hunting rifle'],
+  launcher_rpg: ['РПГ', 'RPG'],
+};
+
+const MOD_TEXT: Readonly<Record<ModId, { name: [string, string]; note: [string, string] }>> = {
+  mod_suppressor: {
+    name: ['Глушитель', 'Suppressor'],
+    note: ['Шум выстрела −70%, урон −10%', 'Shot noise −70%, damage −10%'],
+  },
+  mod_ext_mag_m4: {
+    name: ['Магазин M4A1 на 40', 'M4A1 40-round mag'],
+    note: ['M4A1: 40 патронов', 'M4A1: 40 rounds'],
+  },
+  mod_ext_mag_ak: {
+    name: ['Магазин AK на 40', 'AK 40-round mag'],
+    note: ['AK: 40 патронов', 'AK: 40 rounds'],
+  },
+  mod_ext_mag_g17: {
+    name: ['Магазин G17 на 33', 'G17 33-round mag'],
+    note: ['G17: 33 патрона', 'G17: 33 rounds'],
+  },
+  mod_flashlight: {
+    name: ['Подствольный фонарь', 'Weapon light'],
+    note: ['Светит, пока оружие в руках; ест батарейки', 'Shines while held; uses batteries'],
+  },
+};
+
+const AMMO_NAMES: Readonly<Record<AmmoId, [string, string]>> = {
+  ammo_9mm: ['Патроны 9×19', '9×19 ammo'],
+  ammo_45: ['Патроны .45', '.45 ammo'],
+  ammo_12: ['Патроны 12 калибра', '12-gauge shells'],
+  ammo_556: ['Патроны 5.56×45', '5.56×45 ammo'],
+  ammo_762: ['Патроны 7.62×39', '7.62×39 ammo'],
+  ammo_308: ['Патроны .308', '.308 ammo'],
+  rocket_rpg: ['Выстрел к РПГ', 'RPG rocket'],
+};
+
+const MAG_NAMES: Readonly<Record<MagId, [string, string]>> = {
+  mag_g17: ['Магазин G17', 'G17 magazine'],
+  mag_m1911: ['Магазин M1911', 'M1911 magazine'],
+  mag_m4: ['Магазин M4A1', 'M4A1 magazine'],
+  mag_ak: ['Магазин AK', 'AK magazine'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const id of GUN_IDS) GUNS[id].name = GUN_NAMES[id][idx];
+  for (const id of MOD_IDS) {
+    MODS[id].name = MOD_TEXT[id].name[idx];
+    MODS[id].note = MOD_TEXT[id].note[idx];
+  }
+  for (const id of AMMO_IDS) AMMO[id].name = AMMO_NAMES[id][idx];
+  for (const id of Object.keys(MAGS) as MagId[]) MAGS[id].name = MAG_NAMES[id][idx];
+});
 
 export const isGun = (id: string | null | undefined): id is GunId => !!id && id in GUNS;
 export const isMod = (id: string | null | undefined): id is ModId => !!id && id in MODS;

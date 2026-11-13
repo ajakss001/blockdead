@@ -1,3 +1,4 @@
+import { tr } from '../../core/i18n';
 import * as F from './furniture';
 import type { Place } from './furniture';
 import { LIFE, spotHash, TREE } from './lifeKinds';
@@ -14,10 +15,14 @@ import { LOT, type Site } from './poiSite';
 /** 5-row pixel font for the signs (Latin and the Cyrillic the signs need). */
 const GLYPHS: Record<string, string[]> = {
   A: ['0110', '1001', '1111', '1001', '1001'],
+  C: ['0111', '1000', '1000', '1000', '0111'],
   E: ['1111', '1000', '1110', '1000', '1111'],
   G: ['0111', '1000', '1011', '1001', '0111'],
+  I: ['111', '010', '010', '010', '111'],
   L: ['1000', '1000', '1000', '1000', '1111'],
   M: ['10001', '11011', '10101', '10001', '10001'],
+  N: ['1001', '1101', '1011', '1001', '1001'],
+  O: ['0110', '1001', '1001', '1001', '0110'],
   P: ['1110', '1001', '1110', '1000', '1000'],
   R: ['1110', '1001', '1110', '1010', '1001'],
   T: ['11111', '00100', '00100', '00100', '00100'],
@@ -522,7 +527,7 @@ export function checkpoint(S: Site, rand: Rand): void {
   for (const x of [-22, 18]) {
     p.box(0x5a5a56, x, 0, rz - 4.6, 0.12, 2.6, 0.12, 'metal', true);
     p.box(0xd8d4c8, x, 1.9, rz - 4.6, 4.2, 0.7, 0.06, 'plaster');
-    signText(p, 'ЭВАКУАЦИЯ >', x, 2.08, rz - 4.55, 0.068, 0xa02a20);
+    signText(p, tr('ЭВАКУАЦИЯ >', 'EVACUATION >'), x, 2.08, rz - 4.55, 0.068, 0xa02a20);
   }
 }
 

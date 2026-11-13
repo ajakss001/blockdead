@@ -3,6 +3,7 @@ import { FLASHLIGHT } from '../items/config';
 import { beamMask } from '../items/flashlight';
 import { type HitMaterial, sfx, type SwingKind } from '../audio/Sound';
 import { SURFACE_LIST, type Surface } from '../render/look/surfaces';
+import { tr } from '../core/i18n';
 import { clamp, damp, lerp } from '../core/math';
 import type { GameContext } from '../GameContext';
 import type { LookDelta } from '../input/InputManager';
@@ -169,7 +170,7 @@ export class Player {
       this.battery = Math.max(0, this.battery - dt / BATTERY_LIFE);
       if (this.battery === 0) {
         this.setFlashlight(false);
-        this.ctx.hud.toast('Батарейка села');
+        this.ctx.hud.toast(tr('Батарейка села', 'Battery died'));
       }
     }
 
@@ -343,10 +344,11 @@ export class Player {
     this.viewmodel.click();
     if (on && this.battery <= 0) {
       this.flashT = 0.12;
-      this.ctx.hud.toast('Нужны батарейки');
+      this.ctx.hud.toast(tr('Нужны батарейки', 'Need batteries'));
       return;
     }
-    if (on && this.viewmodel.lightBlocked) this.ctx.hud.toast('Руки на оружии: светит только подствольный фонарь');
+    if (on && this.viewmodel.lightBlocked)
+      this.ctx.hud.toast(tr('Руки на оружии: светит только подствольный фонарь', 'Hands on weapon: only a weapon light can shine'));
     this.flashlightOn = on;
     this.dropT = 0;
     this.flickerT = 1;

@@ -1,4 +1,5 @@
 import type { BodyId } from '../characters/assets';
+import { registerDataLocalizer } from '../core/i18n';
 import { type ModelKind, MODEL_KINDS, ZOMBIE_STATS } from './stats';
 
 /**
@@ -59,3 +60,27 @@ export const ZOMBIE_TYPES = Object.fromEntries(
     return [id, t];
   }),
 ) as Record<ModelKind, ZombieType>;
+
+const ZOMBIE_NAMES: Readonly<Record<ModelKind, [string, string]>> = {
+  worker: ['Однорукий рабочий', 'One-armed worker'],
+  medic: ['Медик', 'Paramedic'],
+  soldier: ['Военный', 'Soldier'],
+  police: ['Полицейский', 'Police officer'],
+  firefighter: ['Пожарный', 'Firefighter'],
+  office: ['Офисный работник', 'Office worker'],
+  grandma: ['Бабушка', 'Grandma'],
+  jogger: ['Бегун', 'Jogger'],
+  chef: ['Повар', 'Chef'],
+  courier: ['Курьер', 'Courier'],
+  builder: ['Строитель', 'Construction worker'],
+  tourist: ['Турист', 'Tourist'],
+  survivorM: ['Выживший', 'Survivor'],
+  survivorF: ['Выжившая', 'Survivor'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const id of MODEL_KINDS) {
+    ZOMBIE_TYPES[id].name = ZOMBIE_NAMES[id][idx];
+  }
+});

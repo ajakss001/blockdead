@@ -19,6 +19,7 @@ import {
 } from 'three';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
+import { langToggle, onLangChange, tr } from '../core/i18n';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
 import { CHUNK, DOWNTOWN_RADIUS, ROAD_HALF } from '../world/gen/layout';
 import { type SceneKind, sceneAt } from '../world/gen/chaos';
@@ -464,7 +465,7 @@ export class WorldScene implements IScene {
     this.grid = gridSchedule(seed);
     this.interaction.spot = { here: () => this.spotHere() };
     this.skills.onLevel = (s, l) => {
-      this.ctx.hud.toast(`Навык «${s.name}»: уровень ${l}`, 2200);
+      this.ctx.hud.toast(tr(`Навык «${s.name}»: уровень ${l}`, `Skill "${s.name}": level ${l}`), 2200);
       this.applyMods();
     };
     // Search by the crosshair: a ray from the eye into the search zones, walls and objects in front stop it.
@@ -533,7 +534,7 @@ export class WorldScene implements IScene {
         this.hordes.hear(x, z, r);
       },
       groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
-      hurtSelf: (hp) => this.hurt(hp, 'Подорвались на своём выстреле', true),
+      hurtSelf: (hp) => this.hurt(hp, tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'), true),
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       handling: () => this.mods().firearms,
@@ -570,27 +571,27 @@ export class WorldScene implements IScene {
     const c = this.player.controller;
     ctx.debug.set('player', () => {
       const p = c.position;
-      const state = c.crouched ? 'присед' : c.sprinting ? 'бег' : c.speed > 0.2 ? 'шаг' : 'стоит';
-      return `player ${p.x.toFixed(1)}, ${p.y.toFixed(2)}, ${p.z.toFixed(1)}  ${c.speed.toFixed(1)} м/с  ${state}  шум ${c.noise.toFixed(2)}`;
+      const state = c.crouched ? tr('присед', 'crouch') : c.sprinting ? tr('бег', 'run') : c.speed > 0.2 ? tr('шаг', 'walk') : tr('стоит', 'idle');
+      return `player ${p.x.toFixed(1)}, ${p.y.toFixed(2)}, ${p.z.toFixed(1)}  ${c.speed.toFixed(1)} ${tr('м/с', 'm/s')}  ${state}  ${tr('шум', 'noise')} ${c.noise.toFixed(2)}`;
     });
     ctx.debug.set('world', () => {
       const ch = this.chunks;
-      return `world seed ${seed}  zone ${ch.zoneAt(c.position.x, c.position.z)}  chunks ${ch.loadedCount} (+${ch.pendingCount})  gen ${ch.lastGenMs.toFixed(0)}ms  colliders ${this.world.boxCount}  interiors ${this.interiors.loadedCount}  doors ${this.doors.count}  этаж ${Math.round(c.position.y / 3.2)}`;
+      return `world seed ${seed}  zone ${ch.zoneAt(c.position.x, c.position.z)}  chunks ${ch.loadedCount} (+${ch.pendingCount})  gen ${ch.lastGenMs.toFixed(0)}ms  colliders ${this.world.boxCount}  interiors ${this.interiors.loadedCount}  doors ${this.doors.count}  ${tr('этаж', 'floor')} ${Math.round(c.position.y / 3.2)}`;
     });
     ctx.debug.set('climate', () => {
       const s = this.survival;
-      return `время ${this.clock.label}  ${this.indoors ? 'внутри' : 'снаружи'}  воздух ${this.air.toFixed(1)}°  ощущается ${this.felt.toFixed(1)}°  тело ${s.bodyTemp.toFixed(2)}°  тревога ${Math.round(s.anxiety * 100)}%`;
+      return `${tr('время', 'time')} ${this.clock.label}  ${this.indoors ? tr('внутри', 'indoors') : tr('снаружи', 'outdoors')}  ${tr('воздух', 'air')} ${this.air.toFixed(1)}°  ${tr('ощущается', 'feels')} ${this.felt.toFixed(1)}°  ${tr('тело', 'body')} ${s.bodyTemp.toFixed(2)}°  ${tr('тревога', 'anxiety')} ${Math.round(s.anxiety * 100)}%`;
     });
     ctx.debug.set('hordes', () => {
       const c = this.player.controller.position;
       const near = this.hordes.list.reduce((m, h) => Math.min(m, Math.hypot(h.x - c.x, h.z - c.z)), Infinity);
-      return `орды ${this.hordes.list.length} (${this.hordes.total} зомби), ближайшая ${Math.round(near)} м · свет ${this.gridState?.power ? 'есть' : 'нет'} вода ${this.gridState?.water ? 'есть' : 'нет'}`;
+      return `${tr('орды', 'hordes')} ${this.hordes.list.length} (${this.hordes.total} ${tr('зомби', 'zombies')}), ${tr('ближайшая', 'nearest')} ${Math.round(near)} ${tr('м', 'm')} · ${tr('свет', 'power')} ${this.gridState?.power ? tr('есть', 'on') : tr('нет', 'off')} ${tr('вода', 'water')} ${this.gridState?.water ? tr('есть', 'on') : tr('нет', 'off')}`;
     });
-    ctx.debug.set('zombies', () => `зомби ${this.zombies.list.length}/${this.zombies.target}  видят ${this.zombies.seeing}  идут за мной ${this.zombies.chasing}  шум ${this.player.controller.noise.toFixed(2)}`);
+    ctx.debug.set('zombies', () => `${tr('зомби', 'zombies')} ${this.zombies.list.length}/${this.zombies.target}  ${tr('видят', 'seeing')} ${this.zombies.seeing}  ${tr('идут за мной', 'chasing')} ${this.zombies.chasing}  ${tr('шум', 'noise')} ${this.player.controller.noise.toFixed(2)}`);
     ctx.debug.set('survival', () => {
       const v = this.survival;
       const pct = (x: number) => Math.round(x * 100);
-      return `hp ${pct(v.health)}  голод ${pct(v.hunger)}  жажда ${pct(v.thirst)}  усталость ${pct(v.fatigue)}  фонарь ${pct(this.player.battery)}  вес ${this.inventory.weight.toFixed(1)}  контейнеры ${this.containers.loadedCount} (открыто ${this.containers.openedCount})`;
+      return `hp ${pct(v.health)}  ${tr('голод', 'hunger')} ${pct(v.hunger)}  ${tr('жажда', 'thirst')} ${pct(v.thirst)}  ${tr('усталость', 'fatigue')} ${pct(v.fatigue)}  ${tr('фонарь', 'light')} ${pct(this.player.battery)}  ${tr('вес', 'weight')} ${this.inventory.weight.toFixed(1)}  ${tr('контейнеры', 'containers')} ${this.containers.loadedCount} (${tr('открыто', 'opened')} ${this.containers.openedCount})`;
     });
   }
 
@@ -734,7 +735,7 @@ export class WorldScene implements IScene {
     if (this.debugSpawnT > 0 && (this.debugSpawnT -= dt) <= 0) this.debugKey();
     if (this.debugDieT > 0 && (this.debugDieT -= dt) <= 0) {
       const f = new Vector3(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
-      this.die('Отладка', c.position.clone().addScaledVector(f, 1));
+      this.die(tr('Отладка', 'Debug'), c.position.clone().addScaledVector(f, 1));
     }
     c.canSprint = this.survival.canSprint;
     c.sprintFactor = this.survival.sprintFactor;
@@ -814,7 +815,7 @@ export class WorldScene implements IScene {
       }
     }
     this.twinsNear(c.position);
-    if (c.fallDamage > 0) this.hurt(c.fallDamage * 100, 'Разбились при падении', true);
+    if (c.fallDamage > 0) this.hurt(c.fallDamage * 100, tr('Разбились при падении', 'Fell to your death'), true);
     this.hazards(dt, c.position);
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
@@ -857,7 +858,14 @@ export class WorldScene implements IScene {
     const a = this.survival.anxiety;
     if (!this.dead) this.dread.update(dt, a);
     this.ctx.fx.setDread(a * 0.8 + this.dread.pulse * a * 0.25);
-    if (this.survival.health <= 0 && !this.dead) this.die(this.survival.infection >= 1 ? 'Заражение: вы обратились' : this.survival.hunger > 0.85 || this.survival.thirst > 0.85 ? 'Истощение' : this.deathCause || 'Раны');
+    if (this.survival.health <= 0 && !this.dead)
+      this.die(
+        this.survival.infection >= 1
+          ? tr('Заражение: вы обратились', 'Infection: you turned')
+          : this.survival.hunger > 0.85 || this.survival.thirst > 0.85
+            ? tr('Истощение', 'Exhaustion')
+            : this.deathCause || tr('Раны', 'Wounds'),
+      );
     this.moodleT -= dt;
     if (this.moodleT <= 0) {
       this.moodleT = 0.25;
@@ -1023,7 +1031,15 @@ export class WorldScene implements IScene {
    * the world stays as it is), and the page loads again into the character editor. No body, no zombie twin.
    */
   async newCharacter(): Promise<void> {
-    if (!confirm('Начать новым персонажем? Текущий выживший и его вещи пропадут, мир останется.')) return;
+    if (
+      !confirm(
+        tr(
+          'Начать новым персонажем? Текущий выживший и его вещи пропадут, мир останется.',
+          'Start with a new character? Your current survivor and their gear will be lost, the world will remain.',
+        ),
+      )
+    )
+      return;
     this.dead = true;
     await this.save();
     location.reload();
@@ -1067,7 +1083,7 @@ export class WorldScene implements IScene {
     // The editor covers everything; afterwards the usual start screen (PC: click to play) shows.
     this.ctx.loop.pause('editor');
     this.creating = true;
-    const choice = await new CharacterEditor(document.getElementById('ui')!, describeXp(this.meta.legacy)).open();
+    const choice = await new CharacterEditor(document.getElementById('ui')!, () => describeXp(this.meta.legacy)).open();
     this.applyChoice(choice);
     this.giveTestLoadout();
     this.creating = false;
@@ -1137,7 +1153,7 @@ export class WorldScene implements IScene {
   private weaponBlow(): void {
     const id = this.inventory.hand;
     if (!id || !this.inventory.wearHand(this.skills.wear(id))) return;
-    this.ctx.hud.toast(`Сломалось: ${ITEMS[id].name}`, 1800);
+    this.ctx.hud.toast(`${tr('Сломалось', 'Broke')}: ${ITEMS[id].name}`, 1800);
     sfx.item('move');
     this.syncBody();
   }
@@ -1173,14 +1189,21 @@ export class WorldScene implements IScene {
    * it is a scratch or a bite — a bleeding wound, and maybe the infection.
    */
   private bitten(damage: number, from: Vector3, many = 1): void {
-    if (this.sleeping) this.wake('Вас укусили во сне!');
+    if (this.sleeping) this.wake(tr('Вас укусили во сне!', 'You were bitten in your sleep!'));
     const r = Math.random();
     const part: BodyPart = r < 0.15 ? 'head' : r < 0.5 ? 'torso' : r < 0.8 ? 'arms' : 'legs';
     const outcome = this.survival.bitten(part, partArmor(this.inventory.worn, part));
     const hp = outcome === 'blocked' ? damage * 0.25 : outcome === 'scratch' ? damage * 0.7 : damage;
     sfx.attacked(outcome, many);
-    this.ctx.hud.toast(outcome === 'blocked' ? `Одежда выдержала: ${PART_NAMES[part]}` : outcome === 'bite' ? `Укус: ${PART_NAMES[part]}` : `Царапина: ${PART_NAMES[part]}`, 1400);
-    this.hurt(hp, 'Вас загрызли', true, from);
+    this.ctx.hud.toast(
+      outcome === 'blocked'
+        ? `${tr('Одежда выдержала', 'Clothing held')}: ${PART_NAMES[part]}`
+        : outcome === 'bite'
+          ? `${tr('Укус', 'Bite')}: ${PART_NAMES[part]}`
+          : `${tr('Царапина', 'Scratch')}: ${PART_NAMES[part]}`,
+      1400,
+    );
+    this.hurt(hp, tr('Вас загрызли', 'Mauled by zombies'), true, from);
   }
 
   /** Fire burns whoever comes too close; a torn cable shocks (sparks fly). Damage comes in pulses. */
@@ -1193,7 +1216,7 @@ export class WorldScene implements IScene {
     this.hazardHp += dt * (h.kind === 'fire' ? 6 + 22 * (1 - h.d / h.r) : 30);
     if (h.kind === 'shock' && Math.random() < dt * 8) this.particles.sparks(at.x, at.y + 0.9, at.z, 5);
     if (this.hazardHp >= 4) {
-      this.hurt(this.hazardHp, h.kind === 'fire' ? 'Сгорели' : 'Убило током', true);
+      this.hurt(this.hazardHp, h.kind === 'fire' ? tr('Сгорели', 'Burned to death') : tr('Убило током', 'Electrocuted'), true);
       this.hazardHp = 0;
     }
   }
@@ -1456,24 +1479,39 @@ export class WorldScene implements IScene {
     const days = Math.floor(minutes / 1440);
     const n10 = days % 10;
     const n100 = days % 100;
-    const word = n10 === 1 && n100 !== 11 ? 'день' : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? 'дня' : 'дней';
     const el = document.createElement('div');
     el.className = 'death-screen';
     el.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#000;color:#d8d2c4;font:16px/1.4 system-ui,sans-serif;text-align:center';
-    el.innerHTML = `<div style="font-size:34px;letter-spacing:2px">Вы прожили ${days} ${word}</div><div style="opacity:.85">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.6">${cause || this.deathCause || 'Неизвестно'}</div><div style="opacity:.6;max-width:420px">Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.</div>${this.lifeSummary()}`;
+    const body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px';
     const btn = document.createElement('button');
     btn.className = 'death-screen__new';
-    btn.textContent = 'Новый персонаж';
     btn.style.cssText = 'margin-top:10px;padding:12px 26px;font:inherit;font-size:18px;background:#3a3630;color:#eee;border:1px solid #6a6458;border-radius:4px;cursor:pointer';
     btn.addEventListener('click', () => location.reload());
     const menu = btn.cloneNode() as HTMLButtonElement;
     menu.className = 'death-screen__menu';
-    menu.textContent = 'В меню';
     menu.addEventListener('click', () => location.replace(location.pathname));
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;justify-content:center';
     row.append(btn, menu);
-    el.append(row);
+    const toggle = langToggle();
+    toggle.style.marginTop = '6px';
+    const renderDeathText = () => {
+      const word =
+        n10 === 1 && n100 !== 11 ? 'день' : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? 'дня' : 'дней';
+      const lived = tr(`Вы прожили ${days} ${word}`, `You survived ${days} ${days === 1 ? 'day' : 'days'}`);
+      const cText = translateCause(cause || this.deathCause);
+      const risen = tr(
+        'Ваш выживший поднялся и бродит там, где упал. В его одежде и с его вещами.',
+        'Your survivor has risen and wanders where they fell. In their clothes and with their belongings.',
+      );
+      body.innerHTML = `<div style="font-size:34px;letter-spacing:2px">${lived}</div><div style="opacity:.85">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.6">${cText}</div><div style="opacity:.6;max-width:420px">${risen}</div>${this.lifeSummary()}`;
+      btn.textContent = tr('Новый персонаж', 'New character');
+      menu.textContent = tr('В меню', 'Main menu');
+    };
+    renderDeathText();
+    onLangChange(renderDeathText);
+    el.append(body, row, toggle);
     (document.getElementById('ui') ?? document.body).append(el);
   }
 
@@ -1505,50 +1543,56 @@ export class WorldScene implements IScene {
         const kindle = inv.count('lighter') + inv.count('matches') > 0;
         if (p.fuel > 0) {
           const h = Math.max(1, Math.round(p.fuel / 60));
-          if (inv.count('planks') === 0) return { text: `Костёр горит ещё ~${h} ч`, act: false, run() {} };
+          if (inv.count('planks') === 0)
+            return { text: tr(`Костёр горит ещё ~${h} ч`, `Campfire burns for ~${h} h`), act: false, run() {} };
           return {
-            text: `Подбросить доску (горит ещё ~${h} ч)`,
+            text: tr(`Подбросить доску (горит ещё ~${h} ч)`, `Add plank (burns for ~${h} h)`),
             act: true,
             run: () => {
               inv.remove('planks', 1);
               p.fuel = Math.min(p.fuel + BASE.plank, 12 * 60);
               sfx.item('drop');
-              hud.toast('Огонь разгорелся', 1000);
+              hud.toast(tr('Огонь разгорелся', 'Fire flared up'), 1000);
             },
           };
         }
-        if (inv.count('planks') === 0 || !kindle) return { text: 'Потухший костёр: нужна доска и спички', act: false, run() {} };
+        if (inv.count('planks') === 0 || !kindle)
+          return {
+            text: tr('Потухший костёр: нужна доска и спички', 'Dead campfire: needs plank and matches'),
+            act: false,
+            run() {},
+          };
         return {
-          text: 'Разжечь костёр снова',
+          text: tr('Разжечь костёр снова', 'Relight campfire'),
           act: true,
           run: () => {
             inv.remove('planks', 1);
             if (inv.count('lighter') === 0) inv.remove('matches', 1);
             p.fuel = BASE.fire;
             this.base.version++;
-            hud.toast('Костёр горит', 1000);
+            hud.toast(tr('Костёр горит', 'Campfire lit'), 1000);
           },
         };
       }
       if (p.kind === 'barrel') {
         const n = Math.floor(p.water);
-        if (n < 1) return { text: 'Сборник пуст — ждите дождя', act: false, run() {} };
+        if (n < 1) return { text: tr('Сборник пуст — ждите дождя', 'Collector empty — wait for rain'), act: false, run() {} };
         if (inv.count('emptyBottle') > 0)
           return {
-            text: `Набрать дождевой воды (${n})`,
+            text: tr(`Набрать дождевой воды (${n})`, `Collect rainwater (${n})`),
             act: true,
             run: () => {
               const k = Math.min(n, inv.count('emptyBottle'), inv.room('dirtyWater'));
-              if (k < 1) return hud.toast('Рюкзак переполнен', 1000);
+              if (k < 1) return hud.toast(tr('Рюкзак переполнен', 'Backpack is full'), 1000);
               inv.remove('emptyBottle', k);
               inv.add('dirtyWater', k);
               p.water -= k;
               sfx.item('drink');
-              hud.toast(`Набрано бутылок: ${k}`, 1200);
+              hud.toast(tr(`Набрано бутылок: ${k}`, `Bottles filled: ${k}`), 1200);
             },
           };
         return {
-          text: `Попить дождевой воды (${n})`,
+          text: tr(`Попить дождевой воды (${n})`, `Drink rainwater (${n})`),
           act: true,
           run: () => {
             p.water -= 1;
@@ -1558,9 +1602,9 @@ export class WorldScene implements IScene {
         };
       }
       if (p.kind === 'trap') {
-        if (p.armed) return { text: 'Растяжка натянута', act: false, run() {} };
+        if (p.armed) return { text: tr('Растяжка натянута', 'Tripwire armed'), act: false, run() {} };
         return {
-          text: 'Натянуть растяжку снова',
+          text: tr('Натянуть растяжку снова', 'Re-arm tripwire'),
           act: true,
           run: () => {
             p.armed = true;
@@ -1571,10 +1615,12 @@ export class WorldScene implements IScene {
       }
     }
     if (this.atmo.tapNear(eye, dir)) {
-      if (!(this.gridState?.water ?? true)) return { text: 'Кран сухой', act: false, run() {} };
+      if (!(this.gridState?.water ?? true)) return { text: tr('Кран сухой', 'Tap is dry'), act: false, run() {} };
       const bottles = inv.count('emptyBottle');
       return {
-        text: bottles ? `Попить и набрать воды (${bottles})` : 'Попить из крана',
+        text: bottles
+          ? tr(`Попить и набрать воды (${bottles})`, `Drink and fill water (${bottles})`)
+          : tr('Попить из крана', 'Drink from tap'),
         act: true,
         run: () => {
           this.survival.thirst = Math.max(0, this.survival.thirst - TAP_DRINK);
@@ -1584,11 +1630,17 @@ export class WorldScene implements IScene {
             inv.remove('emptyBottle', k);
             inv.add('water', k);
           }
-          hud.toast(k > 0 ? `Вы напились и набрали бутылок: ${k}` : 'Вы напились из-под крана', 1300);
+          hud.toast(
+            k > 0
+              ? tr(`Вы напились и набрали бутылок: ${k}`, `Drank water and filled bottles: ${k}`)
+              : tr('Вы напились из-под крана', 'Drank from the tap'),
+            1300,
+          );
         },
       };
     }
-    if (this.atmo.bedNear(eye, dir)) return { text: 'Лечь спать', act: true, run: () => this.sleep(true) };
+    if (this.atmo.bedNear(eye, dir))
+      return { text: tr('Лечь спать', 'Go to sleep'), act: true, run: () => this.sleep(true) };
     return null;
   }
 
@@ -1601,16 +1653,19 @@ export class WorldScene implements IScene {
     const z = c.position.z + fz * 1.2;
     const y = c.position.y;
     const roof = this.shelters.covers(x, z, y);
-    if (kind === 'fire' && roof) return 'Костёр в доме — задохнётесь. Разведите снаружи.';
-    if (kind === 'barrel' && roof) return 'Под крышей дождь не наберётся: поставьте снаружи.';
-    if (this.base.near(x, y, z, 0.9)) return 'Здесь уже что-то стоит';
+    if (kind === 'fire' && roof)
+      return tr('Костёр в доме — задохнётесь. Разведите снаружи.', 'Campfire indoors — you will suffocate. Build it outside.');
+    if (kind === 'barrel' && roof)
+      return tr('Под крышей дождь не наберётся: поставьте снаружи.', 'Rain cannot collect under a roof: place it outside.');
+    if (this.base.near(x, y, z, 0.9)) return tr('Здесь уже что-то стоит', 'Something is already placed here');
     // Free ground there and a clear line to it (with room for its size): not into a wall or a car.
     _so.set(x, y, z);
     this.world.resolveCircle(_so, 0.45, 1.2);
     const reach = 1.2 + 0.55;
     const low = this.world.rayHit(c.position.x, y + 0.4, c.position.z, fx, 0, fz, reach);
     const mid = this.world.rayHit(c.position.x, y + 1.0, c.position.z, fx, 0, fz, reach);
-    if (Math.hypot(_so.x - x, _so.z - z) > 0.05 || (low >= 0 && low < reach) || (mid >= 0 && mid < reach)) return 'Не помещается: отойдите от стены';
+    if (Math.hypot(_so.x - x, _so.z - z) > 0.05 || (low >= 0 && low < reach) || (mid >= 0 && mid < reach))
+      return tr('Не помещается: отойдите от стены', 'Not enough room: step away from the wall');
     const p = this.base.add(kind, x, y, z, Math.atan2(fx, fz));
     if (kind === 'stash') this.containers.addLoose(stashRef(p), []);
     this.save();
@@ -1640,8 +1695,9 @@ export class WorldScene implements IScene {
     this.base.update(minutes, this.weather.rain, (x, z) => !this.shelters.covers(x, z, 0), near, (t) => {
       sfx.street('rattle', { x: t.x, y: t.y + 0.3, z: t.z });
       this.zombies.noiseAt(t.x, t.y, t.z, BASE.trapNoise);
-      if (Math.hypot(t.x - p.x, t.z - p.z) < 70) this.ctx.hud.toast('Звякнули банки на растяжке', 1600);
-      if (this.sleeping) this.wake('Вас разбудил звон банок!');
+      if (Math.hypot(t.x - p.x, t.z - p.z) < 70)
+        this.ctx.hud.toast(tr('Звякнули банки на растяжке', 'Cans rattled on the tripwire'), 1600);
+      if (this.sleeping) this.wake(tr('Вас разбудил звон банок!', 'The rattling cans woke you up!'));
     });
   }
 
@@ -1650,9 +1706,11 @@ export class WorldScene implements IScene {
     const s = this.survival;
     const c = this.player.controller.position;
     if (this.dead || this.sleeping) return;
-    if (this.zombies.threat(c) > 0.02) return this.ctx.hud.toast('Нельзя спать: рядом зомби', 1500);
-    if (s.anxiety > 0.65) return this.ctx.hud.toast('Слишком тревожно — не уснуть', 1500);
-    if (s.fatigue < 0.2) return this.ctx.hud.toast('Спать не хочется', 1200);
+    if (this.zombies.threat(c) > 0.02)
+      return this.ctx.hud.toast(tr('Нельзя спать: рядом зомби', 'Cannot sleep: zombies nearby'), 1500);
+    if (s.anxiety > 0.65)
+      return this.ctx.hud.toast(tr('Слишком тревожно — не уснуть', 'Too anxious to sleep'), 1500);
+    if (s.fatigue < 0.2) return this.ctx.hud.toast(tr('Спать не хочется', 'Not tired enough to sleep'), 1200);
     const el = document.createElement('div');
     el.className = 'sleep';
     document.getElementById('ui')!.append(el);
@@ -1675,15 +1733,23 @@ export class WorldScene implements IScene {
     const z = this.sleeping;
     if (!z) return;
     const input = this.ctx.input;
-    if (Math.abs(input.moveX) + Math.abs(input.moveY) > 0.3 || input.consumePressed('use') || input.consumePressed('attack') || input.consumePressed('jump')) return this.wake('Вы проснулись');
+    if (Math.abs(input.moveX) + Math.abs(input.moveY) > 0.3 || input.consumePressed('use') || input.consumePressed('attack') || input.consumePressed('jump'))
+      return this.wake(tr('Вы проснулись', 'You woke up'));
     const m = SLEEP_RATE * dt;
     this.clock.minutes += m;
     this.survival.sleep(m, z.bed);
     const c = this.player.controller.position;
-    if (this.zombies.threat(c) > 0.08) return this.wake('Шорох рядом — вы проснулись!');
-    if (this.survival.fatigue <= (z.bed ? 0.01 : 0.31)) return this.wake(z.bed ? 'Вы выспались' : 'Спать на полу — так себе: вы проснулись разбитым');
-    if (this.survival.hunger > 0.85 || this.survival.thirst > 0.85) return this.wake('Голод разбудил вас');
-    z.el.textContent = `Сон · ${this.clock.label}`;
+    if (this.zombies.threat(c) > 0.08)
+      return this.wake(tr('Шорох рядом — вы проснулись!', 'Rustling nearby — you woke up!'));
+    if (this.survival.fatigue <= (z.bed ? 0.01 : 0.31))
+      return this.wake(
+        z.bed
+          ? tr('Вы выспались', 'You are well rested')
+          : tr('Спать на полу — так себе: вы проснулись разбитым', 'Sleeping on the floor is rough: you woke up sore'),
+      );
+    if (this.survival.hunger > 0.85 || this.survival.thirst > 0.85)
+      return this.wake(tr('Голод разбудил вас', 'Hunger woke you up'));
+    z.el.textContent = `${tr('Сон', 'Sleeping')} · ${this.clock.label}`;
   }
 
   /** The map opens round the survivor (wider with orientation); M / the button opens it. */
@@ -1726,10 +1792,11 @@ export class WorldScene implements IScene {
     this.atmo.setUtilities(power, water);
     if (!was) return;
     if (was.power && !power) {
-      this.ctx.hud.toast('Свет погас во всём городе', 3500);
+      this.ctx.hud.toast(tr('Свет погас во всём городе', 'Power went out across the city'), 3500);
       sfx.item('move');
     }
-    if (was.water && !water) this.ctx.hud.toast('Из кранов больше не течёт вода', 3500);
+    if (was.water && !water)
+      this.ctx.hud.toast(tr('Из кранов больше не течёт вода', 'Water is no longer running from the taps'), 3500);
   }
 
   /** The death screen's lines: kills, what was learnt, what the next survivor inherits, the world's records. */
@@ -1739,10 +1806,21 @@ export class WorldScene implements IScene {
     const best = Math.floor(this.meta.bestLife / 1440);
     const line = (t: string, o = 0.75) => `<div style="opacity:${o};max-width:520px">${t}</div>`;
     return (
-      line(`Убито зомби: ${this.skills.kills}`) +
-      (learnt ? line(`Навыки: ${learnt}`) : '') +
-      line(legacy ? `Следующий выживший унаследует: ${legacy}` : 'Наследия пока нет: навыки растут от дела', 0.9) +
-      line(`Погибших в этом мире: ${this.meta.deaths} · лучшая жизнь: ${best} дн. · всего убито: ${this.meta.kills}`, 0.5)
+      line(`${tr('Убито зомби', 'Zombies killed')}: ${this.skills.kills}`) +
+      (learnt ? line(`${tr('Навыки', 'Skills')}: ${learnt}`) : '') +
+      line(
+        legacy
+          ? `${tr('Следующий выживший унаследует', 'Next survivor will inherit')}: ${legacy}`
+          : tr('Наследия пока нет: навыки растут от дела', 'No legacy yet: skills grow by doing'),
+        0.9,
+      ) +
+      line(
+        tr(
+          `Погибших в этом мире: ${this.meta.deaths} · лучшая жизнь: ${best} дн. · всего убито: ${this.meta.kills}`,
+          `Deaths in this world: ${this.meta.deaths} · longest life: ${best} d · total killed: ${this.meta.kills}`,
+        ),
+        0.5,
+      )
     );
   }
 
@@ -1826,4 +1904,24 @@ function partArmor(worn: Worn, part: BodyPart): number {
   const sleeves = worn.torso && ITEMS[worn.torso].wear?.sleeves !== false ? bite('torso') : 0;
   const a = part === 'head' ? bite('head') + bite('face') : part === 'torso' ? bite('torso') + bite('vest') : part === 'arms' ? sleeves * 0.8 + bite('hands') * 0.6 : bite('legs') + bite('feet') * 0.3;
   return Math.min(0.9, a);
+}
+
+const CAUSE_PAIRS: readonly [string, string][] = [
+  ['Подорвались на своём выстреле', 'Blew yourself up with your own shot'],
+  ['Отладка', 'Debug'],
+  ['Разбились при падении', 'Fell to your death'],
+  ['Заражение: вы обратились', 'Infection: you turned'],
+  ['Истощение', 'Exhaustion'],
+  ['Раны', 'Wounds'],
+  ['Вас загрызли', 'Mauled by zombies'],
+  ['Сгорели', 'Burned to death'],
+  ['Убило током', 'Electrocuted'],
+];
+
+function translateCause(cause: string): string {
+  if (!cause) return tr('Неизвестно', 'Unknown');
+  for (const [ru, en] of CAUSE_PAIRS) {
+    if (cause === ru || cause === en) return tr(ru, en);
+  }
+  return cause;
 }

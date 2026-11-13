@@ -1,18 +1,20 @@
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
+import { onLangChange, tr } from '../core/i18n';
 import type { Action, InputManager } from './InputManager';
 
 /** Joystick travel in CSS px. */
-const STICK_RADIUS = 56;
+const STICK_RADIUS = 42;
 /** Left share of the screen that spawns the movement stick; the rest is look. */
-const STICK_ZONE = 0.42;
+const STICK_ZONE = 0.45;
 /** Stick deflection that counts as "stopped" (cancels latched sprint). */
 const STICK_DEADZONE = 0.15;
 
 type ButtonKind = 'hold' | 'tap' | 'toggle' | 'latch';
 
 /**
- * Phone controls: floating movement stick on the left, drag-to-look on the right, action buttons.
+ * Phone controls: resting + floating movement stick on the left, drag-to-look on the right,
+ * compact top-left utility bar and compact bottom-right thumb cluster.
  * Pointer Events with per-pointerId tracking, so stick, look and buttons work simultaneously.
  */
 export class TouchInput {
@@ -39,26 +41,32 @@ export class TouchInput {
   ) {
     this.root.className = 'touch';
     this.stick.className = 'touch__stick';
-    this.stick.hidden = true;
     this.knob.className = 'touch__knob';
     this.stick.append(this.knob);
 
+    // Compact top-left utility bar (keeps clutter out of the right look/combat zone).
+    const topBar = document.createElement('div');
+    topBar.className = 'touch__bar';
+    topBar.append(
+      this.button(['Рюкзак', 'Bag'], 'inventory', 'tap', 'touch__pill'),
+      this.button(['Карта', 'Map'], 'map', 'tap', 'touch__pill'),
+      this.button(['Свет', 'Light'], 'flashlight', 'toggle', 'touch__pill'),
+      this.weaponButton(),
+    );
+
+    // Compact bottom-right combat & movement cluster.
     const buttons = document.createElement('div');
     buttons.className = 'touch__buttons';
     buttons.append(
-      this.button('Атака', 'attack', 'hold', 'touch__btn--attack'),
-      (this.sprintButton = this.button('Бег', 'sprint', 'latch', 'touch__btn--sprint')),
-      this.button('Присед', 'crouch', 'toggle', 'touch__btn--crouch'),
-      this.button('Свет', 'flashlight', 'toggle', 'touch__btn--light'),
-      (this.useButton = this.button('Обыск', 'use', 'tap', 'touch__btn--use')),
-      this.button('Рюкзак', 'inventory', 'tap', 'touch__btn--bag'),
-      this.button('Прыжок', 'jump', 'tap', 'touch__btn--jump'),
-      this.button('Карта', 'map', 'tap', 'touch__btn--map'),
-      this.button('Перезар.', 'reload', 'tap', 'touch__btn--gun touch__btn--reload'),
-      this.button('Прицел', 'aim', 'latch', 'touch__btn--gun touch__btn--aim'),
-      this.weaponButton(),
+      this.button(['Атака', 'Attack'], 'attack', 'hold', 'touch__btn--attack'),
+      (this.sprintButton = this.button(['Бег', 'Sprint'], 'sprint', 'latch', 'touch__btn--sprint')),
+      this.button(['Присед', 'Crouch'], 'crouch', 'toggle', 'touch__btn--crouch'),
+      this.button(['Прыжок', 'Jump'], 'jump', 'tap', 'touch__btn--jump'),
+      (this.useButton = this.button(['Обыск', 'Use'], 'use', 'tap', 'touch__btn--use')),
+      this.button(['Перезар.', 'Reload'], 'reload', 'tap', 'touch__btn--gun touch__btn--reload'),
+      this.button(['Прицел', 'Aim'], 'aim', 'latch', 'touch__btn--gun touch__btn--aim'),
     );
-    this.root.append(this.stick, buttons);
+    this.root.append(this.stick, topBar, buttons);
     parent.append(this.root);
     // The search / door button only while the crosshair is on something to use.
     this.useButton.hidden = true;
@@ -72,14 +80,16 @@ export class TouchInput {
   }
 
   private readonly onDown = (e: PointerEvent): void => {
-    if (e.target !== this.root) return; // buttons handle themselves
+    if ((e.target as HTMLElement | null)?.closest('button')) return; // buttons handle themselves
     if (e.clientX < window.innerWidth * STICK_ZONE && this.stickId === -1) {
       this.stickId = e.pointerId;
       this.stickX = e.clientX;
       this.stickY = e.clientY;
-      this.stick.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+      this.stick.classList.add('touch__stick--active');
+      this.stick.style.left = `${e.clientX}px`;
+      this.stick.style.top = `${e.clientY}px`;
+      this.stick.style.bottom = 'auto';
       this.knob.style.transform = 'translate(-50%, -50%)';
-      this.stick.hidden = false;
     } else if (this.lookId === -1) {
       this.lookId = e.pointerId;
       this.lookLastX = e.clientX;
@@ -112,7 +122,11 @@ export class TouchInput {
   private readonly onUp = (e: PointerEvent): void => {
     if (e.pointerId === this.stickId) {
       this.stickId = -1;
-      this.stick.hidden = true;
+      this.stick.classList.remove('touch__stick--active');
+      this.stick.style.left = '';
+      this.stick.style.top = '';
+      this.stick.style.bottom = '';
+      this.knob.style.transform = 'translate(-50%, -50%)';
       this.input.setMove(0, 0);
       this.cancelSprint();
     } else if (e.pointerId === this.lookId) {
@@ -126,10 +140,14 @@ export class TouchInput {
     this.input.release('sprint');
   }
 
-  private button(label: string, action: Action, kind: ButtonKind, cls: string): HTMLButtonElement {
+  private button(label: [string, string], action: Action, kind: ButtonKind, cls: string): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.className = `touch__btn ${cls}`;
-    btn.textContent = label;
+    const sync = () => {
+      btn.textContent = tr(label[0], label[1]);
+    };
+    sync();
+    onLangChange(sync);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       btn.setPointerCapture(e.pointerId);
@@ -167,8 +185,12 @@ export class TouchInput {
   /** One button draws the weapon or puts it away. */
   private weaponButton(): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.className = 'touch__btn touch__btn--weapon';
-    btn.textContent = 'Оружие';
+    btn.className = 'touch__btn touch__pill touch__btn--weapon';
+    const sync = () => {
+      btn.textContent = tr('Оружие', 'Weapon');
+    };
+    sync();
+    onLangChange(sync);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.input.press('weapon');

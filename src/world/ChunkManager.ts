@@ -1,4 +1,5 @@
 import type { Group, Mesh, Scene } from 'three';
+import { getLang } from '../core/i18n';
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import { worldMaterials } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
@@ -162,6 +163,7 @@ export class ChunkManager {
   }
 
   private post(msg: WorkerRequest): void {
+    msg.lang = getLang();
     let best = 0;
     for (let w = 1; w < this.workers.length; w++) if (this.inFlight[w] < this.inFlight[best]) best = w;
     this.workers[best].postMessage(msg);

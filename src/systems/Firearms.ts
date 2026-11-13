@@ -1,5 +1,6 @@
 import { type Object3D, Quaternion, type Scene, Vector3 } from 'three';
 import { type BulletHit, type EchoPlace, type GunMech, type GunSound, sfx } from '../audio/Sound';
+import { tr } from '../core/i18n';
 import type { InputManager } from '../input/InputManager';
 import type { Player } from '../player/Player';
 import type { Particles } from '../render/Particles';
@@ -284,7 +285,16 @@ export class Firearms {
       chamber: inst.chamber,
       capacity: capacityOf(id, inst.mods),
       reserve: this.w.inventory.count(g.caliber),
-      mode: g.modes.length > 1 ? (inst.mode === 'auto' ? 'АВТО' : 'ОДИН') : g.action === 'pump' ? 'ПОМПА' : g.action === 'bolt' ? 'ЗАТВОР' : '',
+      mode:
+        g.modes.length > 1
+          ? inst.mode === 'auto'
+            ? tr('АВТО', 'AUTO')
+            : tr('ОДИН', 'SEMI')
+          : g.action === 'pump'
+            ? tr('ПОМПА', 'PUMP')
+            : g.action === 'bolt'
+              ? tr('ЗАТВОР', 'BOLT')
+              : '',
       busy: gs.busy,
       reloadK: gs.duration > 0 ? gs.t / gs.duration : 0,
       reloading: gs.action === 'reload' || gs.action === 'reloadEmpty' || gs.action.startsWith('load') || gs.action === 'unjam',
@@ -349,11 +359,11 @@ export class Firearms {
         break;
       case 'dry':
         mech('dry');
-        this.w.toast('Пусто — перезарядка (R)', 900);
+        this.w.toast(tr('Пусто — перезарядка (R)', 'Empty — reload (R)'), 900);
         break;
       case 'jam':
         mech('jam');
-        this.w.toast('Заклинило — R', 1200);
+        this.w.toast(tr('Заклинило — R', 'Jammed — R'), 1200);
         break;
       case 'magOut':
         mech('magOut');

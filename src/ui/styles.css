@@ -34,7 +34,7 @@ body {
   pointer-events: none;
 }
 
-#ui > * {
+:where(#ui > *) {
   pointer-events: auto;
 }
 
@@ -236,29 +236,47 @@ body {
 /* Touch controls */
 .touch__stick {
   position: absolute;
-  left: 0;
-  top: 0;
+  left: calc(env(safe-area-inset-left, 0px) + 64px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 54px);
   width: 0;
   height: 0;
   pointer-events: none;
+  opacity: 0.7;
+  transition: opacity 0.15s;
 }
+.touch__stick--active { opacity: 1; }
 .touch__stick[hidden] { display: none; }
 .touch__stick::before {
   content: '';
   position: absolute;
-  width: 120px;
-  height: 120px;
+  width: 84px;
+  height: 84px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 1px solid rgba(190, 182, 166, 0.25);
-  background: rgba(20, 20, 22, 0.18);
+  border: 1px solid rgba(190, 182, 166, 0.32);
+  background: rgba(20, 20, 22, 0.22);
 }
 .touch__knob {
   position: absolute;
-  width: 52px;
-  height: 52px;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: rgba(190, 182, 166, 0.25);
+  border: 1px solid rgba(205, 198, 184, 0.35);
+  background: rgba(190, 182, 166, 0.32);
+}
+.touch__bar {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+.touch__buttons {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 .touch__btn {
   position: absolute;
@@ -267,58 +285,84 @@ body {
   justify-content: center;
   border-radius: 50%;
   border: 1px solid rgba(190, 182, 166, 0.28);
-  background: rgba(20, 20, 22, 0.28);
-  color: rgba(205, 198, 184, 0.75);
-  font: 500 12px system-ui, sans-serif;
+  background: rgba(20, 20, 22, 0.32);
+  color: rgba(205, 198, 184, 0.82);
+  font: 500 10px system-ui, sans-serif;
+  padding: 0;
+  pointer-events: auto;
   touch-action: none;
 }
-.touch__btn.on { background: rgba(120, 104, 70, 0.35); border-color: rgba(190, 168, 120, 0.55); color: rgba(225, 212, 186, 0.9); }
-.touch__btn--attack {
-  width: 86px;
-  height: 86px;
-  right: calc(env(safe-area-inset-right, 0px) + 28px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
-  font-size: 15px;
+.touch__btn[hidden] { display: none !important; }
+.touch__pill {
+  position: static;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  background: rgba(16, 17, 19, 0.45);
 }
-.touch__btn--sprint { width: 60px; height: 60px; right: calc(env(safe-area-inset-right, 0px) + 128px); bottom: calc(env(safe-area-inset-bottom, 0px) + 34px); }
-.touch__btn--crouch { width: 60px; height: 60px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); }
-.touch__btn--light { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 122px); bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); }
-.touch__btn--weapon { width: 56px; height: 56px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 204px); font-size: 12px; }
+.touch__btn.on { background: rgba(120, 104, 70, 0.42); border-color: rgba(190, 168, 120, 0.65); color: rgba(235, 224, 198, 0.95); }
+.touch__btn--attack {
+  width: 56px;
+  height: 56px;
+  right: calc(env(safe-area-inset-right, 0px) + 14px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  font-size: 11px;
+  font-weight: 600;
+}
+.touch__btn--sprint { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 78px); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); }
+.touch__btn--crouch { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 78px); }
+.touch__btn--jump { width: 40px; height: 40px; right: calc(env(safe-area-inset-right, 0px) + 68px); bottom: calc(env(safe-area-inset-bottom, 0px) + 64px); }
 
-/* Compact debug on phones: one line, never intercepts touches. */
+/* Compact debug on phones: bottom-left, one line, never intercepts touches. */
 #ui > .debug--compact {
+  top: auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 2px);
+  left: calc(env(safe-area-inset-left, 0px) + 6px);
   pointer-events: none;
-  padding: 2px 6px;
-  background: rgba(0, 0, 0, 0.35);
+  padding: 1px 5px;
+  font-size: 9px;
+  opacity: 0.6;
+  background: rgba(0, 0, 0, 0.3);
 }
 .debug--compact pre { margin: 0; }
 
-.touch__btn--use { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 30px); font-size: 11px; }
+.touch__btn--use {
+  width: 44px;
+  height: 44px;
+  right: calc(env(safe-area-inset-right, 0px) + 126px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  border-color: rgba(200, 180, 122, 0.55);
+  background: rgba(60, 52, 36, 0.45);
+  color: #e8dec6;
+  font-size: 10px;
+}
 
 /* Zomboid HUD: a row of pixel-art indicators, top right, clear of the phone buttons. */
 #ui > .stats,
 #ui > .action { pointer-events: none; }
 .stats {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 10px);
-  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
   z-index: 2;
   display: flex;
-  gap: 4px;
-  padding: 3px 4px;
+  gap: 3px;
+  padding: 2px 3px;
   background: rgba(8, 9, 11, 0.35);
 }
-.stat { position: relative; width: 28px; height: 28px; opacity: 0.6; transition: opacity 0.4s; }
+.stat { position: relative; width: 20px; height: 20px; opacity: 0.55; transition: opacity 0.4s; }
 .stat--warn { opacity: 0.95; }
 .stat--critical { animation: stat-blink 0.8s steps(2, jump-none) infinite; }
 .stat[hidden] { display: none; }
-.stat__img { position: absolute; left: 0; bottom: 0; width: 28px; height: 28px; image-rendering: pixelated; }
+.stat__img { position: absolute; left: 0; bottom: 0; width: 20px; height: 20px; image-rendering: pixelated; }
 .stat__fill { position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; }
 .stat--wound { position: relative; opacity: 1; animation: stat-blink 1.2s steps(2, jump-none) infinite; }
 @keyframes stat-blink { from { opacity: 1; } to { opacity: 0.25; } }
 @media (max-height: 430px) {
-  .stats { top: calc(env(safe-area-inset-top, 0px) + 6px); right: calc(env(safe-area-inset-right, 0px) + 8px); gap: 3px; }
-  .stat, .stat__img { width: 24px; height: 24px; }
+  .stats { top: calc(env(safe-area-inset-top, 0px) + 5px); right: calc(env(safe-area-inset-right, 0px) + 6px); gap: 2px; }
+  .stat, .stat__img { width: 17px; height: 17px; }
 }
 .action {
   position: absolute;
@@ -342,8 +386,6 @@ body {
   transform: scaleX(0);
 }
 .action--done .action__track { visibility: hidden; }
-.touch__btn--map { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 216px); font-size: 11px; }
-.touch__btn--bag { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); font-size: 11px; }
 
 /* Context prompt under the crosshair. */
 #ui > .prompt { pointer-events: none; }
@@ -701,11 +743,43 @@ body {
   cursor: pointer;
 }
 .inv__credits { margin-left: 6px; padding: 2px 8px; font-size: 11px; }
-.touch__btn--jump { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 206px); bottom: calc(env(safe-area-inset-bottom, 0px) + 154px); font-size: 11px; }
 .volume { display: inline-flex; align-items: center; gap: 8px; font: 12px system-ui, sans-serif; color: #a9a292; }
 .volume input { width: 120px; accent-color: #b8a46a; }
 .inv__volume input { width: 70px; }
 @media (max-height: 430px) { .inv__volume span { display: none; } }
+
+/* Language tumbler (RU / EN) */
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(160, 150, 130, 0.35);
+  background: rgba(20, 20, 22, 0.75);
+}
+.lang-toggle__btn {
+  min-width: 34px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: #8f8878;
+  font: 600 11px system-ui, sans-serif;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+.lang-toggle__btn + .lang-toggle__btn {
+  border-left: 1px solid rgba(160, 150, 130, 0.25);
+}
+.lang-toggle__btn.on {
+  background: rgba(90, 80, 52, 0.65);
+  color: #f0e8d4;
+  box-shadow: inset 0 0 0 1px #c8b47a;
+}
+.editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 /* Stamina: a thin bar low in the middle, fades out when full. */
 .stamina { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); width: 160px; height: 4px; transform: translateX(-50%); background: rgba(20, 20, 22, 0.45); border-radius: 2px; overflow: hidden; pointer-events: none; transition: opacity 0.6s; }
 .stamina.full { opacity: 0; transition-delay: 0.8s; }
@@ -802,20 +876,25 @@ body {
 }
 
 /* Firearms HUD (ui/GunHud.ts): muted, pixel font like the rest, nothing bright. */
+#ui > .gunhud__canvas,
+#ui > .gunhud,
+#ui > .gunhud__reload,
+#ui > .stamina,
+#ui > .sleep { pointer-events: none; }
 .gunhud__canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
 .gunhud {
   position: absolute; right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-  display: flex; align-items: center; gap: 10px;
-  min-width: 120px; padding: 4px 10px; text-align: right; pointer-events: none; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+  min-width: 100px; padding: 3px 8px; text-align: right; pointer-events: none; z-index: 2;
   color: rgba(200, 196, 182, 0.85); background: rgba(20, 21, 19, 0.35); border: 1px solid rgba(120, 116, 100, 0.3);
-  font: 12px/1.2 monospace; transition: opacity 0.6s; text-shadow: 0 1px 0 #1e1f1d;
+  font: 11px/1.2 monospace; transition: opacity 0.6s; text-shadow: 0 1px 0 #1e1f1d;
 }
 .gunhud[hidden] { display: none; }
-.gunhud__icon { width: 48px; height: 48px; image-rendering: pixelated; opacity: 0.85; }
+.gunhud__icon { width: 36px; height: 36px; image-rendering: pixelated; opacity: 0.85; }
 .gunhud__text { display: flex; flex-direction: column; align-items: flex-end; }
-.gunhud__name { font-size: 10px; opacity: 0.7; }
-.gunhud__count { font-size: 18px; letter-spacing: 1px; }
-.gunhud__mode { font-size: 10px; opacity: 0.65; min-height: 12px; }
+.gunhud__name { font-size: 9px; opacity: 0.7; }
+.gunhud__count { font-size: 15px; letter-spacing: 1px; }
+.gunhud__mode { font-size: 9px; opacity: 0.65; min-height: 11px; }
 .gunhud__reload {
   position: absolute; left: 50%; top: calc(50% + 34px); transform: translateX(-50%); pointer-events: none; z-index: 2;
   color: rgba(196, 150, 110, 0.9); font: 12px monospace; text-shadow: 0 1px 0 #1e1f1d;
@@ -823,23 +902,24 @@ body {
 .gunhud__reload[hidden] { display: none; }
 .quickslots {
   position: absolute; left: calc(env(safe-area-inset-left, 0px) + 12px); bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-  display: flex; gap: 4px; z-index: 2;
+  display: flex; gap: 3px; z-index: 2;
 }
 .quickslot {
-  position: relative; width: 34px; height: 34px; padding: 0; background: rgba(20, 21, 19, 0.4);
+  position: relative; width: 28px; height: 28px; padding: 0; background: rgba(20, 21, 19, 0.4);
   border: 1px solid rgba(120, 116, 100, 0.3); color: rgba(200, 196, 182, 0.7);
+  display: flex; align-items: center; justify-content: center;
 }
 .quickslot.on { border-color: rgba(190, 168, 120, 0.6); background: rgba(70, 62, 46, 0.45); }
-.quickslot img { width: 26px; height: 26px; image-rendering: pixelated; opacity: 0.85; }
-.quickslot__n { position: absolute; left: 2px; top: 0; font: 9px monospace; opacity: 0.7; }
-.quickslots--touch { top: calc(env(safe-area-inset-top, 0px) + 8px); bottom: auto; left: 50%; transform: translateX(-50%); }
+.quickslot img { width: 20px; height: 20px; image-rendering: pixelated; opacity: 0.85; }
+.quickslot__n { position: absolute; left: 2px; top: 0; font: 8px monospace; opacity: 0.7; }
+.quickslots--touch { top: calc(env(safe-area-inset-top, 0px) + 5px); bottom: auto; left: 50%; transform: translateX(-50%); }
 .touch__btn--gun { display: none; }
-.touch--gun .touch__btn--gun { display: block; }
-.touch__btn--reload { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 284px); bottom: calc(env(safe-area-inset-bottom, 0px) + 30px); font-size: 10px; }
-.touch__btn--aim { width: 52px; height: 52px; right: calc(env(safe-area-inset-right, 0px) + 284px); bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); font-size: 11px; }
+.touch--gun .touch__btn--gun { display: flex; }
+.touch__btn--reload { width: 38px; height: 38px; right: calc(env(safe-area-inset-right, 0px) + 14px); bottom: calc(env(safe-area-inset-bottom, 0px) + 126px); font-size: 9px; }
+.touch__btn--aim { width: 38px; height: 38px; right: calc(env(safe-area-inset-right, 0px) + 60px); bottom: calc(env(safe-area-inset-bottom, 0px) + 114px); font-size: 9px; }
 .inv__mods { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .inv__mod { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .inv__mod-slot { min-width: 64px; font-size: 11px; color: #8a8478; }
 .inv__mod-empty { font-size: 11px; color: #6c685e; }
 /* Touch: the fire buttons hold the bottom-right corner; the count sits above them. */
-.gunhud--touch { bottom: calc(env(safe-area-inset-bottom, 0px) + 160px); }
+.gunhud--touch { bottom: calc(env(safe-area-inset-bottom, 0px) + 172px); }

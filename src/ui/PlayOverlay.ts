@@ -1,22 +1,23 @@
+import { langToggle, onLangChange, tr } from '../core/i18n';
 import type { GameContext } from '../GameContext';
 import type { KeyboardMouseInput } from '../input/KeyboardMouseInput';
 import { openCredits } from './CreditsScreen';
 import { volumeControl } from './VolumeControl';
 
-const CONTROLS: [string, string][] = [
-  ['WASD', 'движение'],
-  ['Shift', 'бег'],
-  ['C', 'присесть'],
-  ['ЛКМ', 'атака'],
-  ['F', 'фонарик'],
-  ['E', 'обыскать / дверь'],
-  ['Tab / I', 'инвентарь'],
-  ['M', 'карта'],
-  ['1–4 / H', 'быстрые слоты / убрать'],
-  ['ПКМ', 'прицел'],
-  ['R / V', 'перезарядка / осмотр'],
-  ['B / Q', 'режим огня / удар прикладом'],
-  ['Esc', 'пауза'],
+const CONTROLS: readonly [[string, string], [string, string]][] = [
+  [['WASD', 'WASD'], ['движение', 'move']],
+  [['Shift', 'Shift'], ['бег', 'sprint']],
+  [['C', 'C'], ['присесть', 'crouch']],
+  [['ЛКМ', 'LMB'], ['атака', 'attack']],
+  [['F', 'F'], ['фонарик', 'flashlight']],
+  [['E', 'E'], ['обыскать / дверь', 'search / door']],
+  [['Tab / I', 'Tab / I'], ['инвентарь', 'inventory']],
+  [['M', 'M'], ['карта', 'map']],
+  [['1–4 / H', '1–4 / H'], ['быстрые слоты / убрать', 'quickslots / holster']],
+  [['ПКМ', 'RMB'], ['прицел', 'aim']],
+  [['R / V', 'R / V'], ['перезарядка / осмотр', 'reload / inspect']],
+  [['B / Q', 'B / Q'], ['режим огня / удар прикладом', 'fire mode / buttstroke']],
+  [['Esc', 'Esc'], ['пауза', 'pause']],
 ];
 
 /** After a window closes, how long the browser gets to hand the pointer lock back before we hint. */
@@ -47,27 +48,35 @@ export class PlayOverlay {
     this.root.className = 'play-overlay';
     const title = document.createElement('div');
     title.className = 'play-overlay__title';
-    title.textContent = 'Нажмите, чтобы играть';
     const list = document.createElement('div');
     list.className = 'play-overlay__controls';
-    for (const [key, what] of CONTROLS) {
-      const k = document.createElement('kbd');
-      k.textContent = key;
-      const span = document.createElement('span');
-      span.textContent = what;
-      list.append(k, span);
-    }
     this.hint.className = 'play-overlay__hint';
     const credits = document.createElement('button');
     credits.className = 'credits-link';
-    credits.textContent = 'Авторы';
     credits.addEventListener('click', (e) => {
       e.stopPropagation();
       openCredits(parent);
     });
-    this.root.append(title, list, this.hint, volumeControl(), credits);
+    const syncText = () => {
+      title.textContent = tr('Нажмите, чтобы играть', 'Click to play');
+      list.replaceChildren();
+      for (const [key, what] of CONTROLS) {
+        const k = document.createElement('kbd');
+        k.textContent = tr(key[0], key[1]);
+        const span = document.createElement('span');
+        span.textContent = tr(what[0], what[1]);
+        list.append(k, span);
+      }
+      credits.textContent = tr('Авторы', 'Credits');
+      this.soft.textContent = tr('Кликните, чтобы продолжить', 'Click to continue');
+      if (this.hint.textContent) {
+        this.hint.textContent = tr('Подождите секунду и нажмите ещё раз', 'Wait a second and click again');
+      }
+    };
+    syncText();
+    onLangChange(syncText);
+    this.root.append(title, list, this.hint, volumeControl(), langToggle(), credits);
     this.soft.className = 'soft-hint';
-    this.soft.textContent = 'Кликните, чтобы продолжить';
     this.soft.hidden = true;
     parent.append(this.root, this.soft);
 
@@ -81,7 +90,7 @@ export class PlayOverlay {
     });
     document.addEventListener('pointerlockerror', () => {
       // Chrome refuses to re-lock for ~1 s after Esc.
-      if (!this.root.hidden) this.hint.textContent = 'Подождите секунду и нажмите ещё раз';
+      if (!this.root.hidden) this.hint.textContent = tr('Подождите секунду и нажмите ещё раз', 'Wait a second and click again');
       if (this.released && !this.modal) this.showSoft();
     });
 

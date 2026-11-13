@@ -1,3 +1,4 @@
+import { registerDataLocalizer, tr } from '../core/i18n';
 import type { ClassId, ClassMods } from '../data/classes';
 
 /*
@@ -208,5 +209,25 @@ export function describeXp(xp: SkillXp): string {
 export function classSkillText(classId: ClassId): string {
   const cls = CLASS_SKILLS[classId] ?? {};
   const text = SKILLS.filter((s) => cls[s.id]).map((s) => `${s.name} ${cls[s.id]}`).join(' · ');
-  return CLASS_LEARN[classId] ? (text ? `${text} · ` : '') + 'учится быстрее' : text;
+  return CLASS_LEARN[classId] ? (text ? `${text} · ` : '') + tr('учится быстрее', 'learns faster') : text;
 }
+
+const SKILL_TEXT: Readonly<Record<SkillId, { name: [string, string]; per: [string, string] }>> = {
+  axe: { name: ['Топоры', 'Axes'], per: ['урон +5%, износ −5%', 'damage +5%, wear −5%'] },
+  blunt: { name: ['Дробящее', 'Blunt'], per: ['урон +5%, износ −5%', 'damage +5%, wear −5%'] },
+  blade: { name: ['Клинки', 'Blades'], per: ['урон +5%, износ −5%', 'damage +5%, wear −5%'] },
+  fitness: { name: ['Выносливость', 'Fitness'], per: ['усталость −4%', 'fatigue −4%'] },
+  sneak: { name: ['Скрытность', 'Stealth'], per: ['шум −5%', 'noise −5%'] },
+  search: { name: ['Обыск', 'Scavenging'], per: ['обыск −5% времени', 'search time −5%'] },
+  firstAid: { name: ['Первая помощь', 'First aid'], per: ['лечение +6%', 'healing +6%'] },
+  carpentry: { name: ['Плотницкое', 'Carpentry'], per: ['доски −6% времени', 'barricading time −6%'] },
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const s of SKILLS) {
+    const t = SKILL_TEXT[s.id];
+    s.name = t.name[idx];
+    s.per = t.per[idx];
+  }
+});

@@ -10,6 +10,7 @@ import {
   RepeatWrapping,
   SRGBColorSpace,
 } from 'three';
+import { onLangChange } from '../../core/i18n';
 import { generateDecalCanvas } from './decals';
 import { generateGrungeCanvas } from './grunge';
 import { type Bucket, MODEL_LAYER_BASE, SURFACE_LIST, SURFACES } from './surfaces';
@@ -139,6 +140,18 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   tex.generateMipmaps = true;
   tex.anisotropy = Math.min(4, anisotropy);
   tex.needsUpdate = true;
+  onLangChange(() => {
+    SURFACE_LIST.forEach((surface, layer) => {
+      const s = SURFACES[surface];
+      if (!s.decal) return;
+      const canvas = generateDecalCanvas(s.decal, SIZE, layer * 31 + 7);
+      const px = canvas.getContext('2d')!.getImageData(0, 0, SIZE, SIZE).data;
+      if (s.alpha !== undefined) for (let i = 3; i < px.length; i += 4) px[i] = Math.round(px[i] * s.alpha);
+      const base = layer * SIZE * row;
+      for (let y = 0; y < SIZE; y++) data.set(px.subarray(y * row, (y + 1) * row), base + (SIZE - 1 - y) * row);
+    });
+    tex.needsUpdate = true;
+  });
   return tex;
 }
 

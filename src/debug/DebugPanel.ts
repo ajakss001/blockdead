@@ -1,3 +1,4 @@
+import { onLangChange, tr } from '../core/i18n';
 import type { FrameStats } from '../core/Profiler';
 import type { QualityLevel } from '../core/types';
 import type { GameContext } from '../GameContext';
@@ -41,8 +42,17 @@ export class DebugPanel {
     this.root.className = this.compact ? 'debug debug--compact' : 'debug';
     this.root.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
     this.root.append(this.text);
-    if (!this.compact) this.root.append(this.buildControls(), this.status);
+    let controls = !this.compact ? this.buildControls() : null;
+    if (controls) this.root.append(controls, this.status);
     parent.append(this.root);
+    onLangChange(() => {
+      if (controls) {
+        const next = this.buildControls();
+        controls.replaceWith(next);
+        controls = next;
+      }
+      this.refresh();
+    });
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Backquote' || e.code === 'F3') {
@@ -61,7 +71,7 @@ export class DebugPanel {
     const wrap = document.createElement('div');
     wrap.className = 'debug__controls';
 
-    this.row(wrap, 'Качество', [
+    this.row(wrap, tr('Качество', 'Quality'), [
       ...QUALITY_LEVELS.map((lvl: QualityLevel) => ({ label: lvl, onClick: () => quality.setLevel(lvl) })),
       {
         label: 'adaptive',
@@ -78,7 +88,7 @@ export class DebugPanel {
     };
     this.row(
       wrap,
-      'Инстансы',
+      tr('Инстансы', 'Instances'),
       [0, 400, 5000, 20000].map((n) => ({ label: String(n), onClick: () => setStress({ instances: n }) })),
     );
     this.row(
@@ -86,7 +96,7 @@ export class DebugPanel {
       'Draw calls',
       [0, 100, 300, 500].map((n) => ({ label: `+${n}`, onClick: () => setStress({ meshes: n }) })),
     );
-    this.row(wrap, 'Реклама', [
+    this.row(wrap, tr('Реклама', 'Ads'), [
       {
         label: 'interstitial',
         onClick: async () => {
@@ -96,7 +106,7 @@ export class DebugPanel {
       {
         label: 'rewarded',
         onClick: async () => {
-          this.status.textContent = `rewarded: ${(await platform.showRewarded()) ? 'награда выдана' : 'без награды'}`;
+          this.status.textContent = `rewarded: ${(await platform.showRewarded()) ? tr('награда выдана', 'rewarded') : tr('без награды', 'no reward')}`;
         },
       },
     ]);

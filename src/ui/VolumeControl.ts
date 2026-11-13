@@ -1,11 +1,16 @@
 import { sfx } from '../audio/Sound';
+import { onLangChange, tr } from '../core/i18n';
 
 /** "Громкость" slider bound to the master volume (saved). Clicks stay inside (the pause screen grabs the mouse). */
 export function volumeControl(cls = ''): HTMLElement {
   const wrap = document.createElement('label');
   wrap.className = `volume ${cls}`.trim();
   const text = document.createElement('span');
-  text.textContent = 'Громкость';
+  const sync = () => {
+    text.textContent = tr('Громкость', 'Volume');
+  };
+  sync();
+  onLangChange(sync);
   const range = document.createElement('input');
   range.type = 'range';
   range.min = '0';

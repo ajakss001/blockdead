@@ -1,3 +1,4 @@
+import { registerDataLocalizer } from '../../core/i18n';
 import { CHUNK, DOWNTOWN_RADIUS, type WorldLayout, type Zone } from './layout';
 import { hash3 } from './noise';
 
@@ -17,19 +18,39 @@ import { hash3 } from './noise';
  *   on that cell's edge, and never on a block an older type already took.
  */
 export const POI = {
-  gas: { id: 2, name: 'Заправка', chance: 0.8, size: 1, minDist: 5, zones: ['suburb', 'forest', 'field'] as Zone[], road: 'major', risk: 4, downtown: false, near: null },
-  police: { id: 1, name: 'Полицейский участок', chance: 0.5, size: 1, minDist: 6, zones: ['town'] as Zone[], road: 'any', risk: 9, downtown: true, near: null },
-  hyper: { id: 4, name: 'Гипермаркет ValuMart', chance: 0.6, size: 1, minDist: 12, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 14, downtown: false, near: null },
-  mall: { id: 3, name: 'Торговый центр MegaPlaza', chance: 0.55, size: 1, minDist: 16, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 16, downtown: false, near: null },
-  plant: { id: 5, name: 'Водоочистная станция', chance: 0.5, size: 1, minDist: 18, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
-  park: { id: 7, name: 'Сквер', chance: 0.5, size: 1, minDist: 5, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 2, downtown: true, near: null },
-  checkpoint: { id: 6, name: 'Военный КПП', chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
-  lab: { id: 8, name: 'НИИ «Гелиос»', chance: 0.45, size: 1, minDist: 20, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 10, downtown: false, near: null },
-  airport: { id: 9, name: 'Аэропорт', chance: 0.55, size: 1, blocks: [3, 2], minDist: 30, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 18, downtown: false, near: null },
-  base: { id: 10, name: 'Военная база', chance: 0.55, size: 1, blocks: [2, 2], minDist: 26, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 24, downtown: false, near: null },
+  gas: { id: 2, name: 'Заправка' as string, chance: 0.8, size: 1, minDist: 5, zones: ['suburb', 'forest', 'field'] as Zone[], road: 'major', risk: 4, downtown: false, near: null },
+  police: { id: 1, name: 'Полицейский участок' as string, chance: 0.5, size: 1, minDist: 6, zones: ['town'] as Zone[], road: 'any', risk: 9, downtown: true, near: null },
+  hyper: { id: 4, name: 'Гипермаркет ValuMart' as string, chance: 0.6, size: 1, minDist: 12, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 14, downtown: false, near: null },
+  mall: { id: 3, name: 'Торговый центр MegaPlaza' as string, chance: 0.55, size: 1, minDist: 16, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 16, downtown: false, near: null },
+  plant: { id: 5, name: 'Водоочистная станция' as string, chance: 0.5, size: 1, minDist: 18, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
+  park: { id: 7, name: 'Сквер' as string, chance: 0.5, size: 1, minDist: 5, zones: ['town', 'suburb'] as Zone[], road: 'any', risk: 2, downtown: true, near: null },
+  checkpoint: { id: 6, name: 'Военный КПП' as string, chance: 0.55, size: 1, minDist: 10, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 5, downtown: false, near: 'urban' },
+  lab: { id: 8, name: 'НИИ «Гелиос»' as string, chance: 0.45, size: 1, minDist: 20, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 10, downtown: false, near: null },
+  airport: { id: 9, name: 'Аэропорт' as string, chance: 0.55, size: 1, blocks: [3, 2], minDist: 30, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 18, downtown: false, near: null },
+  base: { id: 10, name: 'Военная база' as string, chance: 0.55, size: 1, blocks: [2, 2], minDist: 26, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 24, downtown: false, near: null },
 } as const;
 
 export type PoiKind = keyof typeof POI;
+
+const POI_NAMES: Readonly<Record<PoiKind, [string, string]>> = {
+  gas: ['Заправка', 'Gas station'],
+  police: ['Полицейский участок', 'Police station'],
+  hyper: ['Гипермаркет ValuMart', 'ValuMart Superstore'],
+  mall: ['Торговый центр MegaPlaza', 'MegaPlaza Mall'],
+  plant: ['Водоочистная станция', 'Water treatment plant'],
+  park: ['Сквер', 'City park'],
+  checkpoint: ['Военный КПП', 'Military checkpoint'],
+  lab: ['НИИ «Гелиос»', 'Helios Research Institute'],
+  airport: ['Аэропорт', 'Airport'],
+  base: ['Военная база', 'Military base'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const [k, names] of Object.entries(POI_NAMES) as [PoiKind, [string, string]][]) {
+    (POI[k] as { name: string }).name = names[idx];
+  }
+});
 /** Placement order: earlier types win a contested block. */
 const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab', 'airport', 'base'];
 /** The country road grid runs along every 4th chunk line (see layout). */

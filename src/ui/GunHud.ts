@@ -1,3 +1,4 @@
+import { getLang, tr } from '../core/i18n';
 import type { InputManager } from '../input/InputManager';
 import type { GunHudState } from '../systems/Firearms';
 import { type ItemId, ITEMS } from '../data/items';
@@ -112,7 +113,7 @@ export class GunHud {
       return;
     }
     const low = gun.mag <= Math.max(1, Math.floor(gun.capacity * 0.25));
-    const key = `${gun.id}|${gun.mag}|${gun.reserve}|${gun.mode}|${low}|${gun.jammed}|${f.touch}`;
+    const key = `${gun.id}|${gun.mag}|${gun.reserve}|${gun.mode}|${low}|${gun.jammed}|${f.touch}|${getLang()}`;
     if (key !== this.key) {
       this.key = key;
       this.name.textContent = gun.name;
@@ -120,18 +121,24 @@ export class GunHud {
       this.count.textContent = `${gun.mag} / ${gun.reserve}`;
       this.count.style.color = low ? RUST : '';
       // A gun with more than one fire mode: the key that switches it (B) next to the mode.
-      this.mode.textContent = gun.jammed ? 'ЗАКЛИНИЛО' : GUNS[gun.id].modes.length > 1 && !f.touch ? `${gun.mode} · B` : gun.mode;
+      this.mode.textContent = gun.jammed ? tr('ЗАКЛИНИЛО', 'JAMMED') : GUNS[gun.id].modes.length > 1 && !f.touch ? `${gun.mode} · B` : gun.mode;
     }
     // Fades out 3 s after the last use; back when low or busy.
     const show = f.sinceUse < 3 || low || gun.busy;
     this.panel.style.opacity = show ? '1' : '0';
     const wantReload = gun.mag === 0 && !gun.reloading && gun.reserve > 0;
     this.reload.hidden = !wantReload && !gun.jammed;
-    this.reload.textContent = gun.jammed ? (f.touch ? 'Заклинило — Перезар.' : 'Заклинило — R') : f.touch ? 'Перезарядка' : 'Перезарядка (R)';
+    this.reload.textContent = gun.jammed
+      ? f.touch
+        ? tr('Заклинило — Перезар.', 'Jammed — Reload')
+        : tr('Заклинило — R', 'Jammed — R')
+      : f.touch
+        ? tr('Перезарядка', 'Reload')
+        : tr('Перезарядка (R)', 'Reload (R)');
   }
 
   private updateSlots(f: GunHudFrame): void {
-    const key = f.quick.join(',') + '|' + f.hand;
+    const key = f.quick.join(',') + '|' + f.hand + '|' + getLang();
     if (key === this.slotKey) return;
     this.slotKey = key;
     f.quick.forEach((id, i) => {
@@ -142,7 +149,7 @@ export class GunHud {
       n.textContent = String(i + 1);
       b.append(n);
       b.classList.toggle('on', !!id && id === f.hand);
-      b.title = id ? ITEMS[id].name : 'Пусто';
+      b.title = id ? ITEMS[id].name : tr('Пусто', 'Empty');
       if (id) {
         const img = document.createElement('img');
         img.src = itemIcon(id);
@@ -160,7 +167,7 @@ export class GunHud {
     root?.classList.toggle('touch--gun', !!f.gun);
     const fire = document.querySelector<HTMLElement>('.touch__btn--attack');
     if (fire) {
-      const t = f.gun ? `Огонь ${f.gun.mag}` : 'Атака';
+      const t = f.gun ? `${tr('Огонь', 'Fire')} ${f.gun.mag}` : tr('Атака', 'Attack');
       if (fire.textContent !== t) fire.textContent = t;
     }
   }

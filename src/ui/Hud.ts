@@ -1,3 +1,4 @@
+import { onLangChange, tr } from '../core/i18n';
 import { type StatIcon, statIcon } from './pixelart';
 
 /** Meters on the HUD; each is 0..1 where 1 = fine ("how much is left"). */
@@ -7,15 +8,15 @@ export type Severity = 0 | 1 | 2 | 3;
 /** Cold readings tint blue instead of amber. */
 export type Tint = 'normal' | 'cold';
 
-const STATS: { id: StatId; label: string }[] = [
-  { id: 'health', label: 'Здоровье' },
-  { id: 'hunger', label: 'Сытость' },
-  { id: 'thirst', label: 'Вода' },
-  { id: 'energy', label: 'Силы' },
-  { id: 'warmth', label: 'Тепло тела' },
-  { id: 'calm', label: 'Спокойствие' },
-  { id: 'battery', label: 'Заряд фонаря' },
-  { id: 'sick', label: 'Заражение' },
+const STATS: { id: StatId; label: [string, string] }[] = [
+  { id: 'health', label: ['Здоровье', 'Health'] },
+  { id: 'hunger', label: ['Сытость', 'Satiety'] },
+  { id: 'thirst', label: ['Вода', 'Hydration'] },
+  { id: 'energy', label: ['Силы', 'Energy'] },
+  { id: 'warmth', label: ['Тепло тела', 'Body warmth'] },
+  { id: 'calm', label: ['Спокойствие', 'Calm'] },
+  { id: 'battery', label: ['Заряд фонаря', 'Flashlight battery'] },
+  { id: 'sick', label: ['Заражение', 'Infection'] },
 ];
 
 /** Muted lo-fi palette: severity reads by hue, nothing screams like a mobile-game button. */
@@ -58,7 +59,7 @@ export class Hud {
     for (const { id, label } of STATS) {
       const root = document.createElement('div');
       root.className = 'stat';
-      root.title = label;
+      root.title = tr(label[0], label[1]);
       const base = document.createElement('img');
       base.className = 'stat__img';
       base.src = statIcon(id, DIM);
@@ -67,7 +68,7 @@ export class Hud {
       fill.className = 'stat__fill';
       const img = document.createElement('img');
       img.className = 'stat__img';
-      img.alt = label;
+      img.alt = tr(label[0], label[1]);
       fill.append(img);
       root.append(base, fill);
       this.stats.append(root);
@@ -76,9 +77,20 @@ export class Hud {
     }
     this.wound.className = 'stat stat__img stat--wound';
     this.wound.src = statIcon('wound', PALETTE.normal[3]);
-    this.wound.title = 'Рана — нужна перевязка';
+    this.wound.title = tr('Рана — нужна перевязка', 'Wound — needs bandage');
     this.wound.hidden = true;
     this.stats.append(this.wound);
+    onLangChange(() => {
+      for (const { id, label } of STATS) {
+        const v = this.views.get(id);
+        if (v) {
+          const text = tr(label[0], label[1]);
+          v.root.title = text;
+          v.img.alt = text;
+        }
+      }
+      this.wound.title = tr('Рана — нужна перевязка', 'Wound — needs bandage');
+    });
 
     this.action.className = 'action';
     this.action.hidden = true;
@@ -109,6 +121,7 @@ export class Hud {
   /** value: 0..1 how much is left; severity picks the color, 3 blinks. */
   setStat(id: StatId, value: number, severity: Severity, tint: Tint = 'normal'): void {
     const v = this.views.get(id)!;
+    if (id === 'sick') v.root.hidden = severity === 0 && value >= 0.99;
     const fillKey = Math.round(Math.min(1, Math.max(0, value)) * 16);
     if (fillKey !== v.fillKey) {
       v.fillKey = fillKey;

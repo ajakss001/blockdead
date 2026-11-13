@@ -1,6 +1,7 @@
 import { detectDevice, type DeviceType } from '../core/device';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
+import { tr } from '../core/i18n';
 import type { AdResult } from '../core/types';
 import type { IPlatform, SaveBlob } from './IPlatform';
 
@@ -27,7 +28,7 @@ export class MockPlatform implements IPlatform {
     if (this.adOpen) return 'throttled';
     this.adOpen = true;
     this.events.emit('ad:start', { kind: 'interstitial' });
-    await this.overlay('Межстраничная реклама (mock)', [{ label: 'Закрыть', value: true }], 1500);
+    await this.overlay(tr('Межстраничная реклама (mock)', 'Interstitial ad (mock)'), [{ label: tr('Закрыть', 'Close'), value: true }], 1500);
     this.adOpen = false;
     this.events.emit('ad:end', { kind: 'interstitial', result: 'shown' });
     return 'shown';
@@ -37,9 +38,9 @@ export class MockPlatform implements IPlatform {
     if (this.adOpen) return false;
     this.adOpen = true;
     this.events.emit('ad:start', { kind: 'rewarded' });
-    const rewarded = await this.overlay('Видео за награду (mock)', [
-      { label: 'Досмотреть', value: true },
-      { label: 'Закрыть раньше', value: false },
+    const rewarded = await this.overlay(tr('Видео за награду (mock)', 'Rewarded video (mock)'), [
+      { label: tr('Досмотреть', 'Watch full'), value: true },
+      { label: tr('Закрыть раньше', 'Close early'), value: false },
     ]);
     this.adOpen = false;
     this.events.emit('ad:end', { kind: 'rewarded', result: rewarded ? 'shown' : 'closed' });

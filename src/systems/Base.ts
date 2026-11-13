@@ -5,6 +5,8 @@
  * Time here is game minutes (the clock), not real seconds.
  */
 
+import { registerDataLocalizer } from '../core/i18n';
+
 export type PlacedKind = 'fire' | 'barrel' | 'stash' | 'trap';
 
 export interface Placed {
@@ -47,6 +49,20 @@ export const PLACED_NAME: Record<PlacedKind, string> = {
   stash: 'Сундук',
   trap: 'Растяжка с банками',
 };
+
+const PLACED_TEXT: Readonly<Record<PlacedKind, [string, string]>> = {
+  fire: ['Костёр', 'Campfire'],
+  barrel: ['Сборник дождевой воды', 'Rain collector'],
+  stash: ['Сундук', 'Storage chest'],
+  trap: ['Растяжка с банками', 'Tin-can tripwire'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const k of Object.keys(PLACED_TEXT) as PlacedKind[]) {
+    PLACED_NAME[k] = PLACED_TEXT[k][idx];
+  }
+});
 
 export class Base {
   readonly list: Placed[] = [];

@@ -1,8 +1,9 @@
+import { langToggle, onLangChange, tr } from '../core/i18n';
 import { CLASSES, type ClassId, classDef, STARTER_OUTFITS } from '../data/classes';
 import { classSkillText } from '../systems/Skills';
 import { TRAITS, type TraitId, traitDef, traitPointsLeft } from '../data/traits';
 import type { ItemId, WearSlot } from '../data/items';
-import { type Appearance, baseLook, randomAppearance, REF_CLOTHES, SEX_LABEL, SEXES, type Sex } from '../player/appearance';
+import { type Appearance, BASE_LOOK, baseLook, randomAppearance, REF_CLOTHES, SEX_LABEL, SEXES, type Sex, translateDefaultName } from '../player/appearance';
 import type { Worn } from '../systems/Inventory';
 import { CharacterPreview } from './CharacterPreview';
 
@@ -45,11 +46,12 @@ export class CharacterEditor {
   private tab: Tab = 'look';
   private choice: CharacterChoice;
   private startBtn: HTMLButtonElement | null = null;
+  private nameInput: HTMLInputElement | null = null;
 
   /** `legacy`: what the dead survivors of this world leave the new one ("Топоры 2 · Обыск 1"). */
   constructor(
     private readonly parent: HTMLElement,
-    private readonly legacy = '',
+    private readonly legacy: string | (() => string) = '',
   ) {
     // The male base as on the reference sheet, in its everyday clothes.
     const look = baseLook('male');
@@ -61,36 +63,52 @@ export class CharacterEditor {
   open(): Promise<CharacterChoice> {
     return new Promise((resolve) => {
       const left = div('editor__left');
+      const head = div('editor__head');
+      const title = div('editor__title', tr('Новый выживший', 'New survivor'));
+      head.append(title, langToggle('editor__lang'));
+
       const figure = div('editor__figure-wrap');
-      figure.append(this.preview.canvas, div('editor__drag', '↔ повернуть'));
+      const drag = div('editor__drag', tr('↔ повернуть', '↔ rotate'));
+      figure.append(this.preview.canvas, drag);
       const name = document.createElement('input');
       name.className = 'editor__name';
       name.maxLength = 20;
-      name.placeholder = 'Имя';
+      name.placeholder = tr('Имя', 'Name');
       name.value = this.choice.appearance.name;
       name.addEventListener('input', () => (this.choice.appearance.name = name.value));
-      left.append(div('editor__title', 'Новый выживший'), figure, name);
-      if (this.legacy) left.append(div('editor__legacy', `Наследие погибших: ${this.legacy}`));
+      this.nameInput = name;
+      left.append(head, figure, name);
+      const legacyEl = div('editor__legacy');
+      const syncLegacy = () => {
+        const text = typeof this.legacy === 'function' ? this.legacy() : this.legacy;
+        legacyEl.hidden = !text;
+        legacyEl.textContent = text ? `${tr('Наследие погибших', 'Legacy of the fallen')}: ${text}` : '';
+      };
+      syncLegacy();
+      left.append(legacyEl);
 
       const right = div('editor__right');
       this.tabs.className = 'editor__tabs';
-      for (const [id, label] of [
-        ['look', 'Внешность'],
-        ['class', 'Класс'],
-        ['traits', 'Черты'],
-        ['outfit', 'Одежда'],
-      ] as [Tab, string][]) {
-        const b = button(label, 'editor__tab');
+      const tabDefs: [Tab, [string, string]][] = [
+        ['look', ['Внешность', 'Appearance']],
+        ['class', ['Класс', 'Class']],
+        ['traits', ['Черты', 'Traits']],
+        ['outfit', ['Одежда', 'Clothing']],
+      ];
+      const tabBtns: [HTMLButtonElement, [string, string]][] = [];
+      for (const [id, labels] of tabDefs) {
+        const b = button(tr(labels[0], labels[1]), 'editor__tab');
         b.dataset.tab = id;
         b.addEventListener('click', () => {
           this.tab = id;
           this.renderBody();
         });
         this.tabs.append(b);
+        tabBtns.push([b, labels]);
       }
       this.body.className = 'editor__body';
       const footer = div('editor__footer');
-      const random = button('Случайный персонаж', 'editor__btn editor__btn--quiet');
+      const random = button(tr('Случайный персонаж', 'Random character'), 'editor__btn editor__btn--quiet');
       random.addEventListener('click', () => {
         this.choice.appearance = randomAppearance();
         this.choice.classId = CLASSES[Math.floor(Math.random() * CLASSES.length)].id;
@@ -99,15 +117,30 @@ export class CharacterEditor {
         name.value = this.choice.appearance.name;
         this.renderBody();
       });
-      const start = button('Начать', 'editor__btn');
+      const start = button(tr('Начать', 'Start'), 'editor__btn');
       this.startBtn = start;
+      const offLang = onLangChange(() => {
+        title.textContent = tr('Новый выживший', 'New survivor');
+        drag.textContent = tr('↔ повернуть', '↔ rotate');
+        name.placeholder = tr('Имя', 'Name');
+        const translatedName = translateDefaultName(this.choice.appearance.name, this.choice.appearance.sex);
+        if (translatedName !== this.choice.appearance.name) {
+          this.choice.appearance.name = translatedName;
+          name.value = translatedName;
+        }
+        syncLegacy();
+        for (const [b, labels] of tabBtns) b.textContent = tr(labels[0], labels[1]);
+        random.textContent = tr('Случайный персонаж', 'Random character');
+        this.renderBody();
+      });
       start.addEventListener('click', () => {
         if (traitPointsLeft(this.choice.classId, this.choice.traits) < 0) {
           this.tab = 'traits';
           this.renderBody();
           return;
         }
-        this.choice.appearance.name = name.value.trim() || 'Выживший';
+        offLang();
+        this.choice.appearance.name = name.value.trim() || BASE_LOOK[this.choice.appearance.sex].name;
         this.preview.dispose();
         this.root.remove();
         resolve(this.choice);
@@ -142,7 +175,7 @@ export class CharacterEditor {
     const left = traitPointsLeft(this.choice.classId, this.choice.traits);
     if (this.startBtn) {
       this.startBtn.classList.toggle('editor__btn--off', left < 0);
-      this.startBtn.textContent = left < 0 ? `Не хватает очков черт: ${-left}` : 'Начать';
+      this.startBtn.textContent = left < 0 ? `${tr('Не хватает очков черт', 'Not enough trait points')}: ${-left}` : tr('Начать', 'Start');
     }
   }
 
@@ -151,8 +184,13 @@ export class CharacterEditor {
     const c = this.choice;
     const left = traitPointsLeft(c.classId, c.traits);
     const own = classDef(c.classId).mods.traitPoints ?? 0;
-    this.body.append(div(`editor__points${left < 0 ? ' editor__points--short' : ''}`, `Очки черт: ${left}${own ? ` (класс даёт ${own})` : ''}`));
-    this.body.append(div('editor__note', 'Хорошие черты стоят очков, плохие — дают их.'));
+    this.body.append(
+      div(
+        `editor__points${left < 0 ? ' editor__points--short' : ''}`,
+        `${tr('Очки черт', 'Trait points')}: ${left}${own ? ` (${tr(`класс даёт ${own}`, `class gives ${own}`)})` : ''}`,
+      ),
+    );
+    this.body.append(div('editor__note', tr('Хорошие черты стоят очков, плохие — дают их.', 'Positive traits cost points; negative traits grant them.')));
     for (const good of [true, false]) {
       const list = div('editor__traits');
       for (const t of TRAITS.filter((x) => x.cost > 0 === good)) {
@@ -167,18 +205,21 @@ export class CharacterEditor {
         });
         list.append(b);
       }
-      this.body.append(div('editor__label', good ? 'Хорошие' : 'Плохие'), list);
+      this.body.append(div('editor__label', good ? tr('Хорошие', 'Positive') : tr('Плохие', 'Negative')), list);
     }
   }
 
   private renderLook(): void {
     const a = this.choice.appearance;
     // A man or a woman (the model); the name after. The height is the model's own (no setting).
-    this.chips('Персонаж', SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
+    this.chips(tr('Персонаж', 'Character'), SEXES.map((s) => [s, SEX_LABEL[s]]), a.sex, (v) => {
       const sex = v as Sex;
       if (sex === a.sex) return;
       if (this.choice.tint === REF_CLOTHES[a.sex].tee) this.choice.tint = REF_CLOTHES[sex].tee;
-      this.choice.appearance = baseLook(sex, a.name.trim() || undefined);
+      const trimmed = a.name.trim();
+      const isDefault = !trimmed || trimmed === 'Выживший' || trimmed === 'Выжившая' || trimmed === 'Survivor';
+      this.choice.appearance = baseLook(sex, isDefault ? undefined : trimmed);
+      if (this.nameInput && isDefault) this.nameInput.value = this.choice.appearance.name;
     });
   }
 
@@ -196,7 +237,7 @@ export class CharacterEditor {
       lists.append(pros, cons);
       card.append(lists);
       const skills = classSkillText(c.id);
-      if (skills) card.append(div('editor__class-skills', `Навыки: ${skills}`));
+      if (skills) card.append(div('editor__class-skills', `${tr('Навыки', 'Skills')}: ${skills}`));
       card.addEventListener('click', () => {
         this.choice.classId = c.id;
         this.renderBody();
@@ -207,9 +248,22 @@ export class CharacterEditor {
 
   private renderOutfit(): void {
     // Two choices: the class's clothes, or everyday ones (a T-shirt, jeans, sneakers).
-    const options: [string, string][] = [['uniform', 'Одежда класса'], ['casual', 'Обычная']];
-    this.chips('Стартовая одежда', options, this.choice.outfit, (v) => (this.choice.outfit = v));
-    if (this.choice.outfit === 'uniform') this.body.append(div('editor__note', 'Форма класса — свой цвет и защита. Её можно снять и найти другую одежду в мире.'));
+    const options: [string, string][] = [
+      ['uniform', tr('Одежда класса', 'Class uniform')],
+      ['casual', tr('Обычная', 'Casual')],
+    ];
+    this.chips(tr('Стартовая одежда', 'Starting clothes'), options, this.choice.outfit, (v) => (this.choice.outfit = v));
+    if (this.choice.outfit === 'uniform') {
+      this.body.append(
+        div(
+          'editor__note',
+          tr(
+            'Форма класса — свой цвет и защита. Её можно снять и найти другую одежду в мире.',
+            'Class uniform — comes with its own look and protection. You can take it off and find other clothes in the world.',
+          ),
+        ),
+      );
+    }
   }
 
   private chips(title: string, options: [string, string][], current: string, set: (v: string) => void): void {

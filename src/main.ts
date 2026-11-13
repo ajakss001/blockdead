@@ -1,5 +1,6 @@
 import './ui/styles.css';
 import { detectDevice, type DeviceInfo } from './core/device';
+import { onLangChange, tr } from './core/i18n';
 import { EventBus } from './core/EventBus';
 import { sfx } from './audio/Sound';
 import type { GameEvents } from './core/events';
@@ -193,8 +194,17 @@ function wireLifecycle({ events, loop, input }: GameContext): void {
   document.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
+const rotateEl = document.getElementById('rotate');
+if (rotateEl) {
+  const syncRotate = () => {
+    rotateEl.textContent = tr('Поверните устройство горизонтально', 'Rotate your device to landscape');
+  };
+  syncRotate();
+  onLangChange(syncRotate);
+}
+
 boot().catch((err: unknown) => {
   console.error(err);
   const loading = document.getElementById('loading');
-  if (loading) loading.textContent = 'Не удалось запустить игру. Проверьте поддержку WebGL2.';
+  if (loading) loading.textContent = tr('Не удалось запустить игру. Проверьте поддержку WebGL2.', 'Failed to start the game. Please check WebGL2 support.');
 });

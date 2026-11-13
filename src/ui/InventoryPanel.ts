@@ -1,3 +1,4 @@
+import { langToggle, onLangChange, registerDataLocalizer, tr } from '../core/i18n';
 import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import { type Skills, SKILLS, XP } from '../systems/Skills';
 import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/Crafting';
@@ -49,6 +50,31 @@ const SLOTS: { slot: Slot; label: string }[] = [
   { slot: 'back', label: 'Рюкзак' },
   { slot: 'bag', label: 'Сумка' },
 ];
+
+const SLOT_LABELS: Readonly<Record<WearSlot, [string, string]>> = {
+  outfit: ['Костюм', 'Outfit'],
+  head: ['Голова', 'Head'],
+  face: ['Лицо: очки', 'Face: eyewear'],
+  mask: ['Лицо: маска', 'Face: mask'],
+  torso: ['Торс', 'Torso'],
+  vest: ['Жилет', 'Vest'],
+  hands: ['Руки', 'Hands'],
+  legs: ['Ноги', 'Legs'],
+  feet: ['Обувь', 'Footwear'],
+  back: ['Рюкзак', 'Backpack'],
+  bag: ['Сумка', 'Bag'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  SLOT_NAMES.muzzle = idx ? 'Muzzle' : 'Ствол';
+  SLOT_NAMES.mag = idx ? 'Magazine' : 'Магазин';
+  SLOT_NAMES.rail = idx ? 'Rail' : 'Планка';
+  for (const s of SLOTS) {
+    s.label = SLOT_LABELS[s.slot as WearSlot][idx];
+  }
+});
+
 const BAG_MIN_CELLS = 24;
 const BOX_MIN_CELLS = 12;
 const DRAG_THRESHOLD = 6;
@@ -56,7 +82,8 @@ const DOUBLE_TAP_MS = 320;
 /** E and Esc close every game window (PC); Tab / I toggle the inventory. */
 const CLOSE_KEYS = ['KeyE', 'Escape', 'Tab', 'KeyI'];
 
-const WORDS = ['нет', 'лёгкий', 'сильный', 'критический'];
+const WORDS_RU = ['нет', 'лёгкий', 'сильный', 'критический'];
+const WORDS_EN = ['none', 'mild', 'severe', 'critical'];
 const level = (v: number) => (v >= 0.75 ? 3 : v >= 0.5 ? 2 : v >= 0.25 ? 1 : 0);
 
 /**
@@ -118,6 +145,9 @@ export class InventoryPanel {
     this.root.addEventListener('pointerup', (e) => this.onDragEnd(e));
     this.root.addEventListener('pointercancel', () => this.cancelDrag());
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
+    onLangChange(() => {
+      if (this.isOpen) this.render();
+    });
   }
 
   /** Looks of the survivor (from the character editor / save) for the 3D figure. */
@@ -182,16 +212,27 @@ export class InventoryPanel {
     bar.append(fill);
     const close = el('button', 'inv__close', '✕');
     close.addEventListener('click', () => this.close());
-    const craftBtn = el('button', `inv__btn inv__btn--small inv__craft-btn${this.crafting ? ' on' : ''}`, 'Крафт');
+    const craftBtn = el('button', `inv__btn inv__btn--small inv__craft-btn${this.crafting ? ' on' : ''}`, tr('Крафт', 'Craft'));
     craftBtn.addEventListener('click', () => {
       this.crafting = !this.crafting;
       this.render();
     });
-    const credits = el('button', 'credits-link inv__credits', 'Авторы');
+    const credits = el('button', 'credits-link inv__credits', tr('Авторы', 'Credits'));
     credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
-    const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', 'Новый персонаж');
+    const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', tr('Новый персонаж', 'New character'));
     fresh.addEventListener('click', () => this.host.newCharacter?.());
-    head.append(el('div', 'inv__heading', 'Инвентарь'), bar, el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} кг (без лимита)` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} кг`), craftBtn, volumeControl('inv__volume'), ...(this.host.newCharacter ? [fresh] : []), credits, close);
+    const unit = tr('кг', 'kg');
+    head.append(
+      el('div', 'inv__heading', tr('Инвентарь', 'Inventory')),
+      bar,
+      el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} ${unit} (${tr('без лимита', 'no limit')})` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} ${unit}`),
+      craftBtn,
+      volumeControl('inv__volume'),
+      langToggle('inv__lang'),
+      ...(this.host.newCharacter ? [fresh] : []),
+      credits,
+      close,
+    );
 
     // Half the window is the survivor; the other half is the backpack (split with the container
     // when one is open).
@@ -219,7 +260,7 @@ export class InventoryPanel {
     // In the hand, vest, gloves, bag, then the totals of every clothing stat (bite: over the four body
     // parts, the vest and gloves adding on top, at most 95%).
     const right = el('div', 'inv__slots inv__slots--right');
-    right.append(this.slotCell('hand', 'В руке', inv.hand));
+    right.append(this.slotCell('hand', tr('В руке', 'In hand'), inv.hand));
     for (const { slot, label } of SLOTS) if (over.has(slot)) right.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
     const worn = inv.worn;
     const stats = el('div', 'inv__armor');
@@ -236,7 +277,7 @@ export class InventoryPanel {
   private bagPane(): HTMLElement {
     const pane = el('div', 'inv__pane');
     pane.dataset.drop = 'bag';
-    pane.append(el('div', 'inv__title', 'Рюкзак'));
+    pane.append(el('div', 'inv__title', tr('Рюкзак', 'Backpack')));
     const grid = el('div', 'inv__grid');
     const stacks = this.host.inventory.stacks;
     for (const s of stacks) grid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
@@ -248,7 +289,7 @@ export class InventoryPanel {
   /** Every recipe: what it takes (what is in the bag), why not yet, a button. */
   private craftPane(): HTMLElement {
     const pane = el('div', 'inv__pane inv__pane--craft');
-    pane.append(el('div', 'inv__title', 'Крафт'));
+    pane.append(el('div', 'inv__title', tr('Крафт', 'Craft')));
     const list = el('div', 'inv__recipes');
     const w = this.host.craft;
     for (const r of RECIPES) {
@@ -258,9 +299,9 @@ export class InventoryPanel {
       text.append(el('div', 'inv__recipe-name', r.name), el('div', 'inv__recipe-about', r.about));
       const needs = el('div', 'inv__recipe-needs');
       for (const n of needsLine(r, this.host.inventory)) needs.append(el('span', n.ok ? 'ok' : 'no', n.text));
-      if (why && !why.startsWith('нет:')) needs.append(el('span', 'no', why));
+      if (why && !why.startsWith('нет:') && !why.startsWith('missing:')) needs.append(el('span', 'no', why));
       text.append(needs);
-      const b = el('button', 'inv__btn inv__btn--small', 'Сделать') as HTMLButtonElement;
+      const b = el('button', 'inv__btn inv__btn--small', tr('Сделать', 'Craft')) as HTMLButtonElement;
       b.disabled = !!why;
       b.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -285,7 +326,7 @@ export class InventoryPanel {
     const items = this.host.containers.contents(ref);
     const title = el('div', 'inv__title', this.host.containers.name(ref));
     if (items.length > 1) {
-      const all = el('button', 'inv__btn inv__btn--small', 'Взять всё');
+      const all = el('button', 'inv__btn inv__btn--small', tr('Взять всё', 'Take all'));
       all.addEventListener('click', () => this.takeAll());
       title.append(all);
     }
@@ -293,7 +334,7 @@ export class InventoryPanel {
     const grid = el('div', 'inv__grid');
     for (const s of items) grid.append(this.itemCell({ from: 'box', id: s.id }, s.id, s.count));
     for (let n = items.length; n < Math.max(BOX_MIN_CELLS, items.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
-    if (items.length === 0) pane.append(el('div', 'inv__empty', 'Ничего полезного'));
+    if (items.length === 0) pane.append(el('div', 'inv__empty', tr('Ничего полезного', 'Nothing useful')));
     pane.append(grid);
     return pane;
   }
@@ -331,7 +372,7 @@ export class InventoryPanel {
     for (const s of SKILLS) {
       const l = sk.level(s.id);
       const cell = el('div', `inv__skill${l ? '' : ' inv__skill--none'}`);
-      cell.title = `${s.name}: ${s.per} за уровень`;
+      cell.title = `${s.name}: ${s.per} ${tr('за уровень', 'per level')}`;
       const bar = el('i', 'inv__skill-bar');
       bar.style.width = `${Math.round(sk.progress(s.id) * 100)}%`;
       cell.append(el('span', '', s.name), el('b', '', String(l)), bar);
@@ -347,19 +388,28 @@ export class InventoryPanel {
     const id = sel ? this.itemAt(sel) : null;
     if (!sel || !id) {
       const { survival: sv, player } = this.host;
+      const words = tr(WORDS_RU, WORDS_EN);
       const line = [
-        `Здоровье ${Math.round(sv.health * 100)}%`,
-        `Голод: ${WORDS[level(sv.hunger)]}`,
-        `Жажда: ${WORDS[level(sv.thirst)]}`,
-        `Усталость: ${WORDS[level(sv.fatigue)]}`,
-        sv.wounded ? 'Рана!' : '',
-        `Фонарь ${Math.round(player.battery * 100)}%`,
+        `${tr('Здоровье', 'Health')} ${Math.round(sv.health * 100)}%`,
+        `${tr('Голод', 'Hunger')}: ${words[level(sv.hunger)]}`,
+        `${tr('Жажда', 'Thirst')}: ${words[level(sv.thirst)]}`,
+        `${tr('Усталость', 'Fatigue')}: ${words[level(sv.fatigue)]}`,
+        sv.wounded ? tr('Рана!', 'Wounded!') : '',
+        `${tr('Фонарь', 'Flashlight')} ${Math.round(player.battery * 100)}%`,
       ]
         .filter(Boolean)
         .join('   ·   ');
       card.append(el('div', 'inv__stats', line));
       card.append(this.skillRow());
-      card.append(el('div', 'inv__hint', this.ctx.input.mode === 'kbm' ? 'Клик — выбрать, двойной клик — действие, перетаскивание — переложить' : 'Тап — выбрать, двойной тап — действие, перетащи пальцем — переложить'));
+      card.append(
+        el(
+          'div',
+          'inv__hint',
+          this.ctx.input.mode === 'kbm'
+            ? tr('Клик — выбрать, двойной клик — действие, перетаскивание — переложить', 'Click — select, double-click — action, drag — move')
+            : tr('Тап — выбрать, двойной тап — действие, перетащи пальцем — переложить', 'Tap — select, double-tap — action, drag — move'),
+        ),
+      );
       return card;
     }
     const def = ITEMS[id];
@@ -369,8 +419,8 @@ export class InventoryPanel {
     const worn = def.durability ? this.dirtAt(sel) : null;
     const info =
       describe(def) +
-      (dirt !== null ? ` · грязь ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
-      (worn !== null ? ` · прочность ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
+      (dirt !== null ? ` · ${tr('грязь', 'dirt')} ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
+      (worn !== null ? ` · ${tr('прочность', 'durability')} ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
     text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
     card.append(text);
     const actions = el('div', 'inv__actions');
@@ -384,7 +434,8 @@ export class InventoryPanel {
     }
     card.append(actions);
     if (place0(sel) && isGun(id)) card.append(this.gunMods(id));
-    else if ((MOD_IDS as readonly string[]).includes(id)) card.append(el('div', 'inv__hint', 'Подходит: ' + MOD_FITS[id as ModId].map((g) => GUNS[g].name).join(', ')));
+    else if ((MOD_IDS as readonly string[]).includes(id))
+      card.append(el('div', 'inv__hint', `${tr('Подходит', 'Fits')}: ` + MOD_FITS[id as ModId].map((g) => GUNS[g].name).join(', ')));
     if (place0(sel) && def.equip) card.append(this.quickRow(id));
     return card;
   }
@@ -396,7 +447,13 @@ export class InventoryPanel {
     const g = GUNS[id];
     const box = el('div', 'inv__mods');
     const loaded = inst.mag + (inst.chamber && g.feed !== 'rocket' ? 1 : 0);
-    box.append(el('div', 'inv__hint', `Заряжено ${loaded} / ${capacityOf(id, inst.mods)} · ${ITEMS[g.caliber].name}: ${inv.count(g.caliber)}${g.mag ? ` · магазинов: ${inv.count(g.mag)}` : ''}`));
+    box.append(
+      el(
+        'div',
+        'inv__hint',
+        `${tr('Заряжено', 'Loaded')} ${loaded} / ${capacityOf(id, inst.mods)} · ${ITEMS[g.caliber].name}: ${inv.count(g.caliber)}${g.mag ? ` · ${tr('магазинов', 'magazines')}: ${inv.count(g.mag)}` : ''}`,
+      ),
+    );
     const slots = [...new Set(MOD_IDS.filter((m) => MOD_FITS[m].includes(id)).map((m) => MODS[m].slot))];
     for (const slot of slots) {
       const row = el('div', 'inv__mod');
@@ -404,15 +461,15 @@ export class InventoryPanel {
       const on = inst.mods.find((m) => MODS[m].slot === slot) as ModId | undefined;
       if (on) {
         const b = el('button', 'inv__btn', `${MODS[on].name} ✕`);
-        b.title = 'Снять';
+        b.title = tr('Снять', 'Remove');
         b.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (!inv.detachMod(id, on)) this.ctx.hud.toast('Рюкзак переполнен');
+          if (!inv.detachMod(id, on)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
           sfx.gunMech('magIn', 1.3);
           this.render();
         });
         row.append(b);
-      } else row.append(el('span', 'inv__mod-empty', 'пусто'));
+      } else row.append(el('span', 'inv__mod-empty', tr('пусто', 'empty')));
       for (const m of MOD_IDS) {
         if (m === on || MODS[m].slot !== slot || !MOD_FITS[m].includes(id) || inv.count(m) === 0) continue;
         const b = el('button', 'inv__btn inv__btn--quiet', `+ ${MODS[m].name}`);
@@ -433,7 +490,7 @@ export class InventoryPanel {
   private quickRow(id: ItemId): HTMLElement {
     const inv = this.host.inventory;
     const row = el('div', 'inv__mod');
-    row.append(el('span', 'inv__mod-slot', 'Слот'));
+    row.append(el('span', 'inv__mod-slot', tr('Слот', 'Slot')));
     for (let i = 0; i < QUICK_SLOTS; i++) {
       const b = el('button', `inv__btn${inv.quick[i] === id ? '' : ' inv__btn--quiet'}`, String(i + 1));
       b.addEventListener('click', (e) => {
@@ -450,22 +507,22 @@ export class InventoryPanel {
     const def = ITEMS[id];
     const out: [string, () => void, boolean?][] = [];
     if (place.from === 'slot') {
-      out.push([place.slot === 'hand' ? 'Убрать в рюкзак' : 'Снять', () => this.unslot(place.slot)]);
-      if (this.container) out.push(['Положить', () => this.unslot(place.slot, true)]);
+      out.push([place.slot === 'hand' ? tr('Убрать в рюкзак', 'Holster to backpack') : tr('Снять', 'Take off'), () => this.unslot(place.slot)]);
+      if (this.container) out.push([tr('Положить', 'Store'), () => this.unslot(place.slot, true)]);
       return out;
     }
     if (place.from === 'box') {
-      out.push(['Взять', () => this.take(id, this.boxCount(id))]);
-      if (def.wear) out.push(['Надеть', () => this.take(id, 1) && this.wear(id)]);
-      if (def.equip) out.push(['В руку', () => this.take(id, 1) && this.equip(id)]);
+      out.push([tr('Взять', 'Take'), () => this.take(id, this.boxCount(id))]);
+      if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.take(id, 1) && this.wear(id)]);
+      if (def.equip) out.push([tr('В руку', 'Equip'), () => this.take(id, 1) && this.equip(id)]);
       return out;
     }
     const verb = useVerb(def);
-    if (def.wear) out.push(['Надеть', () => this.wear(id)]);
+    if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.wear(id)]);
     else if (verb) out.push([verb, () => this.use(id)]);
-    if (def.equip) out.push(['В руку', () => this.equip(id)]);
-    if (this.container) out.push(['Положить', () => this.store(id, this.host.inventory.count(id))]);
-    else out.push(['Выбросить', () => this.drop(id), true]);
+    if (def.equip) out.push([tr('В руку', 'Equip'), () => this.equip(id)]);
+    if (this.container) out.push([tr('Положить', 'Store'), () => this.store(id, this.host.inventory.count(id))]);
+    else out.push([tr('Выбросить', 'Drop'), () => this.drop(id), true]);
     return out;
   }
 
@@ -550,7 +607,7 @@ export class InventoryPanel {
       const slot = to.slice(5) as Slot;
       const fits = slot === 'hand' ? !!ITEMS[id].equip : ITEMS[id].wear?.slot === slot;
       if (!fits) {
-        this.ctx.hud.toast('Сюда не подходит', 900);
+        this.ctx.hud.toast(tr('Сюда не подходит', 'Does not fit here'), 900);
         this.render();
         return;
       }
@@ -575,7 +632,7 @@ export class InventoryPanel {
     sfx.item(def.kind === 'drink' ? 'drink' : def.kind === 'food' ? 'eat' : def.kind === 'medical' ? 'bandage' : 'pick');
     if (def.battery) {
       player.rechargeBattery(def.battery);
-      this.ctx.hud.toast('Фонарь заряжен');
+      this.ctx.hud.toast(tr('Фонарь заряжен', 'Flashlight charged'));
     } else {
       this.ctx.hud.toast(survival.consume(def));
       if (def.kind === 'medical') this.host.skills.add('firstAid', XP.heal);
@@ -585,7 +642,7 @@ export class InventoryPanel {
   }
 
   private wear(id: ItemId): void {
-    if (!this.host.inventory.wear(id)) this.ctx.hud.toast('Рюкзак переполнен');
+    if (!this.host.inventory.wear(id)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
       sfx.item('cloth');
       this.selected = { from: 'slot', slot: ITEMS[id].wear!.slot };
@@ -595,7 +652,7 @@ export class InventoryPanel {
   }
 
   private equip(id: ItemId): void {
-    if (!this.host.inventory.equip(id)) this.ctx.hud.toast('Рюкзак переполнен');
+    if (!this.host.inventory.equip(id)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
       sfx.item('weapon');
       this.selected = { from: 'slot', slot: 'hand' };
@@ -610,7 +667,7 @@ export class InventoryPanel {
     const id = slot === 'hand' ? inv.hand : inv.worn[slot];
     if (!id) return;
     const ok = slot === 'hand' ? inv.holster() : inv.takeOff(slot);
-    if (!ok) this.ctx.hud.toast('Рюкзак переполнен');
+    if (!ok) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
       sfx.item(slot === 'hand' ? 'move' : 'cloth');
       if (toBox) this.store(id, 1);
@@ -637,7 +694,7 @@ export class InventoryPanel {
       got = this.host.inventory.add(id, count);
       if (got > 0) this.host.containers.take(ref, id, got);
     }
-    if (got < count) this.ctx.hud.toast('Слишком тяжело');
+    if (got < count) this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
     if (got > 0) sfx.item('pick');
     this.selected = got > 0 ? { from: 'bag', id } : this.selected;
     this.render();
@@ -653,7 +710,7 @@ export class InventoryPanel {
       if (got > 0) this.host.containers.take(ref, s.id, got);
       if (got < s.count) full = true;
     }
-    if (full) this.ctx.hud.toast('Не всё влезло');
+    if (full) this.ctx.hud.toast(tr('Не всё влезло', 'Not everything fit'));
     sfx.item('pick');
     this.render();
   }
@@ -722,15 +779,15 @@ function placeKey(p: Place): string {
 }
 
 function describe(def: ItemDef): string {
-  const parts: string[] = [`${def.weight.toFixed(2).replace(/0$/, '')} кг`];
+  const parts: string[] = [`${def.weight.toFixed(2).replace(/0$/, '')} ${tr('кг', 'kg')}`];
   if (def.note) parts.push(noteText(def.note));
-  if (def.hunger) parts.push(`голод ${def.hunger < 0 ? '−' : '+'}${Math.round(Math.abs(def.hunger) * 100)}`);
-  if (def.thirst) parts.push(`жажда ${def.thirst < 0 ? '−' : '+'}${Math.round(Math.abs(def.thirst) * 100)}`);
-  if (def.fatigue) parts.push(`усталость −${Math.round(Math.abs(def.fatigue) * 100)}`);
-  if (def.pain) parts.push('снимает боль');
-  if (def.dressesWound) parts.push('перевязка раны');
-  if (def.health) parts.push(`здоровье +${Math.round(def.health * 100)}`);
-  if (def.battery) parts.push('заряд фонаря');
+  if (def.hunger) parts.push(`${tr('голод', 'hunger')} ${def.hunger < 0 ? '−' : '+'}${Math.round(Math.abs(def.hunger) * 100)}`);
+  if (def.thirst) parts.push(`${tr('жажда', 'thirst')} ${def.thirst < 0 ? '−' : '+'}${Math.round(Math.abs(def.thirst) * 100)}`);
+  if (def.fatigue) parts.push(`${tr('усталость', 'fatigue')} −${Math.round(Math.abs(def.fatigue) * 100)}`);
+  if (def.pain) parts.push(tr('снимает боль', 'relieves pain'));
+  if (def.dressesWound) parts.push(tr('перевязка раны', 'bandages wound'));
+  if (def.health) parts.push(`${tr('здоровье', 'health')} +${Math.round(def.health * 100)}`);
+  if (def.battery) parts.push(tr('заряд фонаря', 'flashlight battery'));
   if (def.wear) for (const { key, label, format } of WEAR_STATS) parts.push(`${label.toLowerCase()} ${format(def.wear.stats[key])}`);
   return parts.join(' · ');
 }

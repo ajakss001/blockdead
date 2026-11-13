@@ -1,3 +1,4 @@
+import { registerDataLocalizer } from '../core/i18n';
 import type { ItemId, WearSlot } from './items';
 
 /**
@@ -199,3 +200,163 @@ export const STARTER_OUTFITS: readonly { id: string; name: string; worn: Partial
 
 /** Colors offered for the top of a starting outfit. */
 export const OUTFIT_TINTS = [0xdcddd8, 0xe2e2de, 0x3d4a5c, 0x4a5a3a, 0x5c3a34, 0x5a5a5e, 0x2a2a2e, 0x7a6a4a] as const;
+
+const CLASS_TEXT: Readonly<Record<ClassId, { name: [string, string]; about: [string, string]; pros: [string[], string[]]; cons: [string[], string[]] }>> = {
+  military: {
+    name: ['Военный', 'Soldier'],
+    about: [
+      'Служил в армии, знает тактику и умеет держать себя в руках.',
+      'Served in the army, knows tactics and keeps a cool head.',
+    ],
+    pros: [
+      ['Выносливость +20%', 'Тревога растёт на 30% медленнее', 'Рюкзак +4 кг', 'Американская полевая форма, разгрузка и армейский рюкзак'],
+      ['Stamina +20%', 'Anxiety grows 30% slower', 'Backpack +4 kg', 'US field uniform, plate carrier and military backpack'],
+    ],
+    cons: [
+      ['Голод и жажда +15%: привык к пайку'],
+      ['Hunger & thirst +15%: used to rations'],
+    ],
+  },
+  swat: {
+    name: ['Спецназ (SWAT)', 'SWAT Officer'],
+    about: [
+      'Штурмовая группа полиции. Тяжёлая броня, железные нервы.',
+      'Police tactical unit. Heavy armor, nerves of steel.',
+    ],
+    pros: [
+      ['Бронежилет: защита от укуса 55%', 'Тревога растёт вдвое медленнее', 'Монтировка для штурма'],
+      ['Body armor: 55% bite protection', 'Anxiety grows half as fast', 'Breaching crowbar'],
+    ],
+    cons: [
+      ['Тяжёлое снаряжение: усталость +25%', 'Громче двигается'],
+      ['Heavy gear: fatigue +25%', 'Moves louder'],
+    ],
+  },
+  police: {
+    name: ['Полицейский', 'Police Officer'],
+    about: [
+      'Патрульный. Знает город и где люди прячут ценное.',
+      'Patrol officer. Knows the city and where people hide valuables.',
+    ],
+    pros: [
+      ['Обыск на 25% быстрее', 'Багажники — ещё быстрее', 'Карта открывается на 30% шире'],
+      ['Search 25% faster', 'Car trunks even faster', 'Map reveals 30% wider'],
+    ],
+    cons: [
+      ['Лёгкая форма: мёрзнет на 15% быстрее'],
+      ['Light uniform: gets cold 15% faster'],
+    ],
+  },
+  firefighter: {
+    name: ['Пожарный', 'Firefighter'],
+    about: [
+      'Ходил в огонь и выносил людей на руках.',
+      'Walked into fire and carried people out in his arms.',
+    ],
+    pros: [
+      ['Удар +30%', 'Холод почти не берёт: −35% к остыванию', 'Рюкзак +2 кг', 'Пожарный топор'],
+      ['Melee damage +30%', 'Resists cold: −35% cooling rate', 'Backpack +2 kg', 'Fire axe'],
+    ],
+    cons: [
+      ['Голод +10%'],
+      ['Hunger +10%'],
+    ],
+  },
+  medic: {
+    name: ['Врач', 'Doctor'],
+    about: [
+      'Работал в приёмном покое. Знает, как лечить, и чем.',
+      'Worked in the ER. Knows how to treat wounds and with what.',
+    ],
+    pros: [
+      ['Бинты и лекарства лечат на 50% лучше', 'Обезболивающее действует сильнее', 'Аптечка с собой'],
+      ['Bandages & medicine heal 50% more', 'Painkillers work stronger', 'Starts with medical supplies'],
+    ],
+    cons: [
+      ['Удар −20%', 'Медицинская форма почти не греет'],
+      ['Melee damage −20%', 'Medical scrubs barely keep warm'],
+    ],
+  },
+  mechanic: {
+    name: ['Механик', 'Mechanic'],
+    about: [
+      'Чинил машины. Знает, где в них что лежит.',
+      'Fixed cars for a living. Knows where everything is kept inside them.',
+    ],
+    pros: [
+      ['Багажники вдвое быстрее', 'Обыск на 10% быстрее', 'Молоток и скотч'],
+      ['Car trunks twice as fast', 'Search 10% faster', 'Hammer and duct tape'],
+    ],
+    cons: [
+      ['Тревога +10%'],
+      ['Anxiety +10%'],
+    ],
+  },
+  builder: {
+    name: ['Строитель', 'Construction Worker'],
+    about: [
+      'Стройка с утра до ночи. Руки сильные, голос громкий.',
+      'On the job site from dawn till dusk. Strong hands, loud voice.',
+    ],
+    pros: [
+      ['Удар +20%', 'Заколачивает в 1,5 раза быстрее', 'Рюкзак +2 кг', 'Гвозди и доски'],
+      ['Melee damage +20%', 'Barricades 1.5× faster', 'Backpack +2 kg', 'Nails and planks'],
+    ],
+    cons: [
+      ['Шумный: +20% к шуму шагов'],
+      ['Noisy: +20% footstep noise'],
+    ],
+  },
+  office: {
+    name: ['Офисный работник', 'Office Worker'],
+    about: [
+      'Отчёты, кофе, дедлайны. Никаких особых навыков.',
+      'Reports, coffee, deadlines. No special survival skills.',
+    ],
+    pros: [
+      ['Ест меньше: голод и жажда −15%', '+4 очка черт'],
+      ['Eats less: hunger & thirst −15%', '+4 trait points'],
+    ],
+    cons: [
+      ['Устаёт на 15% быстрее'],
+      ['Tires 15% faster'],
+    ],
+  },
+  unemployed: {
+    name: ['Безработный', 'Unemployed'],
+    about: [
+      'Без работы и без бонусов — зато ко всему привык.',
+      'No job and no perks — but used to getting by.',
+    ],
+    pros: [
+      ['Голод и жажда −10%', 'Тревога −10%', '+8 очков черт'],
+      ['Hunger & thirst −10%', 'Anxiety −10%', '+8 trait points'],
+    ],
+    cons: [
+      ['Рюкзак −1 кг'],
+      ['Backpack −1 kg'],
+    ],
+  },
+};
+
+const OUTFIT_NAMES: Readonly<Record<string, [string, string]>> = {
+  casual: ['Повседневная', 'Casual'],
+  warm: ['Тёплая', 'Warm'],
+  light: ['Лёгкая', 'Light'],
+  leather: ['Кожанка', 'Leather jacket'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const c of CLASSES) {
+    const t = CLASS_TEXT[c.id];
+    c.name = t.name[idx];
+    c.about = t.about[idx];
+    c.pros = [...t.pros[idx]];
+    c.cons = [...t.cons[idx]];
+  }
+  for (const o of STARTER_OUTFITS as readonly { id: string; name: string }[]) {
+    const names = OUTFIT_NAMES[o.id];
+    if (names) o.name = names[idx];
+  }
+});

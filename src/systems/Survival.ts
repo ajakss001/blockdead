@@ -1,5 +1,6 @@
 import { BASE_MODS, type ClassMods } from '../data/classes';
 import type { ItemDef } from '../data/items';
+import { registerDataLocalizer, tr } from '../core/i18n';
 import { clamp } from '../core/math';
 import { type Hud, severityOf } from '../ui/Hud';
 
@@ -65,6 +66,18 @@ export interface Exposure {
 export type BodyPart = 'head' | 'torso' | 'arms' | 'legs';
 export const BODY_PARTS: readonly BodyPart[] = ['head', 'torso', 'arms', 'legs'];
 export const PART_NAMES: Record<BodyPart, string> = { head: 'голова', torso: 'торс', arms: 'рука', legs: 'нога' };
+
+const PART_TEXT: Readonly<Record<BodyPart, [string, string]>> = {
+  head: ['голова', 'head'],
+  torso: ['торс', 'torso'],
+  arms: ['рука', 'arm'],
+  legs: ['нога', 'leg'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const p of BODY_PARTS) PART_NAMES[p] = PART_TEXT[p][idx];
+});
 
 /** An injury on one part: a scratch or a bite (bleeds until dressed, heals over time). */
 export interface Wound {
@@ -228,7 +241,7 @@ export class Survival implements SurvivalState {
       if (def.thirst) this.thirst = clamp(this.thirst + def.thirst * 0.6, 0, 1);
       this.pain = clamp(this.pain + 0.3, 0, 1);
       this.health = clamp(this.health - 0.06, 0, 1);
-      return 'Живот скрутило: вода была грязной';
+      return tr('Живот скрутило: вода была грязной', 'Stomach cramps: the water was dirty');
     }
     if (def.hunger) this.hunger = clamp(this.hunger + def.hunger, 0, 1);
     if (def.thirst) this.thirst = clamp(this.thirst + def.thirst, 0, 1);
@@ -242,16 +255,16 @@ export class Survival implements SurvivalState {
       const w = this.wounds.filter((x) => x.bleeding).sort((a, b) => (a.kind === 'bite' ? -1 : 1) - (b.kind === 'bite' ? -1 : 1))[0];
       if (w) w.bleeding = false;
       this.wounded = this.wounds.some((x) => x.bleeding);
-      return w ? `Перевязано: ${PART_NAMES[w.part]}` : 'Перевязано';
+      return w ? `${tr('Перевязано', 'Bandaged')}: ${PART_NAMES[w.part]}` : tr('Перевязано', 'Bandaged');
     }
     if (def.cures) {
       if (this.infection <= 0) return def.name;
       if (this.infection < INFECTION_CURABLE) {
         this.infection = 0;
-        return 'Заражение остановлено';
+        return tr('Заражение остановлено', 'Infection stopped');
       }
       this.infection = Math.max(INFECTION_CURABLE, this.infection - 0.12);
-      return 'Заражение замедлено';
+      return tr('Заражение замедлено', 'Infection slowed');
     }
     return def.name;
   }

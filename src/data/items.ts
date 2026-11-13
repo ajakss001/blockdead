@@ -1,3 +1,4 @@
+import { getLang, registerDataLocalizer, tr } from '../core/i18n';
 import { WEAPONS } from '../weapons/config';
 import { AMMO, type AmmoId, GUN_IDS, GUNS, type GunId, MAGS, type MagId, MOD_IDS, MODS, type ModId } from '../weapons/guns';
 /**
@@ -225,6 +226,10 @@ const FIREARM_ITEMS = {
 
 function gunNote(id: GunId): string {
   const g = GUNS[id];
+  if (getLang() === 'en') {
+    const cal = AMMO[g.caliber].name.replace(/ (ammo|shells)$/, '');
+    return `${cal} · ${g.capacity} · heard at ${g.noise} m`;
+  }
   return `${AMMO[g.caliber].name.replace('Патроны ', '')} · ${g.capacity} · слышно за ${g.noise} м`;
 }
 
@@ -354,7 +359,13 @@ export function noteText(note: string): string {
 }
 
 export function dirtLabel(dirt: number): string {
-  return dirt < 0.08 ? 'чистая' : dirt < 0.3 ? 'слегка грязная' : dirt < 0.6 ? 'грязная' : 'очень грязная';
+  return dirt < 0.08
+    ? tr('чистая', 'clean')
+    : dirt < 0.3
+      ? tr('слегка грязная', 'slightly dirty')
+      : dirt < 0.6
+        ? tr('грязная', 'dirty')
+        : tr('очень грязная', 'very dirty');
 }
 
 /** Sum of a clothing stat over everything worn. */
@@ -378,14 +389,325 @@ export interface ItemStack {
 
 /** What a use button says for an item, or null if it can't be used directly. */
 export function useVerb(def: ItemDef): string | null {
-  if (def.kind === 'food') return 'Съесть';
-  if (def.kind === 'drink') return 'Выпить';
-  if (def.dressesWound) return 'Перевязать';
-  if (def.kind === 'medical') return 'Принять';
-  if (def.battery) return 'Вставить в фонарь';
-  if (def.wear) return 'Надеть';
+  if (def.kind === 'food') return tr('Съесть', 'Eat');
+  if (def.kind === 'drink') return tr('Выпить', 'Drink');
+  if (def.dressesWound) return tr('Перевязать', 'Bandage');
+  if (def.kind === 'medical') return tr('Принять', 'Take');
+  if (def.battery) return tr('Вставить в фонарь', 'Load flashlight');
+  if (def.wear) return tr('Надеть', 'Wear');
   return null;
 }
+
+const ITEM_TEXT: Readonly<Record<Exclude<ItemId, GunId | AmmoId | MagId | ModId>, { name: [string, string]; note?: [string, string] }>> = {
+  beans: { name: ['Консервы: фасоль', 'Canned beans'] },
+  soup: { name: ['Консервы: суп', 'Canned soup'] },
+  chips: { name: ['Чипсы', 'Chips'] },
+  chocolate: { name: ['Шоколадка', 'Chocolate bar'] },
+  apple: { name: ['Яблоко (мягкое)', 'Apple (soft)'] },
+  crackers: { name: ['Крекеры', 'Crackers'] },
+  water: { name: ['Бутылка воды', 'Bottle of water'] },
+  emptyBottle: {
+    name: ['Пустая бутылка', 'Empty bottle'],
+    note: ['Набрать воды: из крана, пока она есть, или из сборника дождевой воды.', 'Fill with water: from a tap while it runs, or from a rain collector.'],
+  },
+  dirtyWater: {
+    name: ['Дождевая вода', 'Rainwater'],
+    note: ['Лучше вскипятить на костре: сырая может скрутить живот.', 'Better boil it on a campfire: raw water can make you sick.'],
+  },
+  soda: { name: ['Газировка', 'Soda'] },
+  juice: { name: ['Сок в коробке', 'Juice box'] },
+  bandage: { name: ['Бинт', 'Bandage'] },
+  rag: { name: ['Чистая тряпка', 'Clean rag'] },
+  painkillers: { name: ['Обезболивающее', 'Painkillers'] },
+  antibiotics: {
+    name: ['Антибиотики', 'Antibiotics'],
+    note: ['Останавливают заражение, если принять рано.', 'Stops infection if taken early.'],
+  },
+  batteries: { name: ['Батарейки', 'Batteries'] },
+  knife: {
+    name: ['Тактический нож', 'Tactical knife'],
+    note: ['Быстрый, тихий, недалеко бьёт', 'Fast, quiet, short reach'],
+  },
+  bat: {
+    name: ['Бейсбольная бита', 'Baseball bat'],
+    note: ['Длинная, сбивает с ног', 'Long reach, knocks down'],
+  },
+  hammer: {
+    name: ['Молоток-гвоздодёр', 'Claw hammer'],
+    note: ['Инструмент и оружие', 'Tool and weapon'],
+  },
+  crowbar: {
+    name: ['Лом', 'Crowbar'],
+    note: ['Тяжёлый, вскрывает двери', 'Heavy, pries doors open'],
+  },
+  axe: {
+    name: ['Пожарный топор', 'Fire axe'],
+    note: ['Медленный, но смертельный', 'Slow, but lethal'],
+  },
+  nails: { name: ['Гвозди', 'Nails'] },
+  planks: { name: ['Доска', 'Plank'] },
+  rope: { name: ['Верёвка', 'Rope'] },
+  tape: { name: ['Скотч', 'Duct tape'] },
+  lighter: { name: ['Зажигалка', 'Lighter'] },
+  matches: { name: ['Спички', 'Matches'] },
+  junk: { name: ['Хлам', 'Scrap'] },
+  soap: {
+    name: ['Мыло', 'Soap'],
+    note: ['Для стирки одежды (скоро)', 'For washing clothes (soon)'],
+  },
+  tshirt: { name: ['Футболка', 'T-shirt'] },
+  hoodie: { name: ['Толстовка', 'Hoodie'] },
+  leatherJacket: { name: ['Кожаная куртка', 'Leather jacket'] },
+  workJacket: { name: ['Рабочая куртка', 'Work jacket'] },
+  jeans: { name: ['Джинсы', 'Jeans'] },
+  cargoPants: { name: ['Штаны карго', 'Cargo pants'] },
+  sneakers: { name: ['Кроссовки', 'Sneakers'] },
+  boots: { name: ['Рабочие ботинки', 'Work boots'] },
+  militaryJacket: { name: ['Армейский китель', 'Army field jacket'] },
+  militaryPants: { name: ['Армейские брюки', 'Army trousers'] },
+  combatBoots: { name: ['Берцы', 'Combat boots'] },
+  outfitSwat: {
+    name: ['Форма SWAT', 'SWAT uniform'],
+    note: ['Тактический комбинезон, наколенники, ботинки', 'Tactical coveralls, knee pads, boots'],
+  },
+  outfitMilitary: {
+    name: ['Полевая форма армии США', 'US Army field uniform'],
+    note: ['Камуфляж, берцы', 'Camo, combat boots'],
+  },
+  outfitPolice: {
+    name: ['Полицейская форма', 'Police uniform'],
+    note: ['Рубашка, брюки, ботинки', 'Shirt, trousers, boots'],
+  },
+  outfitFirefighter: {
+    name: ['Боёвка пожарного', 'Firefighter turnout gear'],
+    note: ['Тяжёлая, тёплая, держит укус', 'Heavy, warm, stops bites'],
+  },
+  outfitDoctor: {
+    name: ['Медицинская форма', 'Medical scrubs'],
+    note: ['Почти не греет, грязь видна сразу', 'Barely warms, shows dirt right away'],
+  },
+  outfitMechanic: {
+    name: ['Комбинезон механика', 'Mechanic coveralls'],
+    note: ['Плотный, к грязи привычный', 'Thick, used to grease and dirt'],
+  },
+  outfitBuilder: {
+    name: ['Рабочая форма строителя', 'Construction workwear'],
+    note: ['Сигнальный жилет, ботинки', 'Hi-vis vest, work boots'],
+  },
+  swatShirt: { name: ['Тактическая куртка', 'Tactical jacket'] },
+  swatPants: { name: ['Тактические брюки', 'Tactical trousers'] },
+  policeShirt: { name: ['Полицейская рубашка', 'Police shirt'] },
+  policePants: { name: ['Полицейские брюки', 'Police trousers'] },
+  fireCoat: { name: ['Боёвка пожарного', 'Firefighter coat'] },
+  firePants: { name: ['Пожарные брюки', 'Firefighter pants'] },
+  gorkaJacket: { name: ['Куртка «Горка»', 'Gorka mountain jacket'] },
+  gorkaPants: { name: ['Брюки «Горка»', 'Gorka mountain pants'] },
+  helmetMilitary: {
+    name: ['Армейский шлем', 'Combat helmet'],
+    note: ['Кевлар, чехол, крепление под ПНВ', 'Kevlar, cover, NVG mount'],
+  },
+  helmetSwat: { name: ['Шлем SWAT', 'SWAT helmet'] },
+  helmetFire: {
+    name: ['Пожарный шлем', 'Firefighter helmet'],
+    note: ['Поля и назатыльник', 'Wide brim and neck flap'],
+  },
+  helmetConstruction: { name: ['Строительная каска', 'Hard hat'] },
+  vestMilitary: {
+    name: ['Армейская разгрузка', 'Military plate carrier'],
+    note: ['Плиты и подсумки: +3 кг к переноске', 'Plates and pouches: +3 kg carry capacity'],
+  },
+  vestSwat: {
+    name: ['Бронежилет SWAT', 'SWAT body armor'],
+    note: ['Подсумки: +2 кг к переноске', 'Pouches: +2 kg carry capacity'],
+  },
+  backpackMilitary: {
+    name: ['Армейский рюкзак', 'Military backpack'],
+    note: ['Вмещает +16 кг, вещи в нём легче на четверть', 'Holds +16 kg, items inside weigh 25% less'],
+  },
+  backpackSchool: {
+    name: ['Школьный рюкзак', 'School backpack'],
+    note: ['Вмещает +7 кг', 'Holds +7 kg'],
+  },
+  backpackHiking: {
+    name: ['Туристический рюкзак', 'Hiking backpack'],
+    note: ['Самый вместительный: +20 кг, вещи в нём легче на пятую часть', 'Largest pack: +20 kg, items inside weigh 20% less'],
+  },
+  bagMedic: {
+    name: ['Медицинская сумка', 'Medic bag'],
+    note: ['Через плечо: +6 кг, вещи в ней легче на десятую часть', 'Shoulder bag: +6 kg, items inside weigh 10% less'],
+  },
+  toolboxMechanic: {
+    name: ['Ящик с инструментами', 'Toolbox'],
+    note: ['В руке, пока руки свободны; с оружием — на бедре. +5 кг', 'Held when hands are free; at the hip when armed. +5 kg'],
+  },
+  workGloves: { name: ['Рабочие перчатки', 'Work gloves'] },
+  fireGloves: { name: ['Перчатки пожарного', 'Firefighter gloves'] },
+  glassesBallistic: {
+    name: ['Баллистические очки', 'Ballistic glasses'],
+    note: ['Тонированные линзы, держат осколки', 'Tinted lenses, stop shrapnel'],
+  },
+  gogglesTactical: {
+    name: ['Тактические очки-маска', 'Tactical goggles'],
+    note: ['Закрытая маска на ремешке', 'Sealed strap goggles'],
+  },
+  balaclava: {
+    name: ['Балаклава', 'Balaclava'],
+    note: ['Закрывает голову, шею, волосы и уши', 'Covers head, neck, hair and ears'],
+  },
+  shemagh: {
+    name: ['Шемаг', 'Shemagh'],
+    note: ['Платок на шею и лицо', 'Neck and face wrap'],
+  },
+  maskHalf: { name: ['Тканевая полумаска', 'Cloth half-mask'] },
+  tacticalGloves: { name: ['Тактические перчатки', 'Tactical gloves'] },
+  medGloves: { name: ['Медицинские перчатки', 'Medical gloves'] },
+  map: {
+    name: ['Карта района', 'District map'],
+    note: ['Отмечены заправки, участок, большие магазины. Кто-то обвёл выезды из города.', 'Gas stations, police station and large stores marked. Someone circled the exits out of town.'],
+  },
+  walkie: {
+    name: ['Рация', 'Walkie-talkie'],
+    note: ['Только шипение на всех каналах.', 'Nothing but static on every channel.'],
+  },
+  armoryKey: {
+    name: ['Ключ от оружейной', 'Armory key'],
+    note: ['Тяжёлый ключ с биркой «Оружейная». Открывает дверь в участке.', 'Heavy key tagged "Armory". Opens the door at the police station.'],
+  },
+  armoryNote: {
+    name: ['Записка с кодом', 'Note with code'],
+    note: ['«Код оружейной сменили: 4-7-1-9. Не записывать!» — записали.', '"Armory code changed: 4-7-1-9. Do not write it down!" — they wrote it down.'],
+  },
+  keycardGreen: {
+    name: ['Пропуск «Гелиос», уровень 1', 'Helios keycard, Level 1'],
+    note: ['Зелёная карта с полоской. Открывает лабораторный зал.', 'Green magnetic keycard. Opens the laboratory hall.'],
+  },
+  keycardBlue: {
+    name: ['Пропуск «Гелиос», уровень 2', 'Helios keycard, Level 2'],
+    note: ['Синяя карта инженера. Открывает генераторную.', 'Blue engineer keycard. Opens the generator room.'],
+  },
+  fuse: {
+    name: ['Предохранитель', 'Fuse'],
+    note: ['Керамический, на 60 ампер. Генератору нужно три.', 'Ceramic, 60 amp. The generator needs three.'],
+  },
+  labNote1: {
+    name: ['Журнал охраны', 'Security log'],
+    note: [
+      '«Код изолятора меняют по понедельникам. Первая цифра — {lab1}, остальное знает старшая смена. Пропуск лаборантов — в шкафчике.»',
+      '"Containment code changes on Mondays. First digit is {lab1}, senior shift knows the rest. Lab staff keycard is in the locker."',
+    ],
+  },
+  labNote2: {
+    name: ['Записка лаборанта', 'Lab assistant note'],
+    note: [
+      '«Вторая цифра — {lab2}. Синюю карту инженера оставила в холодильнике с пробами, не ругайтесь.»',
+      '"Second digit is {lab2}. Left the blue engineer card in the sample fridge, don\'t be mad."',
+    ],
+  },
+  labNote3: {
+    name: ['Служебная записка', 'Internal memo'],
+    note: [
+      '«Генератор отключён по приказу. Предохранители раздали по отделам. Третья цифра кода — {lab3}.»',
+      '"Generator shut down by order. Fuses distributed across departments. Third code digit is {lab3}."',
+    ],
+  },
+  labNote4: {
+    name: ['Распечатка с сервера', 'Server printout'],
+    note: [
+      '«…журнал доступа: изолятор, код {lab1}-{lab2}-{lab3}-?, последняя смена: {lab4}. Связь потеряна в 04:12.»',
+      '"...access log: containment, code {lab1}-{lab2}-{lab3}-?, last shift: {lab4}. Connection lost at 04:12."',
+    ],
+  },
+  labJournal1: {
+    name: ['Буклет НИИ «Гелиос»', 'Helios Institute brochure'],
+    note: [
+      '«НИИ „Гелиос“: изучаем северные грибковые штаммы ради медицины будущего.» На обороте кто-то написал: «будущего не будет».',
+      '"Helios Research Institute: studying northern fungal strains for the medicine of tomorrow." On the back someone scrawled: "there is no tomorrow."',
+    ],
+  },
+  labJournal2: {
+    name: ['Лабораторный журнал', 'Laboratory journal'],
+    note: [
+      'День 12: штамм Г-7 растёт в темноте и тянется к теплу. День 19: у двоих сотрудников жар и бессонница, их перевели в изолятор. День 23: они больше не узнают нас.',
+      'Day 12: strain G-7 grows in the dark and reaches toward warmth. Day 19: two staff members have fever and insomnia, moved to containment. Day 23: they no longer recognize us.',
+    ],
+  },
+  labJournal3: {
+    name: ['Последняя запись', 'Final entry'],
+    note: [
+      '«Изолятор полон. Генератор отключили, чтобы двери держали. Препарат Г-7 не лечит, но останавливает. Если вы это читаете — уходите на север.»',
+      '"Containment is full. Generator shut down so the doors hold. Compound G-7 doesn\'t cure it, but halts it. If you read this — head north."',
+    ],
+  },
+  campNote1: {
+    name: ['Дневник выживших', 'Survivors\' diary'],
+    note: [
+      'День 6. Нас девять. Воду берём из бойлера, по ночам не шумим. Вчера Миша не вернулся с вылазки. Если найдёте это — мы ушли на север, к реке.',
+      'Day 6. Nine of us left. Getting water from the boiler, staying quiet at night. Misha didn\'t return from his run yesterday. If you find this — we went north toward the river.',
+    ],
+  },
+  campNote2: {
+    name: ['Список дежурств', 'Watch roster'],
+    note: [
+      'Ночь: Оля, Тимур. Утро: я и дед. Фонари только красным. Двери держать на засове. Батарейки — в синем ящике.',
+      'Night: Olya, Timur. Morning: me and the old man. Red filters on flashlights only. Keep doors bolted. Batteries are in the blue crate.',
+    ],
+  },
+  campNote3: {
+    name: ['Записка у костра', 'Campfire note'],
+    note: [
+      '«Не стреляйте в тех, кто стучит дважды, это наши. Еду делим поровну. Сирену не трогать — на неё сходятся они».',
+      '"Don\'t shoot anyone who knocks twice, they\'re ours. Food split evenly. Don\'t touch the siren — it draws them in."',
+    ],
+  },
+  campNote4: {
+    name: ['Карта с пометками', 'Annotated map'],
+    note: [
+      'Кружки вокруг аптеки и склада. Крест на заправке: «пусто». Стрелка на север: «эвакуация? проверить».',
+      'Circles around the pharmacy and warehouse. Cross over the gas station: "empty". Arrow north: "evacuation? check".',
+    ],
+  },
+  ration: {
+    name: ['Сухпаёк', 'MRE ration'],
+    note: ['Армейский рацион на сутки: галеты, тушёнка, шоколад.', '24-hour military ration: crackers, canned meat, chocolate.'],
+  },
+  serumG7: {
+    name: ['Препарат Г-7', 'Compound G-7'],
+    note: ['Экспериментальный. Останавливает заражение даже поздно.', 'Experimental. Halts infection even at a late stage.'],
+  },
+  scrubsTop: { name: ['Медицинская рубашка', 'Scrub top'] },
+  scrubsPants: { name: ['Медицинские брюки', 'Scrub pants'] },
+  officeShirt: { name: ['Офисная рубашка', 'Office shirt'] },
+  slacks: { name: ['Брюки', 'Slacks'] },
+  dressShoes: { name: ['Туфли', 'Dress shoes'] },
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  (WEAR_STATS[0] as { label: string }).label = idx ? 'Bite protection' : 'Защита от укуса';
+  (WEAR_STATS[1] as { label: string }).label = idx ? 'Warmth' : 'Тепло';
+
+  for (const [k, text] of Object.entries(ITEM_TEXT) as [keyof typeof ITEM_TEXT, (typeof ITEM_TEXT)[keyof typeof ITEM_TEXT]][]) {
+    const def = ITEMS[k];
+    def.name = text.name[idx];
+    if (text.note) def.note = text.note[idx];
+  }
+  for (const id of GUN_IDS) {
+    ITEMS[id].name = GUNS[id].name;
+    ITEMS[id].note = gunNote(id);
+  }
+  for (const id of Object.keys(AMMO) as AmmoId[]) {
+    ITEMS[id].name = AMMO[id].name;
+  }
+  const magNote = idx ? 'Spare magazine: faster empty reload' : 'Запасной: с ним перезарядка с пустым магазином быстрее';
+  for (const id of Object.keys(MAGS) as MagId[]) {
+    ITEMS[id].name = MAGS[id].name;
+    ITEMS[id].note = magNote;
+  }
+  for (const id of MOD_IDS) {
+    ITEMS[id].name = MODS[id].name;
+    ITEMS[id].note = MODS[id].note;
+  }
+});
 
 /** Kept one piece per stack with its own state (clothing: dirt; weapons: wear). */
 export function onePiece(def: ItemDef): boolean {

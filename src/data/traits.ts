@@ -1,3 +1,4 @@
+import { registerDataLocalizer } from '../core/i18n';
 import { type ClassId, classDef, type ClassMods } from './classes';
 
 /**
@@ -105,3 +106,35 @@ export function withTraits(m: ClassMods, ids: readonly TraitId[]): ClassMods {
 export function traitLearn(ids: readonly TraitId[]): number {
   return ids.reduce((k, id) => k * (traitDef(id)?.learn ?? 1), 1);
 }
+
+const TRAIT_TEXT: Readonly<Record<TraitId, { name: [string, string]; about: [string, string] }>> = {
+  athletic: { name: ['Атлет', 'Athletic'], about: ['Устаёт на 20% медленнее', 'Tires 20% slower'] },
+  strong: { name: ['Сильный', 'Strong'], about: ['Удар +15%', 'Melee damage +15%'] },
+  quiet: { name: ['Тихий шаг', 'Light-footed'], about: ['Шумит на 20% меньше', 'Makes 20% less noise'] },
+  fastLearner: { name: ['Быстро учится', 'Fast learner'], about: ['Навыки растут на 25% быстрее', 'Skills grow 25% faster'] },
+  keenEye: { name: ['Зоркий', 'Keen-eyed'], about: ['Обыск на 15% быстрее', 'Search 15% faster'] },
+  calm: { name: ['Хладнокровный', 'Calm'], about: ['Тревога растёт на 25% медленнее', 'Anxiety grows 25% slower'] },
+  outdoorsman: { name: ['Турист', 'Outdoorsman'], about: ['Мёрзнет на 20% медленнее, карта открывается шире', 'Gets cold 20% slower, map reveals wider'] },
+  smallEater: { name: ['Малоежка', 'Light eater'], about: ['Голод и жажда −15%', 'Hunger & thirst −15%'] },
+  packMule: { name: ['Выносливая спина', 'Sturdy back'], about: ['Рюкзак +3 кг', 'Backpack +3 kg'] },
+  fastHealer: { name: ['Быстро заживает', 'Fast healer'], about: ['Бинты и лекарства лечат на 25% лучше', 'Bandages & medicine heal 25% more'] },
+  unfit: { name: ['Не в форме', 'Out of shape'], about: ['Устаёт на 25% быстрее', 'Tires 25% faster'] },
+  weak: { name: ['Слабый', 'Weak'], about: ['Удар −15%, рюкзак −2 кг', 'Melee damage −15%, backpack −2 kg'] },
+  clumsy: { name: ['Неуклюжий', 'Clumsy'], about: ['Шумит на 25% больше', 'Makes 25% more noise'] },
+  slowLearner: { name: ['Тугодум', 'Slow learner'], about: ['Навыки растут на 25% медленнее', 'Skills grow 25% slower'] },
+  anxious: { name: ['Пугливый', 'Anxious'], about: ['Тревога растёт на 30% быстрее', 'Anxiety grows 30% faster'] },
+  coldProne: { name: ['Мерзляк', 'Chilly'], about: ['Мёрзнет на 25% быстрее', 'Gets cold 25% faster'] },
+  glutton: { name: ['Обжора', 'High appetite'], about: ['Голод и жажда +20%', 'Hunger & thirst +20%'] },
+  shortSighted: { name: ['Близорукий', 'Short-sighted'], about: ['Обыск на 15% медленнее, карта открывается уже', 'Search 15% slower, map reveals narrower'] },
+  slowHealer: { name: ['Плохо заживает', 'Slow healer'], about: ['Лечение на 25% слабее', 'Healing 25% weaker'] },
+  lost: { name: ['Топографический кретин', 'Poor sense of direction'], about: ['Карта открывается вдвое уже', 'Map reveals half as wide'] },
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const t of TRAITS) {
+    const text = TRAIT_TEXT[t.id];
+    t.name = text.name[idx];
+    t.about = text.about[idx];
+  }
+});

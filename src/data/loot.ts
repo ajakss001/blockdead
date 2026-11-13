@@ -1,3 +1,4 @@
+import { registerDataLocalizer } from '../core/i18n';
 import { mulberry32 } from '../core/random';
 import type { Zone } from '../world/gen/layout';
 import { hash3 } from '../world/gen/noise';
@@ -218,3 +219,68 @@ export function rollLoot(seed: number, containerId: number, type: ContainerType,
   }
   return out;
 }
+
+const LOOT_NAMES: Readonly<Record<ContainerType, [string, string]>> = {
+  fridge: ['Холодильник', 'Fridge'],
+  counter: ['Кухонный шкаф', 'Kitchen cabinet'],
+  wardrobe: ['Шкаф', 'Wardrobe'],
+  tvstand: ['Тумба', 'TV stand'],
+  shelf: ['Стеллаж', 'Shelving unit'],
+  shopCounter: ['Прилавок', 'Shop counter'],
+  crate: ['Ящик', 'Crate'],
+  trunk: ['Багажник', 'Car trunk'],
+  trash: ['Мусорный бак', 'Trash bin'],
+  stash: ['Сундук', 'Storage chest'],
+  desk: ['Стол', 'Desk'],
+  cabinet: ['Шкаф для бумаг', 'Filing cabinet'],
+  nightstand: ['Тумбочка', 'Nightstand'],
+  bookcase: ['Книжный шкаф', 'Bookcase'],
+  boxes: ['Коробки', 'Boxes'],
+  suitcase: ['Чемодан', 'Suitcase'],
+  mailboxes: ['Почтовые ящики', 'Mailboxes'],
+  pharmacy: ['Аптечная полка', 'Pharmacy shelf'],
+  cooler: ['Витрина с напитками', 'Drink cooler'],
+  cafe: ['Стойка кафе', 'Cafe counter'],
+  laundry: ['Стиральная машина', 'Washing machine'],
+  bodyMilitary: ['Погибший военный', 'Fallen soldier'],
+  bodyPolice: ['Погибший полицейский', 'Fallen police officer'],
+  bodyMedic: ['Погибший медик', 'Fallen medic'],
+  bodyTwin: ['Ваш прошлый выживший', 'Your past survivor'],
+  bodyFire: ['Погибший пожарный', 'Fallen firefighter'],
+  gasShelf: ['Стеллаж', 'Store shelf'],
+  gasCounter: ['Касса', 'Cash register'],
+  garage: ['Верстак', 'Workbench'],
+  policeLocker: ['Шкафчик', 'Locker'],
+  policeDesk: ['Стол', 'Desk'],
+  armory: ['Стойка оружейной', 'Armory rack'],
+  superShelf: ['Стеллаж', 'Supermarket shelf'],
+  clothesRack: ['Вешалка с одеждой', 'Clothing rack'],
+  warehouse: ['Паллета', 'Pallet'],
+  plantStore: ['Шкаф с инструментом', 'Tool cabinet'],
+  labLocker: ['Шкафчик персонала', 'Staff locker'],
+  labBench: ['Лабораторный стол', 'Lab bench'],
+  labFridge: ['Холодильник с пробами', 'Sample fridge'],
+  labDesk: ['Стол', 'Desk'],
+  serverRack: ['Серверная стойка', 'Server rack'],
+  labTools: ['Шкаф инженера', 'Engineer cabinet'],
+  isolation: ['Медицинский шкаф изолятора', 'Containment med cabinet'],
+  checkin: ['Стойка регистрации', 'Check-in counter'],
+  planeCabin: ['Салон самолёта', 'Plane cabin'],
+  cargoHold: ['Грузовой отсек', 'Cargo hold'],
+  militaryLocker: ['Армейский шкафчик', 'Army locker'],
+  canteen: ['Кухня столовой', 'Mess hall kitchen'],
+  vehicleCabin: ['Кабина', 'Vehicle cab'],
+  campStash: ['Запасы лагеря', 'Camp stash'],
+  generator: ['Генератор', 'Generator'],
+  militaryCrate: ['Армейский ящик', 'Military crate'],
+  baseArmory: ['Оружейный ящик', 'Weapons crate'],
+  bodyZombie: ['Тело', 'Corpse'],
+  reception: ['Стойка охраны', 'Security desk'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const [k, names] of Object.entries(LOOT_NAMES) as [ContainerType, [string, string]][]) {
+    LOOT[k].name = names[idx];
+  }
+});

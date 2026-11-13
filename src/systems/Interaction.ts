@@ -1,4 +1,5 @@
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
+import { registerDataLocalizer, tr } from '../core/i18n';
 import { XP } from './Skills';
 import { type ItemId, ITEMS, NOTE_VARS } from '../data/items';
 import type { GameContext } from '../GameContext';
@@ -28,6 +29,35 @@ const LOCKS: Record<string, Lock> = {
   labPower: { power: true, prompt: 'Электронный замок — нет питания' },
   labIsolation: { power: true, code: ['labNote1', 'labNote2', 'labNote3', 'labNote4'], prompt: 'Изолятор: кодовый замок' },
 };
+
+const LOCK_TEXT: Readonly<Record<string, { prompt: [string, string]; keyName?: [string, string] }>> = {
+  armory: {
+    prompt: ['Заперто — открыть ключом или кодом', 'Locked — open with key or code'],
+    keyName: ['ключ от оружейной', 'armory key'],
+  },
+  labGreen: {
+    prompt: ['Считыватель: нужен пропуск уровня 1', 'Card reader: Level 1 keycard required'],
+    keyName: ['пропуск уровня 1', 'Level 1 keycard'],
+  },
+  labBlue: {
+    prompt: ['Считыватель: нужен пропуск уровня 2', 'Card reader: Level 2 keycard required'],
+    keyName: ['пропуск уровня 2', 'Level 2 keycard'],
+  },
+  labPower: {
+    prompt: ['Электронный замок — нет питания', 'Electronic lock — no power'],
+  },
+  labIsolation: {
+    prompt: ['Изолятор: кодовый замок', 'Containment: keypad lock'],
+  },
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const [k, t] of Object.entries(LOCK_TEXT)) {
+    LOCKS[k].prompt = t.prompt[idx];
+    if (t.keyName) LOCKS[k].keyName = t.keyName[idx];
+  }
+});
 /** Fuses the lab's generator takes. */
 const FUSES = 3;
 
@@ -138,7 +168,7 @@ export class Interaction {
         this.cancelSearch(true);
       } else {
         this.searchT += dt;
-        hud.showAction(`Обыск: ${this.containers.name(this.searchRef!)}`, this.searchT / this.searchTime);
+        hud.showAction(`${tr('Обыск', 'Searching')}: ${this.containers.name(this.searchRef!)}`, this.searchT / this.searchTime);
         if (this.searchT >= this.searchTime) {
           const ref = this.searchRef!;
           this.onSkill?.('search', ref.type === 'trunk' ? XP.trunk : XP.search);
@@ -172,7 +202,7 @@ export class Interaction {
       if (s) {
         if (s.act) s.run();
         else hud.toast(s.text, 1200);
-      } else if (!ref) hud.toast('Здесь нечего обыскивать', 900);
+      } else if (!ref) hud.toast(tr('Здесь нечего обыскивать', 'Nothing to search here'), 900);
       else if (ref.type === 'generator') this.startGenerator(ref);
       else if (this.containers.isOpened(ref)) {
         sfx.containerOpen(CONTAINER_SOUND[ref.type] ?? 'shelf', spot(ref));
@@ -208,7 +238,7 @@ export class Interaction {
     if (lying) {
       this.focus = null;
       this.setTargeting(true);
-      this.ctx.hud.setPrompt(`${key}Подобрать: ${ITEMS[groundItem(lying.weapon)].name}`);
+      this.ctx.hud.setPrompt(`${key}${tr('Подобрать', 'Pick up')}: ${ITEMS[groundItem(lying.weapon)].name}`);
       return;
     }
     const ref = this.target();
@@ -217,11 +247,17 @@ export class Interaction {
     this.setTargeting(!!ref || !!door);
     if (door && (!ref || this.doorCloser(door, ref))) {
       const state = this.doors.describe(door);
-      const hold = this.ctx.input.mode === 'kbm' ? 'держать E' : 'удерживать';
-      if (state === 'boarded') this.ctx.hud.setPrompt(`Заколочено досками: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — оторвать доску` : ''}`);
-      else if (state === 'barricaded') this.ctx.hud.setPrompt('Дверь заколочена');
+      const hold = this.ctx.input.mode === 'kbm' ? tr('держать E', 'hold E') : tr('удерживать', 'hold');
+      if (state === 'boarded')
+        this.ctx.hud.setPrompt(
+          `${tr('Заколочено досками', 'Boarded up')}: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — ${tr('оторвать доску', 'pry plank off')}` : ''}`,
+        );
+      else if (state === 'barricaded') this.ctx.hud.setPrompt(tr('Дверь заколочена', 'Door is barricaded'));
       else if (state === 'locked') this.ctx.hud.setPrompt(`${key}${this.lockPrompt(door)}`);
-      else this.ctx.hud.setPrompt(`${key}${state === 'open' ? 'Закрыть' : 'Открыть'} дверь${this.canNail(door) ? ` · ${hold} — заколотить` : ''}`);
+      else
+        this.ctx.hud.setPrompt(
+          `${key}${state === 'open' ? tr('Закрыть дверь', 'Close door') : tr('Открыть дверь', 'Open door')}${this.canNail(door) ? ` · ${hold} — ${tr('заколотить', 'board up')}` : ''}`,
+        );
       return;
     }
     if (!ref) {
@@ -232,10 +268,14 @@ export class Interaction {
     }
     if (ref.type === 'generator') {
       const on = this.power?.on(ref.x, ref.z);
-      this.ctx.hud.setPrompt(on ? 'Генератор работает' : `${key}Запустить генератор (предохранители ${Math.min(FUSES, this.inventory.count('fuse'))}/${FUSES})`);
+      this.ctx.hud.setPrompt(
+        on
+          ? tr('Генератор работает', 'Generator is running')
+          : `${key}${tr('Запустить генератор (предохранители', 'Start generator (fuses')} ${Math.min(FUSES, this.inventory.count('fuse'))}/${FUSES})`,
+      );
       return;
     }
-    const verb = this.containers.isOpened(ref) ? 'Открыть' : 'Обыскать';
+    const verb = this.containers.isOpened(ref) ? tr('Открыть', 'Open') : tr('Обыскать', 'Search');
     this.ctx.hud.setPrompt(`${key}${verb}: ${this.containers.name(ref)}`);
   }
 
@@ -255,23 +295,32 @@ export class Interaction {
       }
       if (!l || !by) {
         const msg = !l
-          ? 'Заперто'
+          ? tr('Заперто', 'Locked')
           : l.power && !powered
-            ? 'Электронный замок мёртв: нет питания'
+            ? tr('Электронный замок мёртв: нет питания', 'Electronic lock is dead: no power')
             : l.code && !l.key
-              ? `Нужен код: известно цифр ${notes} из ${l.code.length}`
-              : `Заперто. Нужен ${l.keyName ?? 'ключ'}${l.code ? ' или код' : ''}`;
+              ? tr(`Нужен код: известно цифр ${notes} из ${l.code.length}`, `Code required: ${notes} of ${l.code.length} digits known`)
+              : `${tr('Заперто. Нужен', 'Locked. Need')} ${l.keyName ?? tr('ключ', 'key')}${l.code ? tr(' или код', ' or code') : ''}`;
         this.ctx.hud.toast(msg, 1800);
         if (at) sfx.doorStuck(at);
         this.player.busy = false;
         return;
       }
       this.doors.unlock(door);
-      this.ctx.hud.toast(by === 'key' ? (l.key?.startsWith('keycard') ? 'Пропуск принят' : 'Ключ подошёл') : by === 'code' ? `Код набран: ${lock === 'labIsolation' ? ['lab1', 'lab2', 'lab3', 'lab4'].map((k) => NOTE_VARS[k]).join('-') : l.digits}` : 'Замок открыт', 1600);
+      this.ctx.hud.toast(
+        by === 'key'
+          ? l.key?.startsWith('keycard')
+            ? tr('Пропуск принят', 'Keycard accepted')
+            : tr('Ключ подошёл', 'Key worked')
+          : by === 'code'
+            ? `${tr('Код набран', 'Code entered')}: ${lock === 'labIsolation' ? ['lab1', 'lab2', 'lab3', 'lab4'].map((k) => NOTE_VARS[k]).join('-') : l.digits}`
+            : tr('Замок открыт', 'Lock opened'),
+        1600,
+      );
     }
     const state = this.doors.describe(door);
     if (!this.doors.toggle(door)) {
-      this.ctx.hud.toast(state === 'boarded' ? 'Заколочено досками' : 'Заколочено с той стороны', 1200);
+      this.ctx.hud.toast(state === 'boarded' ? tr('Заколочено досками', 'Boarded up') : tr('Заколочено с той стороны', 'Barricaded from the other side'), 1200);
       if (at) sfx.doorStuck(at);
     } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
     this.player.busy = false;
@@ -280,9 +329,9 @@ export class Interaction {
   /** What a locked door's prompt says (an electronic lock tells whether it has power). */
   private lockPrompt(door: DoorRef): string {
     const l = LOCKS[this.doors.lockOf(door) ?? ''];
-    if (!l) return 'Заперто';
+    if (!l) return tr('Заперто', 'Locked');
     const at = this.doors.info(door);
-    if (l.power && at && this.power?.on(at.x, at.z)) return l.code ? `${l.prompt} — набрать код` : 'Замок открыт';
+    if (l.power && at && this.power?.on(at.x, at.z)) return l.code ? `${l.prompt} — ${tr('набрать код', 'enter code')}` : tr('Замок открыт', 'Lock opened');
     return l.prompt;
   }
 
@@ -291,12 +340,12 @@ export class Interaction {
     const hud = this.ctx.hud;
     if (!this.power) return;
     if (this.power.on(ref.x, ref.z)) {
-      hud.toast('Генератор уже работает', 1200);
+      hud.toast(tr('Генератор уже работает', 'Generator is already running'), 1200);
       return;
     }
     const have = this.inventory.count('fuse');
     if (have < FUSES) {
-      hud.toast(`Не хватает предохранителей: ${have} из ${FUSES}`, 1600);
+      hud.toast(tr(`Не хватает предохранителей: ${have} из ${FUSES}`, `Not enough fuses: ${have} of ${FUSES}`), 1600);
       sfx.containerOpen('locker', spot(ref));
       return;
     }
@@ -304,7 +353,7 @@ export class Interaction {
     this.syncBody();
     this.power.start(ref.x, ref.z);
     sfx.containerOpen('locker', spot(ref));
-    hud.toast('Генератор запущен: свет и электронные замки работают', 2200);
+    hud.toast(tr('Генератор запущен: свет и электронные замки работают', 'Generator started: lights and electronic locks are online'), 2200);
   }
 
   /** A hammer (in hand or in the bag), a board and four nails — and a closed door that takes one more. */
@@ -358,12 +407,12 @@ export class Interaction {
       else hud.hideAction();
     };
     if (this.player.controller.speed > 0.4 || input.isHeld('attack')) {
-      stop('Прервано');
+      stop(tr('Прервано', 'Interrupted'));
       return true;
     }
     const time = (this.boardPry ? PRY_TIME : NAIL_TIME) * this.boardMul;
     this.boardT += dt;
-    hud.showAction(this.boardPry ? 'Отдираю доску' : 'Заколачиваю дверь', this.boardT / time);
+    hud.showAction(this.boardPry ? tr('Отдираю доску', 'Prying plank off') : tr('Заколачиваю дверь', 'Boarding up door'), this.boardT / time);
     // Hammer blows: loud.
     this.boardKnock -= dt;
     const at = this.doors.info(door);
@@ -386,8 +435,8 @@ export class Interaction {
         this.doors.addPlank(door, c.x, c.z);
         this.onSkill?.('carpentry', XP.nail);
         stop(null);
-        hud.toast(`Доска прибита: ${this.doors.planksOn(door)}/${MAX_PLANKS}`, 1100);
-      } else stop('Нечем заколотить');
+        hud.toast(`${tr('Доска прибита', 'Plank nailed')}: ${this.doors.planksOn(door)}/${MAX_PLANKS}`, 1100);
+      } else stop(tr('Нечем заколотить', 'Nothing to board up with'));
     }
     return true;
   }
@@ -423,12 +472,12 @@ export class Interaction {
       inv.version++;
       this.syncBody();
     } else if (inv.add(item, 1) === 0) {
-      this.ctx.hud.toast('Слишком тяжело', 900);
+      this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'), 900);
       return;
     }
     this.ground!.take(w);
     sfx.item('pick');
-    this.ctx.hud.toast(`Подобрано: ${ITEMS[item].name}`, 1200);
+    this.ctx.hud.toast(`${tr('Подобрано', 'Picked up')}: ${ITEMS[item].name}`, 1200);
   }
 
   /** Tell the touch controls whether there is something to use (only when it changes). */
@@ -455,7 +504,7 @@ export class Interaction {
     this.searchT = -1;
     this.ctx.events.emit('ui:busy', { busy: false });
     this.searchRef = null;
-    if (notify) this.ctx.hud.toast('Прервано', 900);
+    if (notify) this.ctx.hud.toast(tr('Прервано', 'Interrupted'), 900);
     else this.ctx.hud.hideAction();
   }
 
@@ -465,7 +514,7 @@ export class Interaction {
     if (inv.hand) return;
     const best = (this.lastWeapon && inv.count(this.lastWeapon) > 0 ? this.lastWeapon : null) ?? WEAPON_PRIORITY.find((id) => inv.count(id) > 0);
     if (!best) {
-      this.ctx.hud.toast('Нечем вооружиться', 900);
+      this.ctx.hud.toast(tr('Нечем вооружиться', 'No weapon to equip'), 900);
       return;
     }
     inv.equip(best);
@@ -476,7 +525,7 @@ export class Interaction {
     const inv = this.inventory;
     const id = inv.quick[i];
     if (!id || !inv.has(id)) {
-      this.ctx.hud.toast(`Слот ${i + 1} пуст`, 800);
+      this.ctx.hud.toast(tr(`Слот ${i + 1} пуст`, `Slot ${i + 1} is empty`), 800);
       return;
     }
     if (inv.hand === id) {
@@ -484,7 +533,7 @@ export class Interaction {
       return;
     }
     if (!inv.equip(id)) {
-      this.ctx.hud.toast('Рюкзак переполнен', 900);
+      this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'), 900);
       return;
     }
     this.syncBody();
@@ -495,7 +544,7 @@ export class Interaction {
     if (!inv.hand) return;
     const held = inv.hand;
     if (!inv.holster()) {
-      this.ctx.hud.toast('Рюкзак переполнен', 900);
+      this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'), 900);
       return;
     }
     this.lastWeapon = held;

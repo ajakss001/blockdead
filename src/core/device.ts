@@ -17,9 +17,12 @@ export function detectDevice(): DeviceInfo {
   const ua = navigator.userAgent;
   // iPadOS reports itself as Mac; touch points give it away.
   const ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  const touch = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const touch = navigator.maxTouchPoints > 0 || coarse;
   const tablet = /iPad|Tablet/i.test(ua) || (ios && !/iPhone|iPod/i.test(ua)) || (/Android/i.test(ua) && !/Mobile/i.test(ua));
-  const mobile = !tablet && (/Android|iPhone|iPod|Mobile/i.test(ua) || (touch && Math.min(screen.width, screen.height) < 600));
+  const mobile =
+    !tablet &&
+    (/Android|iPhone|iPod|Mobile/i.test(ua) || coarse || (touch && Math.min(screen.width, screen.height) < 600));
   cached = {
     type: tablet ? 'tablet' : mobile ? 'mobile' : 'desktop',
     touch,

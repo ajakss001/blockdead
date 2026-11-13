@@ -1,5 +1,6 @@
 import type { GameContext } from '../GameContext';
 import { sfx } from '../audio/Sound';
+import { onLangChange, tr } from '../core/i18n';
 import { MAP_CELL, type MapMemory } from '../systems/MapMemory';
 import { CHUNK, ROAD_HALF, type WorldLayout, type Zone } from '../world/gen/layout';
 import { POI, type PoiSite } from '../world/gen/poi';
@@ -62,7 +63,7 @@ export class MapPanel {
     bar.className = 'map__bar';
     const title = document.createElement('div');
     title.className = 'map__title';
-    title.textContent = 'Карта';
+    title.textContent = tr('Карта', 'Map');
     this.info.className = 'map__info';
     const btn = (label: string, fn: () => void, cls = '') => {
       const b = document.createElement('button');
@@ -73,12 +74,18 @@ export class MapPanel {
     };
     const tools = document.createElement('div');
     tools.className = 'map__tools';
+    const meBtn = btn(tr('Я', 'Me'), () => this.center());
     tools.append(
       btn('−', () => this.zoom(1 / 1.5)),
       btn('+', () => this.zoom(1.5)),
-      btn('Я', () => this.center()),
+      meBtn,
       btn('✕', () => this.close(), 'map__btn--close'),
     );
+    onLangChange(() => {
+      title.textContent = tr('Карта', 'Map');
+      meBtn.textContent = tr('Я', 'Me');
+      if (this.isOpen) this.draw();
+    });
     bar.append(title, this.info, tools);
     this.canvas.className = 'map__canvas';
     this.root.append(this.canvas, bar);
@@ -344,7 +351,10 @@ export class MapPanel {
     g.fill();
 
     const scaleM = Math.round(100 / s / 10) * 10;
-    this.info.textContent = `${scaleM} м в 100 пикс. · отметок: ${memory.marks.length} · нажмите на карту, чтобы отметить`;
+    this.info.textContent = tr(
+      `${scaleM} м в 100 пикс. · отметок: ${memory.marks.length} · нажмите на карту, чтобы отметить`,
+      `${scaleM} m per 100 px · marks: ${memory.marks.length} · click map to mark`,
+    );
   }
 
   private seen(site: PoiSite): boolean {

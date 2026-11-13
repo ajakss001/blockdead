@@ -1,3 +1,4 @@
+import { tr } from '../core/i18n';
 import { type Credit, LIBRARY_CREDITS, MODEL_CREDITS, SOUND_CREDITS } from '../data/credits';
 
 /**
@@ -7,9 +8,18 @@ import { type Credit, LIBRARY_CREDITS, MODEL_CREDITS, SOUND_CREDITS } from '../d
 export function openCredits(parent: HTMLElement): void {
   const root = el('div', 'credits');
   const box = el('div', 'credits__box');
-  box.append(el('div', 'credits__title', 'Авторы'));
-  box.append(el('p', 'credits__note', 'BlockDead: мир создан процедурно для этой игры; большая часть звуков синтезируется в игре.'));
-  const models = section('Модели', MODEL_CREDITS, 'Загрузка…');
+  box.append(el('div', 'credits__title', tr('Авторы', 'Credits')));
+  box.append(
+    el(
+      'p',
+      'credits__note',
+      tr(
+        'BlockDead: мир создан процедурно для этой игры; большая часть звуков синтезируется в игре.',
+        'BlockDead: the world is procedurally generated for this game; most sounds are synthesized in-game.',
+      ),
+    ),
+  );
+  const models = section(tr('Модели', 'Models'), MODEL_CREDITS, tr('Загрузка…', 'Loading…'));
   box.append(models);
   // Authors of the installed models come with the model library (public/models/models.json).
   void fetch(`${import.meta.env.BASE_URL}models/models.json`)
@@ -17,12 +27,27 @@ export function openCredits(parent: HTMLElement): void {
     .catch(() => ({ models: [] }))
     .then((j: { models: { title: string; author: string; license: string; url: string }[] }) => {
       const seen = new Map<string, Credit>();
-      for (const m of j.models) if (!seen.has(m.url)) seen.set(m.url, { what: 'Модель', title: m.title, author: m.author, license: m.license === 'CC0-1.0' ? 'CC0' : 'CC BY 4.0', url: m.url, changes: 'упрощена, текстуры уменьшены' });
-      models.replaceWith(section('Модели', [...MODEL_CREDITS, ...seen.values()], 'Сторонних моделей пока нет.'));
+      for (const m of j.models)
+        if (!seen.has(m.url))
+          seen.set(m.url, {
+            what: tr('Модель', 'Model'),
+            title: m.title,
+            author: m.author,
+            license: m.license === 'CC0-1.0' ? 'CC0' : 'CC BY 4.0',
+            url: m.url,
+            changes: tr('упрощена, текстуры уменьшены', 'simplified, textures downscaled'),
+          });
+      models.replaceWith(
+        section(
+          tr('Модели', 'Models'),
+          [...MODEL_CREDITS, ...seen.values()],
+          tr('Сторонних моделей пока нет.', 'No third-party models yet.'),
+        ),
+      );
     });
-  box.append(section('Звуки', SOUND_CREDITS, ''));
-  box.append(section('Библиотеки', LIBRARY_CREDITS, ''));
-  const close = el('button', 'credits__close', 'Закрыть');
+  box.append(section(tr('Звуки', 'Sounds'), SOUND_CREDITS, ''));
+  box.append(section(tr('Библиотеки', 'Libraries'), LIBRARY_CREDITS, ''));
+  const close = el('button', 'credits__close', tr('Закрыть', 'Close'));
   box.append(close);
   root.append(box);
   // The pause screen under it grabs the mouse on click: keep clicks here.
@@ -44,7 +69,7 @@ function section(title: string, list: readonly Credit[], empty: string): HTMLEle
   if (list.length === 0) s.append(el('div', 'credits__empty', empty));
   for (const c of list) {
     const row = el('div', 'credits__row');
-    row.append(el('div', 'credits__what', `${c.what}: «${c.title}»`));
+    row.append(el('div', 'credits__what', tr(`${c.what}: «${c.title}»`, `${c.what}: "${c.title}"`)));
     row.append(el('div', 'credits__by', `${c.author} · ${c.license}${c.changes ? ` · ${c.changes}` : ''}`));
     row.append(el('div', 'credits__url', c.url));
     s.append(row);

@@ -1,3 +1,4 @@
+import { tr } from '../../core/i18n';
 import { mulberry32 } from '../../core/random';
 import type { DecalKind } from './surfaces';
 
@@ -121,7 +122,10 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       g.save();
       g.translate(c, c);
       g.rotate((rand() - 0.5) * 0.12);
-      const [l1, l2] = kind === 'noFuel' ? ['БЕНЗИНА', 'НЕТ'] : ['ЭВАКУАЦИЯ', '→ СЕВЕР'];
+      const [l1, l2] =
+        kind === 'noFuel'
+          ? [tr('БЕНЗИНА', 'NO'), tr('НЕТ', 'FUEL')]
+          : [tr('ЭВАКУАЦИЯ', 'EVACUATION'), tr('→ СЕВЕР', '→ NORTH')];
       g.fillText(l1, 0, -size * 0.1, size * 0.8);
       g.fillText(l2, 0, size * 0.12, size * 0.8);
       g.restore();
@@ -135,7 +139,7 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.font = `bold ${Math.round(size * 0.16)}px monospace`;
-      g.fillText('ОТМЕНЁН', c, c, size * 0.92);
+      g.fillText(tr('ОТМЕНЁН', 'CANCELLED'), c, c, size * 0.92);
       break;
     }
     case 'biohazard': {
@@ -160,7 +164,7 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.font = `bold ${Math.round(size * 0.08)}px sans-serif`;
-      g.fillText('БИОЛОГИЧЕСКАЯ ОПАСНОСТЬ', c, c, size * 0.96);
+      g.fillText(tr('БИОЛОГИЧЕСКАЯ ОПАСНОСТЬ', 'BIOHAZARD'), c, c, size * 0.96);
       break;
     }
     case 'sheen': {

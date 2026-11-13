@@ -1,4 +1,5 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
+import { registerDataLocalizer } from '../core/i18n';
 import RAW from '../data/gearFit.json';
 import type { GearId } from '../data/items';
 import type { BodyId, RigAsset } from './assets';
@@ -21,6 +22,22 @@ export type V3 = [number, number, number];
 export const REGIONS = ['head', 'neck', 'torso', 'arms', 'hands', 'hips', 'legs', 'feet'] as const;
 export type Region = (typeof REGIONS)[number];
 export const REGION_NAMES: Record<Region, string> = { head: 'голова', neck: 'шея', torso: 'торс', arms: 'руки', hands: 'кисти', hips: 'таз', legs: 'ноги', feet: 'ступни' };
+
+const REGION_TEXT: Readonly<Record<Region, [string, string]>> = {
+  head: ['голова', 'head'],
+  neck: ['шея', 'neck'],
+  torso: ['торс', 'torso'],
+  arms: ['руки', 'arms'],
+  hands: ['кисти', 'hands'],
+  hips: ['таз', 'hips'],
+  legs: ['ноги', 'legs'],
+  feet: ['ступни', 'feet'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const r of REGIONS) REGION_NAMES[r] = REGION_TEXT[r][idx];
+});
 
 export interface PieceFit {
   pos?: V3;

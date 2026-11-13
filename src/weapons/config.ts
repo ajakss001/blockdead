@@ -1,3 +1,4 @@
+import { registerDataLocalizer } from '../core/i18n';
 import type { ItemId } from '../data/items';
 
 /** Melee weapons with their own procedural models (buildWeapon) and stats; the held poses are in player/held. */
@@ -80,6 +81,20 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponConfig>> = {
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
+
+const WEAPON_NAMES: Readonly<Record<WeaponId, [string, string]>> = {
+  fireAxe: ['Пожарный топор', 'Fire axe'],
+  crowbar: ['Лом', 'Crowbar'],
+  hammer: ['Молоток-гвоздодёр', 'Claw hammer'],
+  tacticalKnife: ['Тактический нож', 'Tactical knife'],
+};
+
+registerDataLocalizer((lang) => {
+  const idx = lang === 'en' ? 1 : 0;
+  for (const id of WEAPON_IDS) {
+    WEAPONS[id].name = WEAPON_NAMES[id][idx];
+  }
+});
 
 /** The weapon an item is, if it is one of these. */
 export function weaponOf(item: string | null | undefined): WeaponConfig | null {
