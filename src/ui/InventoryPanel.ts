@@ -123,15 +123,16 @@ export class InventoryPanel {
       if (e.code === 'Escape') this.escDown = true;
       if (!this.isOpen || !CLOSE_KEYS.includes(e.code)) return;
       e.preventDefault();
+      e.stopPropagation();
       // A key still held from before the window opened (holding E through the search) or its
       // auto-repeat must not close it: only a new press after a release does.
       if (e.repeat || this.heldAtOpen.has(e.code)) return;
-      this.close();
+      this.close(e.code === 'Escape');
     });
     window.addEventListener('keyup', (e) => {
       this.heldAtOpen.delete(e.code);
       if (e.code === 'Escape') {
-        if (this.isOpen && !this.escDown) this.close();
+        if (this.isOpen && !this.escDown) this.close(true);
         this.escDown = false;
       }
     });
@@ -139,7 +140,7 @@ export class InventoryPanel {
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return;
       if (this.releasing) this.releasing = false;
-      else if (this.isOpen) this.close();
+      else if (this.isOpen) this.close(true);
     });
     this.root.addEventListener('pointermove', (e) => this.onDragMove(e));
     this.root.addEventListener('pointerup', (e) => this.onDragEnd(e));
@@ -181,7 +182,7 @@ export class InventoryPanel {
     this.render();
   }
 
-  close(): void {
+  close(viaEsc = false): void {
     if (!this.isOpen) return;
     this.cancelDrag();
     this.isOpen = false;
@@ -193,7 +194,7 @@ export class InventoryPanel {
     this.container = null;
     this.ctx.loop.resume('inventory');
     this.ctx.events.emit('ui:modal', { open: false });
-    this.ctx.requestPointerLock();
+    if (!viaEsc) this.ctx.requestPointerLock();
     this.host.onClose();
   }
 

@@ -112,20 +112,21 @@ export class MapPanel {
       if (e.code === 'Escape') this.escDown = true;
       if (!this.isOpen || !CLOSE_KEYS.includes(e.code)) return;
       e.preventDefault();
+      e.stopPropagation();
       if (e.repeat || this.heldAtOpen.has(e.code)) return;
-      this.close();
+      this.close(e.code === 'Escape');
     });
     window.addEventListener('keyup', (e) => {
       this.heldAtOpen.delete(e.code);
       if (e.code === 'Escape') {
-        if (this.isOpen && !this.escDown) this.close();
+        if (this.isOpen && !this.escDown) this.close(true);
         this.escDown = false;
       }
     });
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return;
       if (this.releasing) this.releasing = false;
-      else if (this.isOpen) this.close();
+      else if (this.isOpen) this.close(true);
     });
   }
 
@@ -144,7 +145,7 @@ export class MapPanel {
     this.center();
   }
 
-  close(): void {
+  close(viaEsc = false): void {
     if (!this.isOpen) return;
     this.isOpen = false;
     this.pointers.clear();
@@ -152,7 +153,7 @@ export class MapPanel {
     sfx.item('invClose');
     this.ctx.loop.resume('map');
     this.ctx.events.emit('ui:modal', { open: false });
-    this.ctx.requestPointerLock();
+    if (!viaEsc) this.ctx.requestPointerLock();
   }
 
   private center(): void {

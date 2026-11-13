@@ -171,8 +171,8 @@ export class BodyModel {
     j.setEffectiveWeight(air ? Math.min(1, this.airT / 0.1) : j.getEffectiveWeight());
     r.restPose();
     r.mixer.update(dt);
-    // Looking down: the back and the neck bend (the head comes forward over the belly).
-    const down = Math.max(0, -pitch - 0.2);
+    // Looking down: the back and the neck bend (reduced while crouching so shoulders/backpack stay clear of the camera).
+    const down = Math.max(0, -pitch - 0.2) * (1 - crouchT * 0.7);
     r.bone('Spine1').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.18));
     r.bone('Spine2').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.18));
     r.bone('Neck').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.3));

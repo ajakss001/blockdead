@@ -275,6 +275,12 @@ export class Player {
     // Crouching and standing up follow the controller's eye height (the collision's), the head's sway on top.
     const baseY = y + c.eyeHeight(alpha);
     eye.y = baseY + clamp(eye.y - (y + this.body.standEye(crouchT)), -0.12, 0.12);
+    // While crouched, nudge the camera slightly ahead of the leaning torso/backpack so they never clip the view.
+    if (crouchT > 0.01) {
+      const fwdPush = crouchT * 0.14;
+      eye.x += -sin * fwdPush;
+      eye.z += -cos * fwdPush;
+    }
     // …never into a wall: the eyes only as far forward of the body's centre as there is room.
     let ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
     if (ahead > 0.02) {

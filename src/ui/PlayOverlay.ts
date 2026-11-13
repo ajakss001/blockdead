@@ -112,10 +112,9 @@ export class PlayOverlay {
     // Game windows release the lock on purpose: never the full screen over them or right after them.
     ctx.events.on('ui:modal', ({ open }) => {
       this.modal = open;
-      if (open) {
-        this.released = true;
-        window.clearTimeout(this.graceTimer);
-      } else {
+      this.released = true;
+      window.clearTimeout(this.graceTimer);
+      if (!open) {
         this.graceTimer = window.setTimeout(() => {
           if (!this.ctx.input.active && !this.modal) this.showSoft();
         }, RELOCK_GRACE_MS);

@@ -132,7 +132,8 @@ export class CarHud {
       if (!this.modal.hidden) {
         if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyR') {
           e.preventDefault();
-          this.closeMechanics();
+          e.stopPropagation();
+          this.closeMechanics(e.code === 'Escape');
         }
         return;
       }
@@ -172,13 +173,13 @@ export class CarHud {
     this.renderMechanics(car);
   }
 
-  closeMechanics(): void {
+  closeMechanics(viaEsc = false): void {
     if (this.modal.hidden) return;
     this.modal.hidden = true;
     this.inspectedCar = null;
     this.ctx.loop.resume('inventory');
     this.ctx.events.emit('ui:modal', { open: false });
-    this.ctx.requestPointerLock();
+    if (!viaEsc) this.ctx.requestPointerLock();
     this.onSave();
   }
 
