@@ -12,18 +12,20 @@ const STICK_DEADZONE = 0.15;
 
 type ButtonKind = 'hold' | 'tap' | 'toggle' | 'latch';
 
+const touchIcon = (name: string): string => `<img src="${import.meta.env.BASE_URL}ui/touch/${name}.png" alt="" draggable="false">`;
+
 const TOUCH_ICONS: Partial<Record<Action, string>> = {
-  inventory: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="#1b1915" stroke-width="1.2" stroke-linejoin="round"><path d="M9 5a3 3 0 0 1 6 0v1h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V5zm2 0v1h2V5a1 1 0 0 0-2 0z"/><rect x="8.5" y="13" width="7" height="4" rx="1" fill="#1b1915" opacity="0.28"/></svg>',
-  map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21" fill="currentColor" fill-opacity="0.22"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/><path d="M6 13c2-2 4 1 6-1s4 2 6 0" stroke-dasharray="2 2"/></svg>',
-  flashlight: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="#1b1915" stroke-width="1.1" stroke-linejoin="round"><path d="M15 3l6 6-3 3-2-1-7 7-3-3 7-7-1-2 3-3z"/><circle cx="11.5" cy="12.5" r="1.1" fill="#1b1915"/></svg>',
-  weapon: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="#1b1915" stroke-width="1.1" stroke-linejoin="round"><path d="M3 8h16l1.5 2-1.5 2H11l-1.8 6H5.5l1.6-6H3V8z"/><circle cx="12" cy="13" r="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
-  attack: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="13" r="6.5"/><line x1="11" y1="3.5" x2="11" y2="7.5"/><line x1="11" y1="18.5" x2="11" y2="22.5"/><line x1="1.5" y1="13" x2="5.5" y2="13"/><line x1="16.5" y1="13" x2="20.5" y2="13"/><path d="M16 8c0-2.5 2-3.5 1.5-5.5 2 1 3.5 3 3 5-.2.9-1 1.5-2 1.8" fill="currentColor" stroke="none"/></svg>',
-  sprint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="15" cy="5" r="2" fill="currentColor" stroke="none"/><path d="M6 16l4-4 3 1.5 2.5-4.5"/><path d="M9.5 12l-2-3 4-2 3 2 3-1"/><path d="M5 20l4.5-3.5"/></svg>',
-  crouch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="14.5" cy="5.5" r="2" fill="currentColor" stroke="none"/><path d="M7 18l4-5 3.5 1.5v4.5h3"/><path d="M11 13l3-3.5 4 1.5"/></svg>',
-  jump: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="#1b1915" stroke-width="1" stroke-linejoin="round"><path d="M9 20c3-4 4-8 4-12H9.5L14 3l4.5 5H15c0 5-1.5 9-4 12H9z"/></svg>',
-  use: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="#1b1915" stroke-width="1" stroke-linejoin="round"><path d="M6 14a6 6 0 1 1 12 0" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M11 11V7.5a1 1 0 1 1 2 0V11h1V8.5a1 1 0 1 1 2 0V14a4 4 0 0 1-8 0v-2.5a1 1 0 1 1 2 0V11h1z"/></svg>',
-  reload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><polygon points="21 3 21 9 15 9" fill="currentColor" stroke="none"/></svg>',
-  aim: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="2" x2="12" y2="6.5"/><line x1="12" y1="17.5" x2="12" y2="22"/><line x1="2" y1="12" x2="6.5" y2="12"/><line x1="17.5" y1="12" x2="22" y2="12"/></svg>',
+  inventory: touchIcon('inventory'),
+  map: touchIcon('map'),
+  flashlight: touchIcon('flashlight'),
+  weapon: touchIcon('weapon'),
+  attack: touchIcon('attack'),
+  sprint: touchIcon('sprint'),
+  crouch: touchIcon('crouch'),
+  jump: touchIcon('jump'),
+  use: touchIcon('use'),
+  reload: touchIcon('reload'),
+  aim: touchIcon('aim'),
 };
 
 /**

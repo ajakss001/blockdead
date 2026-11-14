@@ -311,7 +311,12 @@ function cordon(b: Builder, x: number, z: number, rand: Rand, bodies: BodyMode):
   for (let n = 0; n < 2; n++) {
     const cx = x + (rand() - 0.5) * 8;
     const cz = z + (rand() - 0.5) * 8;
-    b.block(0x3e4a34, cx - 0.5, 0, cz - 0.3, 1.0, 0.5, 0.6, 'wood', true);
+    const cp = new Place(b, cx, 0, cz);
+    if (cp.model('supplyCrate', rand, 0, 0, 0, rand() * 6, 1.15, 0.78, 0.15)) {
+      b.solid(cx - 0.5, cz - 0.3, cx + 0.5, cz + 0.3, 0, 0.5);
+    } else {
+      b.block(0x3e4a34, cx - 0.5, 0, cz - 0.3, 1.0, 0.5, 0.6, 'wood', true);
+    }
     b.container('crate', cx, cz + 0.5);
   }
   for (let i = 0; i < 3; i++) groundDecal(b, 'decalLitter', x + (rand() - 0.5) * 14, 0, z + (rand() - 0.5) * 14, 2.4, rand);

@@ -18,7 +18,7 @@
  * The game draws these merged into its chunk meshes with the world material (no extra draw calls).
  * Usage: npm run prep-models
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
@@ -131,17 +131,20 @@ function bounds(parts) {
   return { min, max };
 }
 
-/** Length along +X, flip if asked, real size, standing on y = 0, centered. */
+/** Length along +X (or keep orientation with noTurn), real size, standing on y = 0, centered. */
 function normalize(parts, cfg) {
   let b = bounds(parts);
-  const turn = b.max[2] - b.min[2] > b.max[0] - b.min[0];
+  const turn = !cfg.noTurn && b.max[2] - b.min[2] > b.max[0] - b.min[0];
   const rot = (arr) => {
     for (let k = 0; k < arr.length; k += 3) {
       let x = arr[k];
+      let y = arr[k + 1];
       let z = arr[k + 2];
+      if (cfg.standUp) [x, y, z] = [z, x, y];
       if (turn) [x, z] = [z, -x];
       if (cfg.flip) [x, z] = [-x, -z];
       arr[k] = x;
+      arr[k + 1] = y;
       arr[k + 2] = z;
     }
   };
@@ -150,7 +153,15 @@ function normalize(parts, cfg) {
     rot(p.nrm);
   }
   b = bounds(parts);
-  const s = cfg.length ? cfg.length / (b.max[0] - b.min[0]) : 1;
+  const s = cfg.length
+    ? cfg.length / Math.max(1e-4, b.max[0] - b.min[0])
+    : cfg.width
+      ? cfg.width / Math.max(1e-4, b.max[0] - b.min[0])
+      : cfg.height
+        ? cfg.height / Math.max(1e-4, b.max[1] - b.min[1])
+        : cfg.depth
+          ? cfg.depth / Math.max(1e-4, b.max[2] - b.min[2])
+          : 1;
   const cx = (b.min[0] + b.max[0]) / 2;
   const cz = (b.min[2] + b.max[2]) / 2;
   for (const p of parts) for (let k = 0; k < p.pos.length; k += 3) {
@@ -390,7 +401,10 @@ function decode(texture) {
   const mime = texture.getMimeType();
   try {
     if (mime === 'image/png') {
-      const png = PNG.sync.read(Buffer.from(data));
+      let buf = Buffer.from(data);
+      const iend = buf.indexOf(Buffer.from('49454e44ae426082', 'hex'));
+      if (iend >= 0) buf = buf.subarray(0, iend + 8);
+      const png = PNG.sync.read(buf);
       return { w: png.width, h: png.height, px: png.data };
     }
     if (mime === 'image/jpeg') {
@@ -507,8 +521,45 @@ const index = [];
 const layers = [];
 const docs = new Map();
 
+let prevBin = null;
+let prevAtlas = null;
+const prevByName = new Map();
+if (existsSync(join(OUT, 'models.json')) && existsSync(join(OUT, 'models.bin')) && existsSync(join(OUT, 'atlas.jpg'))) {
+  const prevJson = JSON.parse(readFileSync(join(OUT, 'models.json'), 'utf8'));
+  prevBin = readFileSync(join(OUT, 'models.bin'));
+  prevAtlas = jpeg.decode(readFileSync(join(OUT, 'atlas.jpg')), { useTArray: true }).data;
+  for (const m of prevJson.models ?? []) prevByName.set(m.name, m);
+}
+
 for (const cfg of MODELS) {
-  const file = join(IN, cfg.src, 'model.glb');
+  const file = join(IN, cfg.src, cfg.file ?? 'model.glb');
+  if (!existsSync(file)) {
+    const prev = prevByName.get(cfg.name);
+    if (!prev || !prevBin || !prevAtlas) {
+      throw new Error(`Missing source ${file} and no pre-baked entry for ${cfg.name}`);
+    }
+    const vLen = prev.vertices * STRIDE;
+    const iLen = prev.indices * 2 + (prev.indices % 2 ? 2 : 0);
+    const vbuf = prevBin.subarray(prev.vOffset, prev.vOffset + vLen);
+    const ibuf = prevBin.subarray(prev.iOffset, prev.iOffset + iLen);
+    const layerSize = ATLAS * ATLAS * 4;
+    const layer = prevAtlas.subarray(prev.layer * layerSize, (prev.layer + 1) * layerSize);
+    const vOffset = offset;
+    chunks.push(vbuf);
+    offset += vbuf.length;
+    const iOffset = offset;
+    chunks.push(ibuf);
+    offset += ibuf.length;
+    layers.push(layer);
+    index.push({
+      ...prev,
+      layer: layers.length - 1,
+      vOffset,
+      iOffset,
+    });
+    console.log(`${cfg.name.padEnd(18)} preserved from existing public/models/`);
+    continue;
+  }
   let doc = docs.get(file);
   if (!doc) {
     doc = await io.read(file);
@@ -538,6 +589,16 @@ for (const cfg of MODELS) {
   // Glass last: the game draws the tail of the index buffer as translucent car glass.
   parts.sort((x, y) => Number(x.glass) - Number(y.glass));
   const { atlas, textured, flats } = bakeAtlas(parts);
+  if (cfg.postApoc) {
+    // Subtle desaturation + darkening so bright AI-generated props blend naturally with the night/fog palette.
+    for (let o = 0; o < atlas.length; o += 4) {
+      const r = atlas[o], g = atlas[o + 1], bl = atlas[o + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * bl;
+      atlas[o] = Math.min(255, Math.round((lum + (r - lum) * 0.78) * 0.86));
+      atlas[o + 1] = Math.min(255, Math.round((lum + (g - lum) * 0.78) * 0.86));
+      atlas[o + 2] = Math.min(255, Math.round((lum + (bl - lum) * 0.78) * 0.86));
+    }
+  }
   if (cfg.recolor) {
     // Strong reds (red-cross emblems, red splashes) into the given color, keeping their shading.
     for (let o = 0; o < atlas.length; o += 4) {

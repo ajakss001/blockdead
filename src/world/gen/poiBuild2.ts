@@ -70,6 +70,7 @@ function signText(p: Place, text: string, x: number, y: number, z: number, cell:
 /** A shopping cart (static): wire basket on legs, red handle. Local yaw turns it. */
 export function cart(p: Place, x: number, z: number, yaw: number, tipped = false): void {
   const q = tipped ? p.at(x, z).tipped(yaw, 0, Math.PI / 2 - 0.15, 0.3) : p.at(x, z).tipped(yaw);
+  if (q.model('shoppingCart', 0, 0, 0, 0, 0, 1, 0.55, 0.55)) return;
   const W = 0x8a8c8e;
   q.box(W, 0, 0.42, 0, 0.55, 0.03, 0.85, 'metal');
   q.box(W, 0.27, 0.45, 0, 0.02, 0.45, 0.85, 'metal');

@@ -198,6 +198,10 @@ function beacon(c: Ctx, lx: number, y: number, lz: number, size: number, mode: n
 
 /** Barrel standing at a point. */
 function barrel(c: Ctx, lx: number, lz: number, color: number, y = 0): void {
+  if (c.p.model('barrel', c.rand, lx, y, lz, c.rand() * 6, 1, 0.65, 0.4)) {
+    c.p.solid(lx, lz, 0.6, 0.6, 0.9);
+    return;
+  }
   c.p.cyl(color, lx, y + 0.45, lz, 0.3, 0.9, 'metal');
   c.p.cyl(char(color, 0.4), lx, y + 0.9, lz, 0.31, 0.04, 'metal');
   c.p.solid(lx, lz, 0.6, 0.6, 0.9);

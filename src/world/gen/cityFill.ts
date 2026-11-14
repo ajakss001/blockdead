@@ -1,5 +1,6 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { buildCar, CAR_PAINTS } from '../props/car';
+import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
@@ -198,25 +199,40 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
   }
   // Pay booth by the entrance (street side).
   const bz = south ? z0 + STALL_D + 1.2 : z1 - STALL_D - 2.6;
-  b.block(0x6a6e66, x0 + 0.6, 0, bz, 1.4, 2.3, 1.4, 'metal', true);
-  b.block(PAL.window, x0 + 0.55, 1.1, bz + 0.3, 1.5, 0.8, 0.8, 'glass');
+  const booth = new Place(b, x0 + 1.3, 0, bz + 0.7, south ? 0 : 2);
+  if (booth.model('guardBooth', rand, 0, 0, 0, 0, 0.72, 0.72, 0.25)) {
+    b.solid(x0 + 0.4, bz - 0.1, x0 + 2.2, bz + 1.6, 0, 2.3);
+  } else {
+    b.block(0x6a6e66, x0 + 0.6, 0, bz, 1.4, 2.3, 1.4, 'metal', true);
+    b.block(PAL.window, x0 + 0.55, 1.1, bz + 0.3, 1.5, 0.8, 0.8, 'glass');
+  }
 }
 
 /** Wheeled steel dumpster; `along` is the long axis. */
 function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
   const sx = along === 'x' ? 1.8 : 1.1;
   const sz = along === 'x' ? 1.1 : 1.8;
-  b.block(DUMPSTER, x, 0.12, z, sx, 1.18, sz, 'metal', true);
-  b.block(0x2a3a2a, x - 0.04, 1.3, z - 0.04, sx + 0.08, 0.06, sz + 0.08, 'metal');
+  const dp = new Place(b, x + sx / 2, 0, z + sz / 2, along === 'x' ? 0 : 1);
+  if (dp.model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35)) {
+    b.solid(x, z, x + sx, z + sz, 0.12, 1.3);
+  } else {
+    b.block(DUMPSTER, x, 0.12, z, sx, 1.18, sz, 'metal', true);
+    b.block(0x2a3a2a, x - 0.04, 1.3, z - 0.04, sx + 0.08, 0.06, sz + 0.08, 'metal');
+  }
   b.batch.addShadow(_m.makeTranslation(x + sx / 2, PAVE.plaza, z + sz / 2), sx * 1.25, sz * 1.25, 0.025);
 }
 
 /** A pallet with a stack of crates on it (sometimes searchable). */
 function crates(b: Builder, x: number, z: number, rand: Rand): void {
-  b.block(0x6a5a40, x, 0, z, 1.0, 0.14, 1.0, 'wood', true);
+  const cp = new Place(b, x + 0.5, 0, z + 0.5, Math.floor(rand() * 4) as 0 | 1 | 2 | 3);
+  if (cp.model(rand() < 0.5 ? 'palletCrates' : 'woodenCrate', rand, 0, 0, 0, 0, 1, 0.82, 0.08)) {
+    b.solid(x, z, x + 1.0, z + 1.0, 0, 0.9);
+  } else {
+    b.block(0x6a5a40, x, 0, z, 1.0, 0.14, 1.0, 'wood', true);
+    const h = 1 + Math.floor(rand() * 2);
+    for (let k = 0; k < h; k++) b.block(PAL.crate, x + 0.08 + (rand() - 0.5) * 0.1, 0.14 + k * 0.62, z + 0.08, 0.84, 0.6, 0.84, 'wood');
+  }
   b.batch.addShadow(_m.makeTranslation(x + 0.5, PAVE.plaza, z + 0.5), 1.35, 1.35, 0.025);
-  const h = 1 + Math.floor(rand() * 2);
-  for (let k = 0; k < h; k++) b.block(PAL.crate, x + 0.08 + (rand() - 0.5) * 0.1, 0.14 + k * 0.62, z + 0.08, 0.84, 0.6, 0.84, 'wood');
   if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);
 }
 

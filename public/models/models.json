@@ -1067,6 +1067,1098 @@
    "author": "shubham_mishra",
    "license": "CC-BY-4.0",
    "url": "https://sketchfab.com/3d-models/old-hospital-stretcher-f6f350bf2c754644a69dac2ac21e1230"
+  },
+  {
+   "name": "meshy_keypad",
+   "group": "keypad",
+   "tint": false,
+   "layer": 41,
+   "min": [
+    -0.0788,
+    0,
+    -0.0478
+   ],
+   "size": [
+    0.1576,
+    0.24,
+    0.0956
+   ],
+   "vertices": 2136,
+   "indices": 3840,
+   "glass": 0,
+   "vOffset": 2684640,
+   "iOffset": 2727360,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Electronic_Keypad_20261114_texture_eb7896d4",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_lab_door",
+   "group": "labDoor",
+   "tint": false,
+   "layer": 42,
+   "min": [
+    -0.6336,
+    0,
+    -0.1632
+   ],
+   "size": [
+    1.2671,
+    2.1,
+    0.3265
+   ],
+   "vertices": 2609,
+   "indices": 4986,
+   "glass": 0,
+   "vOffset": 2735040,
+   "iOffset": 2787220,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Heavy_Industrial_Door_20261114_texture_8d5650a4",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_metal_shelf",
+   "group": "metalShelf",
+   "tint": false,
+   "layer": 43,
+   "min": [
+    -1.0369,
+    0,
+    -0.3576
+   ],
+   "size": [
+    2.0738,
+    1.9,
+    0.7202
+   ],
+   "vertices": 3292,
+   "indices": 4800,
+   "glass": 0,
+   "vOffset": 2797192,
+   "iOffset": 2863032,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Industrial_Metal_Shelf_20261114_texture_f05b1f14",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_kitchen_counter",
+   "group": "kitchenCounter",
+   "tint": false,
+   "layer": 44,
+   "min": [
+    -0.6312,
+    0,
+    -0.2894
+   ],
+   "size": [
+    1.2578,
+    0.88,
+    0.5707
+   ],
+   "vertices": 3184,
+   "indices": 5496,
+   "glass": 0,
+   "vOffset": 2872632,
+   "iOffset": 2936312,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Kitchen_Sink_Counter_20261114_texture_8363eca4",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_locker",
+   "group": "locker",
+   "tint": false,
+   "layer": 45,
+   "min": [
+    -0.2836,
+    -0.0035,
+    -0.2491
+   ],
+   "size": [
+    0.5773,
+    1.9535,
+    0.4933
+   ],
+   "vertices": 2553,
+   "indices": 4635,
+   "glass": 0,
+   "vOffset": 2947304,
+   "iOffset": 2998364,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Metal_Locker_20261114_texture_76212984",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_lab_table",
+   "group": "labTable",
+   "tint": false,
+   "layer": 46,
+   "min": [
+    -0.8,
+    -0.0042,
+    -0.4553
+   ],
+   "size": [
+    1.6,
+    0.9018,
+    0.9105
+   ],
+   "vertices": 2717,
+   "indices": 4581,
+   "glass": 0,
+   "vOffset": 3007636,
+   "iOffset": 3061976,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Metal_Prep_Table_20261114_texture_8f951512",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_desk",
+   "group": "desk",
+   "tint": false,
+   "layer": 47,
+   "min": [
+    -0.7,
+    0,
+    -0.4745
+   ],
+   "size": [
+    1.4,
+    1.1638,
+    0.9489
+   ],
+   "vertices": 3599,
+   "indices": 6153,
+   "glass": 0,
+   "vOffset": 3071140,
+   "iOffset": 3143120,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_PostApoc_Worn_Desk_20261113_texture_bf09cc89",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_barrel",
+   "group": "barrel",
+   "tint": false,
+   "layer": 48,
+   "min": [
+    -0.2906,
+    0,
+    -0.2889
+   ],
+   "size": [
+    0.5812,
+    0.92,
+    0.5779
+   ],
+   "vertices": 1836,
+   "indices": 4029,
+   "glass": 0,
+   "vOffset": 3155428,
+   "iOffset": 3192148,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Radioactive_Barrel_20261114_texture_b3c2bf0d",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_fridge",
+   "group": "fridge",
+   "tint": false,
+   "layer": 49,
+   "min": [
+    -0.3844,
+    0,
+    -0.3726
+   ],
+   "size": [
+    0.7689,
+    1.85,
+    0.7451
+   ],
+   "vertices": 2292,
+   "indices": 4347,
+   "glass": 0,
+   "vOffset": 3200208,
+   "iOffset": 3246048,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Retro_Fridge_20261114_texture_5dc39c41",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_supply_crate",
+   "group": "supplyCrate",
+   "tint": false,
+   "layer": 50,
+   "min": [
+    -0.43,
+    -0.0119,
+    -0.2566
+   ],
+   "size": [
+    0.8674,
+    0.3783,
+    0.5056
+   ],
+   "vertices": 3130,
+   "indices": 5415,
+   "glass": 0,
+   "vOffset": 3254744,
+   "iOffset": 3317344,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Supply_Crate_20261114_texture_717596dd",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wall_cabinet",
+   "group": "wallCabinet",
+   "tint": false,
+   "layer": 51,
+   "min": [
+    -0.6069,
+    -0.005,
+    -0.2924
+   ],
+   "size": [
+    1.2119,
+    0.9638,
+    0.5805
+   ],
+   "vertices": 2225,
+   "indices": 4356,
+   "glass": 0,
+   "vOffset": 3328176,
+   "iOffset": 3372676,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Wall_Cabinet_20261114_texture_25bafd78",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_barricaded_door",
+   "group": "barricadedDoor",
+   "tint": false,
+   "layer": 52,
+   "min": [
+    -0.7576,
+    0,
+    -0.1723
+   ],
+   "size": [
+    1.5152,
+    2.05,
+    0.3296
+   ],
+   "vertices": 2429,
+   "indices": 4458,
+   "glass": 0,
+   "vOffset": 3381388,
+   "iOffset": 3429968,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Barricaded_Door_20261114_texture_eda8b7ac",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_bookcase",
+   "group": "bookcase",
+   "tint": false,
+   "layer": 53,
+   "min": [
+    -0.7716,
+    -0.009,
+    -0.2199
+   ],
+   "size": [
+    1.5432,
+    1.959,
+    0.4348
+   ],
+   "vertices": 4763,
+   "indices": 8010,
+   "glass": 0,
+   "vOffset": 3438884,
+   "iOffset": 3534144,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Bookcase_20261114_texture_dba824d5",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wall_barrier",
+   "group": "wallBarrier",
+   "tint": false,
+   "layer": 54,
+   "min": [
+    -1.2,
+    0,
+    -0.1513
+   ],
+   "size": [
+    2.4,
+    1.1173,
+    0.3026
+   ],
+   "vertices": 2002,
+   "indices": 3885,
+   "glass": 0,
+   "vOffset": 3550164,
+   "iOffset": 3590204,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Brick_Wall_Barrier_20261114_texture_2975c987",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_tv",
+   "group": "tv",
+   "tint": false,
+   "layer": 55,
+   "min": [
+    -0.3581,
+    0,
+    -0.3501
+   ],
+   "size": [
+    0.7163,
+    0.52,
+    0.7042
+   ],
+   "vertices": 2454,
+   "indices": 4524,
+   "glass": 0,
+   "vOffset": 3597976,
+   "iOffset": 3647056,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_CRT_Television_20261114_texture_ae0b2916",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_skillet",
+   "group": "skillet",
+   "tint": false,
+   "layer": 56,
+   "min": [
+    -0.19,
+    0,
+    -0.1317
+   ],
+   "size": [
+    0.38,
+    0.0514,
+    0.2634
+   ],
+   "vertices": 1141,
+   "indices": 2340,
+   "glass": 0,
+   "vOffset": 3656104,
+   "iOffset": 3678924,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Cast_Iron_Skillet_20261114_texture_33d874aa",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_mug",
+   "group": "mug",
+   "tint": false,
+   "layer": 57,
+   "min": [
+    -0.0711,
+    0,
+    -0.05
+   ],
+   "size": [
+    0.1421,
+    0.11,
+    0.0999
+   ],
+   "vertices": 1635,
+   "indices": 3174,
+   "glass": 0,
+   "vOffset": 3683604,
+   "iOffset": 3716304,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Ceramic_Mug_20261114_texture_a376d87b",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_plate",
+   "group": "plate",
+   "tint": false,
+   "layer": 58,
+   "min": [
+    -0.12,
+    0,
+    -0.0125
+   ],
+   "size": [
+    0.24,
+    0.2384,
+    0.025
+   ],
+   "vertices": 1548,
+   "indices": 2946,
+   "glass": 0,
+   "vOffset": 3722652,
+   "iOffset": 3753612,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Ceramic_Plate_20261114_texture_d74bc6a2",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_checkout",
+   "group": "checkout",
+   "tint": false,
+   "layer": 59,
+   "min": [
+    -0.9076,
+    0,
+    -0.4597
+   ],
+   "size": [
+    1.8108,
+    0.9286,
+    0.9194
+   ],
+   "vertices": 3585,
+   "indices": 5511,
+   "glass": 0,
+   "vOffset": 3759504,
+   "iOffset": 3831204,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Checkout_Counter_20261114_texture_98c18837",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_pallet_crates",
+   "group": "palletCrates",
+   "tint": false,
+   "layer": 60,
+   "min": [
+    -0.6,
+    0,
+    -0.4806
+   ],
+   "size": [
+    1.2,
+    0.8694,
+    0.9598
+   ],
+   "vertices": 4665,
+   "indices": 7773,
+   "glass": 0,
+   "vOffset": 3842228,
+   "iOffset": 3935528,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Crates_on_Pallet_20261114_texture_f069cf53",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_dumpster",
+   "group": "dumpster",
+   "tint": false,
+   "layer": 61,
+   "min": [
+    -0.9,
+    0,
+    -0.5
+   ],
+   "size": [
+    1.8,
+    1.2341,
+    1
+   ],
+   "vertices": 2628,
+   "indices": 4377,
+   "glass": 0,
+   "vOffset": 3951076,
+   "iOffset": 4003636,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Dumpster_20261114_texture_596b3594",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_elevator_doors",
+   "group": "elevatorDoors",
+   "tint": false,
+   "layer": 62,
+   "min": [
+    -1.0921,
+    -0.0089,
+    -0.0904
+   ],
+   "size": [
+    2.1842,
+    2.2089,
+    0.1849
+   ],
+   "vertices": 3573,
+   "indices": 6045,
+   "glass": 0,
+   "vOffset": 4012392,
+   "iOffset": 4083852,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Elevator_Doors_20261114_texture_c10df5db",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_sofa",
+   "group": "sofa",
+   "tint": false,
+   "layer": 63,
+   "min": [
+    -1,
+    0,
+    -0.4169
+   ],
+   "size": [
+    2,
+    0.8767,
+    0.8338
+   ],
+   "vertices": 2568,
+   "indices": 5229,
+   "glass": 0,
+   "vOffset": 4095944,
+   "iOffset": 4147304,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Fabric_Sofa_20261114_texture_a9033d92",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_painting",
+   "group": "painting",
+   "tint": false,
+   "layer": 64,
+   "min": [
+    -0.425,
+    0,
+    -0.0278
+   ],
+   "size": [
+    0.85,
+    0.5635,
+    0.0544
+   ],
+   "vertices": 2594,
+   "indices": 4482,
+   "glass": 0,
+   "vOffset": 4157764,
+   "iOffset": 4209644,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Framed_Painting_20261114_texture_e9cf3274",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_grocery_shelf",
+   "group": "groceryShelf",
+   "tint": false,
+   "layer": 65,
+   "min": [
+    -1.005,
+    -0.005,
+    -0.3366
+   ],
+   "size": [
+    2.005,
+    1.2581,
+    0.6703
+   ],
+   "vertices": 4103,
+   "indices": 8094,
+   "glass": 0,
+   "vOffset": 4218608,
+   "iOffset": 4300668,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Grocery_Shelf_20261114_texture_cd227601",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_guard_booth",
+   "group": "guardBooth",
+   "tint": false,
+   "layer": 66,
+   "min": [
+    -1.3265,
+    -0.0073,
+    -1.2224
+   ],
+   "size": [
+    2.6531,
+    2.3609,
+    2.4447
+   ],
+   "vertices": 3033,
+   "indices": 5184,
+   "glass": 0,
+   "vOffset": 4316856,
+   "iOffset": 4377516,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Guard_Booth_20261114_texture_867b43f8",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_nightstand",
+   "group": "nightstand",
+   "tint": false,
+   "layer": 67,
+   "min": [
+    -0.2829,
+    0,
+    -0.34
+   ],
+   "size": [
+    0.5658,
+    0.56,
+    0.6757
+   ],
+   "vertices": 2302,
+   "indices": 4131,
+   "glass": 0,
+   "vOffset": 4387884,
+   "iOffset": 4433924,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Nightstand_20261114_texture_90ab5f25",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_pharmacy_shelf",
+   "group": "pharmacyShelf",
+   "tint": false,
+   "layer": 68,
+   "min": [
+    -0.9015,
+    -0.0008,
+    -0.3213
+   ],
+   "size": [
+    1.8153,
+    1.2858,
+    0.6451
+   ],
+   "vertices": 3911,
+   "indices": 6930,
+   "glass": 0,
+   "vOffset": 4442188,
+   "iOffset": 4520408,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Pharmacy_Shelf_20261114_texture_fea904a2",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_reception_desk",
+   "group": "receptionDesk",
+   "tint": false,
+   "layer": 69,
+   "min": [
+    -1.1,
+    -0.0126,
+    -1.1797
+   ],
+   "size": [
+    2.2,
+    1.2116,
+    2.3594
+   ],
+   "vertices": 3454,
+   "indices": 6057,
+   "glass": 0,
+   "vOffset": 4534268,
+   "iOffset": 4603348,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Reception_Desk_20261114_texture_00989381",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_shopping_cart",
+   "group": "shoppingCart",
+   "tint": false,
+   "layer": 70,
+   "min": [
+    -0.4533,
+    0,
+    -0.3048
+   ],
+   "size": [
+    0.9065,
+    0.98,
+    0.6095
+   ],
+   "vertices": 3395,
+   "indices": 5763,
+   "glass": 0,
+   "vOffset": 4615464,
+   "iOffset": 4683364,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Shopping_Cart_20261114_texture_984d0c32",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_stacked_boxes",
+   "group": "stackedBoxes",
+   "tint": false,
+   "layer": 71,
+   "min": [
+    -0.55,
+    0,
+    -0.4715
+   ],
+   "size": [
+    1.1,
+    0.7699,
+    0.9431
+   ],
+   "vertices": 3714,
+   "indices": 6825,
+   "glass": 0,
+   "vOffset": 4694892,
+   "iOffset": 4769172,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Stacked_Boxes_20261114_texture_144589b4",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_storage_rack",
+   "group": "storageRack",
+   "tint": false,
+   "layer": 72,
+   "min": [
+    -1.5251,
+    0,
+    -0.3143
+   ],
+   "size": [
+    3.0552,
+    1.9,
+    0.6287
+   ],
+   "vertices": 3364,
+   "indices": 6201,
+   "glass": 0,
+   "vOffset": 4782824,
+   "iOffset": 4850104,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Storage_Rack_20261114_texture_e6371b02",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_tv_stand",
+   "group": "tvStand",
+   "tint": false,
+   "layer": 73,
+   "min": [
+    -0.625,
+    0,
+    -0.2555
+   ],
+   "size": [
+    1.25,
+    0.4826,
+    0.5109
+   ],
+   "vertices": 2727,
+   "indices": 4326,
+   "glass": 0,
+   "vOffset": 4862508,
+   "iOffset": 4917048,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_TV_Stand_20261114_texture_baf3ce81",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_table_lamp",
+   "group": "tableLamp",
+   "tint": false,
+   "layer": 74,
+   "min": [
+    -0.1739,
+    -0.0022,
+    -0.1353
+   ],
+   "size": [
+    0.3478,
+    0.4222,
+    0.2705
+   ],
+   "vertices": 1684,
+   "indices": 3600,
+   "glass": 0,
+   "vOffset": 4925700,
+   "iOffset": 4959380,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Table_Lamp_20261114_texture_1953e0e3",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_suitcase",
+   "group": "suitcase",
+   "tint": false,
+   "layer": 75,
+   "min": [
+    -0.4371,
+    -0.0019,
+    -0.1459
+   ],
+   "size": [
+    0.8732,
+    0.6519,
+    0.2918
+   ],
+   "vertices": 2286,
+   "indices": 4146,
+   "glass": 0,
+   "vOffset": 4966580,
+   "iOffset": 5012300,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Vintage_Suitcase_20261114_texture_f0c2b961",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wardrobe_open",
+   "group": "wardrobeOpen",
+   "tint": false,
+   "layer": 76,
+   "min": [
+    -0.8308,
+    0,
+    -0.6319
+   ],
+   "size": [
+    1.6615,
+    2,
+    1.2499
+   ],
+   "vertices": 3953,
+   "indices": 7062,
+   "glass": 0,
+   "vOffset": 5020592,
+   "iOffset": 5099652,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wardrobe_with_Clothes_20261114_texture_fb8d8170",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_bed",
+   "group": "bed",
+   "tint": false,
+   "layer": 77,
+   "min": [
+    -0.8059,
+    0,
+    -1.025
+   ],
+   "size": [
+    1.6118,
+    1.1411,
+    2.05
+   ],
+   "vertices": 3132,
+   "indices": 7635,
+   "glass": 0,
+   "vOffset": 5113776,
+   "iOffset": 5176416,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Bed_20261114_texture_dca1774e",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_chair",
+   "group": "chair",
+   "tint": false,
+   "layer": 78,
+   "min": [
+    -0.2108,
+    0,
+    -0.2441
+   ],
+   "size": [
+    0.4216,
+    0.9,
+    0.4881
+   ],
+   "vertices": 1322,
+   "indices": 2991,
+   "glass": 0,
+   "vOffset": 5191688,
+   "iOffset": 5218128,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Chair_20261114_texture_8ff7e180",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_coffee_table",
+   "group": "coffeeTable",
+   "tint": false,
+   "layer": 79,
+   "min": [
+    -0.525,
+    0,
+    -0.2882
+   ],
+   "size": [
+    1.05,
+    0.3773,
+    0.5764
+   ],
+   "vertices": 2034,
+   "indices": 4407,
+   "glass": 0,
+   "vOffset": 5224112,
+   "iOffset": 5264792,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Coffee_Table_20261114_texture_bde5c9fd",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wooden_crate",
+   "group": "woodenCrate",
+   "tint": false,
+   "layer": 80,
+   "min": [
+    -0.4274,
+    -0.0083,
+    -0.3243
+   ],
+   "size": [
+    0.8598,
+    0.6595,
+    0.6486
+   ],
+   "vertices": 3715,
+   "indices": 6966,
+   "glass": 0,
+   "vOffset": 5273608,
+   "iOffset": 5347908,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Crate_20261114_texture_d293e66b",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wooden_door",
+   "group": "woodenDoor",
+   "tint": false,
+   "layer": 81,
+   "min": [
+    -0.5146,
+    0,
+    -0.1265
+   ],
+   "size": [
+    1.0292,
+    2.055,
+    0.2479
+   ],
+   "vertices": 2606,
+   "indices": 4422,
+   "glass": 0,
+   "vOffset": 5361840,
+   "iOffset": 5413960,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Door_20261114_texture_355564ac",
+   "author": "",
+   "license": "",
+   "url": ""
+  },
+  {
+   "name": "meshy_wardrobe",
+   "group": "wardrobe",
+   "tint": false,
+   "layer": 82,
+   "min": [
+    -0.5331,
+    -0.0079,
+    -0.313
+   ],
+   "size": [
+    1.0662,
+    2.0159,
+    0.626
+   ],
+   "vertices": 2936,
+   "indices": 5175,
+   "glass": 0,
+   "vOffset": 5422804,
+   "iOffset": 5481524,
+   "normals": true,
+   "title": "meshy_pack/Meshy_AI_Worn_Wooden_Wardrobe_20261114_texture_67da29aa",
+   "author": "",
+   "license": "",
+   "url": ""
   }
  ]
 }

@@ -1,6 +1,8 @@
 import { type BufferGeometry, Euler, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import type { ContainerType } from '../../data/loot';
 import type { Surface } from '../../render/look/surfaces';
+import { pickModel } from '../models';
+import { modelLibrary, placeModel } from '../props/car';
 import { LIFE, spotHash } from './lifeKinds';
 import { PAL, pick, type Rand } from './palette';
 import type { Builder } from './pieces';
@@ -209,12 +211,45 @@ export class Place {
     const az = (odd ? sx : sz) / 2;
     this.b.solid(cx - ax, cz - az, cx + ax, cz + az, this.y, this.y + h);
   }
+
+  /** Place a baked 3D model from `ModelLibrary` in local coordinates (base at `ly`, facing +Z). */
+  model(
+    group: string,
+    rand: Rand | number,
+    lx = 0,
+    ly = 0,
+    lz = 0,
+    yaw = 0,
+    scale = 1,
+    roughness = 0.78,
+    metalness = 0.18,
+  ): boolean {
+    const m = pickModel(modelLibrary(), group, typeof rand === 'number' ? rand : rand());
+    if (!m) return false;
+    _l.compose(_p.set(lx, ly, lz), _q.setFromAxisAngle(_up, yaw), _s.set(scale, scale, scale));
+    _m.multiplyMatrices(this.base(), _l);
+    placeModel(this.b.batch, m, _m, null, undefined, roughness, metalness);
+    const hx = (m.size[0] * scale) / 2;
+    const hz = (m.size[2] * scale) / 2;
+    const hy = m.size[1] * scale;
+    const [cx, cz] = this.pt(lx, lz);
+    const odd = this.r & 1;
+    const ax = odd ? hz : hx;
+    const az = odd ? hx : hz;
+    this.record(cx - ax, this.y + ly, cz - az, cx + ax, this.y + ly + hy, cz + az);
+    return true;
+  }
 }
 
 // ── Bedroom ────────────────────────────────────────────────────────────────────
 
 export function bed(p: Place, rand: Rand, width = 1.5, messy = false): void {
   const L = 2.0;
+  if (p.model('bed', rand, 0, 0, L / 2, 0, Math.min(1.15, width / 1.5), 0.85, 0.05)) {
+    p.solid(0, L / 2, width, L, 0.6);
+    p.life(LIFE.bed, 0, 0.5, L / 2, 0, 0, 0);
+    return;
+  }
   const wood = pick(rand, WOODS);
   const fabric = pick(rand, FABRICS);
   // Corner legs + raised frame rails.
@@ -244,6 +279,12 @@ export function bed(p: Place, rand: Rand, width = 1.5, messy = false): void {
 }
 
 export function nightstand(p: Place, rand: Rand, open = false): void {
+  if (p.model('nightstand', rand, 0, 0, 0.34, 0, 1, 0.78, 0.12)) {
+    p.solid(0, 0.28, 0.55, 0.65, 0.56);
+    if (!open || rand() >= 0.5) p.model('tableLamp', rand, -0.1, 0.56, 0.34, rand() * 0.6, 1, 0.75, 0.15);
+    p.container('nightstand', 0, 0.7);
+    return;
+  }
   const wood = pick(rand, WOODS);
   p.box(wood, 0, 0, 0.2, 0.45, 0.5, 0.4, 'wood', true);
   if (open) p.box(wood, 0, 0.3, 0.42, 0.38, 0.13, 0.36);
@@ -261,6 +302,12 @@ export function nightstand(p: Place, rand: Rand, open = false): void {
 
 /** Wardrobe 1.2 × 2.0 × 0.6. Open: leaves swung out, clothes inside and spilled on the floor. */
 export function wardrobe(p: Place, rand: Rand, open = false): void {
+  if (p.model(open ? 'wardrobeOpen' : 'wardrobe', rand, 0, 0, 0.32, 0, 1, 0.8, 0.1)) {
+    p.solid(0, 0.3, 1.2, 0.6, 2.0);
+    if (open) clothesPile(p, rand, 0, 0.95, 3 + Math.floor(rand() * 3));
+    p.container('wardrobe', 0, 0.75);
+    return;
+  }
   const wood = pick(rand, WOODS);
   if (!open) {
     p.box(wood, 0, 0.06, 0.3, 1.2, 1.9, 0.58, 'wood', true);
@@ -295,6 +342,11 @@ export function wardrobe(p: Place, rand: Rand, open = false): void {
 // ── Living room ─────────────────────────────────────────────────────────────────
 
 export function sofa(p: Place, rand: Rand, len = 2.0, messy = false): void {
+  if (p.model('sofa', rand, 0, 0, 0.44, 0, Math.min(1.15, len / 2.0), 0.9, 0.04)) {
+    if (messy) p.rbox(pick(rand, FABRICS), (rand() - 0.5) * len, 0.08, 1.3, 0.55, 0.14, 0.52, rand() * 3, 0.1, 0, 'rubber');
+    p.solid(0, 0.45, len, 0.9, 0.85);
+    return;
+  }
   const fabric = pick(rand, FABRICS);
   const wood = pick(rand, WOODS);
   for (const lx of [-len / 2 + 0.08, len / 2 - 0.08]) {
@@ -321,11 +373,20 @@ export function sofa(p: Place, rand: Rand, len = 2.0, messy = false): void {
 }
 
 export function coffeeTable(p: Place, rand: Rand, messy = false): void {
-  const wood = pick(rand, WOODS);
   const q = messy ? p.tipped(0.4, 0, Math.PI / 2, 0.5) : p;
-  q.box(wood, 0, 0.36, 0.28, 1.0, 0.05, 0.55);
-  q.box(wood, -0.45, 0, 0.28, 0.05, 0.36, 0.5);
-  q.box(wood, 0.45, 0, 0.28, 0.05, 0.36, 0.5);
+  if (q.model('coffeeTable', rand, 0, 0, 0.28, 0, 1, 0.78, 0.1)) {
+    if (!messy) {
+      p.solid(0, 0.28, 1.0, 0.55, 0.42);
+      if (rand() < 0.6) p.model('mug', rand, -0.2, 0.38, 0.25, rand() * 6, 1, 0.65, 0.1);
+      if (rand() < 0.6) p.sheet(PAPER, 0.2, 0.39, 0.3, 0.22, 0.3, rand() * 3);
+    }
+    return;
+  }
+  const wood = pick(rand, WOODS);
+  const q2 = messy ? p.tipped(0.4, 0, Math.PI / 2, 0.5) : p;
+  q2.box(wood, 0, 0.36, 0.28, 1.0, 0.05, 0.55);
+  q2.box(wood, -0.45, 0, 0.28, 0.05, 0.36, 0.5);
+  q2.box(wood, 0.45, 0, 0.28, 0.05, 0.36, 0.5);
   if (!messy) {
     p.solid(0, 0.28, 1.0, 0.55, 0.42);
     if (rand() < 0.6) p.cyl(CERAMIC, -0.2, 0.46, 0.25, 0.04, 0.09, 'plaster');
@@ -334,6 +395,16 @@ export function coffeeTable(p: Place, rand: Rand, messy = false): void {
 }
 
 export function tvStand(p: Place, rand: Rand, messy = false): void {
+  if (p.model('tvStand', rand, 0, 0, 0.26, 0, 1, 0.78, 0.12)) {
+    p.solid(0, 0.22, 1.2, 0.45, 0.5);
+    if (messy) {
+      p.at(0.1, 0.95).tipped((rand() - 0.5) * 0.8, Math.PI / 2, 0, 0.24).model('tv', rand, 0, -0.25, 0, 0, 1, 0.65, 0.25);
+    } else {
+      p.model('tv', rand, 0, 0.48, 0.26, 0, 1, 0.65, 0.25);
+    }
+    p.container('tvstand', 0, 0.7);
+    return;
+  }
   p.box(0x2a2622, 0, 0, 0.22, 1.2, 0.5, 0.45, 'wood', true);
   if (messy) {
     // The set was pulled off and dropped face down.
@@ -346,6 +417,12 @@ export function tvStand(p: Place, rand: Rand, messy = false): void {
 }
 
 export function bookcase(p: Place, rand: Rand, messy = false): void {
+  if (p.model('bookcase', rand, 0, 0, 0.22, 0, 1, 0.82, 0.08)) {
+    if (messy) for (let i = 0; i < 5; i++) p.rbox(pick(rand, ART), (rand() - 0.5) * 1.2, 0.02, 0.5 + rand() * 0.6, 0.16, 0.04, 0.22, rand() * 3, 0, 0, 'rubber');
+    p.solid(0, 0.16, 1.4, 0.42, 1.9);
+    p.container('bookcase', 0, 0.55);
+    return;
+  }
   const wood = pick(rand, WOODS);
   p.box(wood, 0, 0, 0.02, 0.9, 1.9, 0.03);
   p.box(wood, -0.435, 0, 0.16, 0.03, 1.9, 0.32);
@@ -372,6 +449,7 @@ export function rug(p: Place, rand: Rand, lz: number, w: number, d: number): voi
 
 /** Painting on the wall behind (z = 0); askew, or fallen and leaning against the wall. */
 export function painting(p: Place, rand: Rand, cy = 1.55, fallen = false): void {
+  if (!fallen && p.model('painting', rand, 0, cy - 0.28, 0.03, 0, 1, 0.8, 0.1)) return;
   const w = 0.5 + rand() * 0.4;
   const h = 0.4 + rand() * 0.25;
   const frame = pick(rand, WOODS);
@@ -443,6 +521,11 @@ export function plant(p: Place, rand: Rand, fallen = false): void {
 
 /** Cardboard boxes, stacked, some open: moving out, or packing what they could. */
 export function boxes(p: Place, rand: Rand, n = 3): void {
+  if (n >= 2 && p.model(rand() < 0.5 ? 'stackedBoxes' : 'palletCrates', rand, 0, 0, 0.45, (rand() - 0.5) * 0.4, 0.85, 0.85, 0.05)) {
+    p.solid(0, 0.3, 1.1, 0.85, 0.75);
+    p.container('boxes', 0, 0.75);
+    return;
+  }
   // Centered on x = 0.
   const widths = Array.from({ length: n }, () => 0.4 + rand() * 0.2);
   const total = widths.reduce((s, w) => s + w + 0.05, -0.05);
@@ -472,22 +555,32 @@ export function kitchenRun(p: Place, rand: Rand, len: number, messy = false, rad
   p.box(APPLIANCE, sx, 0, 0.3, 0.6, 0.9, 0.6, 'metal');
   p.box(0x2a2a2a, sx, 0.9, 0.3, 0.5, 0.01, 0.5, 'metal');
   p.box(0x161616, sx, 0.25, 0.602, 0.44, 0.3, 0.01, 'glass');
-  p.cyl(METAL, sx - 0.12, 0.98, 0.42, 0.12, 0.14);
+  if (!p.model('skillet', rand, sx - 0.12, 0.91, 0.42, rand() * 6, 1, 0.55, 0.6)) {
+    p.cyl(METAL, sx - 0.12, 0.98, 0.42, 0.12, 0.14);
+  }
   const kx = -len / 2 + 0.5;
   p.box(0x5a5e60, kx, 0.87, 0.3, 0.5, 0.035, 0.4, 'metal');
   p.box(METAL, kx, 0.9, 0.08, 0.03, 0.25, 0.03, 'metal');
   // The tap (drinkable while the city has water; tag 1: quiet, a dripping one is added on its own).
   p.life(LIFE.tap, kx, 1.0, 0.12, 0, 0, 0, 1);
-  p.box(cab, 0, 1.45, 0.17, len, 0.65, 0.34);
-  if (messy || rand() < 0.3) {
-    // A wall cabinet hangs open, emptied.
-    const ox = -len / 2 + 0.4 + rand() * (len - 0.8);
-    p.box(0x1a1816, ox, 1.48, 0.345, 0.38, 0.58, 0.005);
-    p.rbox(cab, ox - 0.19 + 0.19 * Math.cos(1.8), 1.77, 0.35 + 0.19 * Math.sin(1.8), 0.38, 0.6, 0.02, -1.8);
+  if (!p.model('wallCabinet', rand, 0, 1.25, 0.29, 0, Math.min(1.5, len / 1.2), 0.78, 0.1)) {
+    p.box(cab, 0, 1.45, 0.17, len, 0.65, 0.34);
+    if (messy || rand() < 0.3) {
+      // A wall cabinet hangs open, emptied.
+      const ox = -len / 2 + 0.4 + rand() * (len - 0.8);
+      p.box(0x1a1816, ox, 1.48, 0.345, 0.38, 0.58, 0.005);
+      p.rbox(cab, ox - 0.19 + 0.19 * Math.cos(1.8), 1.77, 0.35 + 0.19 * Math.sin(1.8), 0.38, 0.6, 0.02, -1.8);
+    }
   }
   // Dishes: a stack of plates, mugs, a pot left on the stove.
-  p.cyl(CERAMIC, kx + 0.5, 0.92, 0.35, 0.11, 0.04 + rand() * 0.05, 'plaster');
-  for (let i = 0; i < 2; i++) if (rand() < 0.6) p.cyl(pick(rand, [CERAMIC, 0x8a4a3a, 0x3a5a6a]), -0.1 + i * 0.15, 0.93, 0.45, 0.04, 0.09, 'plaster');
+  if (!p.model('plate', rand, kx + 0.5, 0.9, 0.35, rand() * 6, 1, 0.6, 0.08)) {
+    p.cyl(CERAMIC, kx + 0.5, 0.92, 0.35, 0.11, 0.04 + rand() * 0.05, 'plaster');
+  }
+  for (let i = 0; i < 2; i++) if (rand() < 0.6) {
+    if (!p.model('mug', rand, -0.1 + i * 0.15, 0.9, 0.45, rand() * 6, 1, 0.65, 0.1)) {
+      p.cyl(pick(rand, [CERAMIC, 0x8a4a3a, 0x3a5a6a]), -0.1 + i * 0.15, 0.93, 0.45, 0.04, 0.09, 'plaster');
+    }
+  }
   if (radio) {
     // Battery radio, still hissing (WorldLife plays it).
     p.life(3, 0.15, 0.97, 0.2, 0, 0, rand());
@@ -503,6 +596,11 @@ export function kitchenRun(p: Place, rand: Rand, len: number, messy = false, rad
 }
 
 export function fridge(p: Place, rand: Rand, open = false): void {
+  if (!open && p.model('fridge', rand, 0, 0, 0.38, 0, 1, 0.6, 0.35)) {
+    p.solid(0, 0.32, 0.77, 0.75, 1.85);
+    p.container('fridge', 0, 0.85);
+    return;
+  }
   if (!open) {
     p.box(APPLIANCE, 0, 0, 0.32, 0.7, 1.8, 0.64, 'metal', true);
     p.box(0x8a8880, 0, 1.2, 0.642, 0.66, 0.012, 0.006, 'metal');
@@ -518,6 +616,7 @@ export function fridge(p: Place, rand: Rand, open = false): void {
 }
 
 export function chair(p: Place, rand: Rand, color: number = pick(rand, WOODS)): void {
+  if (p.model('chair', rand, 0, 0, 0, 0, 1, 0.8, 0.08)) return;
   p.box(color, 0, 0.43, 0, 0.42, 0.04, 0.42);
   p.box(pick(rand, FABRICS), 0, 0.47, 0.01, 0.36, 0.03, 0.36, 'rubber');
   // Slatted backrest with side stiles and top rail.
@@ -580,6 +679,12 @@ export function officeChair(p: Place, rand: Rand, down = false): void {
 
 /** Office desk with a CRT monitor and keyboard (monitor on the floor when `messy`). */
 export function desk(p: Place, rand: Rand, open = false, messy = false): void {
+  if (p.model('desk', rand, 0, 0, 0.48, 0, 1, 0.8, 0.15)) {
+    p.solid(0, 0.375, 1.4, 0.75, 0.76);
+    for (let i = 0; i < 2; i++) p.sheet(PAPER, 0.25 + (rand() - 0.5) * 0.3, 0.76, 0.4 + (rand() - 0.5) * 0.2, 0.21, 0.3, rand() * 3);
+    p.container('desk', 0, 0.95);
+    return;
+  }
   p.box(LAMINATE, 0, 0.72, 0.375, 1.4, 0.04, 0.75);
   p.box(LAMINATE, -0.68, 0, 0.375, 0.04, 0.72, 0.72);
   p.box(LAMINATE, 0, 0.3, 0.04, 1.32, 0.42, 0.02);
@@ -651,6 +756,10 @@ export function notes(p: Place, rand: Rand, n = 2): void {
 // ── Leaving in a hurry ──────────────────────────────────────────────────────────
 
 export function suitcase(p: Place, rand: Rand, open = false): void {
+  if (!open && p.model('suitcase', rand, 0, 0, 0.16, (rand() - 0.5) * 0.6, 1, 0.8, 0.15)) {
+    p.container('suitcase', 0, 0.55);
+    return;
+  }
   const c = pick(rand, [0x2a3440, 0x5a2a2a, 0x3a3a34, 0x6a5a3a]);
   if (open) {
     p.box(c, 0, 0, 0.25, 0.7, 0.12, 0.45, 'rubber');
@@ -721,6 +830,12 @@ export function mailboxes(p: Place, rand: Rand): void {
 
 /** Dead elevator: doors pried a hand's width apart, a black shaft behind. */
 export function elevator(p: Place, rand: Rand): void {
+  if (p.model('elevatorDoors', rand, 0, 0, 0.1, 0, 1, 0.55, 0.45)) {
+    p.solid(0, 0.1, 2.1, 0.2, 2.2);
+    p.model('keypad', rand, 1.15, 1.1, 0.06, 0, 1, 0.5, 0.3);
+    p.poster(PAPER, -0.35, 1.5, 0.21, 0.3, 0.06);
+    return;
+  }
   p.box(0x4a4c4e, 0, 0, 0.05, 1.4, 2.3, 0.1, 'metal');
   p.box(0x050505, 0, 0, 0.11, 1.0, 2.1, 0.01, 'metal');
   const gap = 0.12 + rand() * 0.25;
@@ -734,6 +849,13 @@ export function elevator(p: Place, rand: Rand): void {
 
 /** Concierge / security counter (L-shaped) with an old monitor and a chair behind. */
 export function concierge(p: Place, rand: Rand): void {
+  if (p.model('receptionDesk', rand, 0, 0, 0.55, 0, 1, 0.78, 0.15)) {
+    p.solid(0, 0.35, 2.2, 0.8, 1.1);
+    officeChair(p.at(0, -0.7, 2), rand, rand() < 0.4);
+    papers(p, rand, -1.0, 0.8, 1.0, 1.6, 4);
+    p.container('reception', 0, 1.0);
+    return;
+  }
   p.box(0x6d6250, 0, 0, 0.35, 2.4, 1.05, 0.6, 'wood', true);
   p.box(0x9a9483, 0, 1.05, 0.35, 2.5, 0.04, 0.7, 'plaster');
   p.box(0x6d6250, 1.2 - 0.3, 0, -0.5, 0.6, 1.05, 1.1, 'wood', true);
@@ -760,6 +882,15 @@ export const SHOP_SIGN: Record<ShopKind, number> = { grocery: 0x6a4a2a, pharmacy
 
 /** Shelving unit (len along local X), stocked or stripped; goods knocked onto the floor when `messy`. */
 export function shopShelf(p: Place, rand: Rand, len: number, kind: ShopKind, messy = false): void {
+  const grp = kind === 'pharmacy'
+    ? (messy && rand() < 0.4 ? 'metalShelf' : 'pharmacyShelf')
+    : (messy && rand() < 0.4 ? (rand() < 0.5 ? 'metalShelf' : 'storageRack') : 'groceryShelf');
+  if (p.model(grp, rand, 0, 0, 0.33, 0, Math.min(1.3, len / 2.0), 0.75, 0.25)) {
+    if (messy) for (let i = 0; i < 6; i++) p.rbox(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), (rand() - 0.5) * len, 0.05, 0.8 + rand() * 0.6, 0.18, 0.1, 0.12, rand() * 6, 0, 0, 'wood');
+    p.solid(0, 0.25, len, 0.5, 1.7);
+    p.container(kind === 'pharmacy' ? 'pharmacy' : 'shelf', 0, 0.75);
+    return;
+  }
   const frame = kind === 'pharmacy' ? 0xb8b4aa : METAL;
   p.box(frame, 0, 0, 0.25, len, 0.08, 0.5, 'metal');
   p.box(frame, 0, 0.08, 0.02, len, 1.6, 0.04, 'metal');
@@ -787,6 +918,11 @@ export function cooler(p: Place, rand: Rand): void {
 
 /** Shop counter with a cash register (drawer out), facing +Z customers. */
 export function shopCounter(p: Place, rand: Rand, kind: ShopKind): void {
+  if (kind !== 'cafe' && p.model('checkout', rand, 0, 0, 0.46, 0, 1, 0.75, 0.2)) {
+    p.solid(0, 0.35, 1.8, 0.85, 1.0);
+    p.container('counter', 0, 1.0);
+    return;
+  }
   p.box(0x6d6250, 0, 0, 0.35, 2.2, 1.0, 0.7, 'wood', true);
   p.box(0x9a9483, 0, 1.0, 0.35, 2.3, 0.04, 0.78, 'plaster');
   p.box(0x2a2a2a, -0.6, 1.04, 0.3, 0.38, 0.22, 0.34, 'metal');

@@ -74,9 +74,13 @@ export function lab(S: Site, rand: Rand): void {
   S.wallZ(fence, -LOT, LOT, LOT, 2.0, [], 'concrete');
   S.wallX(fence, -LOT, LOT, LOT, 2.0, [{ at: 0, w: 7, h: 2.1 }], 'concrete');
   p.box(0x9a2a22, 0, 1.0, LOT, 6.6, 0.12, 0.12, 'metal');
-  p.box(0x8a8a84, 5.5, 0, LOT - 2.4, 2.2, 2.6, 2.2, 'plaster', true);
-  p.box(0x2a3036, 5.5, 1.2, LOT - 1.29, 1.6, 0.9, 0.02, 'glass');
-  p.box(0x4a4c4e, 5.5, 2.6, LOT - 2.4, 2.6, 0.15, 2.6, 'roof');
+  if (p.model('guardBooth', rand, 5.5, 0, LOT - 2.4, 0, 1, 0.72, 0.25)) {
+    p.solid(5.5, LOT - 2.4, 2.5, 2.4, 2.4);
+  } else {
+    p.box(0x8a8a84, 5.5, 0, LOT - 2.4, 2.2, 2.6, 2.2, 'plaster', true);
+    p.box(0x2a3036, 5.5, 1.2, LOT - 1.29, 1.6, 0.9, 0.02, 'glass');
+    p.box(0x4a4c4e, 5.5, 2.6, LOT - 2.4, 2.6, 0.15, 2.6, 'roof');
+  }
   for (let x = -16; x <= 16; x += 3) p.box(0xd8d4c8, x, 0.03, 16, 0.1, 0.005, 4.5, 'asphalt');
   S.car(-14, 16, Math.PI / 2, rand);
   if (rand() < 0.6) S.car(-8, 16, -Math.PI / 2, rand, 'van');
@@ -119,8 +123,12 @@ export function lab(S: Site, rand: Rand): void {
   const cardLocker = Math.floor(spotHash(S.s.i, S.s.j, 81) * 4);
   for (let k = 0; k < 4; k++) {
     const x = -19 + k * 1.1;
-    p.box(0x6a7a84, x, 0, 0.45, 1.0, 2.0, 0.5, 'metal', true);
-    p.box(0x5a6a74, x, 0.05, 0.71, 0.96, 1.9, 0.02, 'metal');
+    if (p.model('locker', rand, x, 0, 0.45, 0, 1, 0.55, 0.45)) {
+      p.solid(x, 0.45, 0.6, 0.5, 2.0);
+    } else {
+      p.box(0x6a7a84, x, 0, 0.45, 1.0, 2.0, 0.5, 'metal', true);
+      p.box(0x5a6a74, x, 0.05, 0.71, 0.96, 1.9, 0.02, 'metal');
+    }
     S.container('labLocker', x, 1.1, k === cardLocker ? ['keycardGreen', 'labNote1'] : undefined);
   }
   // Offices: desks and filing cabinets; one desk keeps a fuse and the third digit.
@@ -159,8 +167,16 @@ export function lab(S: Site, rand: Rand): void {
   // The fuse, the second digit and the lab journal lie on one of the two benches.
   const keyBench = spotHash(S.s.i, S.s.j, 84) < 0.5 ? 0 : 1;
   [-5.5, -9].forEach((z, k) => {
-    p.box(0xd8d8d4, -12, 0, z, 9, 0.9, 1.2, 'tile', true);
-    p.box(0x2a2c2e, -12, 0.9, z, 9.1, 0.04, 1.3, 'metal');
+    let placed = false;
+    for (const bx of [-15.2, -13.1, -11.0, -8.9]) {
+      placed = p.model('labTable', rand, bx, 0, z, 0, 1, 0.55, 0.45) || placed;
+    }
+    if (placed) {
+      p.solid(-12, z, 9, 1.2, 0.9);
+    } else {
+      p.box(0xd8d8d4, -12, 0, z, 9, 0.9, 1.2, 'tile', true);
+      p.box(0x2a2c2e, -12, 0.9, z, 9.1, 0.04, 1.3, 'metal');
+    }
     for (let x = -16; x <= -8; x += 1.3) p.cyl(0x8aa4ac, x + rand() * 0.4, 1.06, z + (rand() - 0.5) * 0.6, 0.06, 0.24, 'glass');
     S.container('labBench', -12, z + 0.9, k === keyBench ? ['fuse', 'labNote2', 'labJournal2'] : undefined);
   });
