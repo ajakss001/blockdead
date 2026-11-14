@@ -242,10 +242,18 @@ const DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     s.line(10, 0, 10, 3, 0xd04040);
   },
   bandage: (s) => {
-    s.ellipse(7, 9, 5, 4, C.white);
-    s.ellipse(7, 9, 2, 1.5, 0xb8b2a2);
-    s.rect(11, 10, 4, 2, C.white);
-    s.dot(13, 10, 0xb03030);
+    // Clean rolled sterile gauze bandage with spiral top, shaded wrap & unrolled tail.
+    s.rect(3, 5, 8, 8, 0xd8d3c4);
+    s.rect(3, 5, 8, 2, C.white);
+    s.rect(3, 11, 8, 2, 0xb6b0a0);
+    s.ellipse(7, 5, 4, 2, C.white);
+    s.ellipse(7, 5, 2, 1, 0x9b9586);
+    s.dot(7, 5, 0x6f6a5e);
+    // Unrolled gauze strip on the right + small red medical cross.
+    s.rect(10, 9, 5, 3, C.white);
+    s.rect(11, 11, 4, 1, 0xc4beb0);
+    s.line(6, 8, 6, 10, 0xc83838);
+    s.line(5, 9, 7, 9, 0xc83838);
   },
   rag: (s) => {
     s.rect(3, 5, 10, 7, 0xb8b0a0);
@@ -932,8 +940,9 @@ const STAT_DRAW: Record<StatIcon, (s: Sprite, c: number, d: number) => void> = {
     s.line(12, 10, 14, 12, c);
   },
   wound: (s, c, d) => {
-    // Adhesive bandage.
-    s.line(3, 12, 12, 3, c, 4);
+    // Crisp adhesive bandage strip with central pad.
+    s.line(3, 12, 12, 3, c, 3);
+    s.line(4, 11, 11, 4, c, 3);
     s.rect(6, 6, 4, 4, d);
     s.dot(7, 7, c);
     s.dot(8, 8, c);

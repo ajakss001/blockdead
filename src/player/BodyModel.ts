@@ -60,7 +60,7 @@ export class BodyModel {
     for (const m of this.gear.values()) (m.material as { dispose(): void }).dispose();
     this.gear.clear();
     coverBody(body);
-    const r = new CharacterRig(body, 0, { cover: true, hide: this.hide }, fpBodyGeometry(body));
+    const r = new CharacterRig(body, 0, { cover: true, hide: this.hide, near: NEAR }, fpBodyGeometry(body));
     r.mesh.castShadow = true;
     this.root.add(r.root);
     this.rig = r;
