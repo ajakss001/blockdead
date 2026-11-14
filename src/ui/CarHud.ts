@@ -173,7 +173,8 @@ export class CarHud {
     this.inspectedCar = null;
     this.ctx.loop.resume('inventory');
     this.ctx.events.emit('ui:modal', { open: false });
-    if (!viaEsc) this.ctx.requestPointerLock();
+    void viaEsc;
+    this.ctx.requestPointerLock();
     this.onSave();
   }
 

@@ -153,7 +153,8 @@ export class MapPanel {
     sfx.item('invClose');
     this.ctx.loop.resume('map');
     this.ctx.events.emit('ui:modal', { open: false });
-    if (!viaEsc) this.ctx.requestPointerLock();
+    void viaEsc;
+    this.ctx.requestPointerLock();
   }
 
   private center(): void {

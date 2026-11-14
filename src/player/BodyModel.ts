@@ -16,7 +16,7 @@ import type { GearId } from '../data/items';
  * Gear on it as on the figure (characters/gear), but never in the way: no helmet (it is round the eyes), and
  * nothing of a vest's collar or the straps nearer the eye than NEAR; the toolbox only when it is on the hip.
  */
-const NEAR = 0.22;
+const NEAR = 0.36;
 
 const SPEED_WALK = 1.4;
 const SPEED_RUN = 3.6;
@@ -170,9 +170,9 @@ export class BodyModel {
     }
     j.setEffectiveWeight(air ? Math.min(1, this.airT / 0.1) : j.getEffectiveWeight());
     r.restPose();
-    r.mixer.update(dt);
-    // Looking down: the back and the neck bend (reduced while crouching so shoulders/backpack stay clear of the camera).
-    const down = Math.max(0, -pitch - 0.2) * (1 - crouchT * 0.7);
+    r.mixer.update(Math.min(dt, 0.05));
+    // Looking down: the back and the neck bend (greatly reduced while crouching so torso/vest stay clear of the camera).
+    const down = Math.max(0, -pitch - 0.2) * (1 - crouchT * 0.9);
     r.bone('Spine1').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.18));
     r.bone('Spine2').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.18));
     r.bone('Neck').quaternion.multiply(_q.setFromAxisAngle(_x, down * 0.3));
@@ -193,15 +193,17 @@ export class BodyModel {
     if (!r) return out.copy(this.root.position).setY(this.root.position.y + 1.62);
     const head = r.bone('Head');
     // The head bone is scaled to nothing: its parent's frame carries the eye.
+    // Smooth the offset relative to root.position so running/moving never lags the camera into the torso.
     _h.copy(EYE).applyQuaternion(head.quaternion).add(head.position);
     head.parent!.localToWorld(_h);
+    _h.sub(this.root.position);
     if (!this.eyeSet) this.eye.copy(_h);
     else {
       const k = 1 - Math.exp(-25 * dt);
       this.eye.lerp(_h, k);
     }
     this.eyeSet = true;
-    return out.copy(this.eye);
+    return out.copy(this.eye).add(this.root.position);
   }
 
   dispose(): void {

@@ -40,6 +40,7 @@ const MATERIAL: Partial<Record<Surface, HitMaterial>> = {
   rubber: 'soft',
 };
 const _o = new Vector3();
+const _eye = new Vector3();
 const _d = new Vector3();
 const _ray = new Raycaster();
 
@@ -272,17 +273,28 @@ export class Player {
     const amp = clamp(c.speed / SPEED_WALK, 0, 1.6);
     const cos = Math.cos(c.yaw);
     const sin = Math.sin(c.yaw);
-    // Keep the body's third-person pose updated (for shadows / looking down at feet), shifted slightly
-    // behind the eye when crouched or looking down so the vest/chest never clips into the camera.
-    const backShift = crouchT * 0.22 + Math.max(0, -c.pitch - 0.35) * 0.14;
-    this.body.update(x + sin * backShift, y, z + cos * backShift, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
-    // Anchor the first-person camera directly to the smoothed controller position & eyeHeight so
-    // crouching never lags, jitters, or drops inside the character's own chest/floor.
+    // Attach the camera back to the head bone (with local-space smoothing so running never clips torso).
+    this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
+    const eye = this.body.eyePosition(_eye, frameDt);
     const baseY = y + c.eyeHeight(alpha);
-    const bobY = c.airborne ? 0 : Math.sin(phase * 2) * 0.022 * amp * (1 - crouchT * 0.5);
+    eye.y = baseY + clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08);
+    const fwdPush = 0.04 + crouchT * 0.12;
+    eye.x += -sin * fwdPush;
+    eye.z += -cos * fwdPush;
+    const ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
+    if (ahead > 0.02) {
+      const room = this.world.rayHit(x, baseY, z, -sin, 0, -cos, ahead + 0.2);
+      if (room >= 0) {
+        const fit = Math.max(0, room - 0.18);
+        if (fit < ahead) {
+          eye.x += sin * (ahead - fit);
+          eye.z += cos * (ahead - fit);
+        }
+      }
+    }
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
-    this.camera.position.set(x, baseY + bobY - this.landDip, z);
+    this.camera.position.set(eye.x, eye.y - this.landDip, eye.z);
     this.shakeT = damp(this.shakeT, 0, 14, frameDt);
     const sh = this.shakeT * 0.02;
     this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp + (Math.random() - 0.5) * sh, 'YXZ');
