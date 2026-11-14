@@ -15,11 +15,8 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { characterMaterial } from '../render/look/materials';
-import { MODEL_LAYER_BASE } from '../render/look/surfaces';
-import { worldMaterials } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
 import type { DoorSpot, DoorStyle } from './gen/pieces';
-import { loadModelLibrary, modelGeometry, pickModel } from './models';
 
 /** Reference leaf size; each door scales its leaf to its own width. */
 const LEAF_W = 1;
@@ -143,49 +140,28 @@ export class Doors {
     const pane = slab(LEAF_W - 0.14, LEAF_H - 0.31, 0.012, LEAF_W / 2, 0.22 + (LEAF_H - 0.31) / 2);
     const glassDoor = mergeGeometries([tint(frame, 0x8a8e90, 1), tint(pane, 0x5c6a72, 0.32)])!;
     const glass = new MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.4, transparent: true, side: DoubleSide });
+    const plank = (y: number, tilt: number, zOff: number): BufferGeometry => {
+      const g = new BoxGeometry(LEAF_W + 0.16, 0.14, 0.035);
+      g.rotateZ(tilt);
+      g.translate(LEAF_W / 2, y, zOff);
+      return g;
+    };
+    const barricadedLeaf = mergeGeometries([
+      tint(wood, 0x5a4632, 1),
+      tint(plank(0.48, 0.07, 0.045), 0x7a6446, 1),
+      tint(plank(1.06, -0.09, 0.045), 0x6f5a3e, 1),
+      tint(plank(1.62, 0.05, 0.045), 0x766044, 1),
+      tint(plank(0.52, -0.06, -0.045), 0x745e42, 1),
+      tint(plank(1.12, 0.08, -0.045), 0x6c573c, 1),
+      tint(plank(1.66, -0.05, -0.045), 0x786246, 1),
+    ])!;
+    const barricadedMat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.04, side: DoubleSide });
     this.pools = {
       wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
       glass: this.pool([[glassDoor, glass]]),
       lab: this.pool([[wood, characterMaterial('handle', 0x5c6468)]]),
-      barricaded: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
+      barricaded: this.pool([[barricadedLeaf, barricadedMat]]),
     };
-    void loadModelLibrary(`${import.meta.env.BASE_URL}models/`).then((lib) => {
-      if (!lib) return;
-      const mat = worldMaterials().cast;
-      const swap = (style: DoorStyle, group: string, rough: number, metal: number) => {
-        const m = pickModel(lib, group, 0);
-        if (!m) return;
-        const g = modelGeometry(lib, m).clone();
-        const sx = LEAF_W / Math.max(0.05, m.size[0]);
-        const sy = LEAF_H / Math.max(0.05, m.size[1]);
-        const sz = 0.16 / Math.max(0.05, m.size[2]);
-        g.scale(sx, sy, sz);
-        g.translate(LEAF_W / 2, 0, 0);
-        const n = g.attributes.position.count;
-        const uv = g.attributes.uv;
-        const surfUv = new Float32Array(n * 2);
-        for (let i = 0; i < n; i++) {
-          surfUv[i * 2] = uv.getX(i);
-          surfUv[i * 2 + 1] = uv.getY(i);
-        }
-        const layers = new Float32Array(n).fill(MODEL_LAYER_BASE + m.layer);
-        const pbr = new Float32Array(n * 2);
-        for (let i = 0; i < n; i++) {
-          pbr[i * 2] = rough;
-          pbr[i * 2 + 1] = metal;
-        }
-        g.setAttribute('aSurfUv', new Float32BufferAttribute(surfUv, 2));
-        g.setAttribute('aLayer', new Float32BufferAttribute(layers, 1));
-        g.setAttribute('aPbr', new Float32BufferAttribute(pbr, 2));
-        const mesh = this.pools[style].meshes[0];
-        mesh.geometry.dispose();
-        mesh.geometry = g;
-        mesh.material = mat;
-      };
-      swap('wood', 'woodenDoor', 0.78, 0.1);
-      swap('lab', 'labDoor', 0.55, 0.45);
-      swap('barricaded', 'barricadedDoor', 0.82, 0.12);
-    });
     this.plankMesh = new InstancedMesh(new BoxGeometry(1, 0.15, 0.035), characterMaterial('handle', 0x7a6446), PLANK_CAPACITY);
     this.plankMesh.count = 0;
     this.plankMesh.frustumCulled = false;

@@ -114,7 +114,7 @@ export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];
  * The interior generator puts real panes exactly there.
  */
 export const FACADE_WINDOW = {
-  apartments: { inset: (11 / 64) * 3, width: (42 / 64) * 3, sill: (18 / 64) * 3.2, head: (48 / 64) * 3.2 },
+  apartments: { inset: (11 / 64) * 3, width: (42 / 64) * 3, sill: (16 / 64) * 3.2, head: (52 / 64) * 3.2 },
   offices: { inset: (3 / 64) * 3, width: (58 / 64) * 3, sill: (7 / 64) * 3.2, head: (59 / 64) * 3.2 },
 } as const;
 export const FACADE_BAY = 3;

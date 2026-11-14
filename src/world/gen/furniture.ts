@@ -170,7 +170,9 @@ export class Place {
 
   /** Flat sheet lying on a surface at height ly (paper, a towel), rotated by yaw. */
   sheet(color: number, lx: number, ly: number, lz: number, sx: number, sz: number, yaw: number, surface: Surface = 'plaster'): void {
-    _l.compose(_p.set(lx, ly + 0.006, lz), _q.setFromAxisAngle(_up, yaw), _s.set(sx, 1, sz));
+    const jitter = (Math.abs(lx * 17.3 + lz * 31.7) % 1) * 0.008;
+    const yOff = (ly <= 0.001 ? 0.025 : ly + 0.008) + jitter;
+    _l.compose(_p.set(lx, yOff, lz), _q.setFromAxisAngle(_up, yaw), _s.set(sx, 1, sz));
     this.b.geo(flat(), color, _m.multiplyMatrices(this.base(), _l), surface);
   }
 
@@ -418,7 +420,7 @@ export function tvStand(p: Place, rand: Rand, messy = false): void {
 
 export function bookcase(p: Place, rand: Rand, messy = false): void {
   if (p.model('bookcase', rand, 0, 0, 0.34, 0, 1, 0.82, 0.08)) {
-    if (messy) for (let i = 0; i < 5; i++) p.rbox(pick(rand, ART), (rand() - 0.5) * 1.2, 0.02, 0.65 + rand() * 0.6, 0.16, 0.04, 0.22, rand() * 3, 0, 0, 'rubber');
+    if (messy) for (let i = 0; i < 5; i++) p.rbox(pick(rand, ART), (rand() - 0.5) * 1.2, 0.042 + i * 0.004, 0.65 + rand() * 0.6, 0.16, 0.04, 0.22, rand() * 3, 0, 0, 'rubber');
     p.solid(0, 0.32, 1.5, 0.45, 1.95);
     p.container('bookcase', 0, 0.72);
     return;
@@ -436,7 +438,7 @@ export function bookcase(p: Place, rand: Rand, messy = false): void {
       x += w + (rand() < 0.3 ? 0.08 : 0);
     }
   }
-  if (messy) for (let i = 0; i < 5; i++) p.rbox(pick(rand, ART), (rand() - 0.5) * 1.2, 0.02, 0.5 + rand() * 0.6, 0.16, 0.04, 0.22, rand() * 3, 0, 0, 'rubber');
+  if (messy) for (let i = 0; i < 5; i++) p.rbox(pick(rand, ART), (rand() - 0.5) * 1.2, 0.042 + i * 0.004, 0.5 + rand() * 0.6, 0.16, 0.04, 0.22, rand() * 3, 0, 0, 'rubber');
   p.solid(0, 0.16, 0.9, 0.32, 1.9);
   p.container('bookcase', 0, 0.55);
 }
@@ -799,7 +801,7 @@ export function suitcase(p: Place, rand: Rand, open = false): void {
 
 /** Clothes dropped on the floor around a local point. */
 export function clothesPile(p: Place, rand: Rand, lx: number, lz: number, n: number): void {
-  for (let i = 0; i < n; i++) p.rbox(pick(rand, CLOTHES), lx + (rand() - 0.5) * 0.9, 0.02, lz + (rand() - 0.5) * 0.6, 0.35 + rand() * 0.2, 0.03, 0.3 + rand() * 0.2, rand() * 6, 0, 0, 'rubber');
+  for (let i = 0; i < n; i++) p.rbox(pick(rand, CLOTHES), lx + (rand() - 0.5) * 0.9, 0.038 + i * 0.004, lz + (rand() - 0.5) * 0.6, 0.35 + rand() * 0.2, 0.03, 0.3 + rand() * 0.2, rand() * 6, 0, 0, 'rubber');
 }
 
 /** Furniture dragged against a door from the inside: a wardrobe on its side, chairs piled on it. */
@@ -888,11 +890,11 @@ export function elevator(p: Place, rand: Rand): void {
 
 /** Concierge / security counter (L-shaped) with an old monitor and a chair behind. */
 export function concierge(p: Place, rand: Rand): void {
-  if (p.model('receptionDesk', rand, 0, 0, 0.55, 0, 1, 0.78, 0.15)) {
-    p.solid(0, 0.35, 2.2, 0.8, 1.1);
-    officeChair(p.at(0, -0.7, 2), rand, rand() < 0.4);
-    papers(p, rand, -1.0, 0.8, 1.0, 1.6, 4);
-    p.container('reception', 0, 1.0);
+  if (p.model('receptionDesk', rand, 0, 0, 0.95, Math.PI, 1, 0.78, 0.15)) {
+    p.solid(0, 0.95, 2.3, 1.35, 1.15);
+    officeChair(p.at(0, 1.0, 0), rand, rand() < 0.4);
+    papers(p, rand, -1.0, -0.2, 1.0, 0.6, 4);
+    p.container('reception', 0, 0.95);
     return;
   }
   p.box(0x6d6250, 0, 0, 0.35, 2.4, 1.05, 0.6, 'wood', true);

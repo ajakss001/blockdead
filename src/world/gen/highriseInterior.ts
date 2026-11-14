@@ -113,7 +113,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   if (!rf) return;
 
   // Concierge desk facing the doors, mailboxes on the side wall, the dead elevator by the stairs.
-  F.concierge(new Place(b, Math.min(L.doorX + 3.7, L.ix1 - 1.5), 0, L.iz0 + 3.7, 2), rf);
+  F.concierge(new Place(b, Math.min(L.doorX + 3.7, L.ix1 - 2.1), 0, L.iz0 + 4.0, 2), rf);
   F.mailboxes(new Place(b, L.ix1, 0, L.iz0 + 1.8, 3), rf);
   F.elevator(new Place(b, L.cx1 + 1.5, 0, L.cz0, 2), rf);
   F.notes(new Place(b, L.cx1 + 3.1, 0, L.cz0, 2), rf, 3);
@@ -166,7 +166,7 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
   }
   if (rf() < 0.35) groundDecal(b, 'decalLitter', L.ix0 + 2 + rf() * (width - 4), y, cz, 1.5, rf, 1.8);
   if (rf() < 0.5) groundDecal(b, 'decalLitter', L.ix0 + 2 + rf() * (width - 4), y, cz, 1.6, rf);
-  if (rf() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 2 + rf() * (width - 4), y + 1.3, L.czA, 1.2, 1);
+  if (rf() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 0.8, y + 1.3, L.czA, 1.1, 1);
   F.papers(new Place(b, L.ix0, y, L.czA), rf, 1, 0.2, width - 1, CORRIDOR - 0.2, 2 + Math.floor(rf() * 5));
   if (rf() < 0.25) F.suitcase(new Place(b, L.ix0 + 4 + rf() * (width - 8), y, cz - 0.3, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.5);
 }
@@ -175,13 +175,10 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
  * Unit door. Planked shut from outside (no way in), or barricaded from inside: then it swings out
  * into the corridor and opens onto the furniture piled behind it.
  */
-function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, plankZ: number, st: UnitState, rs: Rand): void {
+function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, _plankZ: number, st: UnitState, rs: Rand): void {
   const planked = st !== 'barricaded' && rs() < 0.1;
   const open = !planked && (st === 'fled' ? rs() < 0.45 : st === 'ransacked' ? rs() < 0.6 : false);
   b.door(gx, hz, y, 0, st === 'barricaded' ? -swing : swing, planked, { open });
-  if (planked) {
-    for (let p = 0; p < 3; p++) b.block(0x6a5a42, gx - 0.15, y + 0.5 + p * 0.6, plankZ, DOOR_W + 0.3, 0.14, 0.04, 'wood');
-  }
 }
 
 function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], lit: LitUnit[]): void {

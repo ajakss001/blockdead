@@ -138,15 +138,13 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
         .multiply(new Matrix4().makeRotationFromEuler(new Euler(o.flatTire ? -0.02 : 0, 0, o.flatTire ? -0.01 : 0)));
       placeModel(batch, m, matrix, m.tint ? paintFor(o.paint, rand) : null, dirt);
       if (containers) containers.push(trunkSpot(m, matrix, o.yaw));
-      // Narrower footprint (mirrors/bumpers excluded) and split height (low hood/trunk vs cabin)
-      // so bullets fly cleanly over the hood/trunk and past the sides.
-      const hx = m.size[0] * 0.45;
-      const hz = m.size[2] * 0.41;
-      const hoodH = Math.min(0.92, m.size[1] * 0.62);
+      // Full footprint lower body so the player never clips into trunks/bumpers,
+      // and tall cabin collider so AI line-of-sight and bullets cannot shoot through cars.
+      const hx = m.size[0] * 0.5 + 0.05;
+      const hz = m.size[2] * 0.48;
+      const hoodH = Math.max(0.95, m.size[1] * 0.64);
       world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
-      if (m.size[1] > hoodH + 0.15) {
-        world.addOrientedBox(o.x, o.z, hx * 0.48, hz * 0.86, o.yaw, hoodH, m.size[1] - 0.04);
-      }
+      world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, m.size[1] + 0.12));
       return;
     }
   }
@@ -268,9 +266,9 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     containers.push({ type: 'trunk', x: t.x, z: t.z, box: [t.x, t.y, t.z, 0.45, 0.36, WIDTH / 2 - 0.08, o.yaw] });
   }
 
-  // Narrower footprint + split hood/cabin height so bullets pass over the hood/trunk and past the sides.
-  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.94, WIDTH * 0.44, o.yaw, -0.5, 0.92);
-  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.46, WIDTH * 0.38, o.yaw, 0.92, 1.44);
+  // Full footprint + tall cabin so player cannot clip into trunk and bandits cannot shoot through cars.
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH + 0.04, WIDTH * 0.48, o.yaw, -0.5, 0.96);
+  world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.66, WIDTH * 0.44, o.yaw, 0.96, 1.58);
 }
 
 /**

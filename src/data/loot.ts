@@ -8,6 +8,7 @@ export type ContainerType =
   | 'fridge'
   // A dead survivor of yours, killed again: what they wore and carried (filled by the scene, never rolled).
   | 'bodyTwin'
+  | 'bodyBandit'
   | 'counter'
   | 'wardrobe'
   | 'tvstand'
@@ -140,6 +141,7 @@ export const LOOT: Readonly<Record<ContainerType, LootTable>> = {
   bodyPolice: { name: 'Погибший полицейский', empty: 0.25, rolls: [1, 3], items: [['helmetSwat', 0.4], ['vestSwat', 0.3], ['batteries', 2], ['bandage', 1.5], ['tape', 1], ['bat', 0.6], ['water', 1], ['swatShirt', 0.3], ['tacticalGloves', 0.4], ['outfitPolice', 0.25], ['ammo_9mm', 0.5], ['mag_g17', 0.2], ['balaclava', 0.3]] },
   bodyMedic: { name: 'Погибший медик', empty: 0.2, rolls: [1, 3], items: [['bandage', 3], ['painkillers', 2.5], ['antibiotics', 1.5], ['scrubsTop', 0.6], ['soap', 1], ['water', 1], ['medGloves', 1], ['bagMedic', 0.5], ['outfitDoctor', 0.3]] },
   bodyTwin: { name: 'Ваш прошлый выживший', empty: 1, rolls: [0, 0], items: [] },
+  bodyBandit: { name: 'Труп бандита', empty: 1, rolls: [0, 0], items: [] },
   bodyFire: { name: 'Погибший пожарный', empty: 0.25, rolls: [1, 3], items: [['helmetFire', 1], ['fireCoat', 0.5], ['axe', 0.4], ['rope', 1.5], ['water', 1.5], ['bandage', 1], ['fireGloves', 0.6], ['outfitFirefighter', 0.35]] },
   gasShelf: { name: 'Стеллаж', empty: 0.3, rolls: [1, 3], items: [['chips', 4], ['chocolate', 3], ['crackers', 3], ['beans', 2], ['water', 3], ['soda', 3], ['map', 1], ['tape', 1], ['batteries', 1.5], ['lighter', 1.5], ['jerrycan', 2.2], ['carBattery', 1.2], ['engineParts', 1.5]] },
   gasCounter: { name: 'Касса', empty: 0.25, rolls: [1, 2], items: [['map', 3], ['lighter', 3], ['batteries', 2], ['chocolate', 2], ['painkillers', 1], ['junk', 2], ['carKey', 1.5]] },
@@ -246,6 +248,7 @@ const LOOT_NAMES: Readonly<Record<ContainerType, [string, string]>> = {
   bodyPolice: ['Погибший полицейский', 'Fallen police officer'],
   bodyMedic: ['Погибший медик', 'Fallen medic'],
   bodyTwin: ['Ваш прошлый выживший', 'Your past survivor'],
+  bodyBandit: ['Труп бандита', 'Bandit corpse'],
   bodyFire: ['Погибший пожарный', 'Fallen firefighter'],
   gasShelf: ['Стеллаж', 'Store shelf'],
   gasCounter: ['Касса', 'Cash register'],

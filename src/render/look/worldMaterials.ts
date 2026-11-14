@@ -17,7 +17,7 @@ import { type Bucket, MODEL_LAYER_BASE, SURFACE_LIST, SURFACES } from './surface
 
 export type LightingModel = 'standard' | 'lambert';
 
-const SIZE = 256;
+const SIZE = 128;
 
 /**
  * World materials: one texture array holds every surface's grunge texture, and each vertex carries
@@ -168,8 +168,25 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
         const ctx = c.getContext('2d')!;
         ctx.drawImage(bmp, 0, 0, SIZE, SIZE);
         const px = ctx.getImageData(0, 0, SIZE, SIZE).data;
+        let sum = 0;
+        const count = SIZE * SIZE;
+        for (let i = 0; i < px.length; i += 4) sum += (px[i] + px[i + 1] + px[i + 2]) / 3;
+        const mean = Math.max(40, sum / count);
         const base = targetLayer * SIZE * row;
-        for (let y = 0; y < SIZE; y++) data.set(px.subarray(y * row, (y + 1) * row), base + (SIZE - 1 - y) * row);
+        for (let y = 0; y < SIZE; y++) {
+          const srcOff = y * row;
+          const dstOff = base + (SIZE - 1 - y) * row;
+          for (let x = 0; x < SIZE; x++) {
+            const si = srcOff + x * 4;
+            const di = dstOff + x * 4;
+            const lum = (px[si] * 0.3 + px[si + 1] * 0.59 + px[si + 2] * 0.11) / mean;
+            const detail = Math.max(0.72, Math.min(1.25, 0.55 + 0.45 * lum));
+            data[di] = Math.max(0, Math.min(255, Math.round(data[di] * detail)));
+            data[di + 1] = Math.max(0, Math.min(255, Math.round(data[di + 1] * detail)));
+            data[di + 2] = Math.max(0, Math.min(255, Math.round(data[di + 2] * detail)));
+            data[di + 3] = 255;
+          }
+        }
         tex.needsUpdate = true;
       })
       .catch(() => {});

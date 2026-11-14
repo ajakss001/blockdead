@@ -88,9 +88,9 @@ function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, offi
     g.fillRect(0, fy * cell + cell - 5, size, 5);
     for (let bx = 0; bx < 2; bx++) {
       const x0 = bx * cell + (office ? 3 : 11);
-      const y0 = fy * cell + (office ? 5 : 16);
+      const y0 = fy * cell + (office ? 5 : 12);
       const w = office ? cell - 6 : cell - 22;
-      const h = office ? cell - 12 : 30;
+      const h = office ? cell - 12 : 36;
       const roll = rand();
       if (!office) {
         g.fillStyle = 'rgba(70, 66, 60, 0.9)';
@@ -366,8 +366,15 @@ export function generateGrungeCanvas(
           break;
       }
 
-      // Grime: low-frequency dark-brown patches (gentle on interior plaster, fabric and glass).
-      const surfGrime = kind === 'glass' ? 0.1 : kind === 'plaster' || kind === 'fabric' ? 0.24 : 1;
+      // Grime: low-frequency dark-brown patches (gentle on interior plaster, facades, fabric and glass).
+      const surfGrime =
+        kind === 'glass'
+          ? 0.1
+          : kind === 'plaster' || kind === 'fabric'
+            ? 0.24
+            : kind === 'facadeBrick' || kind === 'facadeConcrete' || kind === 'facadeOffice'
+              ? 0.32
+              : 0.75;
       const dirt = smooth(0.5 - 0.14 * Math.max(0, grimeK - 1), 0.72, grime(u, v)) * Math.min(1, grimeK) * surfGrime;
       shade *= 1 - dirt * 0.45;
       r = r + (52 - r) * dirt * 0.35;

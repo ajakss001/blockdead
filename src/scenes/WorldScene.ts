@@ -33,6 +33,7 @@ import { MAP_SEEN, MapMemory } from '../systems/MapMemory';
 import { Base, BASE, type Placed, type PlacedKind } from '../systems/Base';
 import { BaseProps } from '../world/BaseProps';
 import { MapPanel } from '../ui/MapPanel';
+import { WorldEditor } from '../editor/WorldEditor';
 import { gridSchedule, type GridSchedule, TAP_DRINK } from '../systems/Utilities';
 import { describeXp, emptyMeta, type MetaData, SKILLS, Skills, weaponSkill, XP } from '../systems/Skills';
 import { BACKPACK_CAPACITY, ITEMS } from '../data/items';
@@ -298,6 +299,7 @@ export class WorldScene implements IScene {
   private readonly searchOutline = new LineSegments(boxEdges([[0, 0, 0, 0.5, 0.5, 0.5, 0]]), new LineBasicMaterial({ color: 0xe8dcb0, transparent: true, opacity: 0.32 }));
   private zoneDebug: LineSegments | null = null;
   private zoneDebugT = 0;
+  private editor!: WorldEditor;
   /** The player's death (ragdoll, camera) once it happened. */
   private death: PlayerDeath | null = null;
   private deathShown = false;
@@ -440,7 +442,7 @@ export class WorldScene implements IScene {
           : ([bot.pos.x, bot.pos.y + 0.22, bot.pos.z, 0.75, 0.32, 0.55, bot.yaw] as [number, number, number, number, number, number, number]);
         const ref: ContainerRef = {
           id: BANDIT_BODY_ID + bot.id,
-          type: 'bodyTwin',
+          type: 'bodyBandit',
           x: pelvis.x,
           z: pelvis.z,
           y: pelvis.y,
@@ -673,6 +675,16 @@ export class WorldScene implements IScene {
 
     this.resize(ctx.renderer.width, ctx.renderer.height);
     this.applyQuality();
+    this.editor = new WorldEditor(this.scene, this.camera, ctx.renderer.gl.domElement, (on) => {
+      this.player.viewmodel.scene.visible = !on && !this.dead && !this.vehicles.activeCar;
+      if (!on) {
+        const p = this.camera.position;
+        this.player.controller.position.set(p.x, Math.max(0, p.y - 1.6), p.z);
+      }
+    });
+    if (new URLSearchParams(location.search).get('editor') === '1') {
+      this.editor.toggle(true);
+    }
     this.unsubs.push(
       ctx.events.on('viewport:resize', ({ width, height }) => this.resize(width, height)),
       ctx.events.on('quality:changed', () => this.applyQuality()),
@@ -859,6 +871,7 @@ export class WorldScene implements IScene {
   }
 
   fixedUpdate(dt: number): void {
+    if (this.editor.active) return;
     const c = this.player.controller;
     if (this.debugSpawnT > 0 && (this.debugSpawnT -= dt) <= 0) this.debugKey();
     if (this.debugDieT > 0 && (this.debugDieT -= dt) <= 0) {
@@ -1062,7 +1075,9 @@ export class WorldScene implements IScene {
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
     // The survivor's body, arms and light move by world time (or the active vehicle camera when driving).
-    if (this.vehicles.activeCar && !this.dead) {
+    if (this.editor.active) {
+      this.editor.update(frameDt);
+    } else if (this.vehicles.activeCar && !this.dead) {
       this.vehicles.render(frameDt, this.camera, this.ctx.input);
     } else {
       this.player.render(alpha, gameDt);
@@ -2162,6 +2177,7 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
+    this.editor.dispose();
     this.firearms.dispose();
     this.bandits.dispose();
     this.gunHud.dispose();

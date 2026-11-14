@@ -421,7 +421,6 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
   b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'metal');
   b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'metal');
-  if (rand() < 0.5) wallDecalZ(b, 'decalBullets', L.x0 + 2 + rand() * (desc.w - 4), 1.2 + rand() * 1.4, L.z0, 1.4, -1);
   if (rand() < 0.35) groundDecal(b, 'decalLitter', L.doorX + (rand() - 0.5) * 3, 0, L.z0 - 1.5 - rand() * 2, 1.6, rand);
   const shop = groundShop(desc);
   if (shop) {

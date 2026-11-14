@@ -956,12 +956,11 @@ export class Bandits {
       return;
     }
 
-    // Detach held weapon from the hand and drop it flat beside the body so it never clips through the head.
+    // Remove the held weapon mesh on death so there isn't an unpickable decoy next to the corpse;
+    // the exact weapon is inside the bandit's lootable corpse inventory (`bot.loot`).
     if (v.heldObj) {
       v.heldObj.removeFromParent();
-      v.heldObj.position.set(b.pos.x + Math.cos(b.yaw) * 0.45, b.pos.y + 0.05, b.pos.z - Math.sin(b.yaw) * 0.45);
-      v.heldObj.rotation.set(Math.PI / 2, b.yaw + 0.4, 0);
-      this.w.scene.add(v.heldObj);
+      v.heldObj = null;
     }
 
     // Transfer rig from b.root to world space (RagdollPose drives bones in world space).
