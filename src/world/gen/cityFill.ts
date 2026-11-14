@@ -1,5 +1,6 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import { buildCar, CAR_PAINTS } from '../props/car';
+import { pickModel } from '../models';
+import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
 import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
@@ -255,10 +256,31 @@ function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, ga
     [a, gapAt - gapW / 2],
     [gapAt + gapW / 2, c],
   ];
+  const barrier = pickModel(modelLibrary(), 'wallBarrier', 0);
   for (const [s0, s1] of spans) {
-    if (s1 - s0 < 0.2) continue;
-    if (alongX) b.block(color, s0, 0, fixed - thick / 2, s1 - s0, h, thick, surface, true);
-    else b.block(color, fixed - thick / 2, 0, s0, thick, h, s1 - s0, surface, true);
+    const spanLen = s1 - s0;
+    if (spanLen < 0.2) continue;
+    if (barrier) {
+      const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
+      const segLen = spanLen / count;
+      const sx = segLen / barrier.size[0];
+      const sy = Math.min(1.65, h / barrier.size[1]);
+      const sz = 1.0;
+      const halfT = (barrier.size[2] * sz) / 2;
+      const topY = barrier.size[1] * sy;
+      _q.setFromAxisAngle(_axis.set(0, 1, 0), alongX ? 0 : Math.PI / 2);
+      _s.set(sx, sy, sz);
+      for (let i = 0; i < count; i++) {
+        const u = s0 + (i + 0.5) * segLen;
+        _p.set(alongX ? u : fixed, 0, alongX ? fixed : u);
+        placeModel(b.batch, barrier, _m.compose(_p, _q, _s), null);
+      }
+      if (alongX) b.solid(s0, fixed - halfT, s1, fixed + halfT, 0, topY);
+      else b.solid(fixed - halfT, s0, fixed + halfT, s1, 0, topY);
+      continue;
+    }
+    if (alongX) b.block(color, s0, 0, fixed - thick / 2, spanLen, h, thick, surface, true);
+    else b.block(color, fixed - thick / 2, 0, s0, thick, h, spanLen, surface, true);
     // Posts / ribs every few meters break up the flat sheet.
     if (ribEvery > 0) {
       for (let t = s0; t <= s1; t += ribEvery) {

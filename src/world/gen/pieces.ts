@@ -5,6 +5,8 @@ import type { StaticBatch } from '../../render/StaticBatch';
 import type { ItemId } from '../../data/items';
 import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
+import { pickModel } from '../models';
+import { modelLibrary, placeModel } from '../props/car';
 
 /** A searchable spot in the world (world XZ of its front face, Y of its floor). */
 /**
@@ -674,6 +676,39 @@ export function fence(
     _s.set(alongX ? len : 0.04, h, alongX ? 0.04 : len);
     b.batch.add(b.box, PAL.fence, _m.compose(_p, _q.setFromEuler(_e), _s), 'wood');
   };
+  const barrier = pickModel(modelLibrary(), 'wallBarrier', 0);
+  if (barrier) {
+    const sy = style === 'board' ? 1.35 : 0.95;
+    const sz = 1.0;
+    const halfT = (barrier.size[2] * sz) / 2;
+    const topY = barrier.size[1] * sy;
+    _q.setFromEuler(_e.set(0, alongX ? 0 : Math.PI / 2, 0));
+    for (const [s0, s1] of spans) {
+      const spanLen = s1 - s0;
+      if (spanLen < 0.3) continue;
+      const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
+      const segLen = spanLen / count;
+      const sx = segLen / barrier.size[0];
+      _s.set(sx, sy, sz);
+      for (let i = 0; i < count; i++) {
+        if (rand && rand() < 0.1) continue;
+        const segStart = s0 + i * segLen;
+        const segEnd = segStart + segLen;
+        const u = segStart + segLen * 0.5;
+        _p.set(alongX ? u : fixed, 0, alongX ? fixed : u);
+        placeModel(b.batch, barrier, _m.compose(_p, _q, _s), null);
+        if (alongX) b.colliders.addBox(segStart, fixed - halfT, segEnd, fixed + halfT, 0, topY);
+        else b.colliders.addBox(fixed - halfT, segStart, fixed + halfT, segEnd, 0, topY);
+        if (spotHash(segStart, fixed, 21) < 0.18) {
+          const side = spotHash(fixed, segStart, 22) < 0.5 ? -1 : 1;
+          const fh = topY * (0.6 + spotHash(segStart, fixed, 23) * 0.4);
+          if (alongX) b.life(LIFE.ivy, u, 0, fixed + side * (halfT + 0.02), 0, side, segLen, fh, spotHash(segStart, fixed, 24));
+          else b.life(LIFE.ivy, fixed + side * (halfT + 0.02), 0, u, side, 0, segLen, fh, spotHash(segStart, fixed, 24));
+        }
+      }
+    }
+    return;
+  }
   for (const [s0, s1] of spans) {
     if (s1 - s0 < 0.3) continue;
     for (let x0 = s0; x0 < s1 - 0.05; x0 += 2) {
