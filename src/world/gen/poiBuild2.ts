@@ -516,8 +516,11 @@ export function checkpoint(S: Site, rand: Rand): void {
   p.box(0x5a5a46, 0, 0, 12, 2, 0.75, 1, 'wood', true);
   F.notes(p.at(0, 12.2, 0), rand, 3);
   for (let k = 0; k < 4; k++) {
-    p.box(0x4a5a3a, -8 + k * 1.1, 0, 14, 1.0, 0.6, 0.7, 'wood', true);
-    S.container('militaryCrate', -8 + k * 1.1, 14.5);
+    const cx = -8 + k * 1.1;
+    if (!p.model('supplyCrate', rand, cx, 0, 14.35, 0, 1, 0.78, 0.15, true)) {
+      p.box(0x4a5a3a, cx, 0, 14, 1.0, 0.6, 0.7, 'wood', true);
+    }
+    S.container('militaryCrate', cx, 14.8);
   }
   S.container('bodyMilitary', 3, 18);
   if (rand() < 0.6) S.container('bodyMilitary', -18, 22);

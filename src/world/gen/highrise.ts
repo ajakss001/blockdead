@@ -4,7 +4,7 @@ import { mulberry32 } from '../../core/random';
 import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
 import { SHOP_KINDS, SHOP_SIGN, type ShopKind } from './furniture';
 import { hash3 } from './noise';
-import { type Builder, glassTeeth, PAL, pick, type Rand } from './pieces';
+import { type Builder, PAL, pick, type Rand } from './pieces';
 
 /**
  * Downtown high-rises (5–25 storeys), authored in a local frame with the entrance on the −Z side
@@ -387,7 +387,6 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     b.block(PAL.trim, x + pw, 0.3, L.z0 - 0.06, 0.08, 2.6, 0.06, 'metal');
     b.block(PAL.trim, x, 2.8, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
     if (broken) {
-      glassTeeth(b, x, 0.3, L.z0 - 0.05, pw, 2.5, rand);
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 + 1.0, 1.6, rand, 1.2);
     } else {
@@ -404,8 +403,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, height: ENTRANCE_H, style, open, pair: -1 });
     b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
   } else if (entrance === 'smashed') {
-    // The doors are gone: glass teeth in the frame, glass everywhere, an open way in.
-    glassTeeth(b, d0 + 0.05, 0.05, L.z0 + 0.12, ENTRANCE_W - 0.1, ENTRANCE_H - 0.1, rand);
+    // The doors are gone: glass on the ground, an open way in.
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
   } else {

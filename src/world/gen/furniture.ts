@@ -763,12 +763,17 @@ export function papers(p: Place, rand: Rand, x0: number, z0: number, x1: number,
 /** Notes pinned on the wall behind the piece: "gone to the evacuation point", lists, a child's drawing. */
 export function notes(p: Place, rand: Rand, n = 2): void {
   for (let i = 0; i < n; i++) {
-    const x = (rand() - 0.5) * 0.8;
-    const y = 1.3 + rand() * 0.4;
-    const roll = (rand() - 0.5) * 0.25;
+    const x = (rand() - 0.5) * 0.5;
+    const y = 1.3 + rand() * 0.35;
+    const roll = (rand() - 0.5) * 0.22;
     p.poster(pick(rand, [PAPER, 0xd8cc9a, 0xc8d0c8]), x, y, 0.21, 0.29, roll);
-    // Scribbled lines.
-    for (let k = 0; k < 3; k++) p.rbox(0x2a2a30, x, y + 0.08 - k * 0.06, 0.016, 0.14, 0.008, 0.002, 0, 0, roll, 'plaster');
+    // Scribbled lines rotated inside the paper bounds and flush with its surface.
+    const sinR = Math.sin(roll);
+    const cosR = Math.cos(roll);
+    for (let k = 0; k < 3; k++) {
+      const dy = 0.06 - k * 0.055;
+      p.rbox(0x2a2a30, x - dy * sinR, y + dy * cosR, 0.012, 0.12, 0.007, 0.002, 0, 0, roll, 'plaster');
+    }
   }
 }
 

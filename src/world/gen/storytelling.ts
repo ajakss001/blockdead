@@ -1,5 +1,6 @@
 import { Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
-import { buildCar, CAR_PAINTS } from '../props/car';
+import { pickModel } from '../models';
+import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
 import { groundDecal } from './highrise';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, PAL, pick, type Rand } from './pieces';
@@ -110,9 +111,18 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
     b.block(PAL.metal, cx + dx, 0, cz + 2.2, 0.08, 0.95, 0.08, 'metal', true);
     b.block(PAL.metal, cx + dx + 1.92, 0, cz + 2.2, 0.08, 0.95, 0.08, 'metal', true);
   }
-  b.block(0x3e4a34, cx - 0.6, 0, cz - 2.6, 1.0, 0.5, 0.6, 'wood', true);
-  // The checkpoint's own box: army kit (the glasses and shemaghs of the men who held it).
-  b.container('militaryCrate', cx - 0.1, cz - 1.9);
+  const crateM = pickModel(modelLibrary(), 'supplyCrate', rand());
+  if (crateM) {
+    const cx0 = cx - 0.1;
+    const cz0 = cz - 2.3;
+    placeModel(b.batch, crateM, _m.makeTranslation(cx0, 0, cz0), null, undefined, 0.78, 0.15);
+    b.solid(cx0 - crateM.size[0] / 2, cz0 - crateM.size[2] / 2, cx0 + crateM.size[0] / 2, cz0 + crateM.size[2] / 2, 0, crateM.size[1]);
+    b.container('militaryCrate', cx0, cz0 + crateM.size[2] / 2 + 0.35);
+  } else {
+    b.block(0x3e4a34, cx - 0.6, 0, cz - 2.6, 1.0, 0.5, 0.6, 'wood', true);
+    // The checkpoint's own box: army kit (the glasses and shemaghs of the men who held it).
+    b.container('militaryCrate', cx - 0.1, cz - 1.9);
+  }
   for (let i = 0; i < 3; i++) groundDecal(b, 'decalLitter', cx + (rand() - 0.5) * 8, 0, cz + (rand() - 0.5) * 8, 2.4, rand);
   for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

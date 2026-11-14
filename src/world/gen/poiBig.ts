@@ -429,8 +429,10 @@ export function militaryBase(S: Site, rand: Rand): void {
   S.roof(-20, -54, -6, -24, 5, 0x6a6c66, 0x8a8c86, 0x4a4c46);
   for (const z of [-50, -44, -38, -32]) {
     for (const x of [-17, -9]) {
-      p.box(0x4a4e3e, x, 0, z, 2.6, 0.12, 1.2, 'wood', true);
-      for (let k = 0; k < 2; k++) p.box(0x4e5438, x, 0.12 + k * 0.6, z, 2.2, 0.55, 1.0, 'wood');
+      if (!p.model('supplyCrate', rand, x, 0, z, 0, 1.35, 0.78, 0.15, true)) {
+        p.box(0x4a4e3e, x, 0, z, 2.6, 0.12, 1.2, 'wood', true);
+        for (let k = 0; k < 2; k++) p.box(0x4e5438, x, 0.12 + k * 0.6, z, 2.2, 0.55, 1.0, 'wood');
+      }
       // The front row is the base's armoury: rifles, rounds, the only RPGs.
       S.container(z === -50 ? 'baseArmory' : 'militaryCrate', x, z + 0.9);
     }

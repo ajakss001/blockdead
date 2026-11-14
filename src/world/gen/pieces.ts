@@ -538,9 +538,8 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
     [wb, x1],
   ] as const) {
     if (rand() < 0.35) {
-      // Smashed: a low sill you can step over, teeth of glass in the frame, glass on the pavement.
+      // Smashed: a low sill you can step over.
       wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.3, false);
-      glassTeeth(b, xa + 0.15, 0.3, z1 - 0.12, xb - xa - 0.3, 2.3, rand);
       b.solid(xa, z1 - WALL_T, xa + 0.15, z1);
       b.solid(xb - 0.15, z1 - WALL_T, xb, z1);
     } else {
@@ -550,9 +549,8 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
     b.block(PAL.trim, xa, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');
     b.block(PAL.trim, xb - 0.15, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');
   }
-  // Glass shop door (sometimes left open), or its frame with the glass kicked out.
+  // Glass shop door (sometimes left open), or its open frame.
   if (rand() < 0.75) b.door(wa, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, height: 2.6, style: 'glass', open: rand() < 0.3 });
-  else glassTeeth(b, wa + 0.05, 0.1, z1 - 0.1, DOOR_W - 0.1, 2.3, rand);
   wallAlongX(b, front, paper, x0, x1, z1 - WALL_T, true, 2.6, h - 2.6, false);
   b.block(SHOP_SIGN[kind], x0 + 0.3, 2.7, z1, w - 0.6, 0.55, 0.06, 'metal');
   wallAlongX(b, front, paper, x0, x1, z0, false, 0, h);
