@@ -71,7 +71,7 @@ export { PAL, pick, type Rand } from './palette';
 import { PAL, pick, type Rand } from './palette';
 import * as F from './furniture';
 import { LIFE, spotHash, TREE } from './lifeKinds';
-import { Place, type Quarter, SHOP_KINDS, SHOP_SIGN } from './furniture';
+import { Place, SHOP_KINDS, SHOP_SIGN } from './furniture';
 
 const WALL_T = 0.2;
 const DOOR_W = 1.0;
@@ -473,25 +473,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const kLen = Math.max(1.5, x1 - WALL_T - 1.05 - (xp + 0.4));
   F.kitchenRun(new Place(b, xp + 0.4 + kLen / 2, 0, z0 + WALL_T, 0), rand, kLen, messy);
   F.fridge(new Place(b, x1 - WALL_T - 0.45, 0, z0 + WALL_T, 0), rand, open());
-  const tz = zp - 1.3;
-  b.block(PAL.counter, xp + 1.2, 0.72, tz, 1.0, 0.05, 0.8, 'wood');
-  b.solid(xp + 1.2, tz, xp + 2.2, tz + 0.8);
-  for (const [lx, lz] of [
-    [0.05, 0.05],
-    [0.9, 0.05],
-    [0.05, 0.7],
-    [0.9, 0.7],
-  ] as const) {
-    b.block(PAL.counter, xp + 1.2 + lx, 0, tz + lz, 0.05, 0.72, 0.05, 'wood');
-  }
-  for (const [cx, cz, r] of [
-    [xp + 1.45, tz - 0.25, 0],
-    [xp + 1.95, tz + 1.05, 2],
-  ] as [number, number, Quarter][]) {
-    if (messy && rand() < 0.6) F.chairDown(new Place(b, cx, 0, cz + (r ? 0.3 : -0.3), r), rand);
-    else F.chair(new Place(b, cx, 0, cz, r), rand);
-  }
-  if (rand() < 0.5) b.block(0xd2cec2, xp + 1.5, 0.77, tz + 0.3, 0.22, 0.015, 0.22, 'plaster');
+  F.diningTable(new Place(b, xp + 1.7, 0, zp - 0.9, 0), rand, 2, messy);
   if (!messy && rand() < 0.1) {
     // A battery radio on the counter, still hissing.
     b.block(0x2a2826, xp + 0.8, 0.91, z0 + WALL_T + 0.1, 0.3, 0.17, 0.1, 'metal');

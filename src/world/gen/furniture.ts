@@ -646,10 +646,12 @@ export function chairDown(p: Place, rand: Rand, color: number = pick(rand, WOODS
 
 /** Table centered on the place, chairs around it (some knocked over when `messy`). */
 export function diningTable(p: Place, rand: Rand, chairs = 4, messy = false): void {
-  const wood = pick(rand, WOODS);
-  p.box(wood, 0, 0.72, 0, 1.2, 0.04, 0.8);
-  for (const lx of [-0.55, 0.55]) for (const lz of [-0.35, 0.35]) p.box(wood, lx, 0, lz, 0.05, 0.72, 0.05);
-  p.solid(0, 0, 1.2, 0.8, 0.76);
+  if (!p.model('diningTable', rand, 0, 0, 0, 0, 1, 0.78, 0.08)) {
+    const wood = pick(rand, WOODS);
+    p.box(wood, 0, 0.72, 0, 1.2, 0.04, 0.8);
+    for (const lx of [-0.55, 0.55]) for (const lz of [-0.35, 0.35]) p.box(wood, lx, 0, lz, 0.05, 0.72, 0.05);
+  }
+  p.solid(0, 0, 1.5, 0.9, 0.78);
   const seats: [number, number, Quarter][] = [
     [-0.3, -0.62, 0],
     [0.3, 0.62, 2],
@@ -658,13 +660,19 @@ export function diningTable(p: Place, rand: Rand, chairs = 4, messy = false): vo
   ];
   for (let i = 0; i < Math.min(chairs, 4); i++) {
     const [x, z, r] = seats[i];
-    if (messy && rand() < 0.5) chairDown(p.at(x * 1.6, z * 1.8, r), rand, wood);
-    else chair(p.at(x + (rand() - 0.5) * 0.15, z + (rand() - 0.5) * 0.15, r), rand, wood);
+    if (messy && rand() < 0.5) chairDown(p.at(x * 1.6, z * 1.8, r), rand);
+    else chair(p.at(x + (rand() - 0.5) * 0.15, z + (rand() - 0.5) * 0.15, r), rand);
   }
   // Dinner never finished.
-  for (let i = 0; i < 2; i++) if (rand() < 0.6) p.cyl(CERAMIC, (rand() - 0.5) * 0.8, 0.77, (rand() - 0.5) * 0.4, 0.11, 0.015, 'plaster');
-  if (rand() < 0.5) p.cyl(pick(rand, [CERAMIC, 0x8a4a3a]), (rand() - 0.5) * 0.6, 0.8, (rand() - 0.5) * 0.3, 0.04, 0.09, 'plaster');
-  if (rand() < 0.4) p.sheet(PAPER, (rand() - 0.5) * 0.6, 0.74, (rand() - 0.5) * 0.3, 0.21, 0.3, rand() * 3);
+  for (let i = 0; i < 2; i++) if (rand() < 0.6) {
+    const px = (rand() - 0.5) * 0.8, pz = (rand() - 0.5) * 0.4;
+    if (!p.model('plate', rand, px, 0.71, pz, rand() * 6, 1, 0.6, 0.08)) p.cyl(CERAMIC, px, 0.77, pz, 0.11, 0.015, 'plaster');
+  }
+  if (rand() < 0.5) {
+    const mx = (rand() - 0.5) * 0.6, mz = (rand() - 0.5) * 0.3;
+    if (!p.model('mug', rand, mx, 0.71, mz, rand() * 6, 1, 0.65, 0.1)) p.cyl(pick(rand, [CERAMIC, 0x8a4a3a]), mx, 0.8, mz, 0.04, 0.09, 'plaster');
+  }
+  if (rand() < 0.4) p.sheet(PAPER, (rand() - 0.5) * 0.6, 0.715, (rand() - 0.5) * 0.3, 0.21, 0.3, rand() * 3);
 }
 
 // ── Offices ─────────────────────────────────────────────────────────────────────

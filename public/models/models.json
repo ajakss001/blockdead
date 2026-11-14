@@ -2159,6 +2159,32 @@
    "author": "",
    "license": "",
    "url": ""
+  },
+  {
+   "name": "meshy_dining_table",
+   "group": "diningTable",
+   "tint": false,
+   "layer": 83,
+   "min": [
+    -0.775,
+    0,
+    -0.3855
+   ],
+   "size": [
+    1.55,
+    0.7077,
+    0.771
+   ],
+   "vertices": 3121,
+   "indices": 6132,
+   "glass": 0,
+   "vOffset": 5492580,
+   "iOffset": 5555000,
+   "normals": true,
+   "title": "meshy_pack/dining_table",
+   "author": "",
+   "license": "",
+   "url": ""
   }
  ]
 }

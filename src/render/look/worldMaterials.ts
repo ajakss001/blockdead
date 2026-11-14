@@ -17,7 +17,7 @@ import { type Bucket, MODEL_LAYER_BASE, SURFACE_LIST, SURFACES } from './surface
 
 export type LightingModel = 'standard' | 'lambert';
 
-const SIZE = 128;
+const SIZE = 256;
 
 /**
  * World materials: one texture array holds every surface's grunge texture, and each vertex carries
@@ -149,6 +149,31 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   tex.generateMipmaps = true;
   tex.anisotropy = Math.min(4, anisotropy);
   tex.needsUpdate = true;
+  const customTextures: Partial<Record<(typeof SURFACE_LIST)[number], string>> = {
+    asphalt: 'asphalt.jpg',
+    plaster: 'plaster.jpg',
+    wood: 'wood.jpg',
+    concrete: 'concrete.jpg',
+  };
+  for (let layer = 0; layer < SURFACE_LIST.length; layer++) {
+    const file = customTextures[SURFACE_LIST[layer]];
+    if (!file) continue;
+    const targetLayer = layer;
+    void fetch(`${import.meta.env.BASE_URL}textures/${file}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => (blob ? createImageBitmap(blob) : null))
+      .then((bmp) => {
+        if (!bmp) return;
+        const c = new OffscreenCanvas(SIZE, SIZE);
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(bmp, 0, 0, SIZE, SIZE);
+        const px = ctx.getImageData(0, 0, SIZE, SIZE).data;
+        const base = targetLayer * SIZE * row;
+        for (let y = 0; y < SIZE; y++) data.set(px.subarray(y * row, (y + 1) * row), base + (SIZE - 1 - y) * row);
+        tex.needsUpdate = true;
+      })
+      .catch(() => {});
+  }
   onLangChange(() => {
     SURFACE_LIST.forEach((surface, layer) => {
       const s = SURFACES[surface];

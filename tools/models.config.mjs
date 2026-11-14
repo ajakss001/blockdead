@@ -104,4 +104,5 @@ export const MODELS = [
   { src: 'meshy_pack/Meshy_AI_Worn_Wooden_Crate_20261114_texture_d293e66b', file: 'Meshy_AI_model.glb', name: 'meshy_wooden_crate', group: 'woodenCrate', width: 0.85, budget: 800, noTurn: true, postApoc: true, tint: false },
   { src: 'meshy_pack/Meshy_AI_Worn_Wooden_Door_20261114_texture_355564ac', file: 'Meshy_AI_model.glb', name: 'meshy_wooden_door', group: 'woodenDoor', height: 2.1, standUp: true, budget: 1000, noTurn: true, postApoc: true, tint: false },
   { src: 'meshy_pack/Meshy_AI_Worn_Wooden_Wardrobe_20261114_texture_67da29aa', file: 'Meshy_AI_model.glb', name: 'meshy_wardrobe', group: 'wardrobe', height: 2.12, budget: 1200, noTurn: true, postApoc: true, tint: false },
+  { src: 'meshy_pack/dining_table', file: 'Meshy_AI_model.glb', name: 'meshy_dining_table', group: 'diningTable', width: 1.55, budget: 1100, noTurn: true, postApoc: true, tint: false },
 ];
