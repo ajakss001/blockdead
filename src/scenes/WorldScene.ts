@@ -676,10 +676,12 @@ export class WorldScene implements IScene {
     this.resize(ctx.renderer.width, ctx.renderer.height);
     this.applyQuality();
     this.editor = new WorldEditor(this.scene, this.camera, ctx.renderer.gl.domElement, (on) => {
+      this.ctx.events.emit('ui:modal', { open: on });
       this.player.viewmodel.scene.visible = !on && !this.dead && !this.vehicles.activeCar;
       if (!on) {
         const p = this.camera.position;
         this.player.controller.position.set(p.x, Math.max(0, p.y - 1.6), p.z);
+        this.ctx.requestPointerLock();
       }
     });
     if (new URLSearchParams(location.search).get('editor') === '1') {

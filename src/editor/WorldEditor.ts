@@ -49,7 +49,10 @@ export class WorldEditor {
   private selected: Object3D | null = null;
   private lib: ModelLibrary | null = null;
   private looking = false;
+  private lookButton = -1;
+  private downMouse = { x: 0, y: 0 };
   private lastMouse = { x: 0, y: 0 };
+  private movedWhileDown = false;
   private yaw = 0;
   private pitch = 0;
   private draggingGizmo = false;
@@ -100,6 +103,7 @@ export class WorldEditor {
     this.dom.addEventListener('pointerdown', this.onPointerDown);
     window.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
+    this.dom.addEventListener('wheel', this.onWheel, { passive: false });
     this.dom.addEventListener('contextmenu', this.onContextMenu);
   }
 
@@ -143,6 +147,7 @@ export class WorldEditor {
     this.dom.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
+    this.dom.removeEventListener('wheel', this.onWheel);
     this.dom.removeEventListener('contextmenu', this.onContextMenu);
     this.gizmo.detach();
     this.gizmo.dispose();
@@ -181,44 +186,69 @@ export class WorldEditor {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (!this.active) return;
-    if (e.button === 2) {
+    if (e.button === 2 || e.button === 1) {
       this.looking = true;
+      this.lookButton = e.button;
       this.lastMouse = { x: e.clientX, y: e.clientY };
       return;
     }
     if (e.button !== 0 || this.draggingGizmo) return;
-    const rect = this.dom.getBoundingClientRect();
-    this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObjects(this.scene.children, true);
-    const hit = this.pickHit(hits);
-    if (!hit) {
-      this.select(null);
-      return;
-    }
-    const obj = hit.object;
-    if (obj instanceof Mesh && obj.geometry.getAttribute('aSurfUv') && !obj.userData.editorStandalone && hit.faceIndex !== undefined && hit.faceIndex !== null) {
-      const extracted = this.extractIsland(obj, hit.faceIndex);
-      if (extracted) {
-        this.select(extracted);
-        return;
-      }
-    }
-    this.select(obj);
+    this.looking = true;
+    this.lookButton = 0;
+    this.downMouse = { x: e.clientX, y: e.clientY };
+    this.lastMouse = { x: e.clientX, y: e.clientY };
+    this.movedWhileDown = false;
   };
 
   private onPointerMove = (e: PointerEvent): void => {
-    if (!this.active || !this.looking) return;
+    if (!this.active || !this.looking || this.draggingGizmo) return;
     const dx = e.clientX - this.lastMouse.x;
     const dy = e.clientY - this.lastMouse.y;
     this.lastMouse = { x: e.clientX, y: e.clientY };
+    if (this.lookButton === 0 && !this.movedWhileDown) {
+      if (Math.hypot(e.clientX - this.downMouse.x, e.clientY - this.downMouse.y) < 5) return;
+      this.movedWhileDown = true;
+    }
     this.yaw -= dx * 0.0035;
     this.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, this.pitch - dy * 0.0035));
   };
 
   private onPointerUp = (e: PointerEvent): void => {
-    if (e.button === 2) this.looking = false;
+    if (!this.active) return;
+    if (this.looking && e.button === this.lookButton) {
+      this.looking = false;
+      const wasClick = e.button === 0 && !this.movedWhileDown && !this.draggingGizmo;
+      this.lookButton = -1;
+      if (wasClick) {
+        const rect = this.dom.getBoundingClientRect();
+        this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        this.raycaster.setFromCamera(this.pointer, this.camera);
+        const hits = this.raycaster.intersectObjects(this.scene.children, true);
+        const hit = this.pickHit(hits);
+        if (!hit) {
+          this.select(null);
+          return;
+        }
+        const obj = hit.object;
+        if (obj instanceof Mesh && obj.geometry.getAttribute('aSurfUv') && !obj.userData.editorStandalone && hit.faceIndex !== undefined && hit.faceIndex !== null) {
+          const extracted = this.extractIsland(obj, hit.faceIndex);
+          if (extracted) {
+            this.select(extracted);
+            return;
+          }
+        }
+        this.select(obj);
+      }
+    }
+  };
+
+  private onWheel = (e: WheelEvent): void => {
+    if (!this.active) return;
+    e.preventDefault();
+    const step = e.deltaY > 0 ? -1.8 : 1.8;
+    const fwd = new Vector3(0, 0, -1).applyEuler(new Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    this.camera.position.addScaledVector(fwd, step * (e.shiftKey ? 2.5 : 1));
   };
 
   private pickHit(hits: Intersection[]): Intersection | null {
