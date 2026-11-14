@@ -688,7 +688,7 @@ export function fence(
       if (spanLen < 0.3) continue;
       const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
       const segLen = spanLen / count;
-      const sx = segLen / barrier.size[0];
+      const sx = (segLen / barrier.size[0]) * 1.045;
       _s.set(sx, sy, sz);
       for (let i = 0; i < count; i++) {
         if (rand && rand() < 0.1) continue;

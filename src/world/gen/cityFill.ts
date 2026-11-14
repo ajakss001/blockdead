@@ -263,7 +263,7 @@ function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, ga
     if (barrier) {
       const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
       const segLen = spanLen / count;
-      const sx = segLen / barrier.size[0];
+      const sx = (segLen / barrier.size[0]) * 1.045;
       const sy = Math.min(1.65, h / barrier.size[1]);
       const sz = 1.0;
       const halfT = (barrier.size[2] * sz) / 2;
