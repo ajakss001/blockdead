@@ -77,7 +77,7 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   // Buses: clean-ish painted panels (no rust blooms that could read as stains on a big surface).
   busPaint: { kind: 'paint', detail: 0xd8d4cc, noise: 0.22, roughness: 0.7, metalness: 0.2, tile: 2.5, castShadow: true },
   // Intact windows and shop glass: clear and lightly tinted, a cold sheen from the flashlight.
-  windowGlass: { kind: 'glass', detail: 0x6f808c, noise: 0.08, roughness: 0.05, metalness: 0.55, tile: 3, alpha: 0.24, castShadow: false },
+  windowGlass: { kind: 'glass', detail: 0x5c6b75, noise: 0.08, roughness: 0.08, metalness: 0.45, tile: 3, alpha: 0.16, castShadow: false },
   rubber: { kind: 'grime', detail: 0x9c9a96, noise: 0.5, roughness: 1, metalness: 0, tile: 0.6, castShadow: true },
   // Murky, dusty, cracked; tile is large so a pane shows one crack, not a repeating pattern.
   carGlass: { kind: 'glass', detail: 0xc4c8cc, noise: 0.35, roughness: 0.9, metalness: 0.1, tile: 2.2, alpha: 0.82, castShadow: false },
