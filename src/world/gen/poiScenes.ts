@@ -79,7 +79,7 @@ function mdl(c: Ctx, group: string, lx: number, lz: number, yaw: number, o: { ro
   const top = o.roll === Math.PI ? m.size[1] : o.roll ? Math.max(1.2, lift * 2) : lift + m.size[1];
   const mat = new Matrix4().compose(new Vector3(x, lift + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, wyaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
   placeModel(c.b.batch, m, mat, o.paint !== undefined ? new Color(o.paint) : null, o.charred ? charTint : undefined);
-  if (o.collide !== false) c.b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, wyaw, -0.5, top + 0.3);
+  if (o.collide !== false) c.b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, wyaw, -0.5, top + 0.05);
   return m;
 }
 

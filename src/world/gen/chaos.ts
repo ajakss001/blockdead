@@ -58,7 +58,7 @@ function model(b: Builder, group: string, x: number, z: number, yaw: number, ran
   if (!m) return null;
   const mat = new Matrix4().compose(new Vector3(x, (o.lift ?? 0) + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, yaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
   placeModel(b.batch, m, mat, o.paint !== undefined && m.tint ? new Color(o.paint) : null);
-  if (o.collide !== false) b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, yaw, -0.5, (o.lift ?? 0) + m.size[1] + 0.3);
+  if (o.collide !== false) b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, yaw, -0.5, (o.lift ?? 0) + m.size[1] + 0.05);
   return m;
 }
 

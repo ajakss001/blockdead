@@ -9,9 +9,9 @@ import type { InteriorData } from './gen/buildChunk';
 import { type BuildingDesc, FLOOR_H, highriseSurfaceY, insideFootprint } from './gen/highrise';
 
 /** Start streaming a building's interior within this distance of its footprint, m. */
-const LOAD_MARGIN = 12;
+const LOAD_MARGIN = 16;
 /** Drop it beyond this one (hysteresis). */
-const UNLOAD_MARGIN = 28;
+const UNLOAD_MARGIN = 36;
 /** Upper bound (shader cut-out slots); the quality preset may allow fewer. */
 const MAX_LOADED = 2;
 const CHECK_INTERVAL = 0.25;
@@ -28,6 +28,7 @@ export class Interiors {
   private readonly byChunk = new Map<number, number[]>();
   private readonly loaded = new Map<number, Group>();
   private readonly pending = new Set<number>();
+  private readonly readyQueue: InteriorData[] = [];
   /** Storey each loaded interior is furnished around. */
   private readonly focus = new Map<number, number>();
   private t = 0;
@@ -94,6 +95,10 @@ export class Interiors {
   }
 
   update(dt: number, x: number, z: number, y = 0): void {
+    // Apply at most one streamed interior per frame to avoid micro-freezes when approaching buildings.
+    const next = this.readyQueue.shift();
+    if (next) this.applyInterior(next);
+
     this.t -= dt;
     if (this.t > 0) return;
     this.t = CHECK_INTERVAL;
@@ -122,6 +127,14 @@ export class Interiors {
   private onInterior(data: InteriorData): void {
     const id = data.buildingId;
     this.pending.delete(id);
+    if (!this.buildings.has(id)) return;
+    const idx = this.readyQueue.findIndex((q) => q.buildingId === id);
+    if (idx >= 0) this.readyQueue[idx] = data;
+    else this.readyQueue.push(data);
+  }
+
+  private applyInterior(data: InteriorData): void {
+    const id = data.buildingId;
     if (!this.buildings.has(id)) return;
     // A rebuild around another storey replaces the old one in place; doors keep their state.
     const rebuild = this.loaded.has(id);

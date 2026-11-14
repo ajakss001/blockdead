@@ -1,5 +1,5 @@
 import { mulberry32 } from '../../core/random';
-import { FACADE_WINDOW } from '../../render/look/surfaces';
+import { FACADE_BAY, FACADE_WINDOW } from '../../render/look/surfaces';
 import * as F from './furniture';
 import { Place, type Quarter, type ShopKind } from './furniture';
 import {
@@ -44,6 +44,25 @@ type UnitMode = 'apartment' | 'office' | 'storage';
 function unitState(r: Rand): UnitState {
   const x = r();
   return x < 0.3 ? 'lived' : x < 0.62 ? 'fled' : x < 0.82 ? 'ransacked' : x < 0.9 ? 'barricaded' : 'burnt';
+}
+
+/**
+ * Splits [x0, x1] into `count` bays whose interior walls land on FACADE_BAY piers
+ * so no partition wall ever cuts a window in half.
+ */
+function snapBayBounds(x0: number, x1: number, count: number): number[] {
+  const bounds = [x0];
+  const width = x1 - x0;
+  for (let u = 1; u < count; u++) {
+    const raw = x0 + (u * width) / count;
+    const snapped = Math.round(raw / FACADE_BAY) * FACADE_BAY;
+    const prev = bounds[bounds.length - 1];
+    if (snapped - prev >= FACADE_BAY - 0.25 && x1 - snapped >= FACADE_BAY - 0.25) {
+      bounds.push(snapped);
+    }
+  }
+  bounds.push(x1);
+  return bounds;
 }
 
 export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: number, idBase: (floor: number) => number): void {
@@ -135,10 +154,11 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
   const wallSkinB = skins[Math.abs(paperB) % skins.length];
   const width = L.ix1 - L.ix0;
   const n = Math.max(2, Math.floor(width / 6.5));
-  const uw = width / n;
-  for (let u = 0; u < n; u++) {
-    const ux0 = L.ix0 + u * uw;
-    const ux1 = ux0 + uw;
+  const bounds = snapBayBounds(L.ix0, L.ix1, n);
+  for (let u = 0; u < bounds.length - 1; u++) {
+    const ux0 = bounds[u];
+    const ux1 = bounds[u + 1];
+    const uw = ux1 - ux0;
     if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - 0.12 - L.iz0, wallSkinA);
     // Someone still lives in a lit unit (the random stream advances either way).
     const light = lit.find((l) => !l.back && l.u === u);
@@ -186,10 +206,11 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
   const width = L.ix1 - x0;
   if (width < 4) return;
   const n = Math.max(1, Math.floor(width / 6.5));
-  const uw = width / n;
-  for (let u = 0; u < n; u++) {
-    const ux0 = x0 + u * uw;
-    const ux1 = ux0 + uw;
+  const bounds = snapBayBounds(x0, L.ix1, n);
+  for (let u = 0; u < bounds.length - 1; u++) {
+    const ux0 = bounds[u];
+    const ux1 = bounds[u + 1];
+    const uw = ux1 - ux0;
     if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0 + 0.12, 0.12, h, L.iz1 - L.cz0 - 0.12, 'plaster');
     const light = lit.find((l) => l.back && l.u === u);
     const st0 = mode === 'storage' ? 'lived' : unitState(rs);
@@ -230,14 +251,14 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   }
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);
-  else apartment(U, w, d, h, st, rf, lwin, paper);
+  else apartment(U, w, d, h, st, rf, lwin, paper, cx, front);
   // A leak: water dripping from the ceiling somewhere in the unit.
   // (The ground floor's slab is 5 cm thick on top of y; upper ones end at y.)
   if (U.chance(0, 0, 68) < 0.28) U.life(LIFE.drip, (U.chance(0, 0, 69) - 0.5) * w * 0.6, h, d * (0.25 + U.chance(0, 0, 70) * 0.5), 0, y === 0 ? h - 0.05 : h, U.chance(0, 0, 71));
   if (st === 'barricaded') F.barricade(U.at(0, d, 2), rf);
 }
 
-function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, lwin: number[], paper: number): void {
+function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, lwin: number[], paper: number, cx: number, front: boolean): void {
   const messy = st === 'ransacked';
   const fled = st === 'fled';
   const open = () => messy || (fled && rf() < 0.6);
@@ -254,19 +275,30 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   if (U.chance(0, 0, 72) < 0.05) U.life(LIFE.phone, 0, 0.8, d * 0.5, 0, 0, U.chance(0, 0, 73));
   for (const lx of lwin) if (rf() < 0.75) F.curtains(U.at(lx, 0), rf, spec.width, spec.sill, spec.head);
 
-  if (d >= 7) {
-    // Bedroom (side s) behind a partition, living room (side −s), kitchen towards the door.
+  // Find a FACADE_BAY pier inside this apartment so the bedroom/living-room wall never splits a window.
+  const basePier = Math.round(cx / FACADE_BAY) * FACADE_BAY;
+  let partX: number | null = null;
+  for (const offset of [0, -FACADE_BAY, FACADE_BAY]) {
+    const cand = ((basePier + offset) - cx) * (front ? 1 : -1);
+    if (cand >= -w / 2 + 2.4 && cand <= w / 2 - 2.4) {
+      partX = cand;
+      break;
+    }
+  }
+  if (d >= 7 && partX !== null) {
+    // Bedroom (side s) behind a pier-aligned partition, living room (side −s), kitchen towards the door.
     const dz = Math.min(5.2, Math.max(3.6, d * 0.5));
-    U.box(paper, 0, 0, dz / 2, 0.12, h, dz, 'plaster', true);
-    const ret = w / 2 - 1.06;
-    U.box(paper, s * (0.06 + ret / 2), 0, dz, ret, h, 0.12, 'plaster', true);
+    U.box(paper, partX, 0, dz / 2, 0.12, h, dz, 'plaster', true);
+    const sideW = w / 2 - s * partX;
+    const ret = sideW - 1.06;
+    if (ret > 0.08) U.box(paper, partX + s * (0.06 + ret / 2), 0, dz, ret, h, 0.12, 'plaster', true);
     U.box(paper, s * (w / 2 - 0.5), 2.1, dz, 1.0, h - 2.1, 0.12, 'plaster');
 
     // Bedroom.
-    const bx = s * (w / 4 + 0.1);
-    F.bed(U.at(bx, 0), rf, 1.5, messy);
-    F.nightstand(U.at(s * (w / 4 + 1.15), 0), rf, open());
-    F.wardrobe(U.at(s * 0.06, dz - 1.0, face(s)), rf, open());
+    const bx = (partX + s * w / 2) / 2;
+    F.bed(U.at(bx, 0), rf, Math.min(1.5, Math.max(1.2, sideW - 0.9)), messy);
+    F.nightstand(U.at(bx + s * Math.min(1.05, sideW * 0.34), 0), rf, open());
+    F.wardrobe(U.at(partX + s * 0.06, dz - 1.0, face(s)), rf, open());
     F.painting(U.at(s * w / 2, Math.min(dz - 0.5, 2.8), face(-s)), rf, 1.5, messy && rf() < 0.5);
     if (fled || messy) F.suitcase(U.at(bx, 2.55), rf, rf() < 0.6);
     else F.rug(U.at(bx, 2.2), rf, 0.4, 1.4, 0.8);
@@ -278,7 +310,7 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     F.coffeeTable(sofaP.at(0, 1.05), rf, messy && rf() < 0.6);
     F.painting(sofaP, rf, 1.55, messy && rf() < 0.4);
     const tvDown = messy && rf() < 0.6;
-    const tvP = U.at(-s * 0.06, dz * 0.5, face(-s));
+    const tvP = U.at(partX - s * 0.06, dz * 0.5, face(-s));
     F.tvStand(tvP, rf, tvDown);
     // The power is still on here: the set was left on, showing static.
     if (st === 'lived' && !tvDown && U.chance(0, 0, 61) < 0.6) tvP.life(LIFE.tv, 0, 0.75, 0.49, 0.5, 0.38, U.chance(0, 0, 62));
