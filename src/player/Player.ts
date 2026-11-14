@@ -275,10 +275,15 @@ export class Player {
     const sin = Math.sin(c.yaw);
     // Attach the camera back to the head bone (with local-space smoothing so running never clips torso).
     this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
+    this.body.root.visible = crouchT < 0.25;
     const eye = this.body.eyePosition(_eye, frameDt);
     const baseY = y + c.eyeHeight(alpha);
-    eye.y = baseY + clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08);
-    const fwdPush = 0.04 + crouchT * 0.12;
+    const headBobY = clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08) * (1 - crouchT * 0.75);
+    eye.y = baseY + headBobY;
+    // Keep crouched camera horizontally centered on the controller so crouched_walking head sway never jerks or clips walls.
+    eye.x = lerp(eye.x, x, crouchT);
+    eye.z = lerp(eye.z, z, crouchT);
+    const fwdPush = 0.04 + crouchT * 0.06;
     eye.x += -sin * fwdPush;
     eye.z += -cos * fwdPush;
     const ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
