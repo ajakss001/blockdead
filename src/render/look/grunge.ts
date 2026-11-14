@@ -274,9 +274,20 @@ export function generateGrungeCanvas(
           else if (white < 0.04) shade *= 0.45;
           break;
         case 'plaster': {
-          // Water stains running down from the top of the wall.
-          const drip = smooth(0.62, 0.85, column(u, 0.5)) * (0.3 + 0.7 * v);
-          shade *= 1 - drip * 0.35;
+          // Aged architectural plaster / wallpaper: subtle vertical seam and faint baseboard dampness, no giant camo blobs.
+          if (x % 64 === 0) shade *= 0.94;
+          const damp = smooth(0.76, 1.0, v) * 0.16;
+          const drip = smooth(0.74, 0.94, column(u, 0.5)) * (0.15 + 0.5 * v);
+          shade *= 1 - drip * 0.18 - damp;
+          break;
+        }
+        case 'concrete':
+        case 'facadeConcrete': {
+          // Precast architectural concrete panels with subtle expansion seams and mineral grain.
+          if (x % 64 === 0 || y % 32 === 0) shade *= 0.84;
+          else shade *= 0.94 + cellHash(Math.floor(y / 32), Math.floor(x / 64)) * 0.12;
+          const drip = smooth(0.68, 0.92, column(u, 0.5)) * smooth(0.15, 0.95, v);
+          shade *= 1 - drip * 0.16;
           break;
         }
         case 'fabric':
@@ -308,10 +319,14 @@ export function generateGrungeCanvas(
           // Painted panels of a big vehicle: faint mottling and grey dust low down, no rust, no stains.
           shade *= 1 - 0.12 * smooth(0.45, 0.9, v) - 0.05 * smooth(0.5, 0.8, blotch(u, v));
           break;
-        case 'glass':
-          // Dust settles in soft clouds, lighter than the glass.
-          shade *= 0.9 + 0.35 * smooth(0.35, 0.75, n);
+        case 'glass': {
+          // Crisp dark-tinted glass with a subtle diagonal reflection sheen and light corner frost.
+          const sheen = Math.max(0, 1 - Math.abs(((u + v * 0.65) % 1) - 0.45) * 7) * 0.18;
+          const edge = Math.max(Math.abs(u - 0.5), Math.abs(v - 0.5)) * 2;
+          const frost = smooth(0.75, 1.0, edge) * 0.14;
+          shade *= 0.88 + sheen + frost;
           break;
+        }
         case 'facadeBrick': {
           // Running bond: 6 px courses, 16 px bricks; mortar darker and greyer; per-brick tint.
           const row = Math.floor(y / 6);
@@ -351,8 +366,9 @@ export function generateGrungeCanvas(
           break;
       }
 
-      // Grime: low-frequency dark-brown patches over everything (scaled by options.grime).
-      const dirt = smooth(0.5 - 0.14 * Math.max(0, grimeK - 1), 0.72, grime(u, v)) * Math.min(1, grimeK);
+      // Grime: low-frequency dark-brown patches (gentle on interior plaster, fabric and glass).
+      const surfGrime = kind === 'glass' ? 0.1 : kind === 'plaster' || kind === 'fabric' ? 0.24 : 1;
+      const dirt = smooth(0.5 - 0.14 * Math.max(0, grimeK - 1), 0.72, grime(u, v)) * Math.min(1, grimeK) * surfGrime;
       shade *= 1 - dirt * 0.45;
       r = r + (52 - r) * dirt * 0.35;
       gg = gg + (44 - gg) * dirt * 0.35;

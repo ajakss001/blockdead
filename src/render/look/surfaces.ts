@@ -65,7 +65,7 @@ export interface SurfaceSpec {
 export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   ground: { kind: 'ground', detail: 0xd6d6cc, noise: 0.55, roughness: 1, metalness: 0, tile: 4, castShadow: false },
   asphalt: { kind: 'asphalt', detail: 0xd0d0cc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 3, castShadow: false },
-  plaster: { kind: 'plaster', detail: 0xdcd8cf, noise: 0.35, roughness: 0.92, metalness: 0.05, tile: 2, bump: 0.6, castShadow: true },
+  plaster: { kind: 'plaster', detail: 0xd8d3c8, noise: 0.16, roughness: 0.9, metalness: 0.04, tile: 2, bump: 0.5, castShadow: true },
   roof: { kind: 'wood', detail: 0xc8c4bc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 1.2, castShadow: true },
   wood: { kind: 'wood', detail: 0xdad2c4, noise: 0.4, roughness: 0.88, metalness: 0, tile: 1, castShadow: true },
   metal: { kind: 'metal', detail: 0xd4d0cc, noise: 0.3, roughness: 0.7, metalness: 0.35, tile: 1.5, castShadow: true },
@@ -77,7 +77,7 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   // Buses: clean-ish painted panels (no rust blooms that could read as stains on a big surface).
   busPaint: { kind: 'paint', detail: 0xd8d4cc, noise: 0.22, roughness: 0.7, metalness: 0.2, tile: 2.5, castShadow: true },
   // Intact windows and shop glass: clear and lightly tinted, a cold sheen from the flashlight.
-  windowGlass: { kind: 'glass', detail: 0x9aa8b2, noise: 0.2, roughness: 0.1, metalness: 0.35, tile: 3, alpha: 0.35, castShadow: false },
+  windowGlass: { kind: 'glass', detail: 0x6f808c, noise: 0.08, roughness: 0.05, metalness: 0.55, tile: 3, alpha: 0.24, castShadow: false },
   rubber: { kind: 'grime', detail: 0x9c9a96, noise: 0.5, roughness: 1, metalness: 0, tile: 0.6, castShadow: true },
   // Murky, dusty, cracked; tile is large so a pane shows one crack, not a repeating pattern.
   carGlass: { kind: 'glass', detail: 0xc4c8cc, noise: 0.35, roughness: 0.9, metalness: 0.1, tile: 2.2, alpha: 0.82, castShadow: false },

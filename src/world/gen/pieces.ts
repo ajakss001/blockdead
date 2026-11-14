@@ -32,7 +32,7 @@ export interface ContainerSpot {
 }
 
 /** An interior door: hinge position and closed-leaf yaw in world space (leaf extends along +X when yaw = 0). */
-export type DoorStyle = 'wood' | 'glass';
+export type DoorStyle = 'wood' | 'glass' | 'lab' | 'barricaded';
 
 export interface DoorSpot {
   hx: number;

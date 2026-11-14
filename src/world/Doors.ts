@@ -15,8 +15,11 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { characterMaterial } from '../render/look/materials';
+import { MODEL_LAYER_BASE } from '../render/look/surfaces';
+import { worldMaterials } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
 import type { DoorSpot, DoorStyle } from './gen/pieces';
+import { loadModelLibrary, modelGeometry, pickModel } from './models';
 
 /** Reference leaf size; each door scales its leaf to its own width. */
 const LEAF_W = 1;
@@ -143,7 +146,46 @@ export class Doors {
     this.pools = {
       wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
       glass: this.pool([[glassDoor, glass]]),
+      lab: this.pool([[wood, characterMaterial('handle', 0x5c6468)]]),
+      barricaded: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
     };
+    void loadModelLibrary(`${import.meta.env.BASE_URL}models/`).then((lib) => {
+      if (!lib) return;
+      const mat = worldMaterials().cast;
+      const swap = (style: DoorStyle, group: string, rough: number, metal: number) => {
+        const m = pickModel(lib, group, 0);
+        if (!m) return;
+        const g = modelGeometry(lib, m).clone();
+        const sx = LEAF_W / Math.max(0.05, m.size[0]);
+        const sy = LEAF_H / Math.max(0.05, m.size[1]);
+        const sz = 0.14 / Math.max(0.05, m.size[2]);
+        g.scale(sx, sy, sz);
+        g.translate(LEAF_W / 2, 0, 0);
+        const n = g.attributes.position.count;
+        const uv = g.attributes.uv;
+        const surfUv = new Float32Array(n * 2);
+        for (let i = 0; i < n; i++) {
+          surfUv[i * 2] = uv.getX(i);
+          surfUv[i * 2 + 1] = uv.getY(i);
+        }
+        const layers = new Float32Array(n).fill(MODEL_LAYER_BASE + m.layer);
+        const pbr = new Float32Array(n * 2);
+        for (let i = 0; i < n; i++) {
+          pbr[i * 2] = rough;
+          pbr[i * 2 + 1] = metal;
+        }
+        g.setAttribute('aSurfUv', new Float32BufferAttribute(surfUv, 2));
+        g.setAttribute('aLayer', new Float32BufferAttribute(layers, 1));
+        g.setAttribute('aPbr', new Float32BufferAttribute(pbr, 2));
+        const mesh = this.pools[style].meshes[0];
+        mesh.geometry.dispose();
+        mesh.geometry = g;
+        mesh.material = mat;
+      };
+      swap('wood', 'woodenDoor', 0.78, 0.1);
+      swap('lab', 'labDoor', 0.55, 0.45);
+      swap('barricaded', 'barricadedDoor', 0.82, 0.12);
+    });
     this.plankMesh = new InstancedMesh(new BoxGeometry(1, 0.15, 0.035), characterMaterial('handle', 0x7a6446), PLANK_CAPACITY);
     this.plankMesh.count = 0;
     this.plankMesh.frustumCulled = false;
@@ -160,7 +202,7 @@ export class Doors {
     if (this.sets.has(key) || spots.length === 0) return;
     const same = keep !== null && keep.length === spots.length;
     const doors: DoorState[] = spots.map((spot, i) => {
-      const style = spot.style ?? 'wood';
+      const style: DoorStyle = spot.style ?? (spot.lock ? 'lab' : spot.barricaded ? 'barricaded' : 'wood');
       const open = (same ? keep[i] : !!spot.open) && !spot.barricaded && !(spot.lock && !this.unlocked.has(doorKey(spot)));
       const d: DoorState = {
         spot,

@@ -322,7 +322,7 @@ export class Interaction {
     if (!this.doors.toggle(door)) {
       this.ctx.hud.toast(state === 'boarded' ? tr('Заколочено досками', 'Boarded up') : tr('Заколочено с той стороны', 'Barricaded from the other side'), 1200);
       if (at) sfx.doorStuck(at);
-    } else if (at) sfx.door(at.style, !at.open, at, at.creaky, at.pitch);
+    } else if (at) sfx.door(at.style === 'glass' ? 'glass' : 'wood', !at.open, at, at.creaky, at.pitch);
     this.player.busy = false;
   }
 

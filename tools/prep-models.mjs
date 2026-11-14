@@ -141,6 +141,7 @@ function normalize(parts, cfg) {
       let y = arr[k + 1];
       let z = arr[k + 2];
       if (cfg.standUp) [x, y, z] = [z, x, y];
+      if (cfg.layFlat) [x, y, z] = [x, -z, y];
       if (turn) [x, z] = [z, -x];
       if (cfg.flip) [x, z] = [-x, -z];
       arr[k] = x;
