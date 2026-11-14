@@ -158,7 +158,7 @@ export class Doors {
         const g = modelGeometry(lib, m).clone();
         const sx = LEAF_W / Math.max(0.05, m.size[0]);
         const sy = LEAF_H / Math.max(0.05, m.size[1]);
-        const sz = 0.14 / Math.max(0.05, m.size[2]);
+        const sz = 0.16 / Math.max(0.05, m.size[2]);
         g.scale(sx, sy, sz);
         g.translate(LEAF_W / 2, 0, 0);
         const n = g.attributes.position.count;

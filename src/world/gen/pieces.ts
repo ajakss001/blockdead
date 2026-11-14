@@ -467,16 +467,12 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   F.curtains(new Place(b, x0 + WALL_T, 0, z0 + d * 0.55, 1), rand, 1.1, 1.0, 2.0);
   F.bookcase(new Place(b, xp, 0, z0 + d * 0.5, 3), rand, messy);
   // TV on a stand against the back wall (kept clear of the doorways on the partition).
-  b.block(0x2a2826, x0 + 0.9, 0, z0 + WALL_T + 0.05, 1.2, 0.55, 0.45, 'wood', true);
-  b.block(0x161616, x0 + 1.05, 0.55, z0 + WALL_T + 0.1, 0.9, 0.5, 0.35, 'metal');
-  b.container('tvstand', x0 + 1.5, z0 + WALL_T + 0.6);
+  F.tvStand(new Place(b, x0 + 1.5, 0, z0 + WALL_T, 0), rand, messy);
 
   // Kitchen: counter along the back wall, fridge in the corner, small table.
-  b.block(PAL.counter, xp + 0.4, 0, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.4), 0.86, 0.6, 'wood', true);
-  b.block(PAL.counterTop, xp + 0.38, 0.86, z0 + WALL_T, x1 - WALL_T - 1.05 - (xp + 0.38), 0.05, 0.64, 'plaster');
-  b.block(PAL.appliance, x1 - WALL_T - 0.8, 0, z0 + WALL_T + 0.05, 0.72, 1.8, 0.7, 'metal', true);
-  b.container('counter', (xp + 0.4 + x1 - WALL_T - 1.05) / 2, z0 + WALL_T + 0.65);
-  b.container('fridge', x1 - WALL_T - 0.44, z0 + WALL_T + 0.8);
+  const kLen = Math.max(1.5, x1 - WALL_T - 1.05 - (xp + 0.4));
+  F.kitchenRun(new Place(b, xp + 0.4 + kLen / 2, 0, z0 + WALL_T, 0), rand, kLen, messy);
+  F.fridge(new Place(b, x1 - WALL_T - 0.45, 0, z0 + WALL_T, 0), rand, open());
   const tz = zp - 1.3;
   b.block(PAL.counter, xp + 1.2, 0.72, tz, 1.0, 0.05, 0.8, 'wood');
   b.solid(xp + 1.2, tz, xp + 2.2, tz + 0.8);

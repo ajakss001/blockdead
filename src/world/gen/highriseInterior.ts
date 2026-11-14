@@ -139,7 +139,7 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
   for (let u = 0; u < n; u++) {
     const ux0 = L.ix0 + u * uw;
     const ux1 = ux0 + uw;
-    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - L.iz0, wallSkinA);
+    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - 0.12 - L.iz0, wallSkinA);
     // Someone still lives in a lit unit (the random stream advances either way).
     const light = lit.find((l) => !l.back && l.u === u);
     const st0 = unitState(rs);
@@ -193,7 +193,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
   for (let u = 0; u < n; u++) {
     const ux0 = x0 + u * uw;
     const ux1 = ux0 + uw;
-    if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0, 0.12, h, L.iz1 - L.cz0, 'plaster');
+    if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0 + 0.12, 0.12, h, L.iz1 - L.cz0 - 0.12, 'plaster');
     const light = lit.find((l) => l.back && l.u === u);
     const st0 = mode === 'storage' ? 'lived' : unitState(rs);
     const st = light ? 'lived' : st0;
