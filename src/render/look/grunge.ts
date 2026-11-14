@@ -79,7 +79,7 @@ const cellHash = (a: number, b: number) => {
  * Office towers get full-height glass panels with a mullion instead.
  */
 /** Draws the window grid; returns the rects of intact glass (not smashed, not boarded). */
-function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, office: boolean): [number, number, number, number][] {
+function drawWindows(g: CanvasRenderingContext2D, size: number, _rand: Rand, office: boolean): [number, number, number, number][] {
   const glass: [number, number, number, number][] = [];
   const cell = size / 2;
   for (let fy = 0; fy < 2; fy++) {
@@ -91,57 +91,14 @@ function drawWindows(g: CanvasRenderingContext2D, size: number, rand: Rand, offi
       const y0 = fy * cell + (office ? 5 : 12);
       const w = office ? cell - 6 : cell - 22;
       const h = office ? cell - 12 : 36;
-      const roll = rand();
       if (!office) {
         g.fillStyle = 'rgba(70, 66, 60, 0.9)';
         g.fillRect(x0 - 3, y0 - 3, w + 6, h + 6);
       }
-      if (roll < 0.22) {
-        // Smashed: black hole, jagged teeth of glass left in the frame.
-        g.fillStyle = '#050505';
-        g.fillRect(x0, y0, w, h);
-        g.fillStyle = 'rgba(120, 130, 136, 0.8)';
-        g.beginPath();
-        g.moveTo(x0, y0);
-        for (let t = 0; t <= 6; t++) g.lineTo(x0 + (w * t) / 6, y0 + (t % 2 ? 4 + rand() * 9 : 1));
-        g.lineTo(x0 + w, y0);
-        g.fill();
-        g.beginPath();
-        g.moveTo(x0, y0 + h);
-        for (let t = 0; t <= 5; t++) g.lineTo(x0 + (w * t) / 5, y0 + h - (t % 2 ? 3 + rand() * 7 : 1));
-        g.lineTo(x0 + w, y0 + h);
-        g.fill();
-      } else if (roll < 0.36 && !office) {
-        // Boarded up from inside after the outbreak.
-        g.fillStyle = '#1a1816';
-        g.fillRect(x0, y0, w, h);
-        g.fillStyle = '#6a5a42';
-        for (let k = 0; k < 3; k++) {
-          g.save();
-          g.translate(x0 + w / 2, y0 + 6 + k * 9);
-          g.rotate((rand() - 0.5) * 0.25);
-          g.fillRect(-w / 2 - 2, -3, w + 4, 6);
-          g.restore();
-        }
-      } else {
-        glass.push([x0, y0, w, h]);
-        // Dark glass with a faint cold reflection; some with faded curtains behind.
-        g.fillStyle = office ? '#1b2329' : '#161b1f';
-        g.fillRect(x0, y0, w, h);
-        if (!office && roll > 0.8) {
-          g.fillStyle = ['#4a3a34', '#3a4038', '#4a4434'][Math.floor(rand() * 3)];
-          g.fillRect(x0 + 2, y0 + 2, w * 0.3, h - 4);
-          g.fillRect(x0 + w * 0.7 - 2, y0 + 2, w * 0.3, h - 4);
-        }
-        g.fillStyle = 'rgba(150, 165, 175, 0.18)';
-        g.beginPath();
-        g.moveTo(x0 + w * 0.2, y0 + h);
-        g.lineTo(x0 + w * 0.45, y0 + h);
-        g.lineTo(x0 + w * 0.8, y0);
-        g.lineTo(x0 + w * 0.55, y0);
-        g.fill();
-        if (rand() < 0.3) drawCrackAt(g, x0 + rand() * w, y0 + rand() * h, w * 0.4, rand);
-      }
+      // Every window opening is cut out cleanly so the real 3D transparent glass panes show through at all distances.
+      glass.push([x0, y0, w, h]);
+      g.fillStyle = '#0c1014';
+      g.fillRect(x0, y0, w, h);
       if (office) {
         g.fillStyle = 'rgba(90, 96, 100, 0.95)';
         g.fillRect(x0 + w / 2 - 1, y0, 2, h);
@@ -157,18 +114,6 @@ function markGlass(g: CanvasRenderingContext2D, rects: [number, number, number, 
     const img = g.getImageData(x + 1, y + 1, w - 2, h - 2);
     for (let i = 3; i < img.data.length; i += 4) img.data[i] = 102;
     g.putImageData(img, x + 1, y + 1);
-  }
-}
-
-function drawCrackAt(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, rand: Rand): void {
-  g.strokeStyle = 'rgba(200, 205, 210, 0.5)';
-  g.lineWidth = 1;
-  for (let i = 0; i < 6; i++) {
-    const a = rand() * Math.PI * 2;
-    g.beginPath();
-    g.moveTo(cx, cy);
-    g.lineTo(cx + Math.cos(a) * r * (0.4 + rand() * 0.6), cy + Math.sin(a) * r * (0.4 + rand() * 0.6));
-    g.stroke();
   }
 }
 

@@ -117,7 +117,7 @@ export function initWorldMaterials(model: LightingModel, anisotropy: number): vo
     patch(m, texture!, model === 'standard', cutWindows, kind === 'glass');
     return m;
   };
-  materials = { cast: make('opaque'), flat: make('opaque'), glass: make('glass'), castCut: make('opaque', true) };
+  materials = { cast: make('opaque', true), flat: make('opaque', false), glass: make('glass'), castCut: make('opaque', true) };
 }
 
 export function worldMaterials(): Record<Bucket, Material> & { castCut: Material } {
@@ -249,13 +249,8 @@ uniform float uCutTop[${MAX_CUTOUTS}];` : ''}`,
         '#include <map_fragment>',
         (cutWindows
             ? `vec4 texel = vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));
-// Intact window glass (alpha-marked) of a loaded building: a hole into the rooms behind.
-if (texel.a < 0.6) {
-  for (int i = 0; i < ${MAX_CUTOUTS}; i++) {
-    vec4 b = uCutXZ[i];
-    if (vCutPos.x > b.x && vCutPos.x < b.z && vCutPos.z > b.y && vCutPos.z < b.w && vCutPos.y < uCutTop[i]) discard;
-  }
-}
+// Cut out every window opening cleanly at all distances so real 3D glass panes show instead of flat textures.
+if (texel.a < 0.6) discard;
 diffuseColor.rgb *= texel.rgb;`
             : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`) +
           (!isGlass
