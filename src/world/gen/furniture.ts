@@ -202,6 +202,11 @@ export class Place {
   container(type: ContainerType, lx: number, lz: number): void {
     const [cx, cz] = this.pt(lx, lz);
     this.b.container(type, cx, cz, this.y, this.drawn[0] <= this.drawn[3] ? [...this.drawn] : undefined);
+    this.resetBounds();
+  }
+
+  /** Clears accumulated drawn bounds for this place and its ancestors. */
+  resetBounds(): void {
     for (let p: Place | null = this; p; p = p.parent) p.drawn.splice(0, 6, Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity);
   }
 
@@ -921,12 +926,13 @@ export const SHOP_SIGN: Record<ShopKind, number> = { grocery: 0x6a4a2a, pharmacy
 
 /** Shelving unit (len along local X), stocked or stripped; goods knocked onto the floor when `messy`. */
 export function shopShelf(p: Place, rand: Rand, len: number, kind: ShopKind, messy = false): void {
+  p.resetBounds();
   const grp = kind === 'pharmacy'
     ? (messy && rand() < 0.4 ? 'metalShelf' : 'pharmacyShelf')
     : (messy && rand() < 0.4 ? (rand() < 0.5 ? 'metalShelf' : 'storageRack') : 'groceryShelf');
   if (p.model(grp, rand, 0, 0, 0.33, 0, Math.min(1.3, len / 2.0), 0.75, 0.25, true)) {
-    if (messy) for (let i = 0; i < 6; i++) p.rbox(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), (rand() - 0.5) * len, 0.05, 0.8 + rand() * 0.6, 0.18, 0.1, 0.12, rand() * 6, 0, 0, 'wood');
     p.container(kind === 'pharmacy' ? 'pharmacy' : 'shelf', 0, 0.75);
+    if (messy) for (let i = 0; i < 6; i++) p.rbox(pick(rand, [0x6a3a2a, 0x3a4a5a, 0x7a7050, 0x4a5a3a]), (rand() - 0.5) * len, 0.05, 0.8 + rand() * 0.6, 0.18, 0.1, 0.12, rand() * 6, 0, 0, 'wood');
     return;
   }
   const frame = kind === 'pharmacy' ? 0xb8b4aa : METAL;

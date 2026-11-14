@@ -138,7 +138,6 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   }
   F.mailboxes(new Place(b, L.ix1, 0, L.iz0 + 1.8, 3), rf);
   F.elevator(new Place(b, L.cx1 + 1.5, 0, L.cz0, 2), rf);
-  if (L.cx1 + 3.1 < L.ix1 - 0.8) F.notes(new Place(b, L.cx1 + 3.1, 0, L.cz0, 2), rf, 2);
   // Potted plants either side of the entrance, a bench along a clear stretch of wall.
   for (const side of [-1, 1]) F.plant(new Place(b, L.doorX + side * (ENTRANCE_W / 2 + 0.5), 0, L.iz0 + 0.45), rf, rf() < 0.3);
   if (!shop && L.doorX - L.ix0 > 3.2) F.bench(new Place(b, L.ix0, 0, L.iz0 + 1.6, 1), rf, rf() < 0.3);
@@ -175,8 +174,6 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
       furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA, light);
-      // Notes left on the solid wall beside the door for whoever comes looking.
-      if (st === 'fled' && rf() < 0.5 && gx - ux0 >= 1.1) F.notes(new Place(b, gx - 0.65, y, L.czA, 0), rf, 1 + Math.floor(rf() * 2));
     }
   }
   backUnits(b, L, y, h, paperB, mode, rs, rf, wins, lit);
@@ -352,8 +349,7 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     F.painting(U.at(s * w / 2, 2.6, face(-s)), rf, 1.5, messy && rf() < 0.5);
   }
 
-  // By the door (only on solid wall away from the doorway): notes, luggage, moving boxes.
-  if ((fled || rf() < 0.2) && w >= 4.0) F.notes(U.at(s * Math.min(w / 2 - 0.6, 1.35), d, 2), rf, 1 + Math.floor(rf() * 2));
+  // By the door (only on solid wall away from the doorway): luggage, moving boxes.
   if (fled && rf() < 0.7) F.suitcase(U.at(-s * 1.1, d - 0.75, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
   if (rf() < (fled ? 0.4 : 0.2)) F.boxes(U.at(s * 2.1, d, 2), rf, 2 + Math.floor(rf() * 2));
   if (messy) {
@@ -406,7 +402,9 @@ function storageUnit(U: Place, w: number, d: number, rf: Rand): void {
   F.boxes(U.at(w / 4, 0), rf, 2);
   F.shopShelf(U.at(-w / 2, d / 2, 1), rf, Math.min(2.4, d - 1.4), 'grocery', true);
   const cx = w / 2 - 0.6;
-  U.box(PAL.crate, cx, 0, d / 2, 0.8, 0.7, 0.8, 'wood', true);
+  if (!U.model('woodenCrate', rf, cx, 0, d / 2, 0, 1.0, 0.8, 0.1, true)) {
+    U.box(PAL.crate, cx, 0, d / 2, 0.8, 0.7, 0.8, 'wood', true);
+  }
   U.container('crate', cx - 0.7, d / 2);
   F.papers(U, rf, -w / 2 + 0.5, 0.5, w / 2 - 0.5, d - 0.5, 3);
 }
