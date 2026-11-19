@@ -22,6 +22,12 @@ interface Tri {
   n: [number, number, number];
   d: number;
   p: number[];
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
   layer: number;
   glass: boolean;
   buried?: boolean;
@@ -35,10 +41,16 @@ export function __tris(surfaces: SurfaceBuffers[]): Tri[] {
   const out: Tri[] = [];
   for (const s of surfaces) {
     const P = s.position;
-    for (let t = 0; t < P.length / 9; t++) {
-      const o = t * 9;
-      const e1 = [P[o + 3] - P[o], P[o + 4] - P[o + 1], P[o + 5] - P[o + 2]];
-      const e2 = [P[o + 6] - P[o], P[o + 7] - P[o + 1], P[o + 8] - P[o + 2]];
+    const I = s.index;
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const i0 = I[t];
+      const i1 = I[t + 1];
+      const i2 = I[t + 2];
+      const p0 = i0 * 3;
+      const p1 = i1 * 3;
+      const p2 = i2 * 3;
+      const e1 = [P[p1] - P[p0], P[p1 + 1] - P[p0 + 1], P[p1 + 2] - P[p0 + 2]];
+      const e2 = [P[p2] - P[p0], P[p2 + 1] - P[p0 + 1], P[p2 + 2] - P[p0 + 2]];
       let n: [number, number, number] = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       const len = Math.hypot(...n);
       // Slivers (under 1 cm², or thinner than 1 cm) cannot show a fight, and their normals are noise.
@@ -46,7 +58,22 @@ export function __tris(surfaces: SurfaceBuffers[]): Tri[] {
       const longest = Math.max(Math.hypot(e1[0], e1[1], e1[2]), Math.hypot(e2[0], e2[1], e2[2]), Math.hypot(e2[0] - e1[0], e2[1] - e1[1], e2[2] - e1[2]));
       if (len / longest < 0.01) continue;
       n = [n[0] / len, n[1] / len, n[2] / len];
-      out.push({ n, d: n[0] * P[o] + n[1] * P[o + 1] + n[2] * P[o + 2], p: Array.from(P.subarray(o, o + 9)), layer: s.layer[t * 3], glass: s.bucket === 'glass' });
+      const x0 = P[p0], y0 = P[p0 + 1], z0 = P[p0 + 2];
+      const x1 = P[p1], y1 = P[p1 + 1], z1 = P[p1 + 2];
+      const x2 = P[p2], y2 = P[p2 + 1], z2 = P[p2 + 2];
+      out.push({
+        n,
+        d: n[0] * x0 + n[1] * y0 + n[2] * z0,
+        p: [x0, y0, z0, x1, y1, z1, x2, y2, z2],
+        minX: Math.min(x0, x1, x2),
+        maxX: Math.max(x0, x1, x2),
+        minY: Math.min(y0, y1, y2),
+        maxY: Math.max(y0, y1, y2),
+        minZ: Math.min(z0, z1, z2),
+        maxZ: Math.max(z0, z1, z2),
+        layer: s.layer[i0],
+        glass: s.bucket === 'glass',
+      });
     }
   }
   return out;
@@ -118,6 +145,11 @@ export function __fights(list: Tri[]): Map<string, { count: number; at: number[]
       if (!bin) continue;
       for (const o of bin) {
         if (o.glass || o === t) continue;
+        if (
+          t.maxX + PLANE_EPS < o.minX || o.maxX + PLANE_EPS < t.minX ||
+          t.maxY + PLANE_EPS < o.minY || o.maxY + PLANE_EPS < t.minY ||
+          t.maxZ + PLANE_EPS < o.minZ || o.maxZ + PLANE_EPS < t.minZ
+        ) continue;
         if (t.n[0] * o.n[0] + t.n[1] * o.n[1] + t.n[2] * o.n[2] > -0.999 || !near(t, o)) continue;
         if (overlap(t, o)) {
           t.buried = true;
@@ -138,13 +170,18 @@ export function __fights(list: Tri[]): Map<string, { count: number; at: number[]
         for (const o of bin) {
           if (o === t || o.buried || (t.glass && o.glass)) continue;
           if (flip && !o.glass) continue;
+          if (
+            t.maxX + PLANE_EPS < o.minX || o.maxX + PLANE_EPS < t.minX ||
+            t.maxY + PLANE_EPS < o.minY || o.maxY + PLANE_EPS < t.minY ||
+            t.maxZ + PLANE_EPS < o.minZ || o.maxZ + PLANE_EPS < t.minZ
+          ) continue;
           const dot = t.n[0] * o.n[0] + t.n[1] * o.n[1] + t.n[2] * o.n[2];
           if ((flip ? -dot : dot) < 0.999) continue;
           if (!near(t, o)) continue;
+          if (!overlap(t, o)) continue;
           const pair = t.p[0] < o.p[0] ? `${t.p.join()}|${o.p.join()}` : `${o.p.join()}|${t.p.join()}`;
           if (seen.has(pair)) continue;
           seen.add(pair);
-          if (!overlap(t, o)) continue;
           const name = [layerName(t.layer), layerName(o.layer)].sort().join(' × ');
           const f = found.get(name) ?? { count: 0, at: t.p.slice(0, 3).map((v) => +v.toFixed(2)) };
           if ((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.ZF_SHOW === name) console.log('   ', name, t.p.map((v) => +v.toFixed(3)).join(' '), '|', o.p.map((v) => +v.toFixed(3)).join(' '));
@@ -163,7 +200,7 @@ export async function main(args: string[] = []): Promise<number> {
   const { readFileSync } = (await import(/* @vite-ignore */ fsName)) as { readFileSync(path: string, enc?: string): string & Uint8Array };
   const json = JSON.parse(readFileSync('public/models/models.json', 'utf8'));
   const bin = readFileSync('public/models/models.bin') as Uint8Array;
-  const lib: ModelLibrary = { ...json, bin: bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) as ArrayBuffer, byName: new Map(), byGroup: new Map(), cache: new Map() };
+  const lib: ModelLibrary = { ...json, bin: bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) as ArrayBuffer, byName: new Map(), byGroup: new Map(), cache: new Map(), lodCache: new Map() };
   for (const m of lib.models) {
     lib.byName.set(m.name, m);
     lib.byGroup.set(m.group, [...(lib.byGroup.get(m.group) ?? []), m]);

@@ -477,9 +477,10 @@ void main() {
 }`;
 
 const DOME_FRAG = /* glsl */ `
+precision mediump float;
 uniform sampler2D uTex;
-uniform float uTime;
-uniform vec3 uWind;
+uniform highp float uTime;
+uniform highp vec3 uWind;
 uniform vec3 uSky;
 uniform vec3 uMoon;
 uniform float uDay;

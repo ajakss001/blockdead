@@ -36,21 +36,29 @@ function placeholderAtlas(): DataArrayTexture {
 }
 
 /**
- * The model atlas (public/models/atlas.jpg: layers stacked top to bottom). Loaded before the world
- * streams; false if the library is not installed (the game then keeps its procedural props).
+ * The model atlas (public/models/atlas.jpg: layers tiled left-to-right, top-to-bottom). Loaded
+ * before the world streams; false if the library is not installed.
  */
 export async function loadModelAtlas(url: string, layerSize: number, anisotropy: number): Promise<boolean> {
   try {
     const img = await createImageBitmap(await (await fetch(url)).blob());
-    const canvas = new OffscreenCanvas(img.width, img.height);
+    const cols = Math.max(1, Math.floor(img.width / layerSize));
+    const rows = Math.max(1, Math.floor(img.height / layerSize));
+    const layers = cols * rows;
+    const canvas = new OffscreenCanvas(layerSize, layerSize);
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(img, 0, 0);
-    const px = ctx.getImageData(0, 0, img.width, img.height).data;
-    const layers = Math.floor(img.height / layerSize);
     const row = layerSize * 4;
     const data = new Uint8Array(layerSize * row * layers);
-    // Each layer's rows flipped to GL order (the UVs were made for that).
-    for (let l = 0; l < layers; l++) for (let y = 0; y < layerSize; y++) data.set(px.subarray((l * layerSize + y) * row, (l * layerSize + y + 1) * row), (l * layerSize + layerSize - 1 - y) * row);
+    for (let l = 0; l < layers; l++) {
+      const cx = (l % cols) * layerSize;
+      const cy = Math.floor(l / cols) * layerSize;
+      ctx.drawImage(img, cx, cy, layerSize, layerSize, 0, 0, layerSize, layerSize);
+      const px = ctx.getImageData(0, 0, layerSize, layerSize).data;
+      // Each layer's rows flipped to GL order (the UVs were made for that).
+      const base = l * layerSize * row;
+      for (let y = 0; y < layerSize; y++) data.set(px.subarray(y * row, (y + 1) * row), base + (layerSize - 1 - y) * row);
+    }
+    img.close();
     const tex = new DataArrayTexture(data, layerSize, layerSize, layers);
     tex.colorSpace = SRGBColorSpace;
     tex.wrapS = tex.wrapT = RepeatWrapping;
@@ -222,15 +230,18 @@ attribute vec2 aPbr;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
-${!isGlass ? 'varying vec3 vSnowWorld;\nvarying vec3 vSnowNorm;' : ''}
+${!isGlass ? 'varying float vSnowBase;' : ''}
 ${cutWindows ? 'varying vec3 vCutPos;' : ''}`,
       )
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vSurfUv = aSurfUv;
 vLayer = aLayer;
 vPbr = aPbr;
-${!isGlass ? 'vSnowWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvSnowNorm = normalize(mat3(modelMatrix) * objectNormal);' : ''}
-${cutWindows ? 'vCutPos = (modelMatrix * vec4(transformed, 1.0)).xyz;' : ''}`);
+${!isGlass || cutWindows ? 'vec4 worldPos4 = modelMatrix * vec4(transformed, 1.0);' : ''}
+${!isGlass ? `float snowUp = smoothstep(0.45, 0.78, normalize(mat3(modelMatrix) * objectNormal).y);
+float snowNoise = 0.76 + 0.24 * sin(worldPos4.x * 0.27 + worldPos4.z * 0.19) * cos(worldPos4.z * 0.23 - worldPos4.x * 0.11);
+vSnowBase = snowUp * snowNoise;` : ''}
+${cutWindows ? 'vCutPos = worldPos4.xyz;' : ''}`);
     let frag = shader.fragmentShader
       .replace(
         '#include <common>',
@@ -240,7 +251,7 @@ uniform mediump sampler2DArray uModels;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
-${!isGlass ? 'uniform float uSnow;\nvarying vec3 vSnowWorld;\nvarying vec3 vSnowNorm;' : ''}
+${!isGlass ? 'uniform float uSnow;\nvarying float vSnowBase;' : ''}
 ${cutWindows ? `varying vec3 vCutPos;
 uniform vec4 uCutXZ[${MAX_CUTOUTS}];
 uniform float uCutTop[${MAX_CUTOUTS}];` : ''}`,
@@ -260,11 +271,8 @@ diffuseColor.rgb *= texel.rgb;`
             : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`) +
           (!isGlass
             ? `
-if (uSnow > 0.01) {
-  float snowUp = smoothstep(0.45, 0.78, normalize(vSnowNorm).y);
-  float snowNoise = 0.76 + 0.24 * sin(vSnowWorld.x * 0.27 + vSnowWorld.z * 0.19) * cos(vSnowWorld.z * 0.23 - vSnowWorld.x * 0.11);
-  float snowMask = clamp(snowUp * uSnow * snowNoise, 0.0, 0.9);
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.89, 0.95), snowMask);
+if (uSnow > 0.01 && vSnowBase > 0.001) {
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.89, 0.95), clamp(vSnowBase * uSnow, 0.0, 0.9));
 }`
             : ''),
       );

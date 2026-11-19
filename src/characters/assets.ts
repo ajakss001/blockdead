@@ -84,6 +84,10 @@ export interface BodyAsset {
 
 /** Texture sizes: up close (the player, the menu) and for the crowd (zombies, LOD). */
 export type TexSize = 0 | 512 | 1024 | 2048;
+let charAnisotropy = 4;
+export function setCharacterAnisotropy(n: number): void {
+  charAnisotropy = Math.max(1, n);
+}
 /** The zombies' texture of a body: the smaller file, loaded the first time it is asked for. */
 export function lodTexture(asset: BodyAsset): Texture | null {
   if (asset.textureLod !== undefined) return asset.textureLod;
@@ -92,7 +96,7 @@ export function lodTexture(asset: BodyAsset): Texture | null {
   const t = new TextureLoader().load(`${source.base}${asset.id}_${size}.webp`);
   t.colorSpace = SRGBColorSpace;
   t.minFilter = LinearMipmapLinearFilter;
-  t.anisotropy = 4;
+  t.anisotropy = charAnisotropy;
   if (asset.texture) t.flipY = asset.texture.flipY;
   return (asset.textureLod = t);
 }
@@ -158,7 +162,7 @@ function fetchBody(id: BodyId): Promise<BodyAsset | null> {
           ? texLoader.loadAsync(`${base}${id}_${texSize}.webp`).then((t) => {
               t.colorSpace = SRGBColorSpace;
               t.minFilter = LinearMipmapLinearFilter;
-              t.anisotropy = 4;
+              t.anisotropy = charAnisotropy;
               return t;
             })
           : Promise.resolve(null),

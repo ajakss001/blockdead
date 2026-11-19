@@ -45,7 +45,9 @@ async function main(): Promise<void> {
   if (!lib) throw new Error('no model library');
   const atlas = await new TextureLoader().loadAsync('/models/atlas.jpg');
   atlas.colorSpace = SRGBColorSpace;
-  const layers = (atlas.image as HTMLImageElement).height / lib.atlas;
+  const atlasImg = atlas.image as HTMLImageElement;
+  const cols = Math.max(1, Math.round(atlasImg.width / lib.atlas));
+  const atlasRows = Math.max(1, Math.round(atlasImg.height / lib.atlas));
   const rows = Math.ceil(MODELS.length / PER_ROW);
   const W = CELL_W * 4 * PER_ROW;
   const H = rows * (CELL_H + LABEL);
@@ -80,7 +82,7 @@ async function main(): Promise<void> {
       glbs.set(cfg.src, root);
     }
     const source = normalizedSource(root, cfg);
-    const result = prepared(lib, info, atlas, layers);
+    const result = prepared(lib, info, atlas, cols, atlasRows);
     const row = Math.floor(k / PER_ROW);
     const col0 = (k % PER_ROW) * 4;
     const size = new Vector3(...info.size);
@@ -146,10 +148,12 @@ function normalizedSource(root: Object3D, cfg: Cfg): Group {
 }
 
 /** The prepared model drawn like the game: back faces culled, its atlas layer, glass translucent. */
-function prepared(lib: Parameters<typeof modelGeometry>[0], m: ModelInfo, atlas: Texture, layers: number): Group {
+function prepared(lib: Parameters<typeof modelGeometry>[0], m: ModelInfo, atlas: Texture, cols: number, rows: number): Group {
   const map = atlas.clone();
-  map.repeat.set(1, 1 / layers);
-  map.offset.set(0, (layers - 1 - m.layer) / layers);
+  const col = m.layer % cols;
+  const row = Math.floor(m.layer / cols);
+  map.repeat.set(1 / cols, 1 / rows);
+  map.offset.set(col / cols, (rows - 1 - row) / rows);
   map.needsUpdate = true;
   const g = new Group();
   g.add(new Mesh(modelGeometry(lib, m), new MeshStandardMaterial({ map, vertexColors: true, roughness: 0.75, metalness: 0.15 })));

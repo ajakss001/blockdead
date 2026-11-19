@@ -24,6 +24,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const data: WorkerResponse =
     req.type === 'chunk' ? { type: 'chunk', ...buildChunk(layout, req.i, req.j, req.bodies) } : { type: 'interior', ...buildInterior(req.building, req.focus) };
   const transfer: Transferable[] = [data.colliders.buffer, data.ambient.buffer];
-  for (const s of data.surfaces) transfer.push(s.position.buffer, s.normal.buffer, s.color.buffer, s.surfUv.buffer, s.layer.buffer, s.pbr.buffer);
+  for (const s of data.surfaces) {
+    transfer.push(s.position.buffer, s.normal.buffer, s.color.buffer, s.surfUv.buffer, s.layer.buffer, s.pbr.buffer, s.index.buffer);
+    if (s.indexLod1) transfer.push(s.indexLod1.buffer);
+  }
   (self as unknown as { postMessage(message: unknown, transfer: Transferable[]): void }).postMessage(data, transfer);
 };

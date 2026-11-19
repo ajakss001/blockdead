@@ -91,6 +91,7 @@ void main() {
 }`;
 
 const FRAG = /* glsl */ `
+precision mediump float;
 uniform float uRain;
 varying float vA;
 void main() {

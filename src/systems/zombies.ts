@@ -209,7 +209,10 @@ export class ZombieSim {
   private nextId = 1;
   private readonly rnd: () => number;
   private spawnTimer = 0;
+  private popAccum = 0;
   private readonly heardAt = new Vector3();
+  private readonly aliveBuf: Zombie[] = [];
+  private readonly corpseBuf: Zombie[] = [];
 
   constructor(
     private readonly world: ZombieWorld,
@@ -699,19 +702,25 @@ export class ZombieSim {
   }
 
   private separate(): void {
-    const l = this.list;
+    const alive = this.aliveBuf;
+    alive.length = 0;
+    for (let i = 0; i < this.list.length; i++) {
+      const z = this.list[i];
+      if (z.state !== 'dead') alive.push(z);
+    }
     const min = T.radius * 2;
-    for (let i = 0; i < l.length; i++) {
-      if (l[i].state === 'dead') continue;
-      for (let j = i + 1; j < l.length; j++) {
-        if (l[j].state === 'dead') continue;
-        const a = l[i].pos;
-        const b = l[j].pos;
-        if (Math.abs(a.y - b.y) > 1.5) continue;
+    const min2 = min * min;
+    for (let i = 0; i < alive.length; i++) {
+      const a = alive[i].pos;
+      for (let j = i + 1; j < alive.length; j++) {
+        const b = alive[j].pos;
         const dx = b.x - a.x;
+        if (dx >= min || dx <= -min) continue;
         const dz = b.z - a.z;
+        if (dz >= min || dz <= -min) continue;
+        if (Math.abs(a.y - b.y) > 1.5) continue;
         const d2 = dx * dx + dz * dz;
-        if (d2 >= min * min || d2 < 1e-8) continue;
+        if (d2 >= min2 || d2 < 1e-8) continue;
         const d = Math.sqrt(d2);
         const push = (min - d) / 2;
         a.x -= (dx / d) * push;
@@ -726,29 +735,45 @@ export class ZombieSim {
   }
 
   private populate(dt: number, p: PlayerSense, viewDir?: Vector3): void {
-    // Bodies go only where the player can't see it happen: too many of them (oldest first), or old ones.
-    const unseen = (z: Zombie) => {
-      const dx = z.pos.x - p.pos.x;
-      const dz = z.pos.z - p.pos.z;
-      const d = Math.hypot(dx, dz);
-      return d > 30 || !viewDir || (dx * viewDir.x + dz * viewDir.z) / (d * Math.max(1e-3, Math.hypot(viewDir.x, viewDir.z))) < 0.2;
-    };
-    const bodies = this.list.filter((z) => z.state === 'dead' && !z.twin).sort((a, b) => a.diedAt - b.diedAt);
-    let over = bodies.length - T.maxCorpses;
-    for (const z of bodies) {
-      const old = this.time - z.diedAt > T.corpse;
-      if ((over > 0 || old) && unseen(z)) {
-        this.list.splice(this.list.indexOf(z), 1);
-        this.removed.push(z);
-        over--;
+    this.popAccum += dt;
+    if (this.popAccum >= 0.4) {
+      this.popAccum = 0;
+      const vLen = viewDir ? Math.max(1e-3, Math.hypot(viewDir.x, viewDir.z)) : 1;
+      // Bodies go only where the player can't see it happen: too many of them (oldest first), or old ones.
+      const unseen = (z: Zombie) => {
+        const dx = z.pos.x - p.pos.x;
+        const dz = z.pos.z - p.pos.z;
+        const d = Math.hypot(dx, dz);
+        return d > 30 || !viewDir || (dx * viewDir.x + dz * viewDir.z) / (d * vLen) < 0.2;
+      };
+      const bodies = this.corpseBuf;
+      bodies.length = 0;
+      for (let i = 0; i < this.list.length; i++) {
+        const z = this.list[i];
+        if (z.state === 'dead' && !z.twin) bodies.push(z);
       }
-    }
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      const z = this.list[i];
-      if (z.twin) continue;
-      if (Math.hypot(z.pos.x - p.pos.x, z.pos.z - p.pos.z) > T.despawn && z.state !== 'chase') {
-        this.list.splice(i, 1);
-        if (z.state === 'dead') this.removed.push(z);
+      if (bodies.length > 1) bodies.sort((a, b) => a.diedAt - b.diedAt);
+      let over = bodies.length - T.maxCorpses;
+      for (let k = 0; k < bodies.length; k++) {
+        const z = bodies[k];
+        const old = this.time - z.diedAt > T.corpse;
+        if ((over > 0 || old) && unseen(z)) {
+          const ix = this.list.indexOf(z);
+          if (ix >= 0) this.list.splice(ix, 1);
+          this.removed.push(z);
+          over--;
+        }
+      }
+      const despawn2 = T.despawn * T.despawn;
+      for (let i = this.list.length - 1; i >= 0; i--) {
+        const z = this.list[i];
+        if (z.twin || z.state === 'chase') continue;
+        const dx = z.pos.x - p.pos.x;
+        const dz = z.pos.z - p.pos.z;
+        if (dx * dx + dz * dz > despawn2) {
+          this.list.splice(i, 1);
+          if (z.state === 'dead') this.removed.push(z);
+        }
       }
     }
     this.spawnTimer -= dt;

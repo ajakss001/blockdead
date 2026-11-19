@@ -33,6 +33,10 @@ type Read = (file: string) => Promise<ArrayBuffer>;
 
 let read: Read = (f) => fetch(`${import.meta.env?.BASE_URL ?? '/'}models/gear/${f}`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${f}: ${r.status}`))));
 let texSize: TexSize = 2048;
+let gearAnisotropy = 4;
+export function setGearAnisotropy(n: number): void {
+  gearAnisotropy = Math.max(1, n);
+}
 let meta: Meta | null = null;
 let metaP: Promise<Meta | null> | null = null;
 const pieces = new Map<GearId, Piece>();
@@ -93,7 +97,7 @@ function loadPiece(g: GearId): Promise<void> {
             t.colorSpace = SRGBColorSpace;
             t.flipY = false;
             t.minFilter = LinearMipmapLinearFilter;
-            t.anisotropy = 4;
+            t.anisotropy = gearAnisotropy;
             return t;
           })
         : Promise.resolve(null),
@@ -147,7 +151,7 @@ function texOf(url: string): Texture {
   t.colorSpace = SRGBColorSpace;
   t.flipY = false;
   t.minFilter = LinearMipmapLinearFilter;
-  t.anisotropy = 4;
+  t.anisotropy = gearAnisotropy;
   return t;
 }
 

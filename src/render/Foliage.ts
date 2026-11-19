@@ -75,6 +75,8 @@ export class Foliage {
   private sources: FoliageSources = { trees: [], cars: [], ivy: [] };
   /** Tiles grown or dropped since the last upload. */
   private dirty = true;
+  private readonly wantPool: { d: number; k: number }[] = [];
+  private readonly want: { d: number; k: number }[] = [];
 
   constructor(
     scene: Scene,
@@ -132,7 +134,7 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
     for (const k of this.tiles.keys()) this.stale.add(k);
   }
 
-  update(time: number, wind: number, px: number, pz: number): void {
+  update(time: number, wind: number, px: number, pz: number, dirX = 0, dirZ = 0): void {
     this.uniforms.uTime.value = time;
     this.uniforms.uWind.value = wind;
     const r = this.radius;
@@ -140,25 +142,43 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
     const t1x = Math.floor((px + r) / TILE_M);
     const t0z = Math.floor((pz - r) / TILE_M);
     const t1z = Math.floor((pz + r) / TILE_M);
-    // Tiles in reach, nearest first; grow a few missing ones per frame.
-    const want: [number, number][] = [];
+    const dLen = Math.hypot(dirX, dirZ);
+    const hasDir = dLen > 1e-4;
+    const nx = hasDir ? dirX / dLen : 0;
+    const nz = hasDir ? dirZ / dLen : 0;
+    // Tiles in reach and in front (keeping immediate 4.5 m ring), nearest first; grow a few missing ones per frame.
+    let wantN = 0;
     for (let tx = t0x; tx <= t1x; tx++) {
       for (let tz = t0z; tz <= t1z; tz++) {
-        const d = Math.hypot((tx + 0.5) * TILE_M - px, (tz + 0.5) * TILE_M - pz);
-        if (d < r + TILE_M * 0.7) want.push([d, key(tx, tz)]);
+        const vx = (tx + 0.5) * TILE_M - px;
+        const vz = (tz + 0.5) * TILE_M - pz;
+        const d = Math.hypot(vx, vz);
+        if (d >= r + TILE_M * 0.7) continue;
+        if (hasDir && d > 4.5 && (vx * nx + vz * nz) / d < -0.25) continue;
+        let slot = this.wantPool[wantN];
+        const k = key(tx, tz);
+        if (!slot) this.wantPool[wantN] = slot = { d, k };
+        else {
+          slot.d = d;
+          slot.k = k;
+        }
+        this.want[wantN++] = slot;
       }
     }
-    want.sort((a, b) => a[0] - b[0]);
+    this.want.length = wantN;
+    if (wantN > 1) this.want.sort((a, b) => a.d - b.d);
     const until = performance.now() + GROW_MS;
     let grown = 0;
-    for (const [, k] of want) {
+    for (let i = 0; i < this.want.length; i++) {
+      const k = this.want[i].k;
       if (this.tiles.has(k) && !this.stale.has(k)) continue;
       if (grown++ > 0 && performance.now() > until) break;
       this.tiles.set(k, this.grow(k));
       this.stale.delete(k);
       this.dirty = true;
     }
-    const sig = `${t0x},${t1x},${t0z},${t1z}`;
+    const yawBucket = hasDir ? Math.round(Math.atan2(nz, nx) * 4) : 0;
+    const sig = `${t0x},${t1x},${t0z},${t1z},${yawBucket}`;
     if (!this.dirty && sig === this.shown) return;
     this.dirty = false;
     this.shown = sig;
@@ -175,8 +195,8 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
     const ic = this.mesh.instanceColor!.array as Float32Array;
     const id = this.data.array as Float32Array;
     let n = 0;
-    for (const [, k] of want) {
-      const g = this.tiles.get(k);
+    for (let i = 0; i < this.want.length; i++) {
+      const g = this.tiles.get(this.want[i].k);
       if (!g || g.n === 0) continue;
       const take = Math.min(g.n, this.cap - n);
       if (take <= 0) break;
@@ -186,9 +206,19 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
       n += take;
     }
     this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.mesh.instanceColor!.needsUpdate = true;
-    this.data.needsUpdate = true;
+    this.mesh.visible = n > 0;
+    if (n > 0) {
+      this.mesh.instanceMatrix.clearUpdateRanges();
+      this.mesh.instanceMatrix.addUpdateRange(0, n * 16);
+      this.mesh.instanceMatrix.needsUpdate = true;
+      const icAttr = this.mesh.instanceColor!;
+      icAttr.clearUpdateRanges();
+      icAttr.addUpdateRange(0, n * 3);
+      icAttr.needsUpdate = true;
+      this.data.clearUpdateRanges();
+      this.data.addUpdateRange(0, n * 4);
+      this.data.needsUpdate = true;
+    }
   }
 
   /** Everything that grows in one tile: tufts per cell, plus the trees', cars' and walls' own. */

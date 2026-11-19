@@ -8,6 +8,7 @@ import {
   InstancedMesh,
   type Material,
   Matrix4,
+  MeshLambertMaterial,
   MeshStandardMaterial,
   Quaternion,
   type Scene,
@@ -15,6 +16,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { characterMaterial } from '../render/look/materials';
+import type { LightingModel } from '../render/look/worldMaterials';
 import type { CollisionWorld } from './CollisionWorld';
 import type { DoorSpot, DoorStyle } from './gen/pieces';
 
@@ -111,6 +113,7 @@ export class Doors {
   constructor(
     private readonly scene: Scene,
     private readonly world: CollisionWorld,
+    lighting: LightingModel = 'standard',
   ) {
     const slab = (w: number, h: number, d: number, x: number, y: number, z = 0): BufferGeometry => new BoxGeometry(w, h, d).translate(x, y, z);
     // Paneled wooden leaf with stiles, rails, raised panels, and lever handle; hinge at x = 0, leaf along +X.
@@ -139,7 +142,10 @@ export class Doors {
     ])!;
     const pane = slab(LEAF_W - 0.14, LEAF_H - 0.31, 0.012, LEAF_W / 2, 0.22 + (LEAF_H - 0.31) / 2);
     const glassDoor = mergeGeometries([tint(frame, 0x8a8e90, 1), tint(pane, 0x5c6a72, 0.32)])!;
-    const glass = new MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.4, transparent: true, side: DoubleSide });
+    const lambert = lighting === 'lambert';
+    const glass = lambert
+      ? new MeshLambertMaterial({ vertexColors: true, transparent: true, side: DoubleSide })
+      : new MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.4, transparent: true, side: DoubleSide });
     const plank = (y: number, tilt: number, zOff: number): BufferGeometry => {
       const g = new BoxGeometry(LEAF_W + 0.16, 0.14, 0.035);
       g.rotateZ(tilt);
@@ -155,7 +161,9 @@ export class Doors {
       tint(plank(1.12, 0.08, -0.045), 0x6c573c, 1),
       tint(plank(1.66, -0.05, -0.045), 0x786246, 1),
     ])!;
-    const barricadedMat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.04, side: DoubleSide });
+    const barricadedMat = lambert
+      ? new MeshLambertMaterial({ vertexColors: true, side: DoubleSide })
+      : new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.04, side: DoubleSide });
     this.pools = {
       wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
       glass: this.pool([[glassDoor, glass]]),

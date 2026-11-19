@@ -274,24 +274,28 @@ export class WorldEditor {
   private extractIsland(mesh: Mesh, faceIndex: number): Mesh | null {
     const geo = mesh.geometry as BufferGeometry;
     const pos = geo.getAttribute('position') as BufferAttribute | undefined;
-    if (!pos || geo.index) return null;
-    const triCount = Math.floor(pos.count / 3);
-    if (faceIndex < 0 || faceIndex >= triCount) return null;
+    if (!pos) return null;
+    const idxAttr = geo.index;
+    const totalIndices = idxAttr ? idxAttr.count : pos.count;
+    const rangeStart = Math.max(0, geo.drawRange.start);
+    const rangeEnd = geo.drawRange.count === Infinity ? totalIndices : Math.min(totalIndices, rangeStart + geo.drawRange.count);
+    const triStart = Math.floor(rangeStart / 3);
+    const triEnd = Math.floor(rangeEnd / 3);
+    if (faceIndex < triStart || faceIndex >= triEnd) return null;
 
-    // Build vertex-position hash -> triangle list
+    const vertAt = (t: number, k: number) => (idxAttr ? idxAttr.getX(t * 3 + k) : t * 3 + k);
+
+    // Build vertex-position hash -> triangle list within this mesh's drawRange
     const vertMap = new Map<string, number[]>();
     const keyOf = (vi: number) => `${Math.round(pos.getX(vi) * 200)}_${Math.round(pos.getY(vi) * 200)}_${Math.round(pos.getZ(vi) * 200)}`;
-    for (let t = 0; t < triCount; t++) {
-      const b = t * 3;
-      if (
-        pos.getX(b) === pos.getX(b + 1) &&
-        pos.getY(b) === pos.getY(b + 1) &&
-        pos.getZ(b) === pos.getZ(b + 1)
-      ) {
-        continue;
-      }
-      for (let k = 0; k < 3; k++) {
-        const key = keyOf(b + k);
+    for (let t = triStart; t < triEnd; t++) {
+      const i0 = vertAt(t, 0);
+      const i1 = vertAt(t, 1);
+      const i2 = vertAt(t, 2);
+      if (i0 === i1 || i1 === i2 || i0 === i2) continue;
+      if (pos.getX(i0) === pos.getX(i1) && pos.getY(i0) === pos.getY(i1) && pos.getZ(i0) === pos.getZ(i1)) continue;
+      for (const vi of [i0, i1, i2]) {
+        const key = keyOf(vi);
         let arr = vertMap.get(key);
         if (!arr) {
           arr = [];
@@ -301,22 +305,23 @@ export class WorldEditor {
       }
     }
 
-    const visited = new Uint8Array(triCount);
+    const triSpan = triEnd - triStart;
+    const visited = new Uint8Array(triSpan);
     const queue: number[] = [faceIndex];
-    visited[faceIndex] = 1;
+    visited[faceIndex - triStart] = 1;
     const island: number[] = [];
     const MAX_ISLAND_TRIS = 35000;
 
     while (queue.length > 0 && island.length < MAX_ISLAND_TRIS) {
       const t = queue.pop()!;
       island.push(t);
-      const b = t * 3;
       for (let k = 0; k < 3; k++) {
-        const neighbors = vertMap.get(keyOf(b + k));
+        const neighbors = vertMap.get(keyOf(vertAt(t, k)));
         if (!neighbors) continue;
         for (const nt of neighbors) {
-          if (!visited[nt]) {
-            visited[nt] = 1;
+          const ni = nt - triStart;
+          if (!visited[ni]) {
+            visited[ni] = 1;
             queue.push(nt);
           }
         }
@@ -334,7 +339,7 @@ export class WorldEditor {
     const tmp = new Vector3();
     for (const t of island) {
       for (let k = 0; k < 3; k++) {
-        tmp.fromBufferAttribute(pos, t * 3 + k).applyMatrix4(mesh.matrixWorld);
+        tmp.fromBufferAttribute(pos, vertAt(t, k)).applyMatrix4(mesh.matrixWorld);
         box.expandByPoint(tmp);
       }
     }
@@ -346,7 +351,7 @@ export class WorldEditor {
       for (let i = 0; i < island.length; i++) {
         const t = island[i];
         for (let k = 0; k < 3; k++) {
-          const sv = t * 3 + k;
+          const sv = vertAt(t, k);
           const dv = (i * 3 + k) * itemSize;
           if (name === 'position') {
             tmp.fromBufferAttribute(attr, sv).applyMatrix4(mesh.matrixWorld).sub(center);
@@ -354,7 +359,10 @@ export class WorldEditor {
             out[dv + 1] = tmp.y;
             out[dv + 2] = tmp.z;
           } else {
-            for (let c = 0; c < itemSize; c++) out[dv + c] = attr.array[sv * itemSize + c];
+            out[dv] = attr.getX(sv);
+            if (itemSize > 1) out[dv + 1] = attr.getY(sv);
+            if (itemSize > 2) out[dv + 2] = attr.getZ(sv);
+            if (itemSize > 3) out[dv + 3] = attr.getW(sv);
           }
         }
       }
@@ -362,11 +370,22 @@ export class WorldEditor {
     }
 
     // Collapse extracted triangles in source chunk mesh so it disappears from original batch
-    for (const t of island) {
-      const b = t * 3;
-      for (let k = 0; k < 3; k++) pos.setXYZ(b + k, 0, -9999, 0);
+    if (idxAttr) {
+      const arr = idxAttr.array as Uint16Array | Uint32Array;
+      for (const t of island) {
+        const b = t * 3;
+        arr[b] = 0;
+        arr[b + 1] = 0;
+        arr[b + 2] = 0;
+      }
+      idxAttr.needsUpdate = true;
+    } else {
+      for (const t of island) {
+        const b = t * 3;
+        for (let k = 0; k < 3; k++) pos.setXYZ(b + k, 0, -9999, 0);
+      }
+      pos.needsUpdate = true;
     }
-    pos.needsUpdate = true;
 
     const extracted = new Mesh(newGeo, mesh.material as Material);
     extracted.position.copy(center);

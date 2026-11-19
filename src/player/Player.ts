@@ -81,6 +81,13 @@ export class Player {
   private flashT = 0;
   private readonly lightTarget: Object3D;
   private readonly bounceLight: PointLight;
+  private lightInCam = false;
+  private bounceInScene = false;
+  private prewarmLight = false;
+  private suppressed = false;
+  private readonly lastShadowPos = new Vector3(1e9, 0, 1e9);
+  private readonly lastShadowDir = new Vector3();
+  private shadowAccum = 0;
   /** The beam's direction in the world: it trails the camera a little (the light is in a hand). */
   private readonly beam = new Vector3();
   private beamSet = false;
@@ -114,10 +121,12 @@ export class Player {
   /** The survivor died: hide the first-person arms, weapon and legs (the ragdoll figure takes over). */
   startDeath(): void {
     this.dead = true;
+    this.suppressed = true;
     this.viewmodel.scene.visible = false;
     this.body.root.visible = false;
     this.flashlight.intensity = 0;
     this.bounceLight.intensity = 0;
+    this.syncLights(false, false);
   }
 
   /** A blow taken: the camera jolts. */
@@ -158,11 +167,10 @@ export class Player {
     this.flashlight.shadow.normalBias = 0.03;
     this.flashlight.shadow.camera.near = 0.15;
     this.flashlight.shadow.camera.far = f.distance;
-    camera.add(this.flashlight, target);
+    camera.add(target);
     if (!camera.parent) scene.add(camera);
     this.bounceLight = new PointLight(f.color, 0, 9.5, 1.8);
     this.bounceLight.castShadow = false;
-    scene.add(this.bounceLight);
 
     this.applyQuality(ctx.quality.preset);
     this.unsubs.push(ctx.events.on('quality:changed', () => this.applyQuality(ctx.quality.preset)));
@@ -330,9 +338,52 @@ export class Player {
     for (const off of this.unsubs) off();
     this.body.dispose();
     this.viewmodel.dispose();
+    this.flashlight.removeFromParent();
     this.flashlight.dispose();
     this.bounceLight.removeFromParent();
     this.bounceLight.dispose();
+  }
+
+  private syncLights(beam: boolean, bounce: boolean): void {
+    if (beam && !this.lightInCam) {
+      this.camera.add(this.flashlight);
+      this.lightInCam = true;
+    } else if (!beam && this.lightInCam) {
+      this.camera.remove(this.flashlight);
+      this.lightInCam = false;
+    }
+    if (bounce && !this.bounceInScene) {
+      this.scene.add(this.bounceLight);
+      this.bounceInScene = true;
+    } else if (!bounce && this.bounceInScene) {
+      this.scene.remove(this.bounceLight);
+      this.bounceInScene = false;
+    }
+  }
+
+  /** Attach/detach flashlight lights during boot prewarm so both shader variants compile behind the loading screen. */
+  prewarmLights(on: boolean): void {
+    this.prewarmLight = on;
+    if (on) {
+      this.flashlight.intensity = 0.01;
+      this.bounceLight.intensity = 0.01;
+      this.syncLights(true, true);
+    } else {
+      this.flashlight.intensity = 0;
+      this.bounceLight.intensity = 0;
+      this.syncLights(false, false);
+    }
+  }
+
+  /** Temporarily suppress the hand flashlight while seated in a vehicle. */
+  suppressLight(on: boolean): void {
+    if (this.suppressed === on) return;
+    this.suppressed = on;
+    if (on) {
+      this.flashlight.intensity = 0;
+      this.bounceLight.intensity = 0;
+      this.syncLights(false, false);
+    }
   }
 
   /** Render the shadow map once (used during loading to compile its shaders off-screen). */
@@ -342,7 +393,7 @@ export class Player {
 
   /** The flashlight is actually shining. */
   get lightOn(): boolean {
-    return this.flashlightOn && this.battery > 0 && !this.viewmodel.lightBlocked;
+    return !this.suppressed && this.flashlightOn && this.battery > 0 && !this.viewmodel.lightBlocked;
   }
 
   rechargeBattery(amount: number): void {
@@ -363,9 +414,9 @@ export class Player {
     this.flashlightOn = on;
     this.dropT = 0;
     this.flickerT = 1;
-    const shadow = this.flashlight.castShadow && on;
-    this.flashlight.shadow.autoUpdate = shadow;
-    this.flashlight.shadow.needsUpdate = shadow;
+    this.flashlight.shadow.autoUpdate = false;
+    this.lastShadowPos.x = 1e9;
+    if (this.flashlight.castShadow && on) this.flashlight.shadow.needsUpdate = true;
   }
 
   /**
@@ -403,7 +454,15 @@ export class Player {
    * the camera's turns a little; brightness and colour by the battery.
    */
   private aimLight(dt: number, level: number): void {
+    if (this.prewarmLight || this.suppressed) return;
     const L = this.flashlight;
+    if (level <= 0.02) {
+      L.intensity = 0;
+      this.bounceLight.intensity = 0;
+      this.syncLights(false, false);
+      return;
+    }
+    this.syncLights(true, true);
     L.intensity = FLASHLIGHT.light.intensity * level;
     const weak = this.battery < FLASHLIGHT.battery.dim ? 1 - this.battery / FLASHLIGHT.battery.dim : 0;
     L.color.copy(LIGHT_COLOR).lerp(WEAK_COLOR, weak);
@@ -417,10 +476,6 @@ export class Player {
       this.beamSet = true;
     } else this.beam.lerp(_ld, 1 - Math.exp(-12 * dt)).normalize();
     this.lightTarget.position.copy(this.beam).applyQuaternion(_q.invert()).multiplyScalar(6).add(_lp);
-    if (level <= 0.02) {
-      this.bounceLight.intensity = 0;
-      return;
-    }
     this.camera.getWorldPosition(_o);
     const hit = this.world.rayHit(_o.x, _o.y, _o.z, this.beam.x, this.beam.y, this.beam.z, 12);
     if (hit < 11.8) {
@@ -431,16 +486,28 @@ export class Player {
     } else {
       this.bounceLight.intensity = 0;
     }
+    if (L.castShadow) {
+      this.shadowAccum += dt;
+      const moved = this.camera.position.distanceToSquared(this.lastShadowPos) > 0.000225;
+      const turned = this.beam.dot(this.lastShadowDir) < 0.99998;
+      if (moved || turned || this.shadowAccum >= 0.066) {
+        L.shadow.needsUpdate = true;
+        this.lastShadowPos.copy(this.camera.position);
+        this.lastShadowDir.copy(this.beam);
+        this.shadowAccum = 0;
+      }
+    }
   }
 
 
   private applyQuality(preset: QualityPreset): void {
     // Shadows from the flashlight on high quality only.
     const shadows = preset.level === 'high' && preset.shadowMapSize > 0;
+    this.flashlight.shadow.autoUpdate = false;
     if (this.flashlight.castShadow !== shadows) {
       this.flashlight.castShadow = shadows;
-      this.flashlight.shadow.autoUpdate = shadows && this.flashlightOn;
-      this.flashlight.shadow.needsUpdate = shadows;
+      this.lastShadowPos.x = 1e9;
+      this.flashlight.shadow.needsUpdate = shadows && this.flashlightOn;
     }
     const size = Math.max(preset.shadowMapSize, 1);
     const shadow = this.flashlight.shadow;

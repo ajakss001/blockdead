@@ -269,6 +269,7 @@ void main() {
 }`;
 
 const FRAG = /* glsl */ `
+precision mediump float;
 varying vec3 vColor;
 varying vec2 vLook;
 varying float vSpin;

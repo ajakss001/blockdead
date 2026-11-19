@@ -38,6 +38,7 @@ interface StatView {
   fill: HTMLDivElement;
   img: HTMLImageElement;
   fillKey: number;
+  opacityKey: string;
   colorKey: string;
 }
 
@@ -87,7 +88,7 @@ export class Hud {
       fill.append(img);
       root.append(base, fill);
       this.stats.append(root);
-      this.views.set(id, { root, fill, img, fillKey: -1, colorKey: '' });
+      this.views.set(id, { root, fill, img, fillKey: -1, opacityKey: '', colorKey: '' });
       this.setStat(id, 1, 0);
     }
     this.wound.className = 'stat stat__img stat--wound';
@@ -207,10 +208,10 @@ export class Hud {
       // Whole pixels of the 24-px icon, so the level reads as pixel art too.
       v.fill.style.height = `${(fillKey / 24) * 100}%`;
     }
-    if (severity < 3) {
-      v.root.style.opacity = (0.52 + 0.48 * clamped).toFixed(2);
-    } else {
-      v.root.style.opacity = '';
+    const opacityKey = severity < 3 ? (0.52 + 0.48 * clamped).toFixed(2) : '';
+    if (opacityKey !== v.opacityKey) {
+      v.opacityKey = opacityKey;
+      v.root.style.opacity = opacityKey;
     }
     const colors = STAT_COLORS[id];
     const color = tint === 'cold' && colors.cold ? colors.cold : severity === 3 ? colors.critical : colors.normal;

@@ -18,8 +18,8 @@ import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
 import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
-import { loadCharacters } from './characters/assets';
-import { loadGearMeta, setGearSource } from './characters/gear';
+import { loadCharacters, setCharacterAnisotropy } from './characters/assets';
+import { loadGearMeta, setGearAnisotropy, setGearSource } from './characters/gear';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
@@ -69,20 +69,26 @@ async function boot(): Promise<void> {
   const quality = new QualityManager(events, renderer, profiler, level);
   const input = new InputManager(pickInputMode(device), events);
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
-  setMaterialAnisotropy(maxAniso);
-  initWorldMaterials(QUALITY_PRESETS[level].lighting, maxAniso);
+  const aniso = level === 'low' ? 1 : Math.min(4, maxAniso);
+  setMaterialAnisotropy(aniso);
+  setCharacterAnisotropy(aniso);
+  setGearAnisotropy(aniso);
+  initWorldMaterials(QUALITY_PRESETS[level].lighting, aniso);
   // Third-party vehicles and props (one atlas layer each), before the world streams in.
-  await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, maxAniso);
+  await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, aniso);
   // The character models (player, zombies, bodies): everything that draws a person uses them synchronously.
   // Up close (the player, the menu, the inventory) 2048, the zombies 1024 (lodTexture); 512 on low.
   setGearSource(level === 'low' ? 512 : 2048);
   await Promise.all([loadCharacters(level === 'low' ? 512 : 2048), loadGearMeta(), loadItemIcons()]);
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
-  const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa);
+  const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa, level, device.type !== 'desktop');
   // The grade, grain and vignette cost nothing extra (one pass either way) but stay off on low.
   postfx.setGrade(level !== 'low');
-  events.on('quality:changed', (e) => postfx.setGrade(e.level !== 'low'));
+  events.on('quality:changed', (e) => {
+    postfx.setGrade(e.level !== 'low');
+    postfx.setBypass(e.level === 'low');
+  });
   const hud = new Hud(uiEl);
 
   // ?scene=bench — the stage 0 rendering benchmark.

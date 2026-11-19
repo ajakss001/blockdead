@@ -39,18 +39,19 @@ interface Box {
  * own walls and doorways. Boxes are tagged with an owner (chunk, interior, door) for removal.
  */
 export class CollisionWorld implements ColliderSink {
-  private readonly boxes = new Map<number, Box>();
+  private readonly boxes: (Box | null)[] = [];
+  private readonly freeIds: number[] = [];
   private readonly grid = new Map<number, number[]>();
   private readonly byOwner = new Map<number, number[]>();
   private readonly candidates: number[] = [];
-  private readonly stamps = new Map<number, number>();
-  private nextId = 0;
+  private stamps = new Int32Array(256);
+  private liveCount = 0;
   private stamp = 0;
   /** Owner assigned to boxes added through addBox(). */
   owner = 0;
 
   get boxCount(): number {
-    return this.boxes.size;
+    return this.liveCount;
   }
 
   addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
@@ -74,8 +75,20 @@ export class CollisionWorld implements ColliderSink {
 
   private insert(box: Box): void {
     const { minX, minZ, maxX, maxZ } = box;
-    const id = this.nextId++;
-    this.boxes.set(id, box);
+    let id: number;
+    if (this.freeIds.length > 0) {
+      id = this.freeIds.pop()!;
+      this.boxes[id] = box;
+    } else {
+      id = this.boxes.length;
+      this.boxes.push(box);
+      if (id >= this.stamps.length) {
+        const grown = new Int32Array(this.stamps.length * 2);
+        grown.set(this.stamps);
+        this.stamps = grown;
+      }
+    }
+    this.liveCount++;
     const owned = this.byOwner.get(this.owner);
     if (owned) owned.push(id);
     else this.byOwner.set(this.owner, [id]);
@@ -117,8 +130,10 @@ export class CollisionWorld implements ColliderSink {
   removeOwner(owner: number): void {
     const ids = this.byOwner.get(owner);
     if (!ids) return;
-    for (const id of ids) {
-      const b = this.boxes.get(id)!;
+    for (let k = 0; k < ids.length; k++) {
+      const id = ids[k];
+      const b = this.boxes[id];
+      if (!b) continue;
       this.forCells(b.minX, b.minZ, b.maxX, b.maxZ, (key) => {
         const list = this.grid.get(key);
         if (!list) return;
@@ -126,8 +141,9 @@ export class CollisionWorld implements ColliderSink {
         if (i >= 0) list.splice(i, 1);
         if (list.length === 0) this.grid.delete(key);
       });
-      this.boxes.delete(id);
-      this.stamps.delete(id);
+      this.boxes[id] = null;
+      this.freeIds.push(id);
+      this.liveCount--;
     }
     this.byOwner.delete(owner);
   }
@@ -144,8 +160,8 @@ export class CollisionWorld implements ColliderSink {
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       let pushed = false;
       for (let i = 0; i < this.candidates.length; i++) {
-        const b = this.boxes.get(this.candidates[i])!;
-        if (b.maxY <= feet || b.minY >= head) continue;
+        const b = this.boxes[this.candidates[i]];
+        if (!b || b.maxY <= feet || b.minY >= head) continue;
         if (b.obb) {
           if (this.pushOutOfObb(pos, b.obb, radius)) pushed = true;
           continue;
@@ -178,26 +194,167 @@ export class CollisionWorld implements ColliderSink {
     }
   }
 
-  /** Distance along a ray to the first box it enters (marching in 8 cm steps), or −1 within maxDist. */
+  /** Distance along a ray to the first box it enters (2D DDA across grid cells + exact slab test), or −1 within maxDist. */
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): number {
-    for (let d = 0.1; d <= maxDist; d += 0.08) {
-      const x = ox + dx * d;
-      const y = oy + dy * d;
-      const z = oz + dz * d;
-      this.query(x - 0.01, z - 0.01, x + 0.01, z + 0.01);
-      for (let i = 0; i < this.candidates.length; i++) {
-        const b = this.boxes.get(this.candidates[i])!;
-        if (y < b.minY || y > b.maxY) continue;
-        if (b.obb) {
+    const tClip = 0.05;
+    if (maxDist < tClip || !Number.isFinite(ox + oy + oz + dx + dy + dz + maxDist)) return -1;
+
+    const stamp = this.nextStamp();
+    let bestT = maxDist;
+    let hit = -1;
+
+    const invDx = Math.abs(dx) > 1e-9 ? 1 / dx : 0;
+    const invDy = Math.abs(dy) > 1e-9 ? 1 / dy : 0;
+    const invDz = Math.abs(dz) > 1e-9 ? 1 / dz : 0;
+
+    let ix = Math.floor(ox / CELL);
+    let iz = Math.floor(oz / CELL);
+
+    let stepX = 0;
+    let tDeltaX = Infinity;
+    let tMaxX = Infinity;
+    if (invDx > 0) {
+      stepX = 1;
+      tDeltaX = CELL * invDx;
+      tMaxX = ((ix + 1) * CELL - ox) * invDx;
+    } else if (invDx < 0) {
+      stepX = -1;
+      tDeltaX = -CELL * invDx;
+      tMaxX = (ix * CELL - ox) * invDx;
+    }
+
+    let stepZ = 0;
+    let tDeltaZ = Infinity;
+    let tMaxZ = Infinity;
+    if (invDz > 0) {
+      stepZ = 1;
+      tDeltaZ = CELL * invDz;
+      tMaxZ = ((iz + 1) * CELL - oz) * invDz;
+    } else if (invDz < 0) {
+      stepZ = -1;
+      tDeltaZ = -CELL * invDz;
+      tMaxZ = (iz * CELL - oz) * invDz;
+    }
+
+    while (true) {
+      const list = this.grid.get(cellKey(ix, iz));
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const id = list[i];
+          if (this.stamps[id] === stamp) continue;
+          this.stamps[id] = stamp;
+          const b = this.boxes[id];
+          if (!b) continue;
+
+          // Y slab test first (fastest rejection for above/below floor boxes).
+          let tMin = 0;
+          let tMax = bestT;
+          if (invDy !== 0) {
+            let t1 = (b.minY - oy) * invDy;
+            let t2 = (b.maxY - oy) * invDy;
+            if (t1 > t2) {
+              const tmp = t1;
+              t1 = t2;
+              t2 = tmp;
+            }
+            if (t1 > tMin) tMin = t1;
+            if (t2 < tMax) tMax = t2;
+            if (tMin > tMax || tMax < tClip) continue;
+          } else if (oy < b.minY || oy > b.maxY) {
+            continue;
+          }
+
           const o = b.obb;
-          const wx = x - o.cx;
-          const wz = z - o.cz;
-          if (Math.abs(wx * o.c - wz * o.s) > o.hx || Math.abs(wx * o.s + wz * o.c) > o.hz) continue;
-        } else if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
-        return d;
+          if (o) {
+            const wx = ox - o.cx;
+            const wz = oz - o.cz;
+            const lox = wx * o.c - wz * o.s;
+            const loz = wx * o.s + wz * o.c;
+            const ldx = dx * o.c - dz * o.s;
+            const ldz = dx * o.s + dz * o.c;
+
+            if (Math.abs(ldx) > 1e-9) {
+              const inv = 1 / ldx;
+              let t1 = (-o.hx - lox) * inv;
+              let t2 = (o.hx - lox) * inv;
+              if (t1 > t2) {
+                const tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+              }
+              if (t1 > tMin) tMin = t1;
+              if (t2 < tMax) tMax = t2;
+              if (tMin > tMax || tMax < tClip) continue;
+            } else if (lox < -o.hx || lox > o.hx) {
+              continue;
+            }
+
+            if (Math.abs(ldz) > 1e-9) {
+              const inv = 1 / ldz;
+              let t1 = (-o.hz - loz) * inv;
+              let t2 = (o.hz - loz) * inv;
+              if (t1 > t2) {
+                const tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+              }
+              if (t1 > tMin) tMin = t1;
+              if (t2 < tMax) tMax = t2;
+              if (tMin > tMax || tMax < tClip) continue;
+            } else if (loz < -o.hz || loz > o.hz) {
+              continue;
+            }
+          } else {
+            if (invDx !== 0) {
+              let t1 = (b.minX - ox) * invDx;
+              let t2 = (b.maxX - ox) * invDx;
+              if (t1 > t2) {
+                const tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+              }
+              if (t1 > tMin) tMin = t1;
+              if (t2 < tMax) tMax = t2;
+              if (tMin > tMax || tMax < tClip) continue;
+            } else if (ox < b.minX || ox > b.maxX) {
+              continue;
+            }
+
+            if (invDz !== 0) {
+              let t1 = (b.minZ - oz) * invDz;
+              let t2 = (b.maxZ - oz) * invDz;
+              if (t1 > t2) {
+                const tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+              }
+              if (t1 > tMin) tMin = t1;
+              if (t2 < tMax) tMax = t2;
+              if (tMin > tMax || tMax < tClip) continue;
+            } else if (oz < b.minZ || oz > b.maxZ) {
+              continue;
+            }
+          }
+
+          const ht = tMin > tClip ? tMin : tClip;
+          if (ht < bestT || hit < 0) {
+            bestT = ht;
+            hit = ht;
+          }
+        }
+      }
+
+      if (tMaxX <= tMaxZ) {
+        if (tMaxX > bestT) break;
+        ix += stepX;
+        tMaxX += tDeltaX;
+      } else {
+        if (tMaxZ > bestT) break;
+        iz += stepZ;
+        tMaxZ += tDeltaZ;
       }
     }
-    return -1;
+    return hit;
   }
 
   /**
@@ -209,9 +366,9 @@ export class CollisionWorld implements ColliderSink {
     this.query(x - radius, z - radius, x + radius, z + radius);
     let best = -Infinity;
     for (let i = 0; i < this.candidates.length; i++) {
-      const b = this.boxes.get(this.candidates[i])!;
+      const b = this.boxes[this.candidates[i]];
       // Low boxes can be stepped onto; anything taller only holds you once you are on top (climbed up).
-      if (b.maxY > maxTop || b.maxY <= best || (b.maxY - b.minY > SUPPORT_MAX_HEIGHT && b.maxY > standY + 0.06)) continue;
+      if (!b || b.maxY > maxTop || b.maxY <= best || (b.maxY - b.minY > SUPPORT_MAX_HEIGHT && b.maxY > standY + 0.06)) continue;
       if (b.obb) {
         const o = b.obb;
         const wx = x - o.cx;
@@ -228,8 +385,8 @@ export class CollisionWorld implements ColliderSink {
     this.query(x - radius, z - radius, x + radius, z + radius);
     let best = Infinity;
     for (let i = 0; i < this.candidates.length; i++) {
-      const b = this.boxes.get(this.candidates[i])!;
-      if (b.minY < fromY || b.minY >= best || !this.overlapsCircle(b, x, z, radius)) continue;
+      const b = this.boxes[this.candidates[i]];
+      if (!b || b.minY < fromY || b.minY >= best || !this.overlapsCircle(b, x, z, radius)) continue;
       best = b.minY;
     }
     return best;
@@ -245,8 +402,8 @@ export class CollisionWorld implements ColliderSink {
     this.query(lx - 0.15, lz - 0.15, lx + 0.15, lz + 0.15);
     let top = -1;
     for (let i = 0; i < this.candidates.length; i++) {
-      const b = this.boxes.get(this.candidates[i])!;
-      if (b.maxY < feetY + minRise || b.maxY > feetY + maxRise || b.maxY <= top || !this.overlapsCircle(b, lx, lz, 0.15)) continue;
+      const b = this.boxes[this.candidates[i]];
+      if (!b || b.maxY < feetY + minRise || b.maxY > feetY + maxRise || b.maxY <= top || !this.overlapsCircle(b, lx, lz, 0.15)) continue;
       top = b.maxY;
     }
     if (top < 0) return -1;
@@ -305,21 +462,29 @@ export class CollisionWorld implements ColliderSink {
   boxesNear(x: number, z: number, r: number, visit: (b: Readonly<Pick<Box, 'minX' | 'minZ' | 'maxX' | 'maxZ' | 'minY' | 'maxY' | 'obb'>>) => void): void {
     this.query(x - r, z - r, x + r, z + r);
     for (const id of [...this.candidates]) {
-      const b = this.boxes.get(id);
+      const b = this.boxes[id];
       if (b) visit(b);
     }
   }
 
+  private nextStamp(): number {
+    if (this.stamp >= 0x70000000) {
+      this.stamps.fill(0);
+      this.stamp = 0;
+    }
+    return ++this.stamp;
+  }
+
   private query(minX: number, minZ: number, maxX: number, maxZ: number): void {
     this.candidates.length = 0;
-    const stamp = ++this.stamp;
+    const stamp = this.nextStamp();
     this.forCells(minX, minZ, maxX, maxZ, (key) => {
       const list = this.grid.get(key);
       if (!list) return;
       for (let i = 0; i < list.length; i++) {
         const id = list[i];
-        if (this.stamps.get(id) === stamp) continue;
-        this.stamps.set(id, stamp);
+        if (this.stamps[id] === stamp) continue;
+        this.stamps[id] = stamp;
         this.candidates.push(id);
       }
     });

@@ -364,7 +364,9 @@ export class WorldScene implements IScene {
     const seed = Number(new URLSearchParams(location.search).get('seed')) || DEFAULT_SEED;
     const layout = new WorldLayout(seed);
     this.layout = layout;
-    this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius);
+    const lowMem = ctx.device.memoryGb > 0 && ctx.device.memoryGb <= 4;
+    const maxWorkers = ctx.device.type !== 'desktop' || lowMem ? 1 : 2;
+    this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius, maxWorkers);
     // Standing surface: storeys, stairs and roofs inside high-rises; paving and terrain everywhere else.
     const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
     this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, ground);
@@ -415,7 +417,7 @@ export class WorldScene implements IScene {
     this.containers.onChunk = (key, list) => (list ? this.ground.addChunk(key, list) : this.ground.removeChunk(key));
     this.scene.add(this.ground.group);
     this.scene.add(this.baseProps.group);
-    this.doors = new Doors(this.scene, this.world);
+    this.doors = new Doors(this.scene, this.world, ctx.quality.preset.lighting);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
     this.bandits = new Bandits({
       scene: this.scene,
@@ -537,6 +539,8 @@ export class WorldScene implements IScene {
         isMechanic: () => this.classId === 'mechanic',
       },
     );
+    const bootAniso = ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy());
+    this.vehicles.setAnisotropy(bootAniso);
     this.carHud = new CarHud(
       ctx,
       this.vehicles,
@@ -620,6 +624,8 @@ export class WorldScene implements IScene {
         this.zombies.noiseAt(x, y, z, r);
         this.hordes.hear(x, z, r);
       },
+      ctx.quality.preset.foliage.cap,
+      ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy()),
     );
     // A blow to a wall: steel strikes sparks, the knife (and a fist) only a little dust; the weapon wears.
     this.player.onStrikeWorld = (x, y, z, item) => {
@@ -831,13 +837,13 @@ export class WorldScene implements IScene {
   prewarm(): () => void {
     const group = new Group();
     const g = new BufferGeometry();
-    const tri = (n: number) => new BufferAttribute(new Float32Array(3 * n), n);
     g.setAttribute('position', new BufferAttribute(new Float32Array([0, 0, 0, 0.001, 0, 0, 0, 0.001, 0]), 3));
-    g.setAttribute('normal', new BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3));
-    g.setAttribute('color', tri(3));
-    g.setAttribute('aSurfUv', tri(2));
-    g.setAttribute('aLayer', tri(1));
-    g.setAttribute('aPbr', tri(2));
+    g.setAttribute('normal', new BufferAttribute(new Int8Array([0, 0, 127, 0, 0, 127, 0, 0, 127]), 3, true));
+    g.setAttribute('color', new BufferAttribute(new Uint8Array(3 * 3), 3, true));
+    g.setAttribute('aSurfUv', new BufferAttribute(new Float32Array(3 * 2), 2));
+    g.setAttribute('aLayer', new BufferAttribute(new Uint8Array(3), 1, false));
+    g.setAttribute('aPbr', new BufferAttribute(new Uint8Array(3 * 2), 2, true));
+    g.setIndex([0, 1, 2]);
     const mats = worldMaterials();
     for (const bucket of [...BUCKETS, 'castCut'] as const) {
       const m = new Mesh(g, mats[bucket]);
@@ -852,7 +858,14 @@ export class WorldScene implements IScene {
     this.player.prewarmShadows();
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
+    this.vehicles.prewarmLights(true);
+    this.ctx.renderer.gl.compile(this.scene, this.camera);
+    this.vehicles.prewarmLights(false);
+    this.player.prewarmLights(true);
+    this.ctx.renderer.gl.compile(this.scene, this.camera);
     return () => {
+      this.vehicles.prewarmLights(false);
+      this.player.prewarmLights(false);
       lifeDone();
       atmoDone();
       group.removeFromParent();
@@ -884,7 +897,7 @@ export class WorldScene implements IScene {
     if (inCar) {
       this.player.viewmodel.scene.visible = false;
       this.player.body.root.visible = false;
-      this.player.flashlight.intensity = 0;
+      this.player.suppressLight(true);
       if (this.ctx.input.consumePressed('use')) {
         this.exitVehicle();
       } else {
@@ -893,6 +906,7 @@ export class WorldScene implements IScene {
         if (this.vehicles.activeCar) c.yaw = this.vehicles.activeCar.yaw;
       }
     } else {
+      this.player.suppressLight(false);
       if (!this.dead) {
         this.player.viewmodel.scene.visible = true;
         this.player.body.root.visible = true;
@@ -1045,11 +1059,12 @@ export class WorldScene implements IScene {
     if (this.moodleT <= dt && dirtSteps(this.inventory.wornDirt) !== this.dirtShown) this.syncBody();
     // Dark = night without a light of your own (rooms by day get light through the windows).
     const dark = !this.player.lightOn && this.clock.isNight && !this.base.fireNear(c.position.x, c.position.y, c.position.z, BASE.lightReach);
+    const threat = this.zombies.threat(c.position);
     if (!this.dead && c.speed > 0.3) {
       if (c.sprinting) this.skills.add('fitness', XP.sprint * dt);
-      else if (c.crouched && this.zombies.threat(c.position) > 0.05) this.skills.add('sneak', XP.sneak * dt);
+      else if (c.crouched && threat > 0.05) this.skills.add('sneak', XP.sneak * dt);
     }
-    this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat: this.zombies.threat(c.position) });
+    this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat });
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
     if (!this.dead) this.dread.update(dt, a);
@@ -1117,6 +1132,10 @@ export class WorldScene implements IScene {
     this.models.update(this.zombies.list, this.player.controller.position, gameDt, this.camera, (this.scene.fog as Fog).far + 2);
     this.camera.getWorldDirection(this.lookDir);
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
+    const qp = this.ctx.quality.preset;
+    const shadowDist = this.player.lightOn && qp.level === 'high' && qp.shadowMapSize > 0 ? qp.shadowDistance : 0;
+    const carLodDist = qp.level === 'low' ? 16 : qp.level === 'medium' ? 28 : 42;
+    this.chunks.updateDetail(this.camera.position.x, this.camera.position.z, shadowDist, carLodDist);
     this.interaction.render(frameDt);
     this.drawSearchZones(frameDt);
     this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y);
@@ -2218,6 +2237,7 @@ export class WorldScene implements IScene {
     this.models.configure(preset.level);
     const isLow = preset.level === 'low';
     this.vehicles?.setLowQuality(isLow);
+    this.vehicles?.setAnisotropy(isLow ? 1 : Math.min(4, this.ctx.renderer.gl.capabilities.getMaxAnisotropy()));
     this.bandits?.setMaxActive(isLow ? 2 : 4);
     this.weather?.setSnowDensity(isLow ? 0.36 : 1.0);
   }

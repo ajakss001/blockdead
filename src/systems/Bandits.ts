@@ -135,6 +135,7 @@ const _q = new Quaternion();
 const _q2 = new Quaternion();
 const _q3 = new Quaternion();
 const _q4 = new Quaternion();
+const _q5 = new Quaternion();
 
 interface Tracer {
   mesh: Mesh;
@@ -239,13 +240,9 @@ export class Bandits {
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
   constructor(private readonly w: BanditWorld) {
-    // Preload male/female and faction costume rigs so bandits spawn smoothly with outfits.
+    // Preload base male/female rigs; faction costume rigs load on demand when a bandit spawns with them.
     void loadBody('male');
     void loadBody('female');
-    void loadBody(bodyFor({ sex: 'male' }, 'outfitMilitary'));
-    void loadBody(bodyFor({ sex: 'male' }, 'outfitSwat'));
-    void loadBody(bodyFor({ sex: 'male' }, 'outfitPolice'));
-    void loadBody(bodyFor({ sex: 'male' }, 'outfitMechanic'));
   }
 
   setMaxActive(n: number): void {
@@ -732,7 +729,7 @@ export class Bandits {
     coverBody(body);
     const scale = figureScale(b.look, body);
     const hide = { value: 0 };
-    const rig = new CharacterRig(body, 0, { cover: true, hide });
+    const rig = new CharacterRig(body, 1, { cover: true, hide });
     rig.root.scale.setScalar(scale);
     rig.mesh.castShadow = true;
     b.root.add(rig.root);
@@ -807,22 +804,22 @@ export class Bandits {
     let missing = false;
     for (const g of want) {
       if (gearKind(g) === 'box' || v.gear.has(g)) continue;
-      const geo = gearGeometry(v.body, g, 0);
+      const geo = gearGeometry(v.body, g, 1);
       if (!geo) {
         missing = true;
         continue;
       }
       const mat = characterMaterial(bodyAsset(v.body), v.rig.rig, {
-        map: gearTexture(g),
+        map: gearTexture(g, true),
         doubleSide: gearKind(g) === 'mask',
       });
       const m = new SkinnedMesh(geo, mat);
       m.bind(v.rig.mesh.skeleton, v.rig.mesh.bindMatrix);
       m.frustumCulled = false;
-      m.castShadow = true;
+      m.castShadow = false;
       v.rig.mesh.add(m);
       v.gear.set(g, m);
-      const lg = gearGeometry(v.body, g, 0, 'lens');
+      const lg = gearGeometry(v.body, g, 1, 'lens');
       if (lg && !v.gear.has(`${g}:lens`)) {
         const l = new SkinnedMesh(lg, characterMaterial(bodyAsset(v.body), v.rig.rig, { lens: LENS_TINT[g] ?? 0x1e1f1d }));
         l.bind(v.rig.mesh.skeleton, v.rig.mesh.bindMatrix);
@@ -943,7 +940,7 @@ export class Bandits {
     const turn = _q2.setFromUnitVectors(curDir, wantDir);
     _q4.identity().slerp(turn, blend);
     const w = bone.getWorldQuaternion(_q);
-    const pw = bone.parent!.getWorldQuaternion(new Quaternion());
+    const pw = bone.parent!.getWorldQuaternion(_q5);
     bone.quaternion.copy(pw.invert().multiply(_q4).multiply(w));
     r.root.updateMatrixWorld(true);
   }
@@ -976,12 +973,12 @@ export class Bandits {
     for (const bone of rig.bones) bone.matrixAutoUpdate = true;
     this.w.scene.add(rig.root);
 
-    const st = stand(v.body, 0);
+    const st = stand(v.body, 1);
     const boxes: StaticBox[] = [];
     this.w.boxesNear(b.pos.x, b.pos.z, 1.8, boxes);
     const killer = new Vector3(fromX, b.pos.y, fromZ);
     const rd = playerRagdoll(b.pos, b.yaw + Math.PI, v.scale, b.vel, killer, boxes, Math.random, st.shape);
-    const pose = new RagdollPose(v.body, 0, rig.rig, world, rd, v.scale);
+    const pose = new RagdollPose(v.body, 1, rig.rig, world, rd, v.scale);
     this.w.addRagdoll(rd);
     b.ragdoll = rd;
     b.ragdollPose = pose;

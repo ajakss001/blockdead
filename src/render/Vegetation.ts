@@ -5,6 +5,7 @@ import {
   DoubleSide,
   DynamicDrawUsage,
   Euler,
+  Frustum,
   InstancedBufferAttribute,
   InstancedMesh,
   LinearMipmapLinearFilter,
@@ -16,6 +17,7 @@ import {
   Quaternion,
   Scene,
   ShaderMaterial,
+  Sphere,
   SRGBColorSpace,
   Vector3,
   type WebGLRenderer,
@@ -57,6 +59,10 @@ const _q = new Quaternion();
 const _e = new Euler();
 const _p = new Vector3();
 const _s = new Vector3();
+const _frustum = new Frustum();
+const _projScreen = new Matrix4();
+const _sphere = new Sphere();
+const _fwd = new Vector3();
 
 /**
  * Trees, bushes and hedges: real foliage from cards of leaf sprigs round the branches, bark tubes, one
@@ -85,17 +91,23 @@ export class Vegetation {
   private plants: Plant[] = [];
   private lod: VegetationLod = { near: 12, mid: 30, fullKeep: 0.8, midKeep: 0.38, variants: 2 };
   private last = new Vector3(1e9, 0, 1e9);
+  private readonly lastLook = new Vector3(0, 0, -1);
+  private readonly counts: number[];
   private dirty = true;
   private far = 50;
   private baked = false;
   /** First model index of each species. */
   private readonly first = new Map<Species, number>();
 
-  constructor(private readonly scene: Scene) {
+  constructor(
+    private readonly scene: Scene,
+    anisotropy = 4,
+  ) {
     this.models = buildModels();
+    this.counts = new Array(this.models.length).fill(0);
     const tex = new CanvasTexture(paintAtlas());
     tex.colorSpace = SRGBColorSpace;
-    tex.anisotropy = 4;
+    tex.anisotropy = anisotropy;
     this.material = new MeshLambertMaterial({ map: tex, alphaTest: 0.45, side: DoubleSide, vertexColors: true });
     this.material.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.uniforms);
@@ -283,18 +295,28 @@ void main() {
       this.far = fogFar;
       this.dirty = true;
     }
-    if (!this.dirty && Math.hypot(eye.x - this.last.x, eye.z - this.last.z) < 2) return;
+    camera.getWorldDirection(_fwd);
+    if (!this.dirty && Math.hypot(eye.x - this.last.x, eye.z - this.last.z) < 2 && _fwd.distanceToSquared(this.lastLook) < 0.015) return;
     this.dirty = false;
     this.last.copy(eye);
-    const counts = new Array(this.meshes.length).fill(0);
+    this.lastLook.copy(_fwd);
+    camera.updateMatrixWorld();
+    _frustum.setFromProjectionMatrix(_projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const counts = this.counts;
+    counts.fill(0);
     let imp = 0;
     const L = this.lod;
-    for (const p of this.plants) {
+    for (let i = 0; i < this.plants.length; i++) {
+      const p = this.plants[i];
       const d = Math.hypot(p.x - eye.x, p.z - eye.z);
       if (d > this.far + 6) continue;
       const nv = Math.min(L.variants, VARIANTS[p.species]);
       const k = this.first.get(p.species)! + (Math.floor(Math.abs(p.pick) * 1000) % nv);
       const model = this.models[k];
+      if (d > 6) {
+        const sr = Math.max(model.radius, model.height * 0.5) * p.scale + 3.5;
+        if (!_frustum.intersectsSphere(_sphere.set(_p.set(p.x, p.y + model.height * p.scale * 0.5, p.z), sr))) continue;
+      }
       _q.setFromEuler(_e.set(0, p.yaw, 0));
       if (d > L.mid) {
         if (imp >= IMP_CAP) continue;
@@ -312,24 +334,40 @@ void main() {
       this.lodAttrs[k].setX(n, d < L.near ? L.fullKeep : L.midKeep);
       counts[k] = n + 1;
     }
-    this.meshes.forEach((mesh, k) => {
-      mesh.count = counts[k];
-      if (counts[k]) {
+    for (let k = 0; k < this.meshes.length; k++) {
+      const mesh = this.meshes[k];
+      const c = counts[k];
+      mesh.count = c;
+      mesh.visible = c > 0;
+      if (c > 0) {
+        mesh.instanceMatrix.clearUpdateRanges();
+        mesh.instanceMatrix.addUpdateRange(0, c * 16);
         mesh.instanceMatrix.needsUpdate = true;
+        this.lodAttrs[k].clearUpdateRanges();
+        this.lodAttrs[k].addUpdateRange(0, c);
         this.lodAttrs[k].needsUpdate = true;
       }
-    });
+    }
     this.impostor.count = imp;
-    if (imp) {
+    this.impostor.visible = imp > 0;
+    if (imp > 0) {
+      this.impostor.instanceMatrix.clearUpdateRanges();
+      this.impostor.instanceMatrix.addUpdateRange(0, imp * 16);
       this.impostor.instanceMatrix.needsUpdate = true;
+      this.impTile.clearUpdateRanges();
+      this.impTile.addUpdateRange(0, imp);
       this.impTile.needsUpdate = true;
     }
   }
 
   /** Programs compile during the loading-screen prewarm. */
   prewarm(): void {
-    for (const m of this.meshes) m.count = Math.max(1, m.count);
+    for (const m of this.meshes) {
+      m.count = Math.max(1, m.count);
+      m.visible = true;
+    }
     this.impostor.count = Math.max(1, this.impostor.count);
+    this.impostor.visible = true;
     this.dirty = true;
   }
 

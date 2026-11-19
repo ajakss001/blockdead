@@ -13,7 +13,6 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
-  MeshLambertMaterial,
   PlaneGeometry,
   PointLight,
   Quaternion,
@@ -35,13 +34,12 @@ const ROOM_LIGHT_RANGE = 30;
 const GLOW_CAP = 320;
 /** Fires light the ground round them from this far (the nearest few get a real light). */
 const FIRE_LIGHT_RANGE = 45;
-const CLOTH_CAP = 4;
 
 const _m = new Matrix4();
 const _q = new Quaternion();
+const _e = new Euler();
 const _p = new Vector3();
 const _s = new Vector3();
-const _c = new Color();
 const _x = new Vector3(1, 0, 0);
 const _y = new Vector3(0, 1, 0);
 
@@ -70,8 +68,6 @@ export class WorldLife {
   private readonly glow: InstancedMesh;
   private readonly glowData: InstancedBufferAttribute;
   private readonly glowMat: ShaderMaterial;
-  private readonly cloth: InstancedMesh;
-  private readonly clothUniforms = { uTime: { value: 0 }, uWind: { value: 0.3 } };
   private readonly radios: number[] = [];
   /** Broken glass on the ground: x, z, radius. */
   private readonly shards: number[] = [];
@@ -79,6 +75,11 @@ export class WorldLife {
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
   private lights: PointLight[] = [];
+  private roomsInScene = false;
+  private roomSortT = 0;
+  private readonly roomPicks: { isLamp: boolean; idx: number }[] = [];
+  private readonly lampNearTmp: [number, number][] = [];
+  private readonly roomNearTmp: [number, number][] = [];
   /** 0 night … 1 day: lit windows and lamps fade in daylight. */
   daylight = 0;
   /** Hour of the day and rain 0..1, for the ambient sound (crickets, birds, the rain's hiss). */
@@ -121,46 +122,28 @@ export class WorldLife {
     this.glow.frustumCulled = false;
     this.glow.instanceMatrix.setUsage(DynamicDrawUsage);
     scene.add(this.glow);
-
-    // Cloth: kept hidden (procedural curtains & blowing papers removed).
-    const strip = new PlaneGeometry(1, 1, 1, 6).translate(0, -0.5, 0);
-    strip.setAttribute('aCloth', new InstancedBufferAttribute(new Float32Array(CLOTH_CAP * 2), 2));
-    const clothMat = new MeshLambertMaterial({ side: DoubleSide });
-    clothMat.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, this.clothUniforms);
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec2 aCloth;\nuniform float uTime;\nuniform float uWind;')
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-float hang = clamp(-position.y, 0.0, 1.0);
-float t = uTime * (1.3 + aCloth.y) + aCloth.y * 31.0;
-float billow = uWind * (0.55 + 0.45 * sin(t * 0.7)) + 0.15 * sin(t * 2.3 + position.x * 3.0);
-transformed.z += aCloth.x * hang * hang * billow;
-transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
-        );
-    };
-    clothMat.customProgramCacheKey = () => 'life-cloth';
-    this.cloth = new InstancedMesh(strip, clothMat, CLOTH_CAP);
-    this.cloth.name = 'life:cloth';
-    this.cloth.count = 0;
-    this.cloth.visible = false;
-    this.cloth.frustumCulled = false;
-    this.cloth.instanceMatrix.setUsage(DynamicDrawUsage);
-    this.cloth.setColorAt(0, _c.set(0xffffff));
-    scene.add(this.cloth);
   }
 
   /** Number of real point lights for lit rooms (0 on weak phones: the fake glow does it alone). */
   set roomLights(n: number) {
     if (n === this.lights.length) return;
-    for (const l of this.lights) this.scene.remove(l);
+    for (const l of this.lights) l.removeFromParent();
+    this.lightsInSync(false);
     this.lights = Array.from({ length: n }, () => {
       const l = new PointLight(0xffc887, 0, 9, 2);
       l.castShadow = false;
-      this.scene.add(l);
       return l;
     });
+    this.roomSortT = 0;
+  }
+
+  private lightsInSync(want: boolean): void {
+    if (want === this.roomsInScene) return;
+    this.roomsInScene = want;
+    for (const l of this.lights) {
+      if (want) this.scene.add(l);
+      else l.removeFromParent();
+    }
   }
 
   /** Wind: direction (rad, xz) and gust 0..1 — the clouds drift with it. */
@@ -196,9 +179,7 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
   private powerOn = true;
 
   /** Curtains and paper disabled. */
-  set clothEnabled(_on: boolean) {
-    this.cloth.visible = false;
-  }
+  set clothEnabled(_on: boolean) {}
 
   add(key: number, spots: Float32Array): void {
     if (spots.length === 0 && !this.sets.has(key)) return;
@@ -219,12 +200,8 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.glowMat.uniforms.uTime.value = this.time;
     const fog = this.scene.fog as Fog | null;
     if (fog) this.glowMat.uniforms.uFog.value.set(fog.near, fog.far, this.daylight);
-    this.clothUniforms.uTime.value = this.time;
-    this.clothUniforms.uWind.value = this.gust;
-    this.cloth.visible = false;
-    this.cloth.count = 0;
-    this.updateRoomLights(player);
-    this.updateFireLights(player);
+    this.updateRoomLights(player, dt);
+    this.updateFireLights(player, dt);
     this.updateSpinners();
 
     // Nearest radio: a storey apart counts as far; pan from the camera's facing.
@@ -256,38 +233,70 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
   /** Fires burning (x, y, z, size, phase): the nearest get the real lights. */
   private readonly fires: number[] = [];
   private fireLightList: PointLight[] = [];
+  private firesInScene = false;
+  private fireSortT = 0;
+  private readonly fireNearTmp: [number, number][] = [];
+  private readonly firePicks: number[] = [];
+  private prewarmActive = false;
 
-  /** At most this many real lights for fires (pre-added to the scene at intensity 0 so WebGL never recompiles shaders mid-frame). */
+  /** At most this many real lights for fires (only added to scene when a fire is in range). */
   set fireLights(n: number) {
-    while (this.fireLightList.length > n) this.scene.remove(this.fireLightList.pop()!);
+    while (this.fireLightList.length > n) this.fireLightList.pop()!.removeFromParent();
     while (this.fireLightList.length < n) {
       const l = new PointLight(0xff8a3a, 0, 16, 1.6);
       l.castShadow = false;
-      this.scene.add(l);
+      if (this.firesInScene || this.prewarmActive) this.scene.add(l);
       this.fireLightList.push(l);
+    }
+    if (n === 0) this.firesInScene = false;
+    this.fireSortT = 0;
+  }
+
+  private firesInSync(want: boolean): void {
+    if (want === this.firesInScene) return;
+    this.firesInScene = want;
+    for (const l of this.fireLightList) {
+      if (want) this.scene.add(l);
+      else l.removeFromParent();
     }
   }
 
-  private updateFireLights(player: Vector3): void {
-    const near: [number, number][] = [];
-    const F = this.fires;
-    for (let i = 0; i < F.length; i += 5) {
-      const d = Math.hypot(F[i] - player.x, F[i + 1] - player.y, F[i + 2] - player.z);
-      if (d < FIRE_LIGHT_RANGE) near.push([d, i]);
+  private updateFireLights(player: Vector3, dt: number): void {
+    if (this.fireLightList.length === 0) {
+      this.firesInSync(false);
+      return;
     }
-    near.sort((a, b) => a[0] - b[0]);
-    this.fireLightList.forEach((l, n) => {
-      const hit = near[n];
-      if (!hit) {
-        l.intensity = 0;
-        return;
+    const F = this.fires;
+    this.fireSortT -= dt;
+    if (this.fireSortT <= 0) {
+      this.fireSortT = 0.1;
+      const near = this.fireNearTmp;
+      near.length = 0;
+      for (let i = 0; i < F.length; i += 5) {
+        const d = Math.hypot(F[i] - player.x, F[i + 1] - player.y, F[i + 2] - player.z);
+        if (d < FIRE_LIGHT_RANGE) near.push([d, i]);
       }
-      const i = hit[1];
+      near.sort((a, b) => a[0] - b[0]);
+      this.firePicks.length = 0;
+      for (let n = 0; n < this.fireLightList.length && n < near.length; n++) {
+        this.firePicks.push(near[n][1]);
+      }
+    }
+    const active = this.firePicks.length > 0 || this.prewarmActive;
+    this.firesInSync(active);
+    if (!active) return;
+    for (let n = 0; n < this.fireLightList.length; n++) {
+      const l = this.fireLightList[n];
+      const i = this.firePicks[n];
+      if (i === undefined || i + 4 >= F.length) {
+        l.intensity = 0;
+        continue;
+      }
       const w = F[i + 3];
       l.position.set(F[i], F[i + 1], F[i + 2]);
       l.distance = 10 + w * 5;
       l.intensity = (10 + w * 8) * (0.75 + 0.25 * Math.sin(this.time * 13 + F[i + 4] * 9) * Math.sin(this.time * 7.3 + F[i + 4]));
-    });
+    }
   }
 
   /** Things still turning (a radar dish, a searchlight's beam). */
@@ -296,6 +305,11 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
   private beamMesh: InstancedMesh | null = null;
 
   private updateSpinners(): void {
+    if (this.spinners.length === 0) {
+      if (this.spinMesh) this.spinMesh.visible = false;
+      if (this.beamMesh) this.beamMesh.visible = false;
+      return;
+    }
     if (!this.spinMesh) {
       // A dish on its head (turns about Y), a searchlight beam: a long soft cone, additive.
       this.spinMesh = new InstancedMesh(new BoxGeometry(1, 0.5, 0.12).translate(0, 0, 0.1), new MeshStandardMaterial({ color: 0x8a8e90, roughness: 0.6, metalness: 0.4 }), 16);
@@ -315,51 +329,79 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
         this.spinMesh.setMatrixAt(d++, _m);
       } else if (sp.tag === 1 && b < 16) {
         // Tilted a little down, 30 m long, widening to 3 m.
-        _q.setFromEuler(new Euler(-0.12, yaw, 0, 'YXZ'));
+        _q.setFromEuler(_e.set(-0.12, yaw, 0, 'YXZ'));
         _m.compose(_p.set(sp.x, sp.y, sp.z), _q, _s.set(1.6 * sp.w, 1.6 * sp.w, 30));
         this.beamMesh!.setMatrixAt(b++, _m);
       }
     }
     this.spinMesh.count = d;
+    this.spinMesh.visible = d > 0;
     this.beamMesh!.count = b;
-    this.spinMesh.instanceMatrix.needsUpdate = true;
-    this.beamMesh!.instanceMatrix.needsUpdate = true;
+    this.beamMesh!.visible = b > 0;
+    if (d > 0) this.spinMesh.instanceMatrix.needsUpdate = true;
+    if (b > 0) this.beamMesh!.instanceMatrix.needsUpdate = true;
   }
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
-  private updateRoomLights(player: Vector3): void {
-    if (this.lights.length === 0) return;
+  private updateRoomLights(player: Vector3, dt: number): void {
+    if (this.lights.length === 0) {
+      this.lightsInSync(false);
+      return;
+    }
     const P = this.powered;
-    const lamps: [number, number][] = [];
-    for (let i = 0; i < P.length; i += 3) {
-      const d = Math.hypot(P[i] - player.x, P[i + 1] - player.y - 1.5, P[i + 2] - player.z);
-      if (d < ROOM_LIGHT_RANGE) lamps.push([d, i]);
+    this.roomSortT -= dt;
+    if (this.roomSortT <= 0) {
+      this.roomSortT = 0.1;
+      const lamps = this.lampNearTmp;
+      const near = this.roomNearTmp;
+      lamps.length = 0;
+      near.length = 0;
+      for (let i = 0; i < P.length; i += 3) {
+        const d = Math.hypot(P[i] - player.x, P[i + 1] - player.y - 1.5, P[i + 2] - player.z);
+        if (d < ROOM_LIGHT_RANGE) lamps.push([d, i]);
+      }
+      lamps.sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < this.rooms.length; i += 5) {
+        const d = Math.hypot(this.rooms[i] - player.x, (this.rooms[i + 1] - player.y - 1.5) * 1.5, this.rooms[i + 2] - player.z);
+        if (d < ROOM_LIGHT_RANGE) near.push([d, i]);
+      }
+      near.sort((a, b) => a[0] - b[0]);
+      this.roomPicks.length = 0;
+      for (let n = 0; n < this.lights.length; n++) {
+        if (n < lamps.length) this.roomPicks.push({ isLamp: true, idx: lamps[n][1] });
+        else if (n - lamps.length < near.length) this.roomPicks.push({ isLamp: false, idx: near[n - lamps.length][1] });
+      }
     }
-    lamps.sort((a, b) => a[0] - b[0]);
-    const near: [number, number][] = [];
-    for (let i = 0; i < this.rooms.length; i += 5) {
-      const d = Math.hypot(this.rooms[i] - player.x, (this.rooms[i + 1] - player.y - 1.5) * 1.5, this.rooms[i + 2] - player.z);
-      if (d < ROOM_LIGHT_RANGE) near.push([d, i]);
-    }
-    near.sort((a, b) => a[0] - b[0]);
-    this.lights.forEach((l, n) => {
-      if (n < lamps.length) {
-        const i = lamps[n][1];
+    const active = this.roomPicks.length > 0 || this.prewarmActive;
+    this.lightsInSync(active);
+    if (!active) return;
+    for (let n = 0; n < this.lights.length; n++) {
+      const l = this.lights[n];
+      const pick = this.roomPicks[n];
+      if (!pick) {
+        l.intensity = 0;
+        continue;
+      }
+      if (pick.isLamp) {
+        const i = pick.idx;
+        if (i + 2 >= P.length) {
+          l.intensity = 0;
+          continue;
+        }
         l.position.set(P[i], P[i + 1], P[i + 2]);
         l.color.setHex(0xdce6f0);
         l.intensity = 9;
-        return;
+      } else {
+        const i = pick.idx;
+        if (i + 4 >= this.rooms.length) {
+          l.intensity = 0;
+          continue;
+        }
+        l.color.setHex(0xffc887);
+        l.position.set(this.rooms[i], this.rooms[i + 1] - 0.1, this.rooms[i + 2]);
+        l.intensity = 7 * flicker(this.time, this.rooms[i + 4], this.rooms[i + 3]);
       }
-      const hit = near[n - lamps.length];
-      if (!hit) {
-        l.intensity = 0;
-        return;
-      }
-      const i = hit[1];
-      l.color.setHex(0xffc887);
-      l.position.set(this.rooms[i], this.rooms[i + 1] - 0.1, this.rooms[i + 2]);
-      l.intensity = 7 * flicker(this.time, this.rooms[i + 4], this.rooms[i + 3]);
-    });
+    }
   }
 
   private wind(dt: number): void {
@@ -462,24 +504,32 @@ transformed.x += aCloth.x * hang * 0.08 * sin(t * 1.7 + hang * 4.0);`,
     this.glow.count = g;
     this.glow.instanceMatrix.needsUpdate = true;
     this.glowData.needsUpdate = true;
-    this.cloth.count = 0;
+    this.roomSortT = 0;
+    this.fireSortT = 0;
   }
 
-  /** Both programs compile during the loading-screen prewarm (instanced meshes with no instances draw nothing). */
+  /** Program compiles during the loading-screen prewarm (attach fire/room lights temporarily). */
   prewarm(): () => void {
     this.glow.count = Math.max(1, this.glow.count);
-    this.cloth.count = Math.max(1, this.cloth.count);
+    this.prewarmActive = true;
+    this.firesInSync(this.fireLightList.length > 0);
+    this.lightsInSync(this.lights.length > 0);
     return () => {
+      this.prewarmActive = false;
       this.dirty = true;
+      this.firesInSync(this.firePicks.length > 0);
+      this.lightsInSync(this.roomPicks.length > 0);
     };
   }
 
   dispose(): void {
-    this.scene.remove(this.glow, this.cloth);
+    this.scene.remove(this.glow);
     this.glow.geometry.dispose();
     this.glowMat.dispose();
-    this.cloth.geometry.dispose();
-    (this.cloth.material as MeshLambertMaterial).dispose();
+    for (const l of this.lights) l.removeFromParent();
+    for (const l of this.fireLightList) l.removeFromParent();
+    this.spinMesh?.removeFromParent();
+    this.beamMesh?.removeFromParent();
   }
 }
 

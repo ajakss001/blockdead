@@ -32,6 +32,7 @@ const ROOT = process.cwd();
 const IN = join(ROOT, 'assets', 'incoming');
 const OUT = join(ROOT, 'public', 'models');
 const ATLAS = 256;
+const ATLAS_COLS = 10;
 const SWATCH = 16;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 await MeshoptSimplifier.ready;
@@ -524,11 +525,16 @@ const docs = new Map();
 
 let prevBin = null;
 let prevAtlas = null;
+let prevAtlasCols = 1;
+let prevAtlasW = ATLAS;
 const prevByName = new Map();
 if (existsSync(join(OUT, 'models.json')) && existsSync(join(OUT, 'models.bin')) && existsSync(join(OUT, 'atlas.jpg'))) {
   const prevJson = JSON.parse(readFileSync(join(OUT, 'models.json'), 'utf8'));
   prevBin = readFileSync(join(OUT, 'models.bin'));
-  prevAtlas = jpeg.decode(readFileSync(join(OUT, 'atlas.jpg')), { useTArray: true }).data;
+  const prevImg = jpeg.decode(readFileSync(join(OUT, 'atlas.jpg')), { useTArray: true, formatAsRGBA: true });
+  prevAtlas = prevImg.data;
+  prevAtlasW = prevImg.width;
+  prevAtlasCols = prevJson.atlasCols ?? Math.max(1, Math.round(prevImg.width / ATLAS));
   for (const m of prevJson.models ?? []) prevByName.set(m.name, m);
 }
 
@@ -543,8 +549,13 @@ for (const cfg of MODELS) {
     const iLen = prev.indices * 2 + (prev.indices % 2 ? 2 : 0);
     const vbuf = prevBin.subarray(prev.vOffset, prev.vOffset + vLen);
     const ibuf = prevBin.subarray(prev.iOffset, prev.iOffset + iLen);
-    const layerSize = ATLAS * ATLAS * 4;
-    const layer = prevAtlas.subarray(prev.layer * layerSize, (prev.layer + 1) * layerSize);
+    const layer = new Uint8Array(ATLAS * ATLAS * 4);
+    const sc = prev.layer % prevAtlasCols;
+    const sr = Math.floor(prev.layer / prevAtlasCols);
+    for (let y = 0; y < ATLAS; y++) {
+      const srcOff = ((sr * ATLAS + y) * prevAtlasW + sc * ATLAS) * 4;
+      layer.set(prevAtlas.subarray(srcOff, srcOff + ATLAS * 4), y * ATLAS * 4);
+    }
     const vOffset = offset;
     chunks.push(vbuf);
     offset += vbuf.length;
@@ -675,8 +686,19 @@ for (const cfg of MODELS) {
 
 mkdirSync(OUT, { recursive: true });
 writeFileSync(join(OUT, 'models.bin'), Buffer.concat(chunks));
-writeFileSync(join(OUT, 'models.json'), JSON.stringify({ stride: STRIDE, atlas: ATLAS, models: index }, null, 1));
-// Atlas layers stacked top to bottom in one JPEG.
-const strip = Buffer.concat(layers.map((l) => Buffer.from(l)));
-writeFileSync(join(OUT, 'atlas.jpg'), jpeg.encode({ data: strip, width: ATLAS, height: ATLAS * layers.length }, 88).data);
+writeFileSync(join(OUT, 'models.json'), JSON.stringify({ stride: STRIDE, atlas: ATLAS, atlasCols: ATLAS_COLS, models: index }, null, 1));
+// Atlas layers packed into a 2D grid (stays well under mobile 4096 px texture limits).
+const atlasRows = Math.ceil(layers.length / ATLAS_COLS);
+const atlasW = ATLAS_COLS * ATLAS;
+const atlasH = atlasRows * ATLAS;
+const grid = new Uint8Array(atlasW * atlasH * 4).fill(255);
+for (let l = 0; l < layers.length; l++) {
+  const dc = l % ATLAS_COLS;
+  const dr = Math.floor(l / ATLAS_COLS);
+  const src = layers[l];
+  for (let y = 0; y < ATLAS; y++) {
+    grid.set(src.subarray(y * ATLAS * 4, (y + 1) * ATLAS * 4), ((dr * ATLAS + y) * atlasW + dc * ATLAS) * 4);
+  }
+}
+writeFileSync(join(OUT, 'atlas.jpg'), jpeg.encode({ data: grid, width: atlasW, height: atlasH }, 88).data);
 console.log(`\n${index.length} models, geometry ${(offset / 1024).toFixed(0)} KB → public/models/`);

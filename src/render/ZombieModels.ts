@@ -210,7 +210,7 @@ class GearLayer {
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
     this.mesh.visible = false;
-    this.mesh.castShadow = true;
+    this.mesh.castShadow = false;
     group.add(this.mesh);
   }
 
@@ -254,6 +254,10 @@ class Layer {
   count = 0;
   private readonly gear = new Map<string, GearLayer>();
   private readonly asked = new Set<GearId>();
+  private readonly prevStatic: number[] = [];
+  private readonly curStatic: number[] = [];
+  private staticOk = true;
+  private staticCount = 0;
 
   constructor(
     private readonly k: Kit,
@@ -273,6 +277,7 @@ class Layer {
     // The gear's meshes read the old skin texture: made again on the new one when next worn.
     for (const gl of this.gear.values()) gl.dispose();
     this.gear.clear();
+    this.prevStatic.length = 0;
     coverBody(this.k.body);
     this.tex = new DataTexture(this.data, this.k.nb * 4, cap, RGBAFormat, FloatType);
     this.tex.minFilter = this.tex.magFilter = NearestFilter;
@@ -306,12 +311,22 @@ class Layer {
 
   begin(): void {
     this.count = 0;
+    this.staticOk = true;
+    this.staticCount = 0;
     for (const gl of this.gear.values()) gl.n = 0;
   }
 
   /** The next instance at `m` in the kind's clothes and `gear`: its skin row to fill. */
-  push(m: Matrix4, tint: Color, tint2: Color, gear: readonly GearId[] = []): Float32Array {
+  push(m: Matrix4, tint: Color, tint2: Color, gear: readonly GearId[] = [], staticId = -1): Float32Array {
     if (this.count >= this.cap) this.make(this.cap * 2);
+    if (staticId < 0) {
+      this.staticOk = false;
+    } else {
+      if (this.staticOk && (this.staticCount >= this.prevStatic.length || this.prevStatic[this.staticCount] !== staticId)) {
+        this.staticOk = false;
+      }
+      this.curStatic[this.staticCount++] = staticId;
+    }
     this.mesh.setMatrixAt(this.count, m);
     tint.toArray(this.tints, this.count * 3);
     tint2.toArray(this.tints2, this.count * 3);
@@ -370,7 +385,14 @@ class Layer {
       a.addUpdateRange(0, this.count * a.itemSize);
       a.needsUpdate = true;
     }
-    this.tex.needsUpdate = true;
+    const texDirty = !this.staticOk || this.staticCount !== this.prevStatic.length;
+    if (texDirty) {
+      this.prevStatic.length = this.staticOk ? this.staticCount : 0;
+      if (this.staticOk) {
+        for (let i = 0; i < this.staticCount; i++) this.prevStatic[i] = this.curStatic[i];
+      }
+      this.tex.needsUpdate = true;
+    }
   }
 
   private release(mesh: InstancedMesh, tex: DataTexture): void {
@@ -447,6 +469,11 @@ export class ZombieModels {
   private readonly layers = new Map<BodyId, Layer>();
   private readonly rigs: Rig[] = [];
   private readonly corpses: Corpse[] = [];
+  private readonly nearPool: { z: Zombie; d: number }[] = [];
+  private readonly nearScratch: { z: Zombie; d: number }[] = [];
+  private readonly liveSet = new Set<number>();
+  private readonly corpseIds = new WeakMap<object, number>();
+  private nextCorpseId = 1;
   /** Ids posed by a mixer this frame (the near ones). */
   readonly detailed = new Set<number>();
   private detail = DETAIL.low;
@@ -486,17 +513,26 @@ export class ZombieModels {
     }
     const seen = (p: Vector3, r: number) => !camera || _frustum.intersectsSphere(_sphere.set(p, r));
     for (const l of this.layers.values()) l.begin();
-    const near: { z: Zombie; d: number }[] = [];
+    let nearN = 0;
     const r2 = this.detail.near * this.detail.near;
     for (const z of list) {
       if (z.state === 'dead' || !dressOf(z)) continue;
       const d = (z.pos.x - eye.x) ** 2 + (z.pos.z - eye.z) ** 2;
-      if (d < r2 && Math.abs(z.pos.y - eye.y) < 12) near.push({ z, d });
+      if (d < r2 && Math.abs(z.pos.y - eye.y) < 12) {
+        let slot = this.nearPool[nearN];
+        if (!slot) this.nearPool[nearN] = slot = { z, d };
+        else {
+          slot.z = z;
+          slot.d = d;
+        }
+        this.nearScratch[nearN++] = slot;
+      }
     }
-    near.sort((a, b) => a.d - b.d);
-    near.length = Math.min(near.length, this.detail.count);
+    this.nearScratch.length = nearN;
+    if (nearN > 1) this.nearScratch.sort((a, b) => a.d - b.d);
+    if (nearN > this.detail.count) this.nearScratch.length = this.detail.count;
     this.detailed.clear();
-    for (const w of near) this.detailed.add(w.z.id);
+    for (let i = 0; i < this.nearScratch.length; i++) this.detailed.add(this.nearScratch[i].z.id);
     for (const r of this.rigs) if (r.id >= 0 && !this.detailed.has(r.id)) r.id = -1;
     const far2 = far * far;
     for (const z of list) {
@@ -518,18 +554,28 @@ export class ZombieModels {
         if (ZOMBIE_STATS[type.id].oneArm) this.dropArm(kit(type.body), row, row);
       }
     }
-    for (const c of this.corpses) {
+    for (let ci = 0; ci < this.corpses.length; ci++) {
+      const c = this.corpses[ci];
       if (!c.done) this.writeCorpse(c);
       _v.setFromMatrixPosition(c.pose.world[0]);
       const d2 = (_v.x - eye.x) ** 2 + (_v.z - eye.z) ** 2;
       if (d2 > far2 || !seen(_v, 1.4)) continue;
+      let sid = -1;
+      if (c.done) {
+        sid = this.corpseIds.get(c) ?? 0;
+        if (!sid) {
+          sid = this.nextCorpseId++;
+          this.corpseIds.set(c, sid);
+        }
+      }
       const [t1, t2] = tints(c, c.type);
-      this.layer(c.type.body).push(_ident, t1, t2, c.gear).set(c.skin);
+      this.layer(c.type.body).push(_ident, t1, t2, c.gear, sid).set(c.skin);
     }
     for (const l of this.layers.values()) l.end();
     if (this.steps.size > list.length + 64) {
-      const live = new Set(list.map((z) => z.id));
-      for (const id of this.steps.keys()) if (!live.has(id)) this.steps.delete(id);
+      this.liveSet.clear();
+      for (let i = 0; i < list.length; i++) this.liveSet.add(list[i].id);
+      for (const id of this.steps.keys()) if (!this.liveSet.has(id)) this.steps.delete(id);
     }
   }
 

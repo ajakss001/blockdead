@@ -17,7 +17,7 @@ import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
 import type { ContainerSpot } from '../gen/pieces';
-import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, pickModel } from '../models';
+import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, modelLod1Indices, pickModel } from '../models';
 
 /** Third-party vehicle and prop models (set in the worker once loaded); null = procedural only. */
 let library: ModelLibrary | null = null;
@@ -295,7 +295,7 @@ function paintFor(paint: number, rand: () => number): Color {
 
 /** A model into the batch: vehicle metal by default, slightly rough; its glass as murky translucent car glass. */
 export function placeModel(batch: StaticBatch, m: ModelInfo, matrix: Matrix4, paint: Color | null, tint?: VertexTint, roughness = 0.75, metalness = 0.25): void {
-  batch.addModel(modelGeometry(library!, m), m.layer, matrix, paint, roughness, metalness, tint);
+  batch.addModel(modelGeometry(library!, m), m.layer, matrix, paint, roughness, metalness, tint, modelLod1Indices(library!, m));
   const glass = modelGlass(library!, m);
   if (glass) batch.add(glass, 0x2a3036, matrix, 'carGlass');
   if (m.size[0] > 0.25 && m.size[2] > 0.25) {

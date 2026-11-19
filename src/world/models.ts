@@ -23,6 +23,8 @@ export interface ModelInfo {
   glass?: number;
   vOffset: number;
   iOffset: number;
+  lod1Offset?: number;
+  lod1Indices?: number;
   normals: boolean;
   title: string;
   author: string;
@@ -33,11 +35,13 @@ export interface ModelInfo {
 export interface ModelLibrary {
   stride: number;
   atlas: number;
+  atlasCols?: number;
   models: ModelInfo[];
   byName: Map<string, ModelInfo>;
   byGroup: Map<string, ModelInfo[]>;
   bin: ArrayBuffer;
   cache: Map<string, BufferGeometry>;
+  lodCache?: Map<string, Uint16Array | null>;
 }
 
 /** Fetch the library (null if it is not installed or fails — the game falls back to procedural props). */
@@ -45,7 +49,7 @@ export async function loadModelLibrary(base: string): Promise<ModelLibrary | nul
   try {
     const [json, bin] = await Promise.all([fetch(`${base}models.json`).then((r) => (r.ok ? r.json() : null)), fetch(`${base}models.bin`).then((r) => (r.ok ? r.arrayBuffer() : null))]);
     if (!json || !bin) return null;
-    const lib: ModelLibrary = { ...json, bin, byName: new Map(), byGroup: new Map(), cache: new Map() };
+    const lib: ModelLibrary = { ...json, bin, byName: new Map(), byGroup: new Map(), cache: new Map(), lodCache: new Map() };
     for (const m of lib.models) {
       lib.byName.set(m.name, m);
       const list = lib.byGroup.get(m.group);
@@ -65,6 +69,16 @@ export function modelGeometry(lib: ModelLibrary, m: ModelInfo): BufferGeometry {
   const g = decode(lib, m, 0, m.indices - (m.glass ?? 0));
   lib.cache.set(m.name, g);
   return g;
+}
+
+/** Simplified LOD1 opaque index buffer for distant vehicles (cached), or null if none baked. */
+export function modelLod1Indices(lib: ModelLibrary, m: ModelInfo): Uint16Array | null {
+  if (!m.lod1Offset || !m.lod1Indices) return null;
+  const cache = (lib.lodCache ??= new Map());
+  if (cache.has(m.name)) return cache.get(m.name)!;
+  const idx = new Uint16Array(lib.bin, m.lod1Offset, m.lod1Indices).slice();
+  cache.set(m.name, idx);
+  return idx;
 }
 
 /** A model's glass panes (cached), or null if it has none. */

@@ -7,6 +7,9 @@ import type { CollisionWorld } from './CollisionWorld';
 import type { Doors } from './Doors';
 import type { InteriorData } from './gen/buildChunk';
 import { type BuildingDesc, FLOOR_H, highriseSurfaceY, insideFootprint } from './gen/highrise';
+import { CHUNK } from './gen/layout';
+
+const bCellKey = (ci: number, cj: number) => (ci + 32768) * 65536 + (cj + 32768);
 
 /** Start streaming a building's interior within this distance of its footprint, m. */
 const LOAD_MARGIN = 16;
@@ -25,6 +28,7 @@ const INTERIOR_OWNER_BASE = 2e15;
  */
 export class Interiors {
   private readonly buildings = new Map<number, BuildingDesc>();
+  private readonly cellBuildings = new Map<number, BuildingDesc[]>();
   private readonly byChunk = new Map<number, number[]>();
   private readonly loaded = new Map<number, Group>();
   private readonly pending = new Set<number>();
@@ -54,19 +58,52 @@ export class Interiors {
   addChunk(key: number, list: BuildingDesc[]): void {
     if (list.length === 0) return;
     this.byChunk.set(key, list.map((b) => b.id));
-    for (const b of list) this.buildings.set(b.id, b);
+    for (const b of list) {
+      this.buildings.set(b.id, b);
+      const i0 = Math.floor((b.cx - b.w / 2 - 2) / CHUNK);
+      const i1 = Math.floor((b.cx + b.w / 2 + 2) / CHUNK);
+      const j0 = Math.floor((b.cz - b.d / 2 - 2) / CHUNK);
+      const j1 = Math.floor((b.cz + b.d / 2 + 2) / CHUNK);
+      for (let ci = i0; ci <= i1; ci++) {
+        for (let cj = j0; cj <= j1; cj++) {
+          const ck = bCellKey(ci, cj);
+          const arr = this.cellBuildings.get(ck);
+          if (arr) arr.push(b);
+          else this.cellBuildings.set(ck, [b]);
+        }
+      }
+    }
   }
 
   removeChunk(key: number): void {
     for (const id of this.byChunk.get(key) ?? []) {
       this.unload(id);
-      this.buildings.delete(id);
+      const b = this.buildings.get(id);
+      if (b) {
+        const i0 = Math.floor((b.cx - b.w / 2 - 2) / CHUNK);
+        const i1 = Math.floor((b.cx + b.w / 2 + 2) / CHUNK);
+        const j0 = Math.floor((b.cz - b.d / 2 - 2) / CHUNK);
+        const j1 = Math.floor((b.cz + b.d / 2 + 2) / CHUNK);
+        for (let ci = i0; ci <= i1; ci++) {
+          for (let cj = j0; cj <= j1; cj++) {
+            const ck = bCellKey(ci, cj);
+            const arr = this.cellBuildings.get(ck);
+            if (!arr) continue;
+            const idx = arr.indexOf(b);
+            if (idx >= 0) arr.splice(idx, 1);
+            if (arr.length === 0) this.cellBuildings.delete(ck);
+          }
+        }
+        this.buildings.delete(id);
+      }
     }
     this.byChunk.delete(key);
   }
 
   buildingAt(x: number, z: number): BuildingDesc | null {
-    for (const b of this.buildings.values()) if (insideFootprint(b, x, z)) return b;
+    const list = this.cellBuildings.get(bCellKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+    if (!list) return null;
+    for (let i = 0; i < list.length; i++) if (insideFootprint(list[i], x, z)) return list[i];
     return null;
   }
 
@@ -83,9 +120,14 @@ export class Interiors {
 
   /** Walkable height inside a high-rise or on its exterior fire escape, or null outside. */
   surfaceY(x: number, z: number, y: number): number | null {
-    const b = this.buildingAt(x, z);
-    if (b) return highriseSurfaceY(b, x, z, y);
-    for (const d of this.buildings.values()) {
+    const list = this.cellBuildings.get(bCellKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+    if (!list) return null;
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      if (insideFootprint(d, x, z)) return highriseSurfaceY(d, x, z, y);
+    }
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
       if (insideFootprint(d, x, z, 1.8)) {
         const sy = highriseSurfaceY(d, x, z, y);
         if (sy > 0.05) return sy;
@@ -152,14 +194,14 @@ export class Interiors {
     if (!rebuild) this.syncWindows(id, true);
   }
 
-  /** Cut the loaded buildings' intact windows open (and only their chunks pay for it). */
+  /** Cut the loaded buildings' intact windows open (and only their overlapping sub-cells pay for it). */
   private syncWindows(id: number, on: boolean): void {
     const key = this.chunkOf(id);
-    if (key !== null) this.chunks.setWindowCut(key, on);
     const boxes = [...this.loaded.keys()].map((bid) => {
       const b = this.buildings.get(bid)!;
       return { minX: b.cx - b.w / 2 - 0.05, minZ: b.cz - b.d / 2 - 0.05, maxX: b.cx + b.w / 2 + 0.05, maxZ: b.cz + b.d / 2 + 0.05, top: b.floors * FLOOR_H - 0.05 };
     });
+    if (key !== null) this.chunks.setWindowCut(key, on, boxes);
     setWindowCutouts(boxes);
   }
 

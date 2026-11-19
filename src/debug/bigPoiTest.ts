@@ -40,8 +40,8 @@ export function main(): number {
           if (!s || s.i !== site.i || s.j !== site.j) same = false;
           const a = buildChunk(layout, i, j);
           const b = buildChunk(layout, i, j);
-          const n = a.surfaces.reduce((k, x) => k + x.position.length / 9, 0);
-          const m = b.surfaces.reduce((k, x) => k + x.position.length / 9, 0);
+          const n = a.surfaces.reduce((k, x) => k + x.index.length / 3, 0);
+          const m = b.surfaces.reduce((k, x) => k + x.index.length / 3, 0);
           if (n !== m || a.containers.length !== b.containers.length) same = false;
           if (n < 200) (empty++, console.log(`     empty chunk ${i}, ${j}`));
           tris += n;

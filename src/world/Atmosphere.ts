@@ -121,6 +121,8 @@ export class Atmosphere {
   private creakT = 8 + Math.random() * 12;
   private aboveT = 60 + Math.random() * 60;
   private draftT = 25 + Math.random() * 30;
+  private loopT = 0;
+  private readonly nearPool: { key: number; kind: LoopKind; x: number; y: number; z: number; d: number }[] = [];
   private readonly near: { key: number; kind: LoopKind; x: number; y: number; z: number; d: number }[] = [];
 
   constructor(
@@ -134,11 +136,13 @@ export class Atmosphere {
     world: CollisionWorld,
     /** A noise in the world zombies may hear. */
     noise: (x: number, y: number, z: number, radius: number) => void,
+    foliageCap = 7000,
+    vegAniso = 4,
   ) {
-    this.foliage = new Foliage(scene, ground, groundY);
+    this.foliage = new Foliage(scene, ground, groundY, foliageCap);
     this.wet = new WetDecals(scene);
     this.street = new Street(scene, particles, world, noise, groundY);
-    this.vegetation = new Vegetation(scene);
+    this.vegetation = new Vegetation(scene, vegAniso);
   }
 
   /** Quality preset: grass reach, density, cap. */
@@ -240,12 +244,15 @@ export class Atmosphere {
   }
 
   update(dt: number, player: Vector3, indoors: boolean, windDir: number, gust: number, f: AtmoFrame): void {
-    if (this.dirty) this.rebuild();
+    if (this.dirty) {
+      this.rebuild();
+      this.loopT = 0;
+    }
     this.time += dt;
     const px = player.x;
     const py = player.y;
     const pz = player.z;
-    this.foliage.update(this.time, gust, px, pz);
+    this.foliage.update(this.time, gust, px, pz, f.look.x, f.look.z);
     this.wet.update(dt);
     const wind = 0.3 + gust * 2.4;
     this.particles.windX = Math.cos(windDir) * wind;
@@ -309,22 +316,41 @@ export class Atmosphere {
     this.updateRain(dt, px, py, pz, indoors, f.rain);
     this.updateNight(dt, indoors, f);
 
-    // Continuous sounds: the nearest few on this storey (and rain on the nearest car's roof).
-    this.near.length = 0;
-    for (const s of this.loopSpots) {
-      const d = Math.hypot(s.x - px, s.z - pz);
-      // Loud ones carry over storeys and roofs; a quiet one only on this storey. Loud ones count nearer.
-      const loud = LOUD_LOOPS.includes(s.kind);
-      if (d < LOOP_RANGE[s.kind] && (loud || Math.abs(s.y - py - 1) < 2.2)) this.near.push({ ...s, d: loud ? d * 0.4 : d });
-    }
-    if (f.rain > 0.2 && !indoors) {
-      for (let i = 0; i + 3 < this.cars.length; i += 4) {
-        const d = Math.hypot(this.cars[i] - px, this.cars[i + 1] - pz);
-        if (d < LOOP_RANGE.rainTin) this.near.push({ key: -1 - i, kind: 'rainTin', x: this.cars[i], y: 1.4, z: this.cars[i + 1], d });
+    // Continuous sounds: the nearest few on this storey (and rain on the nearest car's roof), updated at 10 Hz.
+    this.loopT -= dt;
+    if (this.loopT <= 0) {
+      this.loopT = 0.1;
+      let nearN = 0;
+      const pushNear = (key: number, kind: LoopKind, x: number, y: number, z: number, d: number) => {
+        let slot = this.nearPool[nearN];
+        if (!slot) this.nearPool[nearN] = slot = { key, kind, x, y, z, d };
+        else {
+          slot.key = key;
+          slot.kind = kind;
+          slot.x = x;
+          slot.y = y;
+          slot.z = z;
+          slot.d = d;
+        }
+        this.near[nearN++] = slot;
+      };
+      for (let i = 0; i < this.loopSpots.length; i++) {
+        const s = this.loopSpots[i];
+        const d = Math.hypot(s.x - px, s.z - pz);
+        // Loud ones carry over storeys and roofs; a quiet one only on this storey. Loud ones count nearer.
+        const loud = LOUD_LOOPS.includes(s.kind);
+        if (d < LOOP_RANGE[s.kind] && (loud || Math.abs(s.y - py - 1) < 2.2)) pushNear(s.key, s.kind, s.x, s.y, s.z, loud ? d * 0.4 : d);
       }
+      if (f.rain > 0.2 && !indoors) {
+        for (let i = 0; i + 3 < this.cars.length; i += 4) {
+          const d = Math.hypot(this.cars[i] - px, this.cars[i + 1] - pz);
+          if (d < LOOP_RANGE.rainTin) pushNear(-1 - i, 'rainTin', this.cars[i], 1.4, this.cars[i + 1], d);
+        }
+      }
+      this.near.length = nearN;
+      if (nearN > 1) this.near.sort((a, b) => a.d - b.d);
+      sfx.loops(this.near);
     }
-    this.near.sort((a, b) => a.d - b.d);
-    sfx.loops(this.near);
 
     // The building's own noises, only inside.
     if (!indoors) return;

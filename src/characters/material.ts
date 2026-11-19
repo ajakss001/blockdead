@@ -1,6 +1,6 @@
-import { Color, type DataTexture, DoubleSide, FrontSide, MeshLambertMaterial, type Texture } from 'three';
+import { Color, DataTexture, DoubleSide, FrontSide, LinearFilter, MeshLambertMaterial, RepeatWrapping, RGBAFormat, type Texture } from 'three';
 import { SKIN } from '../style/palette';
-import { glslColor, NOISE_GLSL, stainGlsl } from '../style/look';
+import { glslColor } from '../style/look';
 import { type BodyAsset, lodTexture, type RigAsset } from './assets';
 
 /**
@@ -53,6 +53,62 @@ function bounds(rig: RigAsset): { minY: number; height: number; hips: number } {
   return { minY, height, hips };
 }
 
+function hash2(x: number, y: number, seed: number): number {
+  const n = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453123;
+  return n - Math.floor(n);
+}
+
+function periodicNoise(u: number, v: number, period: number, seed: number): number {
+  const x = u * period;
+  const y = v * period;
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const x0 = ((ix % period) + period) % period;
+  const y0 = ((iy % period) + period) % period;
+  const x1 = (x0 + 1) % period;
+  const y1 = (y0 + 1) % period;
+  const a = hash2(x0, y0, seed);
+  const b = hash2(x1, y0, seed);
+  const c = hash2(x0, y1, seed);
+  const d = hash2(x1, y1, seed);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+
+let _noiseTex: DataTexture | null = null;
+function noiseTexture(): DataTexture {
+  if (_noiseTex) return _noiseTex;
+  const size = 64;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const r = periodicNoise(u, v, 4, 1) * 0.6 + periodicNoise(u, v, 8, 2) * 0.4;
+      const g = periodicNoise(u, v, 8, 3) * 0.6 + periodicNoise(u, v, 16, 4) * 0.4;
+      const b = periodicNoise(u, v, 4, 5) * 0.5 + periodicNoise(u, v, 8, 6) * 0.35 + periodicNoise(u, v, 16, 7) * 0.15;
+      const a = periodicNoise(u, v, 16, 8) * 0.65 + periodicNoise(u, v, 32, 9) * 0.35;
+      const i = (y * size + x) * 4;
+      data[i] = (r * 255) | 0;
+      data[i + 1] = (g * 255) | 0;
+      data[i + 2] = (b * 255) | 0;
+      data[i + 3] = (a * 255) | 0;
+    }
+  }
+  const t = new DataTexture(data, size, size, RGBAFormat);
+  t.wrapS = RepeatWrapping;
+  t.wrapT = RepeatWrapping;
+  t.magFilter = LinearFilter;
+  t.minFilter = LinearFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  _noiseTex = t;
+  return t;
+}
+
 const LUM = 'vec3(0.2126, 0.7152, 0.0722)';
 /** Lenses: dark sunglasses, the eyes behind them not seen. */
 export const LENS_OPACITY = 0.85;
@@ -80,6 +136,7 @@ export function characterMaterial(body: BodyAsset, rig: RigAsset, o: CharacterLo
     sh.uniforms.uMinY = { value: b.minY };
     sh.uniforms.uHeight = { value: b.height };
     sh.uniforms.uHips = { value: b.hips };
+    sh.uniforms.uNoiseTex = { value: noiseTexture() };
     if (o.skin) sh.uniforms.uSkin = { value: o.skin };
     if (cover && !batched) sh.uniforms.uHide = hide;
     sh.uniforms.uTint = { value: o.tint?.[0] ?? new Color(1, 1, 1) };
@@ -120,13 +177,15 @@ vTint2 = aTint2;`
   float zl = dot(diffuseColor.rgb, ${LUM});
   vec3 zt = vBindPos.y > uHips ? vTint : vTint2;
   vec3 zcloth = mix(diffuseColor.rgb, zl * zt / max(dot(zt, ${LUM}), 0.03), ${(o.tintMix ?? 0.6).toFixed(3)});
-  zcloth = mix(zcloth, vec3(dot(zcloth, ${LUM})) * vec3(0.97, 1.0, 0.95), 0.15 + 0.35 * zNoise(vBindPos * 4.0 + 5.0));
-  ${stainGlsl('vBindPos', 'zcloth', 1.4)}
+  vec4 zn2 = texture2D(uNoiseTex, vBindPos.zy * 0.52 + vec2(vBindPos.x * 0.39, 0.61));
+  zcloth = mix(zcloth, vec3(dot(zcloth, ${LUM})) * vec3(0.97, 1.0, 0.95), 0.15 + 0.35 * zn2.r);
+  float zDirt = smoothstep(0.52, 0.76, zn2.b * 0.65 + zn1.a * 0.35);
+  zcloth = mix(zcloth, zcloth * vec3(0.45, 0.42, 0.37), zDirt * 0.62);
   vec3 zdead = ${glslColor(SKIN)} * clamp(zl / 0.17, 0.6, 1.2);
   diffuseColor.rgb = mix(zcloth, zdead, zSkin);`
       : '';
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vBindPos;\nvarying vec3 vTint;\nvarying vec3 vTint2;\nuniform float uMinY;\nuniform float uHeight;\nuniform float uHips;\n${cover ? 'varying float vCover;\n' : ''}${NOISE_GLSL}`)
+      .replace('#include <common>', `#include <common>\nvarying vec3 vBindPos;\nvarying vec3 vTint;\nvarying vec3 vTint2;\nuniform float uMinY;\nuniform float uHeight;\nuniform float uHips;\nuniform mediump sampler2D uNoiseTex;\n${cover ? 'varying float vCover;\n' : ''}`)
       .replace(
         '#include <opaque_fragment>',
         lens
@@ -149,9 +208,10 @@ vTint2 = aTint2;`
         `#include <map_fragment>
 {
   float zSkin = ${tex && o.map === undefined ? 'clamp((1.0 - diffuseColor.a) * 2.0, 0.0, 1.0)' : '0.0'};
-  diffuseColor.a = 1.0;${zombieGlsl}
+  diffuseColor.a = 1.0;
+  vec4 zn1 = texture2D(uNoiseTex, vBindPos.xy * 1.1 + vec2(vBindPos.z * 0.8, 0.23));${zombieGlsl}
   float zh = clamp((vBindPos.y - uMinY) / uHeight, 0.0, 1.0);
-  diffuseColor.rgb *= (0.9 + 0.2 * zNoise(vBindPos * 9.0 + 11.3)) * mix(0.7 + 0.3 * smoothstep(0.0, 0.42, zh), 1.0, zSkin * 0.6);
+  diffuseColor.rgb *= (0.9 + 0.2 * zn1.g) * mix(0.7 + 0.3 * smoothstep(0.0, 0.42, zh), 1.0, zSkin * 0.6);
 }`,
       );
   };
