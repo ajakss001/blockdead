@@ -50,8 +50,16 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
   // Fire escapes are placed last, only where they clear every building volume of the block.
   const escapes: EscapeSpec[] = [];
 
+  const span = down3(Z1 - 0.3) - up3(Z0 + 0.3);
   for (const south of [true, false]) {
-    const d = pick(rand, [18, 21, 24]);
+    let d: number;
+    if (south) {
+      d = pick(rand, span >= 48 ? [18, 21, 24] : [18, 21]);
+    } else {
+      const maxD = span - (rows[0].z1 - rows[0].z0) - 6;
+      const pool = [15, 18, 21, 24].filter((v) => v <= maxD);
+      d = pool.length ? pick(rand, pool) : 15;
+    }
     const z0 = south ? up3(Z0 + 0.3) : down3(Z1 - 0.3) - d;
     const row: Row = { south, z0, z1: z0 + d };
     rows.push(row);
@@ -124,6 +132,7 @@ function eastGap(b: Builder, x0: number, x1: number, row: Row, rand: Rand): void
 /** The back courtyard between the rows. */
 function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: number, rand: Rand): void {
   const width = zN - zS;
+  if (width < 4) return;
   const zMid = (zS + zN) / 2;
   // Ends: a brick wall at the west street (with a gate most of the time), a sheet fence at the east.
   brickWall(b, X0 + 0.3, zS, X0 + 0.3, zN, rand() < 0.7 ? zMid : undefined);

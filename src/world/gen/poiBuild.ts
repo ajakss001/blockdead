@@ -189,14 +189,14 @@ function policeStation(S: Site, rand: Rand): void {
     [-21, 3.5],
     [-17, 3.5],
     [-13, 3.5],
-    [-21, -0.5],
-    [-15, -0.5],
+    [-21, 0.0],
+    [-15, 0.0],
   ];
   const codeDesk = Math.floor(spotHash(S.s.i, S.s.j, 3) * desks.length);
   desks.forEach(([x, z], k) => {
     F.desk(p.at(x, z, 2), rand, rand() < 0.4, rand() < 0.3);
     S.retype('policeDesk', k === codeDesk ? ['armoryNote'] : undefined);
-    F.officeChair(p.at(x, z - 0.9), rand, rand() < 0.3);
+    F.officeChair(p.at(x, z - 1.62), rand, rand() < 0.3);
   });
   F.filingCabinet(p.at(-10, 5.6, 2), rand, rand() < 0.5);
   F.filingCabinet(p.at(-23.6, 1, 1), rand);
@@ -243,7 +243,7 @@ function policeStation(S: Site, rand: Rand): void {
   S.doorX(7, -6);
   F.fridge(p.at(11.4, -10, 3), rand, rand() < 0.5);
   F.diningTable(p.at(7, -13), rand, 4, rand() < 0.4);
-  F.boxes(p.at(4, Z0, 0), rand, 3);
+  F.boxes(p.at(4, Z0 + 0.2, 0), rand, 3);
 
   // Garage beside it (x 14…25, z −20…2), open to the lot: two patrol cars and the SWAT van.
   const GX0 = 14;

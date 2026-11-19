@@ -334,8 +334,9 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
     new Place(b, bx, 0, zMid + 0.9, 0).model('barrel', 0, 0, 0, 0, 0, 1, 0.65, 0.4, true);
     b.life(LIFE.fire, bx, 0.92, zMid + 0.9, 0, 0, 0.55, 0, spotHash(X0, Z0, 98));
   }
+  const seg = (X1 - X0 - 6) / 3;
   for (let n = 0; n < 3; n++) {
-    const dx = X0 + 3 + rand() * (X1 - X0 - 6);
+    const dx = X0 + 2 + n * seg + rand() * Math.max(0.1, seg - 2.4);
     new Place(b, dx + 0.9, 0, zMid - 0.25, 0).model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35, true);
     if (spotHash(dx, zMid, 53) < 0.5) b.life(LIFE.flies, dx + 0.9, 1.5, zMid - 0.25, 0, 0, 0, 0, spotHash(dx, zMid, 54));
   }

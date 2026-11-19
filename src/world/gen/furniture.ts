@@ -229,13 +229,14 @@ export class Place {
       }
       return false;
     }
+    const [cx, cz] = this.pt(lx, lz);
+    if (!this.b.inClip(this.b.wx(cx), this.b.wz(cz))) return true;
     _l.compose(_p.set(lx, ly, lz), _q.setFromAxisAngle(_up, yaw), _s.set(scale, scale, scale));
     _m.multiplyMatrices(this.base(), _l);
-    placeModel(this.b.batch, m, _m, null, undefined, roughness, metalness);
+    placeModel(this.b.batch, m, this.b.worldMatrix(_m), null, undefined, roughness, metalness);
     const hx = (m.size[0] * scale) / 2;
     const hz = (m.size[2] * scale) / 2;
     const hy = m.size[1] * scale;
-    const [cx, cz] = this.pt(lx, lz);
     const cosY = Math.abs(Math.cos(yaw));
     const sinY = Math.abs(Math.sin(yaw));
     const rx = hx * cosY + hz * sinY;
@@ -253,9 +254,10 @@ export class Place {
 // ── Bedroom ────────────────────────────────────────────────────────────────────
 
 export function bed(p: Place, rand: Rand, width = 1.5, _messy = false): void {
-  const L = 2.0;
-  p.model('bed', rand, 0, 0, L / 2 + 0.12, 0, Math.min(1.15, width / 1.5), 0.85, 0.05, true);
-  p.life(LIFE.bed, 0, 0.5, L / 2 + 0.1, 0, 0, 0);
+  const s = Math.min(1.15, width / 1.5);
+  const lz = 1.1 * s + 0.04;
+  p.model('bed', rand, 0, 0, lz, 0, s, 0.85, 0.05, true);
+  p.life(LIFE.bed, 0, 0.5, lz - 0.02, 0, 0, 0);
 }
 
 export function nightstand(p: Place, rand: Rand, open = false): void {
@@ -374,15 +376,15 @@ export function chairDown(p: Place, rand: Rand, _color?: number): void {
 export function diningTable(p: Place, rand: Rand, chairs = 4, messy = false): void {
   p.model('diningTable', rand, 0, 0, 0, 0, 1, 0.78, 0.08, true);
   const seats: [number, number, Quarter][] = [
-    [-0.3, -0.62, 0],
-    [0.3, 0.62, 2],
-    [0.3, -0.62, 0],
-    [-0.3, 0.62, 2],
+    [-0.38, -0.78, 0],
+    [0.38, 0.78, 2],
+    [0.38, -0.78, 0],
+    [-0.38, 0.78, 2],
   ];
   for (let i = 0; i < Math.min(chairs, 4); i++) {
     const [x, z, r] = seats[i];
-    if (messy && rand() < 0.5) chairDown(p.at(x * 1.6, z * 1.8, r), rand);
-    else chair(p.at(x + (rand() - 0.5) * 0.15, z + (rand() - 0.5) * 0.15, r), rand);
+    if (messy && rand() < 0.5) chairDown(p.at(x * 1.15, Math.sign(z) * 1.05, r), rand);
+    else chair(p.at(x + (rand() - 0.5) * 0.1, z + (rand() - 0.5) * 0.1, r), rand);
   }
   for (let i = 0; i < 2; i++) if (rand() < 0.6) {
     const px = (rand() - 0.5) * 0.8, pz = (rand() - 0.5) * 0.4;
@@ -437,7 +439,8 @@ export function clothesPile(_p: Place, _rand: Rand, _lx: number, _lz: number, _n
 export function barricade(p: Place, rand: Rand): void {
   if (p.at(0, 0.3).tipped(0, 0, Math.PI / 2, 0.5).model('wardrobe', rand, 0, 0, 0, 0, 1, 0.8, 0.1)) {
     p.solid(0, 0.32, 1.9, 0.6, 0.9);
-    chair(p.at(-0.4, 0.3).tipped(0.3, Math.PI, 0, 1.12), rand);
+    // Decorative only: the piled chair must not add a second colliding AABB inside the doorway.
+    p.at(-0.4, 0.3).tipped(0.3, Math.PI, 0, 1.12).model('chair', rand, 0, 0, 0, 0, 1, 0.8, 0.08, false);
   }
 }
 
@@ -464,9 +467,9 @@ export function elevator(p: Place, rand: Rand): void {
 /** Concierge / reception counter with a chair behind. */
 export function concierge(p: Place, rand: Rand): void {
   p.resetBounds();
-  p.model('receptionDesk', rand, 0, 0, 0.95, Math.PI, 1, 0.78, 0.15, true);
-  p.container('reception', 0, 0.95);
-  chair(p.at(0, 1.0, 0), rand);
+  p.model('receptionDesk', rand, 0, 0, 1.48, Math.PI, 0.72, 0.78, 0.15, true);
+  p.container('reception', 0, 1.48);
+  chair(p.at(0, 0.32, 0), rand);
 }
 
 export function bench(_p: Place, _rand: Rand, _down = false): void {}
@@ -478,14 +481,24 @@ export const SHOP_KINDS: readonly ShopKind[] = ['grocery', 'pharmacy', 'cafe', '
 /** Sign-band color by shop kind (no names or logos). */
 export const SHOP_SIGN: Record<ShopKind, number> = { grocery: 0x6a4a2a, pharmacy: 0x3a6a4a, cafe: 0x5a3a2a, laundry: 0x3a4a6a };
 
+const SHELF_DIM: Record<string, [number, number]> = {
+  groceryShelf: [2.0, 0.67],
+  pharmacyShelf: [1.82, 0.65],
+  metalShelf: [2.07, 0.72],
+  storageRack: [3.06, 0.63],
+};
+
 /** Shelving unit (len along local X), backed strictly by 3D models. */
 export function shopShelf(p: Place, rand: Rand, len: number, kind: ShopKind, messy = false): void {
   p.resetBounds();
   const grp = kind === 'pharmacy'
     ? (messy && rand() < 0.4 ? 'metalShelf' : 'pharmacyShelf')
     : (messy && rand() < 0.4 ? (rand() < 0.5 ? 'metalShelf' : 'storageRack') : 'groceryShelf');
-  p.model(grp, rand, 0, 0, 0.33, 0, Math.min(1.3, len / 2.0), 0.75, 0.25, true);
-  p.container(kind === 'pharmacy' ? 'pharmacy' : 'shelf', 0, 0.75);
+  const [bw, bd] = SHELF_DIM[grp];
+  const s = Math.min(1.15, len / bw);
+  const lz = (bd * s) / 2 + 0.04;
+  p.model(grp, rand, 0, 0, lz, 0, s, 0.75, 0.25, true);
+  p.container(kind === 'pharmacy' ? 'pharmacy' : 'shelf', 0, lz + (bd * s) / 2 + 0.35);
 }
 
 /** Drinks cooler (3D fridge model). */
@@ -498,8 +511,9 @@ export function cooler(p: Place, rand: Rand): void {
 /** Shop counter facing +Z customers (3D model only). */
 export function shopCounter(p: Place, rand: Rand, kind: ShopKind): void {
   p.resetBounds();
-  p.model(kind === 'cafe' ? 'receptionDesk' : 'checkout', rand, 0, 0, 0.46, 0, 1, 0.75, 0.2, true);
-  p.container(kind === 'cafe' ? 'cafe' : 'shopCounter', 0, 1.0);
+  const cafe = kind === 'cafe';
+  p.model(cafe ? 'receptionDesk' : 'checkout', rand, 0, 0, cafe ? 0.72 : 0.5, 0, cafe ? 0.58 : 1, 0.75, 0.2, true);
+  p.container(cafe ? 'cafe' : 'shopCounter', 0, cafe ? 1.45 : 1.0);
 }
 
 export function cafeTable(p: Place, rand: Rand, messy = false): void {

@@ -133,8 +133,8 @@ function heliCrash(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyMo
   groundDecal(b, 'decalShards', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 3, rand);
   groundDecal(b, 'decalOil', x + (rand() - 0.5) * 4, 0, z + (rand() - 0.5) * 4, 2.4, rand);
   const A = new Place(b, x, 0, z, 0);
-  stripedBarrier(A, -7, -6, 2.4, rand() < 0.5);
-  stripedBarrier(A, 7, 6, 2.4, rand() < 0.5);
+  stripedBarrier(A, -8, -2.5, 2.4, rand() < 0.5);
+  stripedBarrier(A, 8, 2.5, 2.4, rand() < 0.5);
 }
 
 // ── Scenes ──────────────────────────────────────────────────────────────────────
@@ -155,8 +155,9 @@ function cordon(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyMode)
   const truck = armyTruck(b, x + (alongX ? -6.5 : 2.0), z + (alongX ? 2.0 : -6.5), yaw + Math.PI + (rand() - 0.5) * 0.3, rand);
   F.boxes(truck.at(-4.2, 0.6, 0), rand, 2);
   if (rand() < 0.6) armyTruck(b, x + (alongX ? 9 : -2.0), z + (alongX ? -1.6 : 9), yaw + (rand() - 0.5) * 0.3, rand);
-  tent(b, x + (alongX ? -BAND - 4 : 4.5), z + (alongX ? 4.5 : -BAND - 4), yaw, rand);
-  if (rand() < 0.6) tent(b, x + (alongX ? BAND + 4 : -4.5), z + (alongX ? 4.5 : BAND + 4), yaw, rand);
+  // Tents on the road arms beside the line (an arm is 2 × BAND wide: the corners beyond are the blocks' buildings).
+  tent(b, x + (alongX ? -BAND - 4 : 3.0), z + (alongX ? 3.0 : -BAND - 4), yaw, rand);
+  if (rand() < 0.6) tent(b, x + (alongX ? BAND + 4 : -3.0), z + (alongX ? 3.0 : BAND + 4), yaw, rand);
   // Crates of supplies (searchable), burn barrels' soot.
   for (let n = 0; n < 2; n++) {
     const cx = x + (rand() - 0.5) * 8;
@@ -184,7 +185,7 @@ function policeLine(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyM
   for (const s of [-1, 1]) {
     stripedBarrier(A, s * 4.5, 6.5, 2.2, rand() < 0.35);
     stripedBarrier(A, s * 1.6, 6.8, 2.2, rand() < 0.35);
-    jersey(A, s * (BAND + 1.2), -6.5, 2.2);
+    jersey(A, s * (BAND + 1.2), -5.0, 2.2);
   }
   groundDecal(b, 'decalShards', x + (rand() - 0.5) * 4, 0, z + (rand() - 0.5) * 4, 2.6, rand);
   if (rand() < 0.4) stripDecal(b, x + (rand() - 0.5) * 3, z + (rand() - 0.5) * 3, base, 7, 2, 'decalSkid');
@@ -212,9 +213,10 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyM
     [vx, vz] = off(-2, 2.2);
     van(b, vx, vz, base + Math.PI + (rand() - 0.5) * 0.5, 0xc8c4b8, 0x8a2a22, [0x2a3a8a, 0x8a2a2a]);
   }
-  [vx, vz] = off(BAND + 3, 4.5 + BAND);
+  // The fire truck and the medical tent stand on the cross street's arm, never in the corners (the buildings).
+  [vx, vz] = off(2.0, BAND + 6);
   fireTruck(b, vx, vz, base + Math.PI / 2 + (rand() - 0.5) * 0.3, rand);
-  [vx, vz] = off(-BAND - 4, BAND + 4);
+  [vx, vz] = off(-0.4, -BAND - 4.2);
   const med = tent(b, vx, vz, base, rand, 0xb0aca0);
   F.boxes(med.at(1.0, 2.4, 0), rand, 2);
   // Stretchers, luggage, boxes, barriers.

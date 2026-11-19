@@ -90,21 +90,25 @@ function loadPiece(g: GearId): Promise<void> {
   let p = piecesP.get(g);
   if (p) return p;
   p = (async () => {
-    const [gl, texture] = await Promise.all([
+    const base = `${import.meta.env?.BASE_URL ?? '/'}models/gear/`;
+    const crowd = lodSize(texSize);
+    const tex = (size: TexSize) =>
+      new TextureLoader().loadAsync(`${base}${g}_${size}.webp`).then((t) => {
+        t.colorSpace = SRGBColorSpace;
+        t.flipY = false;
+        t.minFilter = LinearMipmapLinearFilter;
+        t.anisotropy = gearAnisotropy;
+        return t;
+      });
+    // The zombies' smaller texture comes with the piece (never drawn while still downloading: empty texels).
+    const [gl, texture, textureLod] = await Promise.all([
       read(`${g}.glb`).then((b) => loader().parseAsync(b, '')),
-      texSize
-        ? new TextureLoader().loadAsync(`${import.meta.env?.BASE_URL ?? '/'}models/gear/${g}_${texSize}.webp`).then((t) => {
-            t.colorSpace = SRGBColorSpace;
-            t.flipY = false;
-            t.minFilter = LinearMipmapLinearFilter;
-            t.anisotropy = gearAnisotropy;
-            return t;
-          })
-        : Promise.resolve(null),
+      texSize ? tex(texSize) : Promise.resolve(null),
+      texSize && crowd && crowd !== texSize ? tex(crowd).catch(() => null) : Promise.resolve(null),
     ]);
     let mesh: Mesh | null = null;
     gl.scene.traverse((o) => (mesh ??= (o as Mesh).isMesh ? (o as Mesh) : null));
-    pieces.set(g, { geometry: mesh!.geometry, texture });
+    pieces.set(g, { geometry: mesh!.geometry, texture, textureLod: textureLod ?? texture });
   })().catch((e) => console.warn('gear', g, e));
   piecesP.set(g, p);
   return p;
@@ -143,7 +147,7 @@ export function gearTexture(g: GearId, lod = false): Texture | null {
   if (!p) return null;
   if (!lod) return p.texture;
   const size = lodSize(texSize);
-  if (p.textureLod === undefined) p.textureLod = !size || size === texSize ? p.texture : texOf(`${import.meta.env?.BASE_URL ?? '/'}models/gear/${g}_${size}.webp`);
+  if (p.textureLod === undefined) p.textureLod = !size || size === texSize || p.texture ? p.texture : texOf(`${import.meta.env?.BASE_URL ?? '/'}models/gear/${g}_${size}.webp`);
   return p.textureLod;
 }
 function texOf(url: string): Texture {

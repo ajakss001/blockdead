@@ -415,7 +415,14 @@ const TEMPLATES: Partial<Record<PoiKind, Record<string, Build>>> = {
       }
     },
     foodCourt(c) {
-      for (let k = 0; k < 7; k++) F.cafeTable(at(c, 11 + c.rand() * 9, -3 + c.rand() * 6, c.rand() * 6, 0, 0, 0, 0.04), c.rand, true);
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 3; col++) {
+          if (c.rand() < 0.25) continue;
+          const x = 11.8 + col * 3.0 + (c.rand() - 0.5) * 0.3;
+          const z = -2.0 + row * 3.2 + (c.rand() - 0.5) * 0.3;
+          F.cafeTable(at(c, x, z, (c.rand() - 0.5) * 0.5, 0, 0, 0, 0.04), c.rand, true);
+        }
+      }
       decal(c, 'decalShards', 16, -4, 4, 1.4, 0.04);
     },
     music(c) {

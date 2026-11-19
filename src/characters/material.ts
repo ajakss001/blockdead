@@ -207,7 +207,8 @@ vTint2 = aTint2;`
         '#include <map_fragment>',
         `#include <map_fragment>
 {
-  float zSkin = ${tex && o.map === undefined ? 'clamp((1.0 - diffuseColor.a) * 2.0, 0.0, 1.0)' : '0.0'};
+  // Skin mask in the texture's alpha; an all-zero texel (a texture not decoded yet) is never skin.
+  float zSkin = ${tex && o.map === undefined ? 'dot(diffuseColor, vec4(1.0)) > 0.004 ? clamp((1.0 - diffuseColor.a) * 2.0, 0.0, 1.0) : 0.0' : '0.0'};
   diffuseColor.a = 1.0;
   vec4 zn1 = texture2D(uNoiseTex, vBindPos.xy * 1.1 + vec2(vBindPos.z * 0.8, 0.23));${zombieGlsl}
   float zh = clamp((vBindPos.y - uMinY) / uHeight, 0.0, 1.0);

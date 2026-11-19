@@ -128,16 +128,18 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, []);
   if (!rf) return;
 
-  // Concierge desk facing the doors (kept clear of elevator & side walls), mailboxes on the side wall, the dead elevator by the stairs.
-  if (L.ix1 - L.cx1 >= 4.8) {
-    const cx = Math.max(L.cx1 + 3.2, Math.min(L.doorX + 3.2, L.ix1 - 2.0));
-    F.concierge(new Place(b, cx, 0, L.iz0 + 4.0, 2), rf);
+  // Concierge desk facing the doors (kept clear of elevator & side walls), mailboxes beside the elevator on the solid core wall.
+  if (L.czA - L.iz0 >= 5.6) {
+    const cx = Math.max(L.doorX + 2.4, L.cx1 + 3.4);
+    if (cx <= L.ix1 - 1.2) {
+      F.concierge(new Place(b, cx, 0, Math.min(L.czA - 0.5, L.iz0 + 5.2), 2), rf);
+    }
   }
-  F.mailboxes(new Place(b, L.ix1, 0, L.iz0 + 1.8, 3), rf);
   F.elevator(new Place(b, L.cx1 + 1.5, 0, L.cz0, 2), rf);
+  F.mailboxes(new Place(b, L.cx1 + 3.55, 0, L.cz0, 2), rf);
   // Residents who never made it out of the lobby with their luggage.
   const bags = Math.floor(rf() * 3);
-  for (let n = 0; n < bags; n++) F.suitcase(new Place(b, L.doorX + (rf() - 0.5) * 3, 0, L.iz0 + 4.5 + rf() * 1.5, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
+  for (let n = 0; n < bags; n++) F.suitcase(new Place(b, L.doorX + (rf() - 0.5) * 3, 0, L.iz0 + 3.0 + rf() * 1.2, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
   if (rf() < 0.7) groundDecal(b, 'decalSoot', L.doorX + (rf() - 0.5) * 4, 0.05, L.iz0 + 2 + rf() * 4, 2.2, rf, 1.3);
 }
 
@@ -191,7 +193,18 @@ function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, 
 }
 
 function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[]): void {
-  const x0 = L.cx1 + 0.15;
+  let x0 = L.cx1 + 0.15;
+  if (mode === 'storage') {
+    // Ground floor: reserve [L.cx1 + 0.15, L.cx1 + 4.35] as a solid alcove wall for the elevator + mailboxes.
+    const alcEnd = Math.min(L.ix1, L.cx1 + 4.35);
+    if (L.ix1 - alcEnd < 3.6) {
+      b.blockY(paper, x0, y, L.cz0, Math.max(0, L.ix1 - x0), h, 0.12, 'plaster');
+      return;
+    }
+    b.blockY(paper, x0, y, L.cz0, alcEnd - x0, h, 0.12, 'plaster');
+    b.blockY(paper, alcEnd - 0.06, y, L.cz0 + 0.12, 0.12, h, L.iz1 - L.cz0 - 0.12, 'plaster');
+    x0 = alcEnd;
+  }
   const width = L.ix1 - x0;
   if (width < 4) return;
   const n = Math.max(1, Math.floor(width / 6.5));
@@ -272,7 +285,7 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   }
   if (d >= 7 && partX !== null) {
     // Bedroom (side s) behind a pier-aligned partition, living room (side −s), kitchen towards the door.
-    const dz = Math.min(5.2, Math.max(3.6, d * 0.5));
+    const dz = Math.min(5.2, Math.max(4.15, d * 0.5));
     U.box(paper, partX, 0, dz / 2, 0.12, h, dz, 'plaster', true);
     const sideW = w / 2 - s * partX;
     const ret = sideW - 1.06;
@@ -280,24 +293,27 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     U.box(paper, s * (w / 2 - 0.5), 2.1, dz, 1.0, h - 2.1, 0.12, 'plaster');
 
     // Bedroom.
-    const bx = (partX + s * w / 2) / 2;
-    F.bed(U.at(bx, 0), rf, Math.min(1.5, Math.max(1.2, sideW - 0.9)), messy);
-    F.nightstand(U.at(bx + s * Math.min(1.05, sideW * 0.34), 0), rf, open());
+    const bedW = Math.min(1.5, Math.max(1.1, sideW - 1.2));
+    const bedHalf = 0.865 * Math.min(1.15, bedW / 1.5);
+    const bedX = sideW >= 2 * bedHalf + 1.0 ? partX + s * (0.14 + bedHalf + 0.08) : (partX + (s * w) / 2) / 2;
+    F.bed(U.at(bedX, 0), rf, bedW, messy);
+    const nsX = bedX + s * (bedHalf + 0.44);
+    if (Math.abs(nsX) <= w / 2 - 0.36 && s * (nsX - partX) >= 0.42) F.nightstand(U.at(nsX, 0), rf, open());
     F.wardrobe(U.at(partX + s * 0.06, dz - 1.0, face(s)), rf, open());
     F.painting(U.at(s * w / 2, Math.min(dz - 0.5, 2.8), face(-s)), rf, 1.5, messy && rf() < 0.5);
-    if (fled || messy) F.suitcase(U.at(bx, 2.55), rf, rf() < 0.6);
+    if (fled || messy) F.suitcase(U.at(bedX, 2.55), rf, rf() < 0.6);
 
     // Living room.
     const sofaP = U.at(-s * w / 2, dz * 0.5, face(s));
     F.sofa(sofaP, rf, 2.0, messy);
-    F.coffeeTable(sofaP.at(0, 1.05), rf, messy && rf() < 0.6);
+    F.coffeeTable(sofaP.at(0, 1.25), rf, messy && rf() < 0.6);
     F.painting(sofaP, rf, 1.55, messy && rf() < 0.4);
     const tvDown = messy && rf() < 0.6;
     const tvP = U.at(partX - s * 0.06, dz * 0.5, face(-s));
     F.tvStand(tvP, rf, tvDown);
     // The power is still on here: the set was left on, showing static.
     if (st === 'lived' && !tvDown && U.chance(0, 0, 61) < 0.6) tvP.life(LIFE.tv, 0, 0.75, 0.49, 0.5, 0.38, U.chance(0, 0, 62));
-    F.bookcase(U.at(-s * (w / 2 - 0.55), 0), rf, messy);
+    F.bookcase(U.at(-s * (w / 2 - 0.9), 0), rf, messy);
 
     // Kitchen.
     const kz = dz + 0.12;
@@ -313,26 +329,26 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
         if (st === 'lived') fP.life(LIFE.fridge, 0, 1.0, 0.66, 0, 0, U.chance(0, 0, 63));
       }
     }
-    if (kd >= 3) F.diningTable(U.at(s * (w / 4), kz + kd / 2), rf, 4, messy);
+    if (kd >= 3) F.diningTable(U.at(s * (w / 4), kz + Math.min(kd * 0.45, kd - 2.2)), rf, 4, messy);
     else F.chair(U.at(s * (w / 4), kz + kd / 2, Math.floor(rf() * 4) as Quarter), rf);
   } else {
     // Studio: bed by the window, wardrobe, kitchenette by the door, a small table.
-    F.bed(U.at(s * (w / 2 - 0.85), 0), rf, 1.4, messy);
-    F.nightstand(U.at(s * (w / 2 - 1.85), 0), rf, open());
-    F.wardrobe(U.at(-s * (w / 2 - 0.7), 0), rf, open());
+    F.bed(U.at(s * (w / 2 - 0.92), 0), rf, 1.4, messy);
+    if (w >= 5.2) F.nightstand(U.at(s * (w / 2 - 2.22), 0), rf, open());
+    F.wardrobe(U.at(-s * (w / 2 - 0.96), 0), rf, open());
     const len = Math.min(2.2, d - 2.4);
     if (len >= 1.2) {
       const K = U.at(-s * w / 2, d - 0.3 - len / 2, face(s));
       F.kitchenRun(K, rf, len, messy, radio);
       kitchenLife(K, len);
     }
-    F.diningTable(U.at(s * 0.9, d * 0.62), rf, 2, messy);
+    if (d >= 4.9 && w >= 4.6) F.diningTable(U.at(s * Math.min(1.6, w / 2 - 0.85), Math.max(3.6, d - 1.75)), rf, 2, messy);
     F.painting(U.at(s * w / 2, 2.6, face(-s)), rf, 1.5, messy && rf() < 0.5);
   }
 
   // By the door (only on solid wall away from the doorway): luggage, moving boxes.
-  if (fled && rf() < 0.7) F.suitcase(U.at(-s * 1.1, d - 0.75, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
-  if (rf() < (fled ? 0.4 : 0.2)) F.boxes(U.at(s * 2.1, d, 2), rf, 2 + Math.floor(rf() * 2));
+  if (fled && w >= 4.2 && rf() < 0.7) F.suitcase(U.at(-s * Math.min(w / 2 - 0.65, 1.55), d - 0.75, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
+  if (d >= 7 && w >= 4.6 && rf() < (fled ? 0.4 : 0.2)) F.boxes(U.at(s * Math.min(2.1, w / 2 - 0.7), d, 2), rf, 2 + Math.floor(rf() * 2));
 }
 
 function officeUnit(U: Place, w: number, d: number, st: UnitState, rf: Rand): void {
@@ -342,9 +358,9 @@ function officeUnit(U: Place, w: number, d: number, st: UnitState, rf: Rand): vo
     // Two columns of desks facing the door.
     for (const side of [-1, 1]) {
       const lx = side * (w / 4);
-      for (let zz = 1.1; zz + 2.0 < d - 1.0; zz += 2.3) {
+      for (let zz = 1.1; zz + 2.1 < d - 1.0; zz += 2.7) {
         F.desk(U.at(lx, zz), rf, open && rf() < 0.6, messy && rf() < 0.5);
-        F.officeChair(U.at(lx - 0.15, zz + 1.15, 2), rf, messy && rf() < 0.5);
+        F.officeChair(U.at(lx - 0.15, zz + 1.62, 2), rf, messy && rf() < 0.5);
       }
     }
     F.filingCabinet(U.at(-w / 2 + 0.35, 0), rf, open && rf() < 0.5);
@@ -378,17 +394,18 @@ function shopInterior(b: Builder, x0: number, z0: number, x1: number, z1: number
   F.shopCounter(S.at(0, 0), rf, kind);
   const left = (z: number) => new Place(b, x0, 0, z, 1);
   if (kind === 'grocery') {
-    for (let lz = 2.2; lz < d - 1.4; lz += 2.0) {
-      F.shopShelf(S.at(0, lz), rf, w - 2.8, kind, messy);
-      F.shopShelf(S.at(0, lz, 2), rf, w - 2.8, kind, messy);
+    for (let lz = 2.6; lz < d - 1.4; lz += 2.2) {
+      F.shopShelf(S.at(0, lz), rf, Math.max(1.2, w - 2.8), kind, messy);
+      F.shopShelf(S.at(0, lz, 2), rf, Math.max(1.2, w - 2.8), kind, messy);
     }
     F.cooler(left(z0 + d * 0.55), rf);
   } else if (kind === 'pharmacy') {
     for (let z = z0 + 1.4; z + 1.1 < z1 - 1.0; z += 2.2) F.shopShelf(left(z), rf, 2.0, kind, messy);
     if (d > 6) F.shopShelf(S.at(0.6, d * 0.5, 0), rf, Math.min(2.4, w - 3), kind, messy);
   } else if (kind === 'cafe') {
-    for (let lz = 2.2; lz < d - 1.0; lz += 1.9) for (const lx of [-w / 4, w / 4]) F.cafeTable(S.at(lx, lz), rf, messy);
-    F.cooler(left(z1 - 1.4), rf);
+    const cols = w >= 5.6 ? [-w / 4, w / 4] : [w / 4];
+    for (let lz = 2.8; lz < d - 1.0; lz += 2.2) for (const lx of cols) F.cafeTable(S.at(lx, lz), rf, messy);
+    F.cooler(left(z0 + 1.1), rf);
   } else {
     for (let z = z0 + 0.9; z < z1 - 1.0; z += 1.5) F.washer(left(z), rf, rf() < 0.3);
     const T = S.at(0.6, d * 0.55);

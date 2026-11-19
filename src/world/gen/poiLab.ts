@@ -111,7 +111,7 @@ export function lab(S: Site, rand: Rand): void {
   // Security: monitors on a desk, staff lockers — one with the green card and the guard's log.
   F.desk(p.at(-15, 6.6, 2), rand, false, true);
   S.retype('labDesk');
-  F.officeChair(p.at(-15, 5.7), rand, true);
+  F.officeChair(p.at(-15, 4.98), rand, true);
   const cardLocker = Math.floor(spotHash(S.s.i, S.s.j, 81) * 4);
   for (let k = 0; k < 4; k++) {
     const x = -19 + k * 1.1;
@@ -132,7 +132,7 @@ export function lab(S: Site, rand: Rand): void {
   desks.forEach(([x, z], k) => {
     F.desk(p.at(x, z, 2), rand, rand() < 0.4, rand() < 0.4);
     S.retype('labDesk', k === fuseDesk ? ['fuse', 'labNote3'] : undefined);
-    F.officeChair(p.at(x, z - 0.9), rand, rand() < 0.4);
+    F.officeChair(p.at(x, z - 1.62), rand, rand() < 0.4);
   });
   F.filingCabinet(p.at(19.4, 4, 3), rand);
 

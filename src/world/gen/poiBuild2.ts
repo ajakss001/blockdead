@@ -164,7 +164,7 @@ export function hypermarket(S: Site, rand: Rand): void {
   S.wallZ(0xb8b4a8, -24, -17, 14, 3);
   p.box(0xb8b4a8, 19, 3, -20.5, 10, 0.1, 7, 'plaster');
   F.desk(p.at(20, -21, 0), rand, rand() < 0.5);
-  F.officeChair(p.at(20, -20.1, 2), rand);
+  F.officeChair(p.at(20, -19.38, 2), rand);
   F.filingCabinet(p.at(23.4, -19, 3), rand, true);
   p.model('locker', rand, 15.2, 0, -23.3, 0, 0.85, 0.55, 0.45, true);
   S.container('cabinet', 15.2, -22.7);
@@ -272,7 +272,7 @@ export function mall(S: Site, rand: Rand): void {
   for (let k = 0; k < 3; k++) {
     F.shopCounter(p.at(21.3, -12 + k * 6, 3), rand, 'cafe');
   }
-  for (let k = 0; k < 8; k++) F.cafeTable(p.at(12 + (k % 4) * 2.4, -14 + Math.floor(k / 4) * 8 + (rand() - 0.5), 0), rand, rand() < 0.5);
+  for (let k = 0; k < 8; k++) F.cafeTable(p.at(11.0 + (k % 4) * 2.2, -14 + Math.floor(k / 4) * 8 + (rand() - 0.5), 0), rand, rand() < 0.5);
 
   // Upper floor west: more shops (the second escalator lands east, a walk round the gallery).
   for (let k = 0; k < 2; k++) {
@@ -296,7 +296,7 @@ export function mall(S: Site, rand: Rand): void {
       p.box(0x5a1e24, x, FH + 0.45, z + 0.28, 0.6, 0.55, 0.12, 'rubber');
     }
   }
-  F.boxes(p.at(22, -5, 2), rand, 2);
+  F.boxes(p.at(22.5, 5.5, 2), rand, 2);
   S.container('cafe', 12, -5);
 }
 

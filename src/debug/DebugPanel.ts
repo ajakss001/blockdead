@@ -81,6 +81,8 @@ export class DebugPanel {
         },
       },
     ]);
+    // The adaptive toggle starts off (quality is the player's choice): show it as such.
+    wrap.lastElementChild?.lastElementChild?.classList.toggle('off', !quality.adaptive);
 
     const setStress = (patch: Partial<StressConfig>) => {
       this.stress = { ...this.stress, ...patch };

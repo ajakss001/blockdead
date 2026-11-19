@@ -93,11 +93,13 @@ export function lodTexture(asset: BodyAsset): Texture | null {
   if (asset.textureLod !== undefined) return asset.textureLod;
   const size = lodSize(source?.texSize ?? 0);
   if (!source || !size || size === source.texSize) return (asset.textureLod = asset.texture);
+  // Normally set by fetchBody already. Fallback: never hand out a texture that is still downloading (it would
+  // be drawn as an empty (0,0,0,0) texel — the whole figure in the dead-skin colour); the full one serves.
+  if (asset.texture) return (asset.textureLod = asset.texture);
   const t = new TextureLoader().load(`${source.base}${asset.id}_${size}.webp`);
   t.colorSpace = SRGBColorSpace;
   t.minFilter = LinearMipmapLinearFilter;
   t.anisotropy = charAnisotropy;
-  if (asset.texture) t.flipY = asset.texture.flipY;
   return (asset.textureLod = t);
 }
 /** The crowd's size for an up-close size: 2048 → 1024; low stays 512. */
@@ -154,21 +156,29 @@ function fetchBody(id: BodyId): Promise<BodyAsset | null> {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
     const texLoader = new TextureLoader();
+    const loadTex = (size: TexSize) =>
+      texLoader.loadAsync(`${base}${id}_${size}.webp`).then((t) => {
+        t.colorSpace = SRGBColorSpace;
+        t.minFilter = LinearMipmapLinearFilter;
+        t.anisotropy = charAnisotropy;
+        return t;
+      });
+    // The zombies' smaller texture is loaded together with the body: a body is only "ready" once both are
+    // decoded, so a zombie switching into it (a costume arriving mid-fight) never samples an empty texture.
+    const crowd = lodSize(texSize);
     {
-      const [g0, g1, texture] = await Promise.all([
+      const [g0, g1, texture, textureLod] = await Promise.all([
         parse(loader, get, `${id}.glb`),
         parse(loader, get, `${id}_lod1.glb`),
-        texSize
-          ? texLoader.loadAsync(`${base}${id}_${texSize}.webp`).then((t) => {
-              t.colorSpace = SRGBColorSpace;
-              t.minFilter = LinearMipmapLinearFilter;
-              t.anisotropy = charAnisotropy;
-              return t;
-            })
-          : Promise.resolve(null),
+        texSize ? loadTex(texSize) : Promise.resolve(null),
+        texSize && crowd && crowd !== texSize ? loadTex(crowd).catch(() => null) : Promise.resolve(null),
       ]);
       const mesh = (g: { scene: { getObjectByProperty(k: string, v: unknown): unknown } }) => g.scene.getObjectByProperty('isSkinnedMesh', true) as SkinnedMesh;
       const asset: BodyAsset = { id, leg: src.meta[id].leg, height: src.meta[id].height, lod0: rigOf(mesh(g0)), lod1: rigOf(mesh(g1)), texture };
+      if (texture) {
+        if (textureLod) textureLod.flipY = texture.flipY;
+        asset.textureLod = textureLod ?? texture;
+      }
       bodies.set(id, asset);
       return asset;
     }

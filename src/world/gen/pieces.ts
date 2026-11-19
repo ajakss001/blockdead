@@ -259,6 +259,11 @@ export class Builder {
     this.batch.add(template, color, matrix, surface);
   }
 
+  /** Transform a frame-local matrix into world space (applies `beginFlip` when active). */
+  worldMatrix(matrix: Matrix4, out = this.m): Matrix4 {
+    return this.flip ? out.copy(this.flipM).multiply(matrix) : out.copy(matrix);
+  }
+
   /** Collider in the current frame (optionally limited to a vertical range). */
   solid(x0: number, z0: number, x1: number, z1: number, y0?: number, y1?: number): void {
     if (!this.inClip(this.wx((x0 + x1) / 2), this.wz((z0 + z1) / 2))) return;
@@ -445,7 +450,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const sz = z0 + d * 0.3;
   const sofaP = new Place(b, x0 + WALL_T, 0, sz + 1.0, 1);
   F.sofa(sofaP, rand, 2.0, messy);
-  F.coffeeTable(sofaP.at(0, 1.05), rand, messy && rand() < 0.6);
+  F.coffeeTable(sofaP.at(0, 1.25), rand, messy && rand() < 0.6);
   F.painting(sofaP, rand, 1.55, messy && rand() < 0.4);
   F.bookcase(new Place(b, xp, 0, z0 + d * 0.5, 3), rand, messy);
   // TV on a stand against the back wall (kept clear of the doorways on the partition).
@@ -455,23 +460,23 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   const kLen = Math.max(1.5, x1 - WALL_T - 1.05 - (xp + 0.4));
   F.kitchenRun(new Place(b, xp + 0.4 + kLen / 2, 0, z0 + WALL_T, 0), rand, kLen, messy);
   F.fridge(new Place(b, x1 - WALL_T - 0.45, 0, z0 + WALL_T, 0), rand, open());
-  F.diningTable(new Place(b, xp + 1.7, 0, zp - 0.9, 0), rand, 2, messy);
+  F.diningTable(new Place(b, xp + 1.9, 0, zp - 1.35, 1), rand, 2, messy);
   if (!messy && rand() < 0.1) {
     // A battery radio spot (audio only, no procedural box).
     b.life(3, xp + 0.95, 1.0, z0 + WALL_T + 0.15, 0, 1, 0, 0, rand());
   }
 
   // Bedroom: bed along the side wall (headboard at the partition), wardrobe against the front wall.
-  const bx = x1 - WALL_T - 1.5;
-  F.bed(new Place(b, bx + 0.75, 0, zp + 0.08, 0), rand, 1.5, messy);
-  F.nightstand(new Place(b, bx - 0.3, 0, zp + 0.08, 0), rand, open());
+  const bedX = x1 - WALL_T - 0.96;
+  F.bed(new Place(b, bedX, 0, zp + 0.08, 0), rand, 1.45, messy);
+  F.nightstand(new Place(b, bedX - 1.3, 0, zp + 0.08, 0), rand, open());
   F.wardrobe(new Place(b, xp + 1.8, 0, z1 - WALL_T, 2), rand, open());
 
   // Leaving: luggage and boxes by the front door.
   const hall = new Place(b, doorX, 0, z1 - WALL_T, 2);
   if (fled) {
     F.suitcase(hall.at(-0.9, 1.0, Math.floor(rand() * 4)), rand, rand() < 0.4);
-    if (rand() < 0.4) F.boxes(new Place(b, xp - 0.9, 0, z1 - WALL_T, 2), rand, 2);
+    if (xp - 0.75 > doorX + 1.25 && rand() < 0.4) F.boxes(new Place(b, xp - 0.75, 0, z1 - WALL_T, 2), rand, 2);
   }
 
   // Gable roof with overhang, ridge along X.
@@ -534,16 +539,19 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   partitionX(b, paper, x0 + WALL_T, x1 - WALL_T, zs, x0 + w * 0.8, h);
   // The sales floor by trade, and a counter by the door.
   shopFloor(b, kind, x0 + WALL_T, zs + 0.12, x1 - WALL_T, z1 - WALL_T - 2.4, rand, messy);
-  F.shopCounter(new Place(b, wb + 1.7, 0, z1 - WALL_T - 2.4, 0), rand, kind);
-  // Crates in the storeroom (3D models only).
-  for (let i = 0; i < 4; i++) {
-    const cx = x0 + 0.5 + rand() * (w - 2);
-    const cz = z0 + WALL_T + 0.3 + rand() * (zs - z0 - 1.5);
-    const cp = new Place(b, cx + 0.4, 0, cz + 0.4, Math.floor(rand() * 4) as F.Quarter);
+  F.shopCounter(new Place(b, Math.min(wb + 1.7, x1 - WALL_T - 1.05), 0, z1 - WALL_T - 2.4, 0), rand, kind);
+  // Crates in the storeroom (3D models only), spaced along the back wall clear of the doorway.
+  const crateSlots: number[] = [];
+  for (let cx = x0 + WALL_T + 0.55; cx <= x1 - WALL_T - 0.55 && crateSlots.length < 4; cx += 1.15) {
+    if (Math.abs(cx - (x0 + w * 0.8)) >= 1.2) crateSlots.push(cx);
+  }
+  const cz = z0 + WALL_T + 0.55;
+  crateSlots.forEach((cx, i) => {
+    const cp = new Place(b, cx, 0, cz, Math.floor(rand() * 4) as F.Quarter);
     cp.resetBounds();
     cp.model('woodenCrate', rand, 0, 0, 0, 0, 1, 0.8, 0.1, true);
     if (i < 2) cp.container('crate', 0, 0.5);
-  }
+  });
 
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
   b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
@@ -563,13 +571,15 @@ function shopFloor(b: Builder, kind: F.ShopKind, xa: number, za: number, xb: num
   if (kind === 'grocery' || kind === 'pharmacy') {
     // Aisles back to back, running front to back.
     const len = Math.max(1.4, d - 1.4);
-    for (let x = xa + 1.4; x < xb - 1.2; x += 2.4) {
+    for (let x = xa + 1.4; x < xb - (kind === 'grocery' ? 1.7 : 1.2); x += 2.4) {
       F.shopShelf(new Place(b, x, 0, za + 0.7 + len / 2, 1), rand, len, kind, messy);
       F.shopShelf(new Place(b, x, 0, za + 0.7 + len / 2, 3), rand, len, kind, messy);
     }
     if (kind === 'grocery') F.cooler(new Place(b, xb, 0, za + d * 0.5, 3), rand);
   } else if (kind === 'cafe') {
-    for (let x = xa + 1.2; x < xb - 1.0; x += 1.9) for (let z = za + 1.0; z < zb - 0.6; z += 1.9) F.cafeTable(new Place(b, x, 0, z, 0), rand, messy);
+    for (let x = xa + 1.95; x < xb - 1.1; x += 2.2) {
+      for (let z = za + 1.25; z < zb - 1.25; z += 2.3) F.cafeTable(new Place(b, x, 0, z, 0), rand, messy);
+    }
     F.cooler(new Place(b, xa, 0, za + d * 0.5, 1), rand);
   } else {
     for (let z = za + 0.5; z < zb - 0.4; z += 1.5) F.washer(new Place(b, xa, 0, z, 1), rand, rand() < 0.3);

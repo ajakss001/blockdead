@@ -3,7 +3,7 @@ import type { GameEvents } from '../core/events';
 import type { Profiler } from '../core/Profiler';
 import type { QualityLevel } from '../core/types';
 import { QUALITY_STORAGE_KEY } from './DeviceProfile';
-import { QUALITY_LEVELS, QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
+import { QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
 import type { Renderer } from './Renderer';
 
 /** Sustained over-budget time before stepping down, ms. */
@@ -15,11 +15,12 @@ const COOLDOWN_MS = 2500;
 const SCALE_STEP = 0.05;
 
 /**
- * Adaptive quality. Over budget → lower resolution scale; at the preset's floor → lower the preset.
- * Recovery only raises resolution scale, never the preset, so it cannot oscillate between presets.
+ * Quality is the player's choice only: the preset (and its resolution) change in `setLevel` and nowhere else.
+ * A freeze, a hitch, a chunk being built never lowers it. `adaptive` (off by default, a debug toggle) may only
+ * trade resolution scale within the chosen preset's own range — it never switches the preset.
  */
 export class QualityManager {
-  adaptive = true;
+  adaptive = false;
   targetFps = 60;
 
   private _preset: QualityPreset;
@@ -68,11 +69,6 @@ export class QualityManager {
     const budget = 1000 / this.targetFps;
     const frame = this.profiler.frameAvgMs;
     const over = frame > budget * 1.12;
-    // Hopelessly slow (under ~30 FPS): skip the resolution steps and drop a whole preset now.
-    if (frame > budget * 2 && now - this.badSince > 800 && this.badSince !== 0) {
-      this.dropPreset();
-      return;
-    }
     const headroom = frame < budget * 1.04 && this.profiler.cpuAvgMs < budget * 0.5;
 
     if (over) {
@@ -92,25 +88,12 @@ export class QualityManager {
   }
 
   private degrade(): void {
-    if (this._scale - SCALE_STEP >= this._preset.resolutionScaleMin - 1e-3) {
-      this._scale -= SCALE_STEP;
-    } else {
-      this.dropPreset();
+    // Only within the player's preset: at its resolution floor there is nothing more to take.
+    if (this._scale - SCALE_STEP < this._preset.resolutionScaleMin - 1e-3) {
+      this.badSince = 0;
       return;
     }
-    this.apply('auto');
-  }
-
-  private dropPreset(): void {
-    const idx = QUALITY_LEVELS.indexOf(this._preset.level);
-    if (idx === 0) {
-      // Lowest preset: fall back to its minimum resolution, nothing else left to trade.
-      this._scale = this._preset.resolutionScaleMin;
-      this.apply('auto');
-      return;
-    }
-    this._preset = QUALITY_PRESETS[QUALITY_LEVELS[idx - 1]];
-    this._scale = (this._preset.resolutionScaleMin + this._preset.resolutionScaleMax) / 2;
+    this._scale -= SCALE_STEP;
     this.apply('auto');
   }
 
