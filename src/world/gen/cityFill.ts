@@ -5,7 +5,7 @@ import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
-import { type Builder, PAL, pick, type Rand } from './pieces';
+import { type Builder, pick, type Rand } from './pieces';
 
 /*
  * The fabric between the landmarks: a tight American downtown block (buildings shoulder to shoulder,
@@ -18,9 +18,6 @@ const FACADES: FacadeSurface[] = ['facadeConcrete', 'facadeBrick', 'facadeOffice
 const up3 = (v: number) => Math.ceil(v / 3) * 3;
 const down3 = (v: number) => Math.floor(v / 3) * 3;
 const SIDE_ALLEY = 3;
-const SHEET = 0x5a5c58;
-const BRICK = 0x6a4e40;
-const DUMPSTER = 0x3a4a3a;
 const ESCAPE = 0x2c2a28;
 
 const paints = Object.values(CAR_PAINTS);
@@ -109,7 +106,6 @@ function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, esc
   const wallX = rand() < 0.5 ? xL + 0.05 : xR - 1.15;
   dumpster(b, wallX, dz - 0.9, 'z');
   if (rand() < 0.6) crates(b, rand() < 0.5 ? xL + 0.1 : xR - 1.1, mid + inward * 5, rand);
-  groundDecal(b, 'decalLitter', (xL + xR) / 2, PAVE.plaza, mid + (rand() - 0.5) * 6, 1.8, rand);
   if (rand() < 0.4) sheetFence(b, xL, streetZ + inward * 0.3, xR, streetZ + inward * 0.3, rand() < 0.6 ? (xL + xR) / 2 : undefined, 1.2);
   // Dead end: walled off at the courtyard.
   if (rand() < 0.3) brickWall(b, xL, courtZ - inward * 0.3, xR, courtZ - inward * 0.3);
@@ -145,7 +141,7 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
     b.container('trash', x + 0.9, southWall ? zS + 1.6 : zN - 1.7);
   }
   for (let k = 0; k < 2; k++) crates(b, clear(X0 + 2 + rand() * (X1 - X0 - 6), 0.5), rand() < 0.5 ? zS + 0.2 : zN - 1.2, rand);
-  for (let k = 0; k < 4; k++) groundDecal(b, rand() < 0.7 ? 'decalLitter' : 'decalOil', X0 + rand() * (X1 - X0), PAVE.plaza, zMid + (rand() - 0.5) * (width - 2), 2, rand);
+  for (let k = 0; k < 4; k++) if (rand() >= 0.7) groundDecal(b, 'decalOil', X0 + rand() * (X1 - X0), PAVE.plaza, zMid + (rand() - 0.5) * (width - 2), 2, rand);
   // Wide enough for the residents' cars: parked along the north wall.
   if (width >= 7.5) {
     const lanes = rand() < 0.5 ? 1 : 0;
@@ -203,35 +199,25 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
   const booth = new Place(b, x0 + 1.3, 0, bz + 0.7, south ? 0 : 2);
   if (booth.model('guardBooth', rand, 0, 0, 0, 0, 0.72, 0.72, 0.25)) {
     b.solid(x0 + 0.4, bz - 0.1, x0 + 2.2, bz + 1.6, 0, 2.3);
-  } else {
-    b.block(0x6a6e66, x0 + 0.6, 0, bz, 1.4, 2.3, 1.4, 'metal', true);
-    b.block(PAL.window, x0 + 0.55, 1.1, bz + 0.3, 1.5, 0.8, 0.8, 'glass');
   }
 }
 
-/** Wheeled steel dumpster; `along` is the long axis. */
+/** Wheeled steel dumpster (3D model); `along` is the long axis. */
 function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
   const sx = along === 'x' ? 1.8 : 1.1;
   const sz = along === 'x' ? 1.1 : 1.8;
   const dp = new Place(b, x + sx / 2, 0, z + sz / 2, along === 'x' ? 0 : 1);
   if (dp.model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35)) {
     b.solid(x, z, x + sx, z + sz, 0.12, 1.3);
-  } else {
-    b.block(DUMPSTER, x, 0.12, z, sx, 1.18, sz, 'metal', true);
-    b.block(0x2a3a2a, x - 0.04, 1.3, z - 0.04, sx + 0.08, 0.06, sz + 0.08, 'metal');
   }
   b.batch.addShadow(_m.makeTranslation(x + sx / 2, PAVE.plaza, z + sz / 2), sx * 1.25, sz * 1.25, 0.025);
 }
 
-/** A pallet with a stack of crates on it (sometimes searchable). */
+/** A pallet with crates on it (3D model, sometimes searchable). */
 function crates(b: Builder, x: number, z: number, rand: Rand): void {
   const cp = new Place(b, x + 0.5, 0, z + 0.5, Math.floor(rand() * 4) as 0 | 1 | 2 | 3);
   if (cp.model(rand() < 0.5 ? 'palletCrates' : 'woodenCrate', rand, 0, 0, 0, 0, 1, 0.82, 0.08)) {
     b.solid(x, z, x + 1.0, z + 1.0, 0, 0.9);
-  } else {
-    b.block(0x6a5a40, x, 0, z, 1.0, 0.14, 1.0, 'wood', true);
-    const h = 1 + Math.floor(rand() * 2);
-    for (let k = 0; k < h; k++) b.block(PAL.crate, x + 0.08 + (rand() - 0.5) * 0.1, 0.14 + k * 0.62, z + 0.08, 0.84, 0.6, 0.84, 'wood');
   }
   b.batch.addShadow(_m.makeTranslation(x + 0.5, PAVE.plaza, z + 0.5), 1.35, 1.35, 0.025);
   if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);
@@ -239,15 +225,15 @@ function crates(b: Builder, x: number, z: number, rand: Rand): void {
 
 /** Corrugated sheet fence, 2.2 m, along X or Z, with an optional gap. */
 function sheetFence(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.2): void {
-  wallLine(b, ax, az, bx, bz, gapAt, gapW, 2.2, 0.05, SHEET, 'metal', 2.4);
+  wallLine(b, ax, az, bx, bz, gapAt, gapW, 2.2);
 }
 
 /** Brick wall, 2.4 m, with an optional gate gap. */
 function brickWall(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.4): void {
-  wallLine(b, ax, az, bx, bz, gapAt, gapW, 2.4, 0.25, BRICK, 'concrete', 0);
+  wallLine(b, ax, az, bx, bz, gapAt, gapW, 2.4);
 }
 
-function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt: number | undefined, gapW: number, h: number, thick: number, color: number, surface: 'metal' | 'concrete', ribEvery: number): void {
+function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt: number | undefined, gapW: number, h: number): void {
   const alongX = Math.abs(bz - az) < 1e-6;
   const a = alongX ? Math.min(ax, bx) : Math.min(az, bz);
   const c = alongX ? Math.max(ax, bx) : Math.max(az, bz);
@@ -257,37 +243,26 @@ function wallLine(b: Builder, ax: number, az: number, bx: number, bz: number, ga
     [gapAt + gapW / 2, c],
   ];
   const barrier = pickModel(modelLibrary(), 'wallBarrier', 0);
+  if (!barrier) return;
   for (const [s0, s1] of spans) {
     const spanLen = s1 - s0;
     if (spanLen < 0.2) continue;
-    if (barrier) {
-      const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
-      const segLen = spanLen / count;
-      const sx = (segLen / barrier.size[0]) * 1.045;
-      const sy = Math.min(1.65, h / barrier.size[1]);
-      const sz = 1.0;
-      const halfT = (barrier.size[2] * sz) / 2;
-      const topY = barrier.size[1] * sy;
-      _q.setFromAxisAngle(_axis.set(0, 1, 0), alongX ? 0 : Math.PI / 2);
-      _s.set(sx, sy, sz);
-      for (let i = 0; i < count; i++) {
-        const u = s0 + (i + 0.5) * segLen;
-        _p.set(alongX ? u : fixed, 0, alongX ? fixed : u);
-        placeModel(b.batch, barrier, _m.compose(_p, _q, _s), null);
-      }
-      if (alongX) b.solid(s0, fixed - halfT, s1, fixed + halfT, 0, topY);
-      else b.solid(fixed - halfT, s0, fixed + halfT, s1, 0, topY);
-      continue;
+    const count = Math.max(1, Math.round(spanLen / barrier.size[0]));
+    const segLen = spanLen / count;
+    const sx = (segLen / barrier.size[0]) * 1.045;
+    const sy = Math.min(1.65, h / barrier.size[1]);
+    const sz = 1.0;
+    const halfT = (barrier.size[2] * sz) / 2;
+    const topY = barrier.size[1] * sy;
+    _q.setFromAxisAngle(_axis.set(0, 1, 0), alongX ? 0 : Math.PI / 2);
+    _s.set(sx, sy, sz);
+    for (let i = 0; i < count; i++) {
+      const u = s0 + (i + 0.5) * segLen;
+      _p.set(alongX ? u : fixed, 0, alongX ? fixed : u);
+      placeModel(b.batch, barrier, _m.compose(_p, _q, _s), null);
     }
-    if (alongX) b.block(color, s0, 0, fixed - thick / 2, spanLen, h, thick, surface, true);
-    else b.block(color, fixed - thick / 2, 0, s0, thick, h, spanLen, surface, true);
-    // Posts / ribs every few meters break up the flat sheet.
-    if (ribEvery > 0) {
-      for (let t = s0; t <= s1; t += ribEvery) {
-        if (alongX) b.block(0x3a3c3a, t - 0.04, 0, fixed - 0.06, 0.08, h + 0.05, 0.12, 'metal');
-        else b.block(0x3a3c3a, fixed - 0.06, 0, t - 0.04, 0.12, h + 0.05, 0.08, 'metal');
-      }
-    }
+    if (alongX) b.solid(s0, fixed - halfT, s1, fixed + halfT, 0, topY);
+    else b.solid(fixed - halfT, s0, fixed + halfT, s1, 0, topY);
   }
 }
 

@@ -78,7 +78,6 @@ function gasStation(S: Site, rand: Rand): void {
       p.box(0xd8d4c8, x, 0.16, z, 0.7, 1.7, 0.45, 'metal', true);
       p.box(0xa03a2a, x, 1.5, z, 0.72, 0.3, 0.47, 'metal');
       p.box(0x1a1a1a, x, 1.0, z, 0.5, 0.3, 0.47, 'glass');
-      if (rand() < 0.4) p.rbox(0x1a1a1a, x + 0.5, 0.2, z + 0.4, 0.04, 0.04, 1.4, rand() * 3, 0, 0, 'rubber');
     }
   }
   // A car left at a pump, another by the shop.
@@ -118,7 +117,6 @@ function gasStation(S: Site, rand: Rand): void {
   S.retype('gasCounter');
   F.cooler(p.at(-12.5, z0 + 0.1), rand);
   F.cooler(p.at(-11.2, z0 + 0.1), rand);
-  F.papers(p, rand, x0 + 1, z0 + 1, x1 - 1, z1 - 1, 6);
 
   // Workshop / car wash bay: x 6…18, z −16…−2, open to the forecourt.
   const wx0 = 6;
@@ -132,11 +130,10 @@ function gasStation(S: Site, rand: Rand): void {
   S.wallZ(0x7a7a74, wz0, wz1, wx1, WH, [], 'concrete');
   S.roof(wx0, wz0, wx1, wz1, WH, 0x6a6862);
   S.car(12, -9, Math.PI / 2, rand);
-  // Workbench with tools, tyres stacked.
-  p.box(0x6a5a44, 16.8, 0, -12, 1.2, 0.9, 3, 'wood', true);
+  // Workbench and wooden crate (3D models).
+  p.model('labTable', rand, 16.8, 0, -12, Math.PI / 2, 1, 0.65, 0.35, true);
   S.container('garage', 16.6, -12);
-  for (let k = 0; k < 4; k++) p.cyl(0x1a1a1a, 7.2, 0.12 + k * 0.24, -14.8, 0.35, 0.22, 'rubber');
-  p.box(0x6a5e4a, 7.5, 0, -4, 1, 0.8, 1, 'wood', true);
+  p.model('woodenCrate', rand, 7.5, 0, -4, 0, 1, 0.8, 0.1, true);
   S.container('crate', 7.5, -4);
 }
 
@@ -178,17 +175,13 @@ function policeStation(S: Site, rand: Rand): void {
   p.box(0x1e2e4e, -2, H - 1.0, Z1 + 0.12, 7, 0.8, 0.06, 'plaster');
   p.box(0xe0dcd0, -2, H - 0.7, Z1 + 0.16, 6.6, 0.12, 0.02, 'plaster');
 
-  // Lobby (x −8…4, z −2…6): the desk, benches.
+  // Lobby (x −8…4, z −2…6): the reception desk.
   S.wallZ(inner, -2, Z1, -8, H, [{ at: 2, w: 1.0, h: 2.1 }]);
   S.doorZ(-8, 2);
   S.wallZ(inner, -2, Z1, 4, H, [{ at: 2, w: 1.0, h: 2.1 }]);
   S.doorZ(4, 2);
-  p.box(0x5a4a3a, -2, 0, 0.4, 5, 1.1, 0.7, 'wood', true);
-  p.box(0x8a8678, -2, 1.1, 0.4, 5.2, 0.05, 0.9, 'plaster');
+  p.model('receptionDesk', rand, -2, 0, 0.4, 0, 1.3, 0.78, 0.15, true);
   S.container('reception', -2, 0.2);
-  F.bench(p.at(-6.5, 4.5, 2), rand);
-  F.bench(p.at(2.5, 4.5, 2), rand);
-  F.papers(p, rand, -7, -1, 3, 5, 6);
   // The corridor wall (z −2): way through from the lobby, doors to the offices' and locker room's backs not needed.
   S.wallX(inner, X0, X1, -2, H, [{ at: -2, w: 1.6, h: 2.3 }]);
   // Offices (x −24…−8, z −2…6): desks, filing cabinets; one desk keeps the armory code.
@@ -212,11 +205,9 @@ function policeStation(S: Site, rand: Rand): void {
   for (let k = 0; k < 8; k++) {
     const x = 5 + (k % 4) * 1.8;
     const z = k < 4 ? 5.4 : -1.4;
-    p.box(0x5a6a7a, x, 0, z, 1.6, 2.0, 0.5, 'metal', true);
-    for (let d = 0; d < 3; d++) p.box(0x4a5a6a, x - 0.53 + d * 0.53, 0.05, z + (k < 4 ? -0.26 : 0.26), 0.5, 1.9, 0.02, 'metal');
+    p.model('locker', rand, x, 0, z, k < 4 ? Math.PI : 0, 1, 0.55, 0.45, true);
     S.container('policeLocker', x, z + (k < 4 ? -0.6 : 0.6), k === keyLocker ? ['armoryKey'] : undefined);
   }
-  F.bench(p.at(8, 2, 0), rand);
 
   // Corridor (z −6…−2) to the back rooms.
   // Cells (x −24…−8, z −20…−6): three, barred fronts with the doors hanging open.
@@ -231,9 +222,8 @@ function policeStation(S: Site, rand: Rand): void {
     p.box(0x3a3a3a, (cx0 + cx1) / 2, H - 0.45, -6, cx1 - cx0, 0.08, 0.08, 'metal');
     p.solid((cx0 + cx0 + 2.2) / 2, -6, 2.2 - 0.25, 0.1, H);
     p.solid((cx0 + 3.2 + cx1) / 2, -6, cx1 - cx0 - 3.2, 0.1, H);
-    // A cot, a bucket.
-    p.box(0x5a5a52, cx0 + 1.4, 0, Z0 + 1.2, 2.0, 0.45, 0.8, 'metal', true);
-    p.box(0x7a7a6a, cx0 + 1.4, 0.45, Z0 + 1.2, 1.9, 0.08, 0.75, 'rubber');
+    // A bed in the cell.
+    F.bed(p.at(cx0 + 1.4, Z0 + 0.3, 0), rand, 0.9, false);
   }
   // Armory (x −8…2, z −20…−6), behind a locked steel door.
   S.wallZ(inner, Z0, -6, -8, H);
@@ -245,7 +235,7 @@ function policeStation(S: Site, rand: Rand): void {
     [1.4, -12, 3],
     [-3, -19.4, 0],
   ] as const) {
-    p.at(x, z, r).box(0x3a3e40, 0, 0, 0.3, 3.2, 2.0, 0.6, 'metal', true);
+    p.at(x, z, r).model('metalShelf', rand, 0, 0, 0.35, 0, 1.1, 0.6, 0.4, true);
     S.container('armory', x + (r === 1 ? 0.8 : r === 3 ? -0.8 : 0), z + (r === 0 ? 0.8 : 0));
   }
   // Back room (x 2…12, z −20…−6): break room, boxes of files.
@@ -254,10 +244,6 @@ function policeStation(S: Site, rand: Rand): void {
   F.fridge(p.at(11.4, -10, 3), rand, rand() < 0.5);
   F.diningTable(p.at(7, -13), rand, 4, rand() < 0.4);
   F.boxes(p.at(4, Z0, 0), rand, 3);
-  F.waterCooler(p.at(3, -6.6, 2), rand);
-  // Notes on what happened, on the reception desk and in the break room.
-  F.notes(p.at(-2, 0.2, 0), rand, 2);
-  F.notes(p.at(7, -15, 0), rand, 1);
 
   // Garage beside it (x 14…25, z −20…2), open to the lot: two patrol cars and the SWAT van.
   const GX0 = 14;
@@ -272,6 +258,6 @@ function policeStation(S: Site, rand: Rand): void {
   S.car((GX0 + GX1) / 2, -4, Math.PI / 2, rand, 'police');
   S.car((GX0 + GX1) / 2 - 2.8, -14, Math.PI / 2, rand, 'van', 0x1e2632);
   if (rand() < 0.6) S.car((GX0 + GX1) / 2 + 2.6, -14, Math.PI / 2, rand, 'police');
+  p.model('labTable', rand, GX1 - 0.8, 0, -18, Math.PI / 2, 1, 0.65, 0.35, true);
   S.container('garage', GX1 - 0.8, -18);
-  p.box(0x6a5a44, GX1 - 0.8, 0, -18, 1.2, 0.9, 2.4, 'wood', true);
 }

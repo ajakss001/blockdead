@@ -1,10 +1,11 @@
-import { Color, CylinderGeometry, Float32BufferAttribute, Matrix4, PlaneGeometry, Quaternion, Vector3, Euler } from 'three';
+import { Color, Float32BufferAttribute, PlaneGeometry } from 'three';
 import { mulberry32 } from '../../core/random';
 import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { curbParking, downtownBlock } from './cityFill';
-import { type BuildingDesc, groundDecal, windowPanes } from './highrise';
+import { Place } from './furniture';
+import { type BuildingDesc, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
 import { LIFE, spotHash, TREE } from './lifeKinds';
@@ -61,12 +62,6 @@ const GROUND_COLORS: Record<Zone, [number, number]> = {
   forest: [0x3c4232, 0x4a4030],
   field: [0x66603f, 0x5a5238],
 };
-
-const _m = new Matrix4();
-const _q = new Quaternion();
-const _p = new Vector3();
-const _s = new Vector3();
-const _x = new Vector3(1, 0, 0);
 
 /**
  * Builds one 64 × 64 m block: ground, its share of the road grid (west and south edges plus the
@@ -163,7 +158,6 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         b.block(PAL.curb, side < 0 ? x - ROAD_HALF - 0.12 : x + ROAD_HALF, 0, za, 0.12, SIDEWALK_H + 0.03, len, 'asphalt');
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
-      hydrant(b, x - ROAD_HALF - 0.55, SIDEWALK_H, z + CHUNK * 0.42);
       for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + side * (ROAD_HALF + 1.0), z + CHUNK * t, SIDEWALK_H);
     }
     // Downtown: the queue that never got out; elsewhere cars sit where people left them.
@@ -177,7 +171,6 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
     } else if (rand() < 0.2) {
       shoulderCar(b, false, x, za + 6 + rand() * (len - 12), rand);
     }
-    if (layout.urbanX(i, j)) for (let n = 0; n < 2; n++) if (rand() < 0.6) groundDecal(b, 'decalLitter', x + (rand() < 0.5 ? -1 : 1) * (ROAD_HALF + 1), SIDEWALK_H, za + rand() * len, 1.8, rand);
   }
   // Road along z = Z (runs east-west).
   if (layout.roadZ(i, j)) {
@@ -192,7 +185,6 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         b.block(PAL.curb, xa, 0, side < 0 ? z - ROAD_HALF - 0.12 : z + ROAD_HALF, len, SIDEWALK_H + 0.03, 0.12, 'asphalt');
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
-      hydrant(b, x + CHUNK * 0.58, SIDEWALK_H, z - ROAD_HALF - 0.55);
       for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + CHUNK * t, z + side * (ROAD_HALF + 1.0), SIDEWALK_H);
     }
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
@@ -201,7 +193,6 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
     } else if (rand() < 0.2) {
       shoulderCar(b, true, xa + 6 + rand() * (len - 12), z, rand);
     }
-    if (layout.urbanZ(i, j)) for (let n = 0; n < 2; n++) if (rand() < 0.6) groundDecal(b, 'decalLitter', xa + rand() * len, SIDEWALK_H, z + (rand() < 0.5 ? -1 : 1) * (ROAD_HALF + 1), 1.8, rand);
   }
   // South-west intersection.
   const any = layout.roadX(i, j) || layout.roadZ(i, j) || layout.roadX(i, j - 1) || layout.roadZ(i - 1, j);
@@ -237,16 +228,6 @@ function streetTree(b: Builder, x: number, z: number, y: number): void {
   b.block(0x3a2e24, x - 0.5, y, z - 0.5, 1.0, 0.016, 1.0, 'ground');
   const species = spotHash(x, z, 46) < 0.1 ? TREE.dead : Math.floor(spotHash(x, z, 47) * 3);
   plantTree(b, x, y, z, 0.75 + spotHash(x, z, 48) * 0.3, spotHash(z, x, 49) * Math.PI * 2, species);
-}
-
-/** A fire hydrant on the sidewalk (half the time); some were knocked open and still spout water. */
-function hydrant(b: Builder, x: number, y: number, z: number): void {
-  if (spotHash(x, z, 99) < 0.5) return;
-  b.batch.add(b.cyl8, 0xa8402e, _m.compose(_p.set(x, y + 0.3, z), _q.identity(), _s.set(0.12, 0.6, 0.12)), 'metal');
-  b.batch.add(b.cyl8, 0x8a3426, _m.compose(_p.set(x, y + 0.62, z), _q.identity(), _s.set(0.09, 0.08, 0.09)), 'metal');
-  b.batch.add(b.cyl8, 0x8a3426, _m.compose(_p.set(x, y + 0.42, z), _q.setFromAxisAngle(_x, Math.PI / 2), _s.set(0.05, 0.3, 0.05)), 'metal');
-  b.colliders.addBox(x - 0.16, z - 0.16, x + 0.16, z + 0.16);
-  if (spotHash(x, z, 100) < 0.4) b.life(LIFE.hydrant, x, y + 0.66, z, 0, 0, 0, 0, spotHash(x, z, 101));
 }
 
 /** Parked cars hug the curb: lane center this far from the road's center line. */
@@ -350,13 +331,12 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
   if (spotHash(X0, Z0, 96) < 0.35) {
     // Someone kept warm here: a rusty barrel, still burning.
     const bx = X0 + 2 + spotHash(X0, Z0, 97) * (X1 - X0 - 4);
-    b.batch.add(b.cyl8, 0x4e3a2c, _m.compose(_p.set(bx, 0.45, zMid + 0.9), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
-    b.colliders.addBox(bx - 0.32, zMid + 0.58, bx + 0.32, zMid + 1.22);
+    new Place(b, bx, 0, zMid + 0.9, 0).model('barrel', 0, 0, 0, 0, 0, 1, 0.65, 0.4, true);
     b.life(LIFE.fire, bx, 0.92, zMid + 0.9, 0, 0, 0.55, 0, spotHash(X0, Z0, 98));
   }
   for (let n = 0; n < 3; n++) {
     const dx = X0 + 3 + rand() * (X1 - X0 - 6);
-    b.block(0x3a4a3a, dx, 0, zMid - 0.8, 1.8, 1.3, 1.1, 'metal', true);
+    new Place(b, dx + 0.9, 0, zMid - 0.25, 0).model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35, true);
     if (spotHash(dx, zMid, 53) < 0.5) b.life(LIFE.flies, dx + 0.9, 1.5, zMid - 0.25, 0, 0, 0, 0, spotHash(dx, zMid, 54));
   }
 }
@@ -391,15 +371,4 @@ function field(b: Builder, layout: WorldLayout, X0: number, Z0: number, X1: numb
     const z = Z0 + rand() * (Z1 - Z0);
     bush(b, x, layout.heightAt(x, z), z, 0.6 + rand() * 0.6, rand);
   }
-  // Rotting hay bales.
-  const bale = new CylinderGeometry(0.75, 0.75, 1.2, 10);
-  for (let n = 0; n < 3; n++) {
-    const x = X0 + 4 + rand() * (X1 - X0 - 8);
-    const z = Z0 + 4 + rand() * (Z1 - Z0 - 8);
-    const y = layout.heightAt(x, z);
-    _q.setFromEuler(new Euler(Math.PI / 2, rand() * 3, 0, 'YXZ'));
-    b.batch.add(bale, 0x7a6a42, _m.compose(_p.set(x, y + 0.7, z), _q, _s.set(1, 1, 1)), 'wood');
-    b.colliders.addBox(x - 0.8, z - 0.8, x + 0.8, z + 0.8);
-  }
-  bale.dispose();
 }

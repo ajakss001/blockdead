@@ -2,6 +2,7 @@ import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import type { ContainerType } from '../../data/loot';
 import { pickModel } from '../models';
 import { modelLibrary, placeModel } from '../props/car';
+import { sandbags } from './chaos';
 import * as F from './furniture';
 import type { Place, Quarter } from './furniture';
 import type { Rand } from './pieces';
@@ -10,29 +11,11 @@ import type { Site } from './poiSite';
 
 /*
  * POI stage 4: the big places, each spanning several chunks (every chunk runs the whole plan with the same
- * random numbers and keeps its own part — see Builder.clip). Airliners, light planes, fighters and the
- * military helicopter are installed models (the low-poly placeholders below stay as the fallback; the
- * transport plane is one still); tanks, APCs and trucks too. All of it is
- * scenery: the cabins and the holds can be searched, nothing can be driven or flown.
+ * random numbers and keeps its own part — see Builder.clip). Airliners, light planes, fighters, military
+ * helicopters, tanks, APCs and trucks are backed strictly by 3D models.
  */
 
-const WHITE = 0xd8d8d2;
-const DARK = 0x1a1e22;
-const OLIVE = 0x4e5438;
-const GREYJET = 0x6a7078;
-
 // ── Pieces ───────────────────────────────────────────────────────────────────
-
-/** A searchable zone over a local rectangle of a place (its frame), y0…y1, in this chunk only. */
-function zone(S: Site, q: Place, type: ContainerType, lx0: number, lz0: number, lx1: number, lz1: number, y0: number, y1: number): void {
-  const [ax, az] = q.pt(lx0, lz0);
-  const [bx, bz] = q.pt(lx1, lz1);
-  const x0 = Math.min(ax, bx);
-  const x1 = Math.max(ax, bx);
-  const z0 = Math.min(az, bz);
-  const z1 = Math.max(az, bz);
-  S.b.container(type, (x0 + x1) / 2, (z0 + z1) / 2, 0, [x0, y0, z0, x1, y1, z1]);
-}
 
 /** A chain-link fence from (x0, z0) to (x1, z1) (local, along X or Z), posts every 6 m; barbed wire on top if asked. */
 function fence(S: Site, x0: number, z0: number, x1: number, z1: number, barbed: boolean): void {
@@ -125,114 +108,28 @@ const CRAFT: Record<'airliner' | 'lightplane' | 'fighter' | 'heliMil', Craft> = 
 
 /**
  * An installed aircraft model on a place (its nose along the place's local +Z, tipped if the place is),
- * collider over the fuselage, its cabin / hold zones; false if no such model (the placeholder is built).
+ * collider over the fuselage, its cabin / hold zones.
  */
 export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, rand: Rand, charred = false): boolean {
   const c = CRAFT[kind];
   const m = pickModel(modelLibrary(), c.group, rand());
-  if (!m) return false;
+  if (!m && modelLibrary() !== null) return false;
   const M = q.frame(new Matrix4()).multiply(new Matrix4().makeRotationY(-Math.PI / 2)).multiply(new Matrix4().makeTranslation(0, 0.01, 0));
   const at = new Vector3().setFromMatrixPosition(M);
   if (!S.b.inClip(at.x, at.z)) return true;
-  placeModel(S.b.batch, m, M, null, charred ? charTint : undefined);
   const nose = new Vector3(1, 0, 0).transformDirection(M);
   const yaw = Math.atan2(-nose.z, nose.x);
-  const [L, H] = m.size;
-  S.b.colliders.addOrientedBox(at.x, at.z, L / 2, c.body / 2, yaw, -0.5, at.y + H);
+  const [L, H] = m ? m.size : [16, 4];
+  if (m) {
+    placeModel(S.b.batch, m, M, null, charred ? charTint : undefined);
+    S.b.colliders.addOrientedBox(at.x, at.z, L / 2, c.body / 2, yaw, -0.5, at.y + H);
+  }
   for (const [type, mid, half, y0, y1, w] of c.zones) {
     const x = at.x + nose.x * mid * L;
     const z = at.z + nose.z * mid * L;
     S.b.containers.push({ type, x, z, box: [x, at.y + ((y0 + y1) / 2) * H, z, half * L, ((y1 - y0) / 2) * H, w, yaw] });
   }
   return true;
-}
-
-/**
- * Airliner placeholder (nose +Z of its place, 32 m, white with a stripe): fuselage, wings with engines,
- * fin and tailplane, gear. The cabin (front half) and the hold (rear, low) can be searched.
- */
-export function airliner(S: Site, q: Place, stripe: number): void {
-  q.cyl(WHITE, 0, 3.4, 0, 2.0, 26, 'busPaint', Math.PI / 2);
-  q.blob(WHITE, 0, 3.2, 13.4, 1.9, 1.85, 2.8, 'busPaint');
-  q.blob(WHITE, 0, 3.7, -14, 1.4, 1.3, 3.2, 'busPaint');
-  q.box(DARK, 0, 3.75, 14.7, 1.5, 0.4, 0.6, 'rubber');
-  for (const s of [-1, 1]) {
-    q.box(DARK, s * 2.02, 3.55, 0, 0.04, 0.3, 22, 'rubber');
-    q.box(stripe, s * 2.03, 2.85, 0, 0.04, 0.35, 25, 'busPaint');
-    q.rbox(WHITE, s * 8.5, 2.3, -1, 13, 0.35, 4.2, -s * 0.28, 0, -s * 0.05, 'busPaint');
-    q.cyl(0x8a8e92, s * 6.2, 1.35, 0.8, 0.95, 3.4, 'metal', Math.PI / 2);
-    q.rbox(WHITE, s * 3.4, 3.9, -12.8, 5.5, 0.25, 2.0, -s * 0.3, 0, 0, 'busPaint');
-    q.box(0x222222, s * 2.6, 0, -1, 0.5, 1.4, 1.0, 'rubber');
-    q.solid(s * 6.2, 0.8, 1.9, 3.4, 2.3);
-  }
-  q.box(WHITE, 0, 4.4, -12.6, 0.35, 4.6, 4.2, 'busPaint');
-  q.box(stripe, 0, 6.6, -12.4, 0.38, 2.0, 2.6, 'busPaint');
-  q.box(0x222222, 0, 0, 10, 0.4, 1.4, 0.8, 'rubber');
-  q.solid(0, 0, 4.2, 30, 5.4);
-  zone(S, q, 'planeCabin', -2.05, 1, 2.05, 13, 1.4, 5.4);
-  zone(S, q, 'cargoHold', -2.05, -12, 2.05, -1, 1.4, 3.2);
-}
-
-/** A light plane (high wing, 8 m) placeholder, nose +Z. */
-export function lightPlane(S: Site, q: Place, color: number): void {
-  q.box(color, 0, 0.7, 0, 1.2, 1.4, 7, 'busPaint');
-  q.box(DARK, 0, 1.45, 1.6, 1.22, 0.55, 1.2, 'rubber');
-  q.box(color, 0, 2.15, 1.0, 11, 0.14, 1.6, 'busPaint');
-  q.box(color, 0, 1.1, -3.6, 0.12, 1.5, 1.0, 'busPaint');
-  q.box(color, 0, 1.0, -3.4, 3.4, 0.1, 0.9, 'busPaint');
-  q.box(0x2a2a2a, 0, 1.0, 3.6, 0.1, 1.6, 0.1, 'metal');
-  for (const s of [-1, 1]) q.box(0x222222, s * 1.0, 0, 0.6, 0.15, 0.7, 0.4, 'rubber');
-  q.solid(0, 0, 1.4, 7.4, 2.2);
-  zone(S, q, 'planeCabin', -0.62, 0, 0.62, 2.5, 0.7, 2.2);
-}
-
-/** A fighter jet placeholder (grey, 15 m, delta wings, twin fins), nose +Z. */
-function fighter(S: Site, q: Place): void {
-  q.box(GREYJET, 0, 1.3, 0, 1.6, 1.4, 12, 'metal');
-  q.blob(GREYJET, 0, 2.0, 6.6, 0.75, 0.7, 2.4, 'metal');
-  q.blob(0x22303a, 0, 2.75, 3.4, 0.55, 0.45, 1.6, 'rubber');
-  for (const s of [-1, 1]) {
-    q.rbox(GREYJET, s * 2.6, 1.6, -1.6, 4.4, 0.16, 5.2, s * 0.35, 0, 0, 'metal');
-    q.rbox(GREYJET, s * 0.7, 3.4, -5.0, 0.12, 2.2, 2.4, 0, 0, s * 0.25, 'metal');
-    q.box(0x3a3e42, s * 0.95, 1.1, 1.8, 0.6, 0.9, 2.4, 'metal');
-    q.box(0x222222, s * 1.2, 0, -1.2, 0.25, 1.3, 0.4, 'rubber');
-  }
-  q.cyl(0x2a2c2e, 0, 1.9, -6.4, 0.55, 0.8, 'metal', Math.PI / 2);
-  q.solid(0, 0, 2.0, 15, 3.3);
-  zone(S, q, 'vehicleCabin', -0.8, 2.5, 0.8, 4.6, 1.2, 3.3);
-}
-
-/** A four-engine transport plane placeholder (olive, 26 m, high wing, rear ramp down), nose +Z. */
-function transport(S: Site, q: Place): void {
-  const c = 0x5a604a;
-  q.cyl(c, 0, 3.4, 0, 2.3, 22, 'metal', Math.PI / 2);
-  q.blob(c, 0, 3.4, 11.4, 2.2, 2.1, 2.6, 'metal');
-  q.box(DARK, 0, 4.2, 12.6, 1.8, 0.5, 0.6, 'rubber');
-  q.rbox(c, 0, 4.2, -12.4, 3.0, 2.4, 4.0, 0, 0.25, 0, 'metal');
-  q.box(c, 0, 5.6, 0.6, 30, 0.5, 4.0, 'metal');
-  for (const x of [-10, -5, 5, 10]) q.cyl(0x4a4e3e, x, 5.0, 2.4, 0.7, 3.4, 'metal', Math.PI / 2);
-  q.box(c, 0, 5.2, -14.2, 0.45, 6.4, 4.4, 'metal');
-  q.box(c, 0, 6.0, -14.4, 11, 0.3, 2.6, 'metal');
-  // The ramp down at the back, the hold open.
-  q.rbox(0x3a3e30, 0, 0.75, -13.4, 3.4, 0.2, 4.2, 0, -0.42, 0, 'metal');
-  for (const s of [-1, 1]) q.box(0x2a2c26, s * 2.1, 0, 0.5, 1.0, 1.6, 5.0, 'metal');
-  q.solid(0, 0, 4.8, 24, 5.8);
-  zone(S, q, 'cargoHold', -2.3, -11.5, 2.3, 4, 1.2, 5.6);
-  zone(S, q, 'vehicleCabin', -2.0, 9, 2.0, 12.5, 2.6, 5.4);
-}
-
-/** A military helicopter placeholder (olive, 14 m with the boom), nose +Z. */
-function helicopter(S: Site, q: Place): void {
-  q.box(OLIVE, 0, 0.6, 0, 2.2, 2.2, 6.4, 'metal');
-  q.blob(OLIVE, 0, 1.6, 3.4, 1.05, 1.0, 1.4, 'metal');
-  q.box(DARK, 0, 1.7, 3.6, 1.6, 0.8, 1.0, 'rubber');
-  q.box(OLIVE, 0, 1.6, -6.4, 0.5, 0.6, 7, 'metal');
-  q.box(OLIVE, 0, 2.0, -9.6, 0.2, 1.8, 1.0, 'metal');
-  q.box(0x2a2c26, 0, 2.8, 0, 0.5, 0.5, 0.5, 'metal');
-  for (let k = 0; k < 4; k++) q.rbox(0x2a2c26, 0, 3.12, 0, 15, 0.06, 0.45, (k * Math.PI) / 4 + 0.3, 0, 0, 'metal');
-  for (const s of [-1, 1]) q.box(0x2a2c26, s * 1.1, 0, 0.3, 0.12, 0.12, 5.0, 'metal');
-  q.solid(0, 0, 2.4, 8.4, 2.9);
-  zone(S, q, 'vehicleCabin', -1.13, -2.5, 1.13, 4.2, 0.6, 2.85);
 }
 
 /** A big shed: three walls, roof, open front toward local −Z of the shed (its door side faces `face`). */
@@ -294,16 +191,13 @@ export function airport(S: Site, rand: Rand): void {
   S.wallZ(side, tz0, tz1, tx1, H);
   S.roof(tx0, tz0, tx1, tz1, H, 0xa8aaa6, 0xc8cac6, 0x4a4c4e);
   p.box(0x2a4a6a, -28, H - 1.6, tz1 + 0.12, 14, 1.0, 0.08, 'plaster');
-  // Check-in: counters with the belt behind them.
+  // Check-in counters.
   for (let k = 0; k < 4; k++) {
     const x = -44 + k * 5;
-    p.box(0x5a5e62, x, 0, 24, 3.2, 1.1, 0.8, 'metal', true);
-    p.box(0x8a8e92, x, 1.1, 24, 3.3, 0.05, 0.9, 'plaster');
+    p.model('receptionDesk', rand, x, 0, 24, Math.PI, 1.2, 0.75, 0.2, true);
     S.container('checkin', x, 23.2);
   }
   S.slab(0x2a2c2e, -46, 25.4, -26, 26.2, 0.4, 0.3, 'rubber');
-  // Waiting hall: rows of seats toward the apron windows.
-  for (const z of [12, 15, 18]) for (const x of [-44, -38, -32]) F.bench(p.at(x, z, 2), rand);
   // Baggage claim: a belt loop with suitcases left on it and round it.
   const bx0 = -24;
   const bx1 = -12;
@@ -328,29 +222,24 @@ export function airport(S: Site, rand: Rand): void {
   p.box(0x5a5c5e, 12, 23, 14, 7.6, 0.4, 7.6, 'roof');
   p.box(0x3a3c3e, 12, 23.4, 14, 0.2, 2.5, 0.2, 'metal');
 
-  // Hangar with a light plane and tools.
+  // Hangar with light planes and workbench.
   hangar(S, 48, -8, 86, 26, 11, 'z0');
-  if (!aircraft(S, 'lightplane', p.at(60, 8, 2), rand)) lightPlane(S, p.at(60, 8, 2), 0xb8b0a0);
-  if (!aircraft(S, 'lightplane', p.at(75, 12, 2), rand)) lightPlane(S, p.at(75, 12, 2), 0x8a3a2a);
-  p.box(0x5a4a3a, 84, 0, 18, 1.2, 0.9, 3, 'wood', true);
+  aircraft(S, 'lightplane', p.at(60, 8, 2), rand);
+  aircraft(S, 'lightplane', p.at(75, 12, 2), rand);
+  p.model('labTable', rand, 84, 0, 18, Math.PI / 2, 1, 0.65, 0.35, true);
   S.container('garage', 83.4, 18);
   F.boxes(p.at(52, 22), rand, 3);
 
   // Airliners: one at the gate, one parked on the apron; one broke up on the runway.
-  if (!aircraft(S, 'airliner', p.at(-28, -10, 0), rand)) airliner(S, p.at(-28, -10, 0), 0x2a4a8a);
-  if (!aircraft(S, 'airliner', p.at(-64, -4, 1), rand)) airliner(S, p.at(-64, -4, 1), 0x8a2a2a);
+  aircraft(S, 'airliner', p.at(-28, -10, 0), rand);
+  aircraft(S, 'airliner', p.at(-64, -4, 1), rand);
   const crash = p.at(42, -38).tipped(0.35, 0, 0.22, 0);
-  if (!aircraft(S, 'airliner', crash, rand)) airliner(S, crash, 0x2a6a4a);
-  const tail = p.at(70, -42).tipped(1.4, 0, -0.5, 0);
-  tail.cyl(WHITE, 0, 1.6, 0, 1.9, 9, 'busPaint', Math.PI / 2);
-  tail.box(WHITE, 0, 2.6, -3, 0.35, 4.2, 3.6, 'busPaint');
-  p.at(28, -30).tipped(-0.6, 0, 0, 0).rbox(WHITE, 0, 0.3, 0, 12, 0.35, 4, 0, 0, 0.08, 'busPaint');
+  aircraft(S, 'airliner', crash, rand);
   for (const [x, z, s] of [
     [42, -38, 10],
     [58, -40, 7],
     [30, -32, 5],
   ] as const) p.decal('decalSoot', x, z, s, rand);
-  for (let k = 0; k < 10; k++) p.rbox(0x8a8e92, 30 + rand() * 40, 0.08, -46 + rand() * 16, 0.4 + rand() * 1.2, 0.08, 0.3 + rand() * 0.8, rand() * 6, 0, 0, 'metal');
 }
 
 // ── Military base ────────────────────────────────────────────────────────────
@@ -374,11 +263,9 @@ export function militaryBase(S: Site, rand: Rand): void {
     [-L + 3, L - 3],
     [L - 3, L - 3],
   ]) watchtower(S, x, z);
-  p.box(0x8a8a7a, 9, 0, L - 4, 2.4, 2.6, 2.4, 'plaster', true);
-  p.box(0x2a3036, 9, 1.2, L - 2.78, 1.8, 0.9, 0.02, 'glass');
-  p.box(0x4a4c40, 9, 2.6, L - 4, 2.8, 0.15, 2.8, 'roof');
+  p.model('guardBooth', rand, 9, 0, L - 4, 0, 1, 0.72, 0.25, true);
   for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xc8c4b8 : 0x9a2a22, -5 + k * 1.75, 1.0, L + 0.4, 1.75, 0.14, 0.14, 'metal');
-  for (const x of [-9, 12]) for (let k = 0; k < 4; k++) p.box(0x8a7a5a, x + (k % 2) * 0.8, Math.floor(k / 2) * 0.35, L - 1.2, 0.75, 0.35, 0.45, 'rubber', true);
+  for (const x of [-9, 12]) sandbags(p, x, L - 1.2, 1.6, rand);
   // Roads inside: from the gate to the hangar apron.
   S.slab(0x4a4c4e, -4, -6, 4, L, 0, 0.03, 'concrete');
   S.slab(0x4a4c4e, -56, -6, 56, 2, 0, 0.03, 'concrete');
@@ -400,9 +287,7 @@ export function militaryBase(S: Site, rand: Rand): void {
       const x = -49 + k * 6.2;
       if (Math.abs(x + 32) < 2) continue;
       F.bed(p.at(x, z0 + 0.3, 0), rand, 0.9, rand() < 0.5);
-      p.box(0x4a4e3e, x, 1.0, z0 + 1.3, 0.95, 0.08, 2.0, 'metal');
-      p.box(0x6a6e5a, x, 1.08, z0 + 1.3, 0.9, 0.12, 1.9, 'rubber');
-      p.box(0x5a5e4a, x + 1.6, 0, z0 + 0.35, 0.8, 1.9, 0.5, 'metal', true);
+      p.model('locker', rand, x + 1.6, 0, z0 + 0.35, 0, 1, 0.55, 0.45, true);
       S.container('militaryLocker', x + 1.6, z0 + 1.0);
     }
   }
@@ -429,10 +314,7 @@ export function militaryBase(S: Site, rand: Rand): void {
   S.roof(-20, -54, -6, -24, 5, 0x6a6c66, 0x8a8c86, 0x4a4c46);
   for (const z of [-50, -44, -38, -32]) {
     for (const x of [-17, -9]) {
-      if (!p.model('supplyCrate', rand, x, 0, z, 0, 1.35, 0.78, 0.15, true)) {
-        p.box(0x4a4e3e, x, 0, z, 2.6, 0.12, 1.2, 'wood', true);
-        for (let k = 0; k < 2; k++) p.box(0x4e5438, x, 0.12 + k * 0.6, z, 2.2, 0.55, 1.0, 'wood');
-      }
+      p.model('supplyCrate', rand, x, 0, z, 0, 1.35, 0.78, 0.15, true);
       // The front row is the base's armoury: rifles, rounds, the only RPGs.
       S.container(z === -50 ? 'baseArmory' : 'militaryCrate', x, z + 0.9);
     }
@@ -448,12 +330,12 @@ export function militaryBase(S: Site, rand: Rand): void {
   vehicleModel(S, 'tank', -30, -50, 0.1, rand);
   vehicleModel(S, 'apc', 18, 46, -Math.PI / 2 + 0.2, rand);
 
-  // Hangar with two fighters; the transport plane on its apron.
+  // Hangar with two fighters; heavy aircraft on the apron.
   hangar(S, 10, -36, 54, -12, 9, 'z1');
-  if (!aircraft(S, 'fighter', p.at(22, -24, 0), rand)) fighter(S, p.at(22, -24, 0));
-  if (!aircraft(S, 'fighter', p.at(42, -26, 0), rand)) fighter(S, p.at(42, -26, 0));
+  aircraft(S, 'fighter', p.at(22, -24, 0), rand);
+  aircraft(S, 'fighter', p.at(42, -26, 0), rand);
   S.slab(0x4a4c4e, 8, -12, 56, 22, 0, 0.032, 'concrete');
-  transport(S, p.at(32, 6, 1));
+  aircraft(S, 'airliner', p.at(32, 6, 1), rand);
 
   // Helipad with its H, two helicopters.
   S.slab(0x5a5c5e, 24, 28, 50, 54, 0, 0.034, 'concrete');
@@ -462,8 +344,8 @@ export function militaryBase(S: Site, rand: Rand): void {
     [41, 41, 0.8, 7],
     [37, 41, 8, 0.8],
   ]) p.box(0xd8d4c8, x, 0.036, z, w, 0.005, d, 'asphalt');
-  if (!aircraft(S, 'heliMil', p.at(30, 35, 0).tipped(0.4), rand)) helicopter(S, p.at(30, 35, 0).tipped(0.4));
-  if (!aircraft(S, 'heliMil', p.at(45, 49, 1), rand)) helicopter(S, p.at(45, 49, 1));
+  aircraft(S, 'heliMil', p.at(30, 35, 0).tipped(0.4), rand);
+  aircraft(S, 'heliMil', p.at(45, 49, 1), rand);
 
   // Parade ground with the flagpole.
   S.slab(0x5a5c5e, -48, -8, -16, 8, 0, 0.032, 'concrete');

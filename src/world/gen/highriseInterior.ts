@@ -1,5 +1,5 @@
 import { mulberry32 } from '../../core/random';
-import { FACADE_BAY, FACADE_WINDOW } from '../../render/look/surfaces';
+import { FACADE_BAY } from '../../render/look/surfaces';
 import * as F from './furniture';
 import { Place, type Quarter, type ShopKind } from './furniture';
 import {
@@ -7,7 +7,6 @@ import {
   CORE_W,
   CORRIDOR,
   DOOR_W,
-  ENTRANCE_W,
   FLIGHT_W,
   FLOOR_H,
   groundDecal,
@@ -20,7 +19,6 @@ import {
   RUN,
   STEPS,
   wallDecalZ,
-  windowXs,
 } from './highrise';
 import { LIFE } from './lifeKinds';
 import { hash3 } from './noise';
@@ -74,7 +72,6 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
   // A generator somewhere in the basement still feeds a few corridor lamps.
   const powered = r0() < 0.3;
   const office = desc.kind === 'offices';
-  const wins = windowXs(desc);
   const lit = litUnits(desc);
   const rise = FLOOR_H / 2 / STEPS;
   const step = RUN / STEPS;
@@ -107,14 +104,14 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     // Painted storey number by the landing.
     b.block(0xb0aa98, L.cx1 + 0.16, y + 1.4, L.cz0 + NEAR + 0.2, 0.02, 0.4, 0.3, 'plaster');
 
-    if (k === 0) lobby(b, L, desc, h, rs, rf, paperA, wins);
-    else corridorStorey(b, L, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, wins, powered, lit.filter((l) => l.k === k));
+    if (k === 0) lobby(b, L, desc, h, rs, rf, paperA);
+    else corridorStorey(b, L, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, powered, lit.filter((l) => l.k === k));
   }
   b.setIdBase(null);
   b.endFrame();
 }
 
-function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf: Rand | null, paper: number, wins: number[]): void {
+function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf: Rand | null, paper: number): void {
   const shop = groundShop(desc);
   if (shop) {
     // Shop walls: along Z at its edge (a door into the lobby), along X on the corridor line.
@@ -128,7 +125,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
     if (rf) shopInterior(b, L.ix0, L.iz0, sx, L.czA - 0.12, shop.kind, rf);
   }
   // Back units at street level: storerooms off the corridor.
-  backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, wins, []);
+  backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, []);
   if (!rf) return;
 
   // Concierge desk facing the doors (kept clear of elevator & side walls), mailboxes on the side wall, the dead elevator by the stairs.
@@ -138,18 +135,13 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   }
   F.mailboxes(new Place(b, L.ix1, 0, L.iz0 + 1.8, 3), rf);
   F.elevator(new Place(b, L.cx1 + 1.5, 0, L.cz0, 2), rf);
-  // Potted plants either side of the entrance, a bench along a clear stretch of wall.
-  for (const side of [-1, 1]) F.plant(new Place(b, L.doorX + side * (ENTRANCE_W / 2 + 0.5), 0, L.iz0 + 0.45), rf, rf() < 0.3);
-  if (!shop && L.doorX - L.ix0 > 3.2) F.bench(new Place(b, L.ix0, 0, L.iz0 + 1.6, 1), rf, rf() < 0.3);
   // Residents who never made it out of the lobby with their luggage.
   const bags = Math.floor(rf() * 3);
   for (let n = 0; n < bags; n++) F.suitcase(new Place(b, L.doorX + (rf() - 0.5) * 3, 0, L.iz0 + 4.5 + rf() * 1.5, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
-  F.papers(new Place(b, L.doorX, 0, L.iz0), rf, -3, 1, 3, 6, 10);
   if (rf() < 0.7) groundDecal(b, 'decalSoot', L.doorX + (rf() - 0.5) * 4, 0.05, L.iz0 + 2 + rf() * 4, 2.2, rf, 1.3);
-  groundDecal(b, 'decalLitter', L.doorX - 2 + rf() * 4, 0.05, L.iz0 + 1.5 + rf() * 5, 2.0, rf);
 }
 
-function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], powered: boolean, lit: LitUnit[]): void {
+function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, powered: boolean, lit: LitUnit[]): void {
   // Front units between the facade and the corridor.
   const skins = ['plaster', 'concrete', 'facadeBrick', 'wood'] as const;
   const wallSkinA = skins[Math.abs(paperA) % skins.length];
@@ -173,21 +165,18 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     b.blockY(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
-      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, wins, paperA, light);
+      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, paperA, light);
     }
   }
-  backUnits(b, L, y, h, paperB, mode, rs, rf, wins, lit);
+  backUnits(b, L, y, h, paperB, mode, rs, rf, lit);
   if (!rf) return;
-  // Corridor: ceiling lamps (a few flicker on the generator), litter, a lost bag, bullet holes.
+  // Corridor: ceiling lamps (a few flicker on the generator), bullet holes, a lost bag.
   const cz = L.czA + CORRIDOR / 2;
   for (let x = L.ix0 + 2.5; x < L.ix1 - 1; x += 5) {
     b.block(0xd8d8d0, x - 0.6, y + h - 0.06, cz - 0.06, 1.2, 0.05, 0.12, 'lamp');
     if (powered && rf() < 0.5) b.life(1, x, y + h - 0.07, cz, 0, 0, 1.2, h - 0.07, rf());
   }
-  if (rf() < 0.35) groundDecal(b, 'decalLitter', L.ix0 + 2 + rf() * (width - 4), y, cz, 1.5, rf, 1.8);
-  if (rf() < 0.5) groundDecal(b, 'decalLitter', L.ix0 + 2 + rf() * (width - 4), y, cz, 1.6, rf);
   if (rf() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 0.8, y + 1.3, L.czA, 1.1, 1);
-  F.papers(new Place(b, L.ix0, y, L.czA), rf, 1, 0.2, width - 1, CORRIDOR - 0.2, 2 + Math.floor(rf() * 5));
   if (rf() < 0.25) F.suitcase(new Place(b, L.ix0 + 4 + rf() * (width - 8), y, cz - 0.3, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.5);
 }
 
@@ -201,7 +190,7 @@ function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, 
   b.door(gx, hz, y, 0, st === 'barricaded' ? -swing : swing, planked, { open });
 }
 
-function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, wins: number[], lit: LitUnit[]): void {
+function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[]): void {
   const x0 = L.cx1 + 0.15;
   const width = L.ix1 - x0;
   if (width < 4) return;
@@ -220,7 +209,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
     b.blockY(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
-    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, wins, paper, light);
+    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, paper, light);
   }
 }
 
@@ -228,17 +217,15 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
  * One apartment, office or storeroom. Authored in a unit frame: the far wall (facade, windows) at
  * z = 0, the door in the middle of the wall at z = d, x across the unit.
  */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, wins: number[], paper: number, light?: LitUnit): void {
+function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, light?: LitUnit): void {
   const w = x1 - x0;
   const d = z1 - z0;
   const cx = (x0 + x1) / 2;
   const U = new Place(b, cx, y, front ? z0 : z1, front ? 0 : 2);
-  const lwin = wins.map((x) => (front ? x - cx : cx - x)).filter((x) => Math.abs(x) < w / 2 - 0.6);
   if (st === 'burnt') {
-    // Burnt out: soot, a charred heap where the furniture was burnt for warmth.
+    // Burnt out: soot patches on the floor.
     U.decal('decalSoot', (rf() - 0.5) * w * 0.4, d * 0.5, 2.2, rf, 1.3);
     U.decal('decalSoot', (rf() - 0.5) * w * 0.6, d * 0.3, 1.6, rf);
-    for (let i = 0; i < 4; i++) U.rbox(0x1e1a16, (rf() - 0.5) * 0.8, 0.05, d * 0.5 + (rf() - 0.5) * 0.8, 0.9, 0.06, 0.1, rf() * 3, 0, 0.2, 'wood');
     return;
   }
   if (light) {
@@ -251,21 +238,20 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   }
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);
-  else apartment(U, w, d, h, st, rf, lwin, paper, cx, front);
+  else apartment(U, w, d, h, st, rf, paper, cx, front);
   // A leak: water dripping from the ceiling somewhere in the unit.
   // (The ground floor's slab is 5 cm thick on top of y; upper ones end at y.)
   if (U.chance(0, 0, 68) < 0.28) U.life(LIFE.drip, (U.chance(0, 0, 69) - 0.5) * w * 0.6, h, d * (0.25 + U.chance(0, 0, 70) * 0.5), 0, y === 0 ? h - 0.05 : h, U.chance(0, 0, 71));
   if (st === 'barricaded') F.barricade(U.at(0, d, 2), rf);
 }
 
-function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, lwin: number[], paper: number, cx: number, front: boolean): void {
+function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, paper: number, cx: number, front: boolean): void {
   const messy = st === 'ransacked';
   const fled = st === 'fled';
   const open = () => messy || (fled && rf() < 0.6);
   const s = rf() < 0.5 ? -1 : 1;
   const face = (side: number): Quarter => (side > 0 ? 1 : 3);
   const radio = (st === 'lived' || fled) && rf() < 0.15;
-  const spec = FACADE_WINDOW.apartments;
   // The kitchen: a dripping tap; flies over what was left behind.
   const kitchenLife = (K: Place, len: number) => {
     if (K.chance(0, 0, 64) < 0.35) K.life(LIFE.tap, -len / 2 + 0.5, 1.0, 0.12, 0, 0, K.chance(0, 0, 65));
@@ -273,7 +259,6 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   };
   // Now and then a phone rings in the empty flat.
   if (U.chance(0, 0, 72) < 0.05) U.life(LIFE.phone, 0, 0.8, d * 0.5, 0, 0, U.chance(0, 0, 73));
-  for (const lx of lwin) if (rf() < 0.75) F.curtains(U.at(lx, 0), rf, spec.width, spec.sill, spec.head);
 
   // Find a FACADE_BAY pier inside this apartment so the bedroom/living-room wall never splits a window.
   const basePier = Math.round(cx / FACADE_BAY) * FACADE_BAY;
@@ -301,12 +286,10 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     F.wardrobe(U.at(partX + s * 0.06, dz - 1.0, face(s)), rf, open());
     F.painting(U.at(s * w / 2, Math.min(dz - 0.5, 2.8), face(-s)), rf, 1.5, messy && rf() < 0.5);
     if (fled || messy) F.suitcase(U.at(bx, 2.55), rf, rf() < 0.6);
-    else F.rug(U.at(bx, 2.2), rf, 0.4, 1.4, 0.8);
 
     // Living room.
     const sofaP = U.at(-s * w / 2, dz * 0.5, face(s));
     F.sofa(sofaP, rf, 2.0, messy);
-    F.rug(sofaP, rf, 1.35, 1.9, 1.3);
     F.coffeeTable(sofaP.at(0, 1.05), rf, messy && rf() < 0.6);
     F.painting(sofaP, rf, 1.55, messy && rf() < 0.4);
     const tvDown = messy && rf() < 0.6;
@@ -315,8 +298,6 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     // The power is still on here: the set was left on, showing static.
     if (st === 'lived' && !tvDown && U.chance(0, 0, 61) < 0.6) tvP.life(LIFE.tv, 0, 0.75, 0.49, 0.5, 0.38, U.chance(0, 0, 62));
     F.bookcase(U.at(-s * (w / 2 - 0.55), 0), rf, messy);
-    F.floorLamp(sofaP.at(1.25, 0.3), rf, messy && rf() < 0.6);
-    F.plant(U.at(-s * (w / 2 - 0.35), dz - 0.45), rf, messy && rf() < 0.5);
 
     // Kitchen.
     const kz = dz + 0.12;
@@ -352,49 +333,29 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   // By the door (only on solid wall away from the doorway): luggage, moving boxes.
   if (fled && rf() < 0.7) F.suitcase(U.at(-s * 1.1, d - 0.75, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
   if (rf() < (fled ? 0.4 : 0.2)) F.boxes(U.at(s * 2.1, d, 2), rf, 2 + Math.floor(rf() * 2));
-  if (messy) {
-    F.clothesPile(U, rf, (rf() - 0.5) * w * 0.6, d * 0.5, 4);
-    F.papers(U, rf, -w / 2 + 0.4, 0.4, w / 2 - 0.4, d - 0.4, 8);
-    U.decal('decalLitter', (rf() - 0.5) * w * 0.5, d * 0.6, 1.6, rf);
-  } else if (rf() < 0.3) {
-    U.decal('decalLitter', (rf() - 0.5) * w * 0.5, d * (0.3 + rf() * 0.4), 1.3, rf);
-  }
 }
 
 function officeUnit(U: Place, w: number, d: number, st: UnitState, rf: Rand): void {
   const messy = st === 'ransacked';
   const open = messy || st === 'fled';
   if (d >= 7) {
-    // Two columns of cubicles facing the door, a partition down the middle.
-    let rows = 0;
+    // Two columns of desks facing the door.
     for (const side of [-1, 1]) {
       const lx = side * (w / 4);
-      rows = 0;
       for (let zz = 1.1; zz + 2.0 < d - 1.0; zz += 2.3) {
-        F.partition(U.at(lx, zz - 0.05), w / 2 - 0.5);
         F.desk(U.at(lx, zz), rf, open && rf() < 0.6, messy && rf() < 0.5);
         F.officeChair(U.at(lx - 0.15, zz + 1.15, 2), rf, messy && rf() < 0.5);
-        rows++;
       }
     }
-    if (rows > 0) F.partition(U.at(0, 1.05 + (rows * 2.3) / 2, 1), rows * 2.3 - 0.4);
     F.filingCabinet(U.at(-w / 2 + 0.35, 0), rf, open && rf() < 0.5);
     F.filingCabinet(U.at(w / 2 - 0.35, 0), rf, open && rf() < 0.5);
-    F.printer(U.at(-w / 2, d - 1.2, 1), rf);
-    F.waterCooler(U.at(w / 2, d - 1.0, 3), rf);
-    F.plant(U.at(w / 2 - 0.35, d - 1.9), rf, messy && rf() < 0.5);
   } else if (rf() < 0.6) {
-    // Meeting room: a table, chairs, a whiteboard with a plan nobody followed.
+    // Meeting room: a table, chairs, cabinet.
     F.diningTable(U.at(0, d / 2), rf, 4, messy);
-    const wb = U.at(-w / 2, d / 2, 1);
-    wb.box(0xd8d8d0, 0, 0.9, 0.02, 1.6, 1.0, 0.03, 'plaster');
-    F.notes(wb, rf, 2);
     F.filingCabinet(U.at(w / 2 - 0.35, 0), rf, open);
   } else {
     storageUnit(U, w, d, rf);
   }
-  F.papers(U, rf, -w / 2 + 0.3, 0.3, w / 2 - 0.3, d - 0.3, messy ? 22 : 5);
-  if (messy || rf() < 0.4) U.decal('decalLitter', (rf() - 0.5) * w * 0.5, d * 0.5, 2, rf);
 }
 
 function storageUnit(U: Place, w: number, d: number, rf: Rand): void {
@@ -402,11 +363,9 @@ function storageUnit(U: Place, w: number, d: number, rf: Rand): void {
   F.boxes(U.at(w / 4, 0), rf, 2);
   F.shopShelf(U.at(-w / 2, d / 2, 1), rf, Math.min(2.4, d - 1.4), 'grocery', true);
   const cx = w / 2 - 0.6;
-  if (!U.model('woodenCrate', rf, cx, 0, d / 2, 0, 1.0, 0.8, 0.1, true)) {
-    U.box(PAL.crate, cx, 0, d / 2, 0.8, 0.7, 0.8, 'wood', true);
-  }
+  U.resetBounds();
+  U.model('woodenCrate', rf, cx, 0, d / 2, 0, 1.0, 0.8, 0.1, true);
   U.container('crate', cx - 0.7, d / 2);
-  F.papers(U, rf, -w / 2 + 0.5, 0.5, w / 2 - 0.5, d - 0.5, 3);
 }
 
 /** Street-level shop: x0..x1 along the facade, z0 (shop windows) .. z1 (back wall). */
@@ -431,14 +390,8 @@ function shopInterior(b: Builder, x0: number, z0: number, x1: number, z1: number
     for (let lz = 2.2; lz < d - 1.0; lz += 1.9) for (const lx of [-w / 4, w / 4]) F.cafeTable(S.at(lx, lz), rf, messy);
     F.cooler(left(z1 - 1.4), rf);
   } else {
-    for (let z = z0 + 0.9; z < z1 - 1.0; z += 0.7) F.washer(left(z), rf, rf() < 0.3);
+    for (let z = z0 + 0.9; z < z1 - 1.0; z += 1.5) F.washer(left(z), rf, rf() < 0.3);
     const T = S.at(0.6, d * 0.55);
-    T.box(0x8a8070, 0, 0.8, 0, 1.6, 0.04, 0.7);
-    T.box(0x3a3a3a, -0.7, 0, 0, 0.05, 0.8, 0.6, 'metal');
-    T.box(0x3a3a3a, 0.7, 0, 0, 0.05, 0.8, 0.6, 'metal');
-    T.solid(0, 0, 1.6, 0.7, 0.85);
-    F.clothesPile(T, rf, 0, 0.7, 3);
+    F.diningTable(T, rf, 0, false);
   }
-  F.papers(S, rf, -w / 2 + 0.4, 0.9, w / 2 - 0.4, d - 0.4, messy ? 10 : 3);
-  if (messy) S.decal('decalLitter', (rf() - 0.5) * w * 0.4, d * 0.5, 2.2, rf, 1.3);
 }

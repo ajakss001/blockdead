@@ -1,4 +1,4 @@
-import { type BufferGeometry, CylinderGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
+import { type BufferGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/random';
 import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
@@ -292,9 +292,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     for (let x = a; x < c - 1; x += 3) panes.push({ x, w: Math.min(2.8, c - x), broken: rand() < 0.4 });
   }
   const roll = rand();
-  const entrance: 'doors' | 'smashed' | 'boarded' = roll < 0.55 ? 'doors' : roll < 0.85 ? 'smashed' : 'boarded';
-  // A boarded-up entrance still leaves a way in: one shop window is always smashed.
-  if (entrance === 'boarded' && panes.length > 0 && !panes.some((p) => p.broken)) panes[Math.floor(rand() * panes.length)].broken = true;
+  const entrance: 'doors' | 'smashed' = roll < 0.7 ? 'doors' : 'smashed';
 
   // Front wall: storeys 1+ in one slab; the ground floor in segments between the openings
   // (entrance: full height to the lintel; smashed shop windows: over a low sill you can step across).
@@ -364,21 +362,6 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.blockY(0x77756e, L.x0, top, L.cz0, WALL, H + hh - top, L.z1 - L.cz0, 'concrete');
   b.blockY(0x77756e, L.x0, top, L.z1 - WALL, L.cx1 - L.x0 + 0.15, H + hh - top, WALL, 'concrete');
   b.block(0x5a5852, L.cx0 - 0.1, H + hh, L.cz0 - 0.2, L.cx1 - L.cx0 + 0.35, 0.15, L.cz1 - L.cz0 + 0.25, 'concrete');
-  // Rooftop clutter: AC units, a water tank.
-  for (let n = 0; n < 3; n++) {
-    const ax = L.cx1 + 2 + rand() * Math.max(1, L.ix1 - L.cx1 - 5);
-    const az = L.iz0 + 1 + rand() * Math.max(1, L.cz0 - L.iz0 - 4);
-    b.block(0x6a6e70, ax, H, az, 1.4, 1.0, 1.0, 'metal');
-    b.solid(ax, az, ax + 1.4, az + 1.0, H, H + 1.0);
-  }
-  if (rand() < 0.6) {
-    const tank = new CylinderGeometry(1.1, 1.1, 2.2, 10);
-    const tx = L.x0 + desc.w * 0.7;
-    const tz = L.z0 + desc.d * 0.3;
-    b.geo(tank, 0x5a4a3a, _m.compose(_p.set(tx, H + 1.1, tz), _q.identity(), _s.set(1, 1, 1)), 'metal');
-    b.solid(tx - 1.1, tz - 1.1, tx + 1.1, tz + 1.1, H, H + 2.2);
-    tank.dispose();
-  }
 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
   for (const { x, w: pw, broken } of panes) {
@@ -402,24 +385,15 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, height: ENTRANCE_H, style, open, pair: 1 });
     b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, height: ENTRANCE_H, style, open, pair: -1 });
     b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
-  } else if (entrance === 'smashed') {
+  } else {
     // The doors are gone: glass on the ground, an open way in.
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
-  } else {
-    // Boarded up from outside: planks nailed across the frame, impassable.
-    for (let k = 0; k < 5; k++) {
-      const y = 0.25 + k * 0.48 + (rand() - 0.5) * 0.1;
-      b.block(0x6a5a42, d0 - 0.12, y, L.z0 - 0.06, ENTRANCE_W + 0.24, 0.18, 0.05, 'wood');
-    }
-    b.block(0x161412, d0, 0, L.z0 + 0.05, ENTRANCE_W, ENTRANCE_H, 0.05, 'wood');
-    b.solid(d0, L.z0 - 0.08, d1, L.z0 + WALL);
   }
   b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
   b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
   b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'metal');
   b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'metal');
-  if (rand() < 0.35) groundDecal(b, 'decalLitter', L.doorX + (rand() - 0.5) * 3, 0, L.z0 - 1.5 - rand() * 2, 1.6, rand);
   const shop = groundShop(desc);
   if (shop) {
     // The shop's own sign panel (a color per trade, no names); a pale cross for the pharmacy.
@@ -435,12 +409,10 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
 }
 
 /**
- * World life on the facade (own random stream, so the rest of the block stays as it was): a window
- * or two still lit by someone's generator or candles, flickering; curtains blowing out of broken
- * windows. Rendered by WorldLife (one draw call each kind for the whole world).
+ * World life on the facade: lit windows (flickering by room). Rendered by WorldLife (one draw call
+ * for the whole world).
  */
 function shellLife(b: Builder, desc: BuildingDesc, L: Local): void {
-  const r = mulberry32(hash3(desc.seed, 7, 505));
   const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
   const wins = windowXs(desc);
   if (wins.length === 0 || desc.floors < 3) return;
@@ -454,14 +426,6 @@ function shellLife(b: Builder, desc: BuildingDesc, L: Local): void {
     for (const x of wins) if (x > span.x0 + 0.3 && x < span.x1 - 0.3) b.life(0, x, y, lu.back ? L.z1 + 0.03 : L.z0 - 0.03, 0, lu.back ? 1 : -1, ww, wh, lu.mode, lu.tag);
     const corner = span.x0 - L.ix0 < 0.5 ? -1 : L.ix1 - span.x1 < 0.5 ? 1 : 0;
     if (corner) for (const z of side) if (z > span.z0 + 0.3 && z < span.z1 - 0.3) b.life(0, corner < 0 ? L.x0 - 0.03 : L.x1 + 0.03, y, z, corner, 0, ww, wh, lu.mode, lu.tag);
-  }
-  if (desc.kind !== 'apartments') return;
-  for (let n = 0; n < 3; n++) {
-    if (r() > 0.55) continue;
-    const k = 1 + Math.floor(r() * (desc.floors - 1));
-    const back = r() < 0.5;
-    const x = pick(r, wins) + (r() - 0.5) * spec.width * 0.5;
-    b.life(2, x, k * FLOOR_H + spec.head - 0.05, back ? L.z1 + 0.05 : L.z0 - 0.05, 0, back ? 1 : -1, 0.55 + r() * 0.35, 1.3 + r() * 0.8, r());
   }
 }
 

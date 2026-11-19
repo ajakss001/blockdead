@@ -1,9 +1,10 @@
 import { Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
-import { pickModel } from '../models';
-import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
+import { buildCar, CAR_PAINTS } from '../props/car';
+import { sandbags, stripedBarrier } from './chaos';
+import { Place } from './furniture';
 import { groundDecal } from './highrise';
 import { LIFE, spotHash } from './lifeKinds';
-import { type Builder, PAL, pick, type Rand } from './pieces';
+import { type Builder, pick, type Rand } from './pieces';
 
 /**
  * Environmental storytelling: the street remembers the day it fell. Traffic jams of people who
@@ -91,38 +92,18 @@ export function carIntoPole(b: Builder, px: number, pz: number, toward: number, 
 }
 
 /**
- * Army checkpoint that did not hold: sandbag walls, striped barriers, ammo crates, the street around it
- * covered in litter and the scorch marks of burn barrels.
+ * Army checkpoint that did not hold: sandbag walls, striped barriers, supply crate, scorch marks.
  */
 export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void {
-  const sand = 0x7a6e56;
-  for (const [dx, dz, w, d] of [
-    [-3.5, -1.2, 2.6, 0.7],
-    [1.2, -1.4, 2.4, 0.7],
-    [-3.6, 1.0, 0.7, 2.0],
-  ] as const) {
-    b.block(sand, cx + dx, 0, cz + dz, w, 0.45, d, 'rubber', true);
-    b.block(sand, cx + dx + 0.1, 0.45, cz + dz + 0.05, w - 0.2, 0.4, d - 0.1, 'rubber');
-  }
-  // Striped barriers (two half-blocked lanes).
-  for (const dx of [-1.2, 2.6]) {
-    b.block(0xb0aa98, cx + dx, 0.75, cz + 2.2, 2.0, 0.22, 0.1, 'metal');
-    for (let s = 0; s < 4; s++) b.block(0x7a2a22, cx + dx + 0.1 + s * 0.5, 0.75, cz + 2.19, 0.22, 0.22, 0.12, 'metal');
-    b.block(PAL.metal, cx + dx, 0, cz + 2.2, 0.08, 0.95, 0.08, 'metal', true);
-    b.block(PAL.metal, cx + dx + 1.92, 0, cz + 2.2, 0.08, 0.95, 0.08, 'metal', true);
-  }
-  const crateM = pickModel(modelLibrary(), 'supplyCrate', rand());
-  if (crateM) {
-    const cx0 = cx - 0.1;
-    const cz0 = cz - 2.3;
-    placeModel(b.batch, crateM, _m.makeTranslation(cx0, 0, cz0), null, undefined, 0.78, 0.15);
-    b.solid(cx0 - crateM.size[0] / 2, cz0 - crateM.size[2] / 2, cx0 + crateM.size[0] / 2, cz0 + crateM.size[2] / 2, 0, crateM.size[1]);
-    b.container('militaryCrate', cx0, cz0 + crateM.size[2] / 2 + 0.35);
-  } else {
-    b.block(0x3e4a34, cx - 0.6, 0, cz - 2.6, 1.0, 0.5, 0.6, 'wood', true);
-    // The checkpoint's own box: army kit (the glasses and shemaghs of the men who held it).
-    b.container('militaryCrate', cx - 0.1, cz - 1.9);
-  }
-  for (let i = 0; i < 3; i++) groundDecal(b, 'decalLitter', cx + (rand() - 0.5) * 8, 0, cz + (rand() - 0.5) * 8, 2.4, rand);
+  const A = new Place(b, cx, 0, cz, 0);
+  sandbags(A, -2.2, -1.2, 2.6, rand);
+  sandbags(A, 2.4, -1.4, 2.4, rand);
+  sandbags(A.at(-3.6, 2.0, 1), 0, 0, 2.0, rand);
+  stripedBarrier(A, -0.2, 2.2, 2.0);
+  stripedBarrier(A, 3.6, 2.2, 2.0);
+  const cp = new Place(b, cx - 0.1, 0, cz - 2.3, 0);
+  cp.resetBounds();
+  cp.model('supplyCrate', rand, 0, 0, 0, 0, 1, 0.78, 0.15, true);
+  cp.container('militaryCrate', 0, 0.55);
   for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

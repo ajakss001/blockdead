@@ -76,10 +76,6 @@ export function lab(S: Site, rand: Rand): void {
   p.box(0x9a2a22, 0, 1.0, LOT, 6.6, 0.12, 0.12, 'metal');
   if (p.model('guardBooth', rand, 5.5, 0, LOT - 2.4, 0, 1, 0.72, 0.25)) {
     p.solid(5.5, LOT - 2.4, 2.5, 2.4, 2.4);
-  } else {
-    p.box(0x8a8a84, 5.5, 0, LOT - 2.4, 2.2, 2.6, 2.2, 'plaster', true);
-    p.box(0x2a3036, 5.5, 1.2, LOT - 1.29, 1.6, 0.9, 0.02, 'glass');
-    p.box(0x4a4c4e, 5.5, 2.6, LOT - 2.4, 2.6, 0.15, 2.6, 'roof');
   }
   for (let x = -16; x <= 16; x += 3) p.box(0xd8d4c8, x, 0.03, 16, 0.1, 0.005, 4.5, 'asphalt');
   S.car(-14, 16, Math.PI / 2, rand);
@@ -109,13 +105,9 @@ export function lab(S: Site, rand: Rand): void {
   S.wallZ(inner, 0, Z1, 6, H, [{ at: 4, w: 1.0, h: 2.1 }]);
   S.doorZ(6, 4);
   S.wallX(inner, X0, X1, 0, H, [{ at: 0, w: 1.8, h: 2.3 }]);
-  // Lobby: the reception desk (the institute's booklet on it), benches.
-  p.box(0x4a5458, 0, 0, 2.2, 4.4, 1.05, 0.7, 'wood', true);
-  p.box(0xb8bcb8, 0, 1.05, 2.2, 4.6, 0.05, 0.9, 'plaster');
+  // Lobby: the reception desk (the institute's booklet on it).
+  p.model('receptionDesk', rand, 0, 0, 2.2, 0, 1.3, 0.78, 0.15, true);
   S.container('reception', 0, 1.6, ['labJournal1']);
-  F.bench(p.at(-4, 6.8, 2), rand);
-  F.bench(p.at(4, 6.8, 2), rand);
-  F.papers(p, rand, -5, 1, 5, 7, 5);
   // Security: monitors on a desk, staff lockers — one with the green card and the guard's log.
   F.desk(p.at(-15, 6.6, 2), rand, false, true);
   S.retype('labDesk');
@@ -125,9 +117,6 @@ export function lab(S: Site, rand: Rand): void {
     const x = -19 + k * 1.1;
     if (p.model('locker', rand, x, 0, 0.45, 0, 1, 0.55, 0.45)) {
       p.solid(x, 0.45, 0.6, 0.5, 2.0);
-    } else {
-      p.box(0x6a7a84, x, 0, 0.45, 1.0, 2.0, 0.5, 'metal', true);
-      p.box(0x5a6a74, x, 0.05, 0.71, 0.96, 1.9, 0.02, 'metal');
     }
     S.container('labLocker', x, 1.1, k === cardLocker ? ['keycardGreen', 'labNote1'] : undefined);
   }
@@ -173,11 +162,7 @@ export function lab(S: Site, rand: Rand): void {
     }
     if (placed) {
       p.solid(-12, z, 9, 1.2, 0.9);
-    } else {
-      p.box(0xd8d8d4, -12, 0, z, 9, 0.9, 1.2, 'tile', true);
-      p.box(0x2a2c2e, -12, 0.9, z, 9.1, 0.04, 1.3, 'metal');
     }
-    for (let x = -16; x <= -8; x += 1.3) p.cyl(0x8aa4ac, x + rand() * 0.4, 1.06, z + (rand() - 0.5) * 0.6, 0.06, 0.24, 'glass');
     S.container('labBench', -12, z + 0.9, k === keyBench ? ['fuse', 'labNote2', 'labJournal2'] : undefined);
   });
   for (const x of [-18, -14.5]) {
@@ -212,7 +197,7 @@ export function lab(S: Site, rand: Rand): void {
   p.cyl(0x3a3a3a, 11.2, 2.2, -9, 0.15, 1.6, 'metal');
   S.container('generator', 13, -8.4);
   p.box(0x2a2c2e, 8, 2.9, -9, 0.1, 0.1, 6, 'metal');
-  p.box(0x5a6a74, 19.4, 0, -5, 0.6, 2.0, 1.2, 'metal', true);
+  p.model('locker', rand, 19.4, 0, -5, Math.PI * 1.5, 1, 0.55, 0.45, true);
   S.container('labTools', 18.6, -5, ['fuse']);
 
   // Isolation ward (z −22…−12): a corridor along the door, four cells behind glass, beds; the
@@ -223,16 +208,14 @@ export function lab(S: Site, rand: Rand): void {
     // Glass front with a doorway.
     p.box(0x8a9298, cx - 2.6, 0, -16, 4.8, 0.9, 0.12, 'metal', true);
     if (!broken.includes(cx)) p.box(0x6a7a84, cx - 2.6, 0.9, -16, 4.8, 1.4, 0.03, 'windowGlass', true);
-    else for (const s of [-1, 1]) p.rbox(0x6a7a84, cx - 2.6 + s * 2.1, 1.15, -16, 0.5, 0.5, 0.03, 0, 0, s * 0.6, 'windowGlass');
     p.box(0x8a9298, cx - 2.6, 2.3, -16, 4.8, H - 2.3, 0.12, 'metal');
     p.box(0x8a9298, cx + 3.3, 2.1, -16, 3.4, H - 2.1, 0.12, 'metal');
     F.bed(p.at(cx - 2, -21.8, 0), rand, 1.0, rand() < 0.6);
   }
-  p.box(0xb8bcbc, X0 + 0.6, 0, -13.5, 1.0, 1.9, 2.4, 'metal', true);
+  p.model('pharmacyShelf', rand, X0 + 0.6, 0, -13.5, Math.PI / 2, 1.1, 0.65, 0.35, true);
   S.container('isolation', X0 + 1.4, -13.5);
-  p.box(0xb8bcbc, X1 - 0.6, 0, -13.5, 1.0, 1.9, 2.4, 'metal', true);
+  p.model('pharmacyShelf', rand, X1 - 0.6, 0, -13.5, -Math.PI / 2, 1.1, 0.65, 0.35, true);
   S.container('isolation', X1 - 1.4, -13.5, ['serumG7', 'labJournal3']);
-  F.papers(p, rand, -18, -15, 18, -12.5, 6);
   // Torn cables hanging from the ceiling (they spark once the power is back), the emergency lamps' housings.
   for (const [x, y, z] of LAB_SPARKS) {
     p.rbox(0x1a1a1a, x, (H + y) / 2, z, 0.035, H - y, 0.035, 0, 0.12, 0.08, 'rubber');

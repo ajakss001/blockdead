@@ -1,4 +1,5 @@
 import { tr } from '../../core/i18n';
+import { jersey, sandbags, tent as chaosTent } from './chaos';
 import * as F from './furniture';
 import type { Place } from './furniture';
 import { LIFE, spotHash, TREE } from './lifeKinds';
@@ -67,23 +68,10 @@ function signText(p: Place, text: string, x: number, y: number, z: number, cell:
   }
 }
 
-/** A shopping cart (static): wire basket on legs, red handle. Local yaw turns it. */
+/** A shopping cart (3D model only). Local yaw turns it. */
 export function cart(p: Place, x: number, z: number, yaw: number, tipped = false): void {
   const q = tipped ? p.at(x, z).tipped(yaw, 0, Math.PI / 2 - 0.15, 0.3) : p.at(x, z).tipped(yaw);
-  if (q.model('shoppingCart', 0, 0, 0, 0, 0, 1, 0.55, 0.55)) return;
-  const W = 0x8a8c8e;
-  q.box(W, 0, 0.42, 0, 0.55, 0.03, 0.85, 'metal');
-  q.box(W, 0.27, 0.45, 0, 0.02, 0.45, 0.85, 'metal');
-  q.box(W, -0.27, 0.45, 0, 0.02, 0.45, 0.85, 'metal');
-  q.box(W, 0, 0.45, 0.42, 0.55, 0.42, 0.02, 'metal');
-  q.box(W, 0, 0.45, -0.42, 0.55, 0.5, 0.02, 'metal');
-  q.box(0x8a2a20, 0, 0.95, -0.52, 0.56, 0.04, 0.04, 'metal');
-  for (const [lx, lz] of [
-    [0.22, 0.36],
-    [-0.22, 0.36],
-    [0.22, -0.36],
-    [-0.22, -0.36],
-  ] as const) q.box(0x1a1a1a, lx, 0, lz, 0.04, 0.42, 0.06, 'rubber');
+  q.model('shoppingCart', 0, 0, 0, 0, 0, 1, 0.55, 0.55);
 }
 
 /** A gondola: two shelves back to back along local Z, `len` long, at (x, z0…z0+len). */
@@ -96,29 +84,9 @@ function gondola(S: Site, rand: Rand, x: number, zc: number, len: number): void 
   }
 }
 
-/** A forklift (placeholder): body, mast with forks, counterweight, wheels. */
-function forklift(p: Place, x: number, z: number, yaw: number): void {
-  const q = p.at(x, z).tipped(yaw);
-  q.box(0xc8a030, 0, 0.25, 0, 1.0, 1.0, 1.9, 'metal');
-  q.box(0x2a2a2a, 0, 1.25, -0.2, 0.9, 0.05, 1.0, 'metal');
-  for (const s of [-0.42, 0.42]) q.box(0x2a2a2a, s, 1.25, -0.2, 0.05, 1.0, 0.05, 'metal');
-  q.box(0x3a3a3a, 0, 0.1, 1.05, 0.9, 2.4, 0.12, 'metal');
-  for (const s of [-0.25, 0.25]) q.box(0x5a5a5a, s, 0.05, 1.7, 0.12, 0.05, 1.1, 'metal');
-  for (const [wx, wz] of [
-    [0.5, 0.6],
-    [-0.5, 0.6],
-    [0.5, -0.6],
-    [-0.5, -0.6],
-  ] as const) q.box(0x1a1a1a, wx, 0, wz, 0.15, 0.45, 0.45, 'rubber');
-  p.solid(x, z, 1.4, 1.4, 2.4);
-}
-
-/** A pallet with a stack of boxes on it (a container). */
+/** A pallet with crates on it (3D model, a container). */
 function pallet(S: Site, rand: Rand, x: number, z: number, y = 0): void {
-  const p = S.p;
-  p.box(0x8a6a44, x, y, z, 1.2, 0.14, 1.0, 'wood', y === 0);
-  const n = 1 + Math.floor(rand() * 3);
-  for (let k = 0; k < n; k++) p.box(rand() < 0.5 ? 0x9a8462 : 0x7a6a50, x + (rand() - 0.5) * 0.1, y + 0.14 + k * 0.4, z + (rand() - 0.5) * 0.1, 1.1, 0.4, 0.9, 'wood', y === 0);
+  S.p.model('palletCrates', rand, x, y, z, 0, 1, 0.82, 0.08, y === 0);
   if (y === 0) S.container('warehouse', x, z + 0.7);
 }
 
@@ -171,7 +139,6 @@ export function hypermarket(S: Site, rand: Rand): void {
     gondola(S, rand, x, -9.5 + 0.0, 5);
   }
   for (let k = 0; k < 5; k++) cart(p, -20 + rand() * 40, -6 + rand() * 10, rand() * 6, rand() < 0.3);
-  F.papers(p, rand, X0 + 2, -12, X1 - 2, 6, 12);
 
   // The warehouse behind a wall with two wide doorways.
   S.wallX(0x8a8478, X0, X1, -12, H, [
@@ -191,8 +158,6 @@ export function hypermarket(S: Site, rand: Rand): void {
     pallet(S, rand, x - 1.4, -22.3);
   }
   for (let k = 0; k < 6; k++) pallet(S, rand, -18 + rand() * 26, -19 + rand() * 5);
-  forklift(p, -8, -16, 0.4);
-  forklift(p, 2, -18.5, -1.3);
   // Manager's office in the corner.
   S.wallX(0xb8b4a8, 14, X1, -17, 3, [{ at: 16, w: 1.0, h: 2.1 }]);
   S.doorX(16, -17);
@@ -201,9 +166,8 @@ export function hypermarket(S: Site, rand: Rand): void {
   F.desk(p.at(20, -21, 0), rand, rand() < 0.5);
   F.officeChair(p.at(20, -20.1, 2), rand);
   F.filingCabinet(p.at(23.4, -19, 3), rand, true);
-  p.box(0x3a3a3a, 15.2, 0, -23.3, 0.8, 1.0, 0.7, 'metal', true);
+  p.model('locker', rand, 15.2, 0, -23.3, 0, 0.85, 0.55, 0.45, true);
   S.container('cabinet', 15.2, -22.7);
-  F.notes(p.at(20, -21.4, 0), rand, 2);
 }
 
 /** Static stairs (a stopped escalator): `n` steps from (x0, z) rising towards +X, w wide. */
@@ -218,18 +182,10 @@ function escalator(p: Place, x0: number, z: number, w: number, rise: number, n: 
   }
 }
 
-/** A clothes rail with things hanging on it (a container). */
+/** A clothes rack (3D open wardrobe model, container). */
 function rack(S: Site, rand: Rand, x: number, z: number, y: number, alongX: boolean): void {
-  const p = S.p;
-  const L = 1.8;
-  p.box(0x9a9a9a, x, y + 1.4, z, alongX ? L : 0.04, 0.04, alongX ? 0.04 : L, 'metal');
-  for (const s of [-1, 1]) p.box(0x9a9a9a, x + (alongX ? (s * L) / 2 : 0), y, z + (alongX ? 0 : (s * L) / 2), 0.04, 1.42, 0.04, 'metal');
-  const n = 3 + Math.floor(rand() * 6);
-  for (let k = 0; k < n; k++) {
-    const t = (k / Math.max(1, n - 1) - 0.5) * (L - 0.2);
-    p.box(F.ART_COLORS[Math.floor(rand() * F.ART_COLORS.length)], x + (alongX ? t : 0), y + 0.6, z + (alongX ? 0 : t), alongX ? 0.06 : 0.5, 0.78, alongX ? 0.5 : 0.06, 'rubber');
-  }
-  S.solid(x, z, alongX ? L : 0.5, alongX ? 0.5 : L, y, y + 1.5);
+  S.p.at(x, z, alongX ? 0 : 1).model('wardrobeOpen', rand, 0, y, 0, 0, 0.9, 0.8, 0.1, false);
+  S.solid(x, z, alongX ? 1.4 : 0.6, alongX ? 0.6 : 1.4, y, y + 1.8);
   S.container('clothesRack', x, z, undefined, y);
 }
 
@@ -310,7 +266,6 @@ export function mall(S: Site, rand: Rand): void {
     if (k > 0) S.wallX(0xb8b4a8, X0, -12, sz0, FH - 0.25);
     S.wallZ(0xb8b4a8, sz0, sz1, -12, FH - 0.25, [{ at: (sz0 + sz1) / 2, w: 4, h: 3 }]);
     for (let r = 0; r < 4; r++) rack(S, rand, -21.5 + (r % 2) * 5, sz0 + 2.5 + Math.floor(r / 2) * 4.5, 0, false);
-    p.box(0xd8d0c0, -14, 0, sz0 + 1.5, 0.5, 1.75, 0.35, 'plaster', true);
   }
   // Ground floor east: the food court.
   p.box(0x5a4a3a, 22.5, 0, -6, 2, 1.1, 18, 'wood', true);
@@ -318,7 +273,6 @@ export function mall(S: Site, rand: Rand): void {
     F.shopCounter(p.at(21.3, -12 + k * 6, 3), rand, 'cafe');
   }
   for (let k = 0; k < 8; k++) F.cafeTable(p.at(12 + (k % 4) * 2.4, -14 + Math.floor(k / 4) * 8 + (rand() - 0.5), 0), rand, rand() < 0.5);
-  F.papers(p, rand, 10, -16, 20, 4, 8);
 
   // Upper floor west: more shops (the second escalator lands east, a walk round the gallery).
   for (let k = 0; k < 2; k++) {
@@ -406,10 +360,10 @@ export function waterPlant(S: Site, rand: Rand): void {
     const [wx, wz] = p.pt(lx, lz);
     S.b.life(LIFE.drip, wx, 4.95, wz, 0, 0, 0, 4.91, spotHash(wx, wz, 71));
   }
+  p.model('locker', rand, 19.3, 0, 3, 0, 1, 0.55, 0.45, true);
   S.container('plantStore', 19.3, 3);
-  p.box(0x5a6a5a, 19.3, 0, 3, 0.6, 1.9, 1.0, 'metal', true);
+  p.model('locker', rand, 4.7, 0, 10.5, 0, 1, 0.55, 0.45, true);
   S.container('plantStore', 4.7, 10.5);
-  p.box(0x5a6a5a, 4.7, 0, 10.5, 0.6, 1.9, 1.0, 'metal', true);
 
   // Control room: x −20…−8, z 4…12, consoles under the windows.
   S.wallX(0xb8b4a8, -20, -8, 12, 3.4, [
@@ -428,7 +382,6 @@ export function waterPlant(S: Site, rand: Rand): void {
   F.officeChair(p.at(-15, 6), rand, rand() < 0.4);
   F.officeChair(p.at(-12, 6.2), rand);
   F.desk(p.at(-10, 9.5, 2), rand, true);
-  F.notes(p.at(-10, 10, 0), rand, 2);
   F.filingCabinet(p.at(-19.5, 10, 1), rand, true);
 
   // The water tower: the landmark.
@@ -457,7 +410,7 @@ export function checkpoint(S: Site, rand: Rand): void {
   for (let k = 0; k < 4; k++) {
     const x = -16 + k * 3.2;
     const z = rz + (k % 2 ? 1.4 : -1.4);
-    p.box(0x9a968a, x, 0, z, 2.2, 0.85, 0.6, 'concrete', true);
+    jersey(p, x, z, 2.2);
   }
   // Barrier arm, down, striped.
   p.box(0x6a6a66, -2, 0, rz - 3.4, 0.3, 1.1, 0.3, 'metal', true);
@@ -465,20 +418,10 @@ export function checkpoint(S: Site, rand: Rand): void {
     for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xd8d4c8 : 0xb02a20, -2 + 0.15 + k * 0.6 + 0.3, 1.0, rz - 3.4 + 0.0, 0.6, 0.1, 0.1, 'metal');
     p.solid(0, rz - 3.4, 3.6, 0.2, 1.1);
   }
-  // Sandbag nests by the road.
-  const bags = (x: number, z: number, len: number, alongX: boolean) => {
-    for (let layer = 0; layer < 3; layer++) {
-      for (let t = -len / 2 + 0.3; t < len / 2; t += 0.62) {
-        const bx = x + (alongX ? t + (layer % 2) * 0.3 : 0);
-        const bz = z + (alongX ? 0 : t + (layer % 2) * 0.3);
-        p.rbox(0x8a7a5a, bx, 0.12 + layer * 0.22, bz, alongX ? 0.58 : 0.34, 0.22, alongX ? 0.34 : 0.58, (rand() - 0.5) * 0.15, 0, 0, 'rubber');
-      }
-    }
-    p.solid(x, z, alongX ? len : 0.4, alongX ? 0.4 : len, 0.7);
-  };
-  bags(6, rz - 4.2, 5, true);
-  bags(8.5, rz - 6.5, 4, false);
-  bags(-20, rz - 4.2, 4, true);
+  // Sandbag nests by the road (3D models).
+  sandbags(p, 6, rz - 4.2, 5, rand);
+  sandbags(p.at(8.5, rz - 6.5, 1), 0, 0, 4, rand);
+  sandbags(p, -20, rz - 4.2, 4, rand);
   // Watchtower: four legs, a platform with walls and a roof, a ladder.
   const tx = 12;
   const tz = 20;
@@ -502,24 +445,23 @@ export function checkpoint(S: Site, rand: Rand): void {
   ] as const) p.box(0x5a4a34, tx + dx, 6.75, tz + dz, 0.12, 0.85, 0.12, 'wood');
   for (let k = 0; k < 14; k++) p.box(0x5a4a34, tx - 1.5, 0.3 + k * 0.4, tz + 1.7, 0.6, 0.05, 0.06, 'wood');
   S.container('militaryCrate', tx, tz);
-  // Tents (olive): a box with a pitched roof; inside a table, cots, crates.
+  // Field tents (3D models) + supply crate.
   const tent = (x: number, z: number) => {
-    p.box(0x4a4f36, x, 0, z, 4, 1.6, 6, 'rubber', true);
-    p.rbox(0x4a4f36, x - 1.0, 2.05, z, 2.3, 0.08, 6.1, 0, 0, 0.6, 'rubber');
-    p.rbox(0x4a4f36, x + 1.0, 2.05, z, 2.3, 0.08, 6.1, 0, 0, -0.6, 'rubber');
+    const [wx, wz] = p.pt(x, z);
+    const yaw = ((p.r + 1) * Math.PI) / 2;
+    if (S.here(x, z)) chaosTent(S.b, wx, wz, yaw, rand);
+    else rand();
+    p.model('supplyCrate', rand, x, 0, z + 2.8, 0, 1, 0.78, 0.15, true);
     S.container('militaryCrate', x, z + 3.3);
   };
   tent(-14, 6);
   tent(-6, 6);
   tent(4, -4);
-  // A table outside with the notes, crates, the dead soldiers' kit.
-  p.box(0x5a5a46, 0, 0, 12, 2, 0.75, 1, 'wood', true);
-  F.notes(p.at(0, 12.2, 0), rand, 3);
+  // A table outside and army supply crates.
+  F.diningTable(p.at(0, 12, 0), rand, 0, false);
   for (let k = 0; k < 4; k++) {
     const cx = -8 + k * 1.1;
-    if (!p.model('supplyCrate', rand, cx, 0, 14.35, 0, 1, 0.78, 0.15, true)) {
-      p.box(0x4a5a3a, cx, 0, 14, 1.0, 0.6, 0.7, 'wood', true);
-    }
+    p.model('supplyCrate', rand, cx, 0, 14.35, 0, 1, 0.78, 0.15, true);
     S.container('militaryCrate', cx, 14.8);
   }
   S.container('bodyMilitary', 3, 18);
@@ -539,7 +481,7 @@ export function checkpoint(S: Site, rand: Rand): void {
  * A square (сквер): a lawn gone to seed, two paths crossing at a dry fountain, benches, lamps, rows of
  * maples, oaks and elms (some dead), bushes, an overgrown hedge round it with gaps where the paths go out.
  */
-export function park(S: Site, rand: Rand): void {
+export function park(S: Site, _rand: Rand): void {
   const p = S.p;
   const b = S.b;
   p.box(0x4a5632, 0, 0, 0, LOT * 2, 0.05, LOT * 2, 'ground');
@@ -552,15 +494,7 @@ export function park(S: Site, rand: Rand): void {
   p.cyl(0x8a867c, 0, 1.1, 0, 0.35, 1.2, 'concrete');
   p.cyl(0x8a867c, 0, 1.75, 0, 0.9, 0.12, 'concrete');
   p.solid(0, 0, 5.6, 5.6, 0.6);
-  // Benches facing the paths, lamps on the corners of the crossing.
-  for (const [x, z, r] of [
-    [-8, 2.1, 2],
-    [8, 2.1, 2],
-    [-8, -2.1, 0],
-    [8, -2.1, 0],
-    [2.1, 9, 1],
-    [-2.1, -9, 3],
-  ] as const) F.bench(p.at(x, z, r), rand, rand() < 0.2);
+  // Lamps on the corners of the crossing.
   for (const [x, z] of [
     [4, 4],
     [-4, -4],

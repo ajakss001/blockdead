@@ -170,6 +170,11 @@ export class Builder {
     this.track?.(x0, y0, z0, x1, y1, z1);
   }
 
+  /** Records a frame AABB in the draw log (used by Place.model so Builder.drawnNear / Site.container fit 3D models). */
+  logBox(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+    this.logged(x0, y0, z0, x1, y1, z1);
+  }
+
   /** Union of what was drawn since the last container whose middle is within 1.8 m of (x, z) and at the floor y. */
   drawnNear(x: number, z: number, y: number): number[] | undefined {
     const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -328,15 +333,6 @@ function partitionZ(b: Builder, paper: number, x: number, za: number, zb: number
   b.block(paper, x, 0, from, 0.12, h, zb - from, 'plaster', true);
 }
 
-/** A table jammed across a doorway (its top ~0.78 m), centred on the doorway, long side along the wall. */
-function tableBarricade(b: Builder, cx: number, cz: number, wallAlongX: boolean): void {
-  const hx = wallAlongX ? 0.55 : 0.45;
-  const hz = wallAlongX ? 0.45 : 0.55;
-  b.block(0x6b5136, cx - hx, 0.72, cz - hz, hx * 2, 0.06, hz * 2, 'wood', true);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.block(0x5a4430, cx + sx * (hx - 0.06) - 0.025, 0, cz + sz * (hz - 0.06) - 0.025, 0.05, 0.72, 0.05, 'wood');
-  b.solid(cx - hx, cz - hz, cx + hx, cz + hz, 0, 0.72);
-}
-
 function partitionX(b: Builder, paper: number, xa: number, xb: number, z: number, doorX: number, h: number): void {
   const d0 = doorX - 0.45;
   const d1 = doorX + 0.45;
@@ -413,26 +409,13 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   b.block(PAL.trim, doorX + DOOR_W / 2, 0, z1, 0.08, DOOR_H + 0.08, 0.03);
   b.block(PAL.trim, doorX - DOOR_W / 2 - 0.08, DOOR_H, z1, DOOR_W + 0.16, 0.08, 0.03);
   const doorRoll = rand();
-  if (doorRoll < 0.8) {
-    // Hinge on the left jamb, swings into the hall.
-    b.door(doorX - DOOR_W / 2, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, height: DOOR_H, style: 'wood', open: doorRoll > 0.55 });
-  } else {
-    // Kicked in: the leaf lies in the hall, the way is open.
-    b.block(0x5a4632, doorX - DOOR_W / 2 + 0.1, 0, z1 - WALL_T - 2.1, DOOR_W - 0.05, 0.05, 2.0, 'wood');
-  }
+  b.door(doorX - DOOR_W / 2, z1 - WALL_T / 2, 0, 0, 1, false, { width: DOOR_W, height: DOOR_H, style: 'wood', open: doorRoll > 0.55 });
 
   // Rooms.
   // Living room opens into the kitchen (back) and the bedroom (front).
   partitionZ(b, paperA, xp, z0 + WALL_T, z1 - WALL_T, [z0 + d * 0.25, z0 + d * 0.75], h);
   const bedDoorX = xp + 0.12 + 0.9 + rand() * 0.6;
   partitionX(b, paperB, xp + 0.12, x1 - WALL_T, zp, bedDoorX, h);
-  // A shelter: sometimes the bedroom doorway is blocked with a table. Up onto it, crouch, squeeze under
-  // the lintel — a zombie can't climb.
-  // Both ways into the bedroom: from the kitchen and from the living room.
-  if (rand() < 0.3) {
-    tableBarricade(b, bedDoorX, zp + 0.06, true);
-    tableBarricade(b, xp + 0.06, z0 + d * 0.75, false);
-  }
 
   // Windows: bedroom front, kitchen back, living room and bedroom sides.
   windowZ(b, x0 + w * 0.76, z1, 1);
@@ -458,15 +441,12 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   if (spotHash(x0, z0, 87) < 0.06) b.life(LIFE.phone, x0 + WALL_T + 1.05, 0.5, z0 + d * 0.3 + 1.0, 0, 0, 0, 0, spotHash(x0, z0, 88));
   if ((messy || fled) && spotHash(x0, z0, 89) < 0.3) b.life(LIFE.flies, sinkX, 1.1, z0 + WALL_T + 0.6, 0, 0, 0, 0, spotHash(x0, z0, 90));
 
-  // Living room: sofa against the side wall, coffee table on a rug, lamp, a painting, TV on the back wall.
+  // Living room: sofa against the side wall, coffee table, painting, TV on the back wall.
   const sz = z0 + d * 0.3;
   const sofaP = new Place(b, x0 + WALL_T, 0, sz + 1.0, 1);
   F.sofa(sofaP, rand, 2.0, messy);
-  F.rug(sofaP, rand, 1.35, 1.9, 1.3);
   F.coffeeTable(sofaP.at(0, 1.05), rand, messy && rand() < 0.6);
   F.painting(sofaP, rand, 1.55, messy && rand() < 0.4);
-  F.floorLamp(sofaP.at(-1.25, 0.3), rand, messy && rand() < 0.6);
-  F.curtains(new Place(b, x0 + WALL_T, 0, z0 + d * 0.55, 1), rand, 1.1, 1.0, 2.0);
   F.bookcase(new Place(b, xp, 0, z0 + d * 0.5, 3), rand, messy);
   // TV on a stand against the back wall (kept clear of the doorways on the partition).
   F.tvStand(new Place(b, x0 + 1.5, 0, z0 + WALL_T, 0), rand, messy);
@@ -477,8 +457,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   F.fridge(new Place(b, x1 - WALL_T - 0.45, 0, z0 + WALL_T, 0), rand, open());
   F.diningTable(new Place(b, xp + 1.7, 0, zp - 0.9, 0), rand, 2, messy);
   if (!messy && rand() < 0.1) {
-    // A battery radio on the counter, still hissing.
-    b.block(0x2a2826, xp + 0.8, 0.91, z0 + WALL_T + 0.1, 0.3, 0.17, 0.1, 'metal');
+    // A battery radio spot (audio only, no procedural box).
     b.life(3, xp + 0.95, 1.0, z0 + WALL_T + 0.15, 0, 1, 0, 0, rand());
   }
 
@@ -487,19 +466,12 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   F.bed(new Place(b, bx + 0.75, 0, zp + 0.08, 0), rand, 1.5, messy);
   F.nightstand(new Place(b, bx - 0.3, 0, zp + 0.08, 0), rand, open());
   F.wardrobe(new Place(b, xp + 1.8, 0, z1 - WALL_T, 2), rand, open());
-  F.rug(new Place(b, bx + 0.75, 0, zp + 0.08, 0), rand, 2.5, 1.3, 0.8);
 
-  // Leaving: luggage and notes by the front door; ransacked: things everywhere.
+  // Leaving: luggage and boxes by the front door.
   const hall = new Place(b, doorX, 0, z1 - WALL_T, 2);
   if (fled) {
     F.suitcase(hall.at(-0.9, 1.0, Math.floor(rand() * 4)), rand, rand() < 0.4);
-    F.notes(hall.at(1.0, 0), rand, 1 + Math.floor(rand() * 2));
     if (rand() < 0.4) F.boxes(new Place(b, xp - 0.9, 0, z1 - WALL_T, 2), rand, 2);
-  }
-  if (messy) {
-    F.clothesPile(hall, rand, 0, 2.2, 3);
-    F.papers(new Place(b, x0, 0, z0), rand, 0.5, 0.5, w - 0.5, d - 0.5, 8);
-    hall.decal('decalLitter', (rand() - 0.5) * 1.5, 2.5, 1.8, rand);
   }
 
   // Gable roof with overhang, ridge along X.
@@ -563,12 +535,14 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   // The sales floor by trade, and a counter by the door.
   shopFloor(b, kind, x0 + WALL_T, zs + 0.12, x1 - WALL_T, z1 - WALL_T - 2.4, rand, messy);
   F.shopCounter(new Place(b, wb + 1.7, 0, z1 - WALL_T - 2.4, 0), rand, kind);
-  // Crates and boxes in the storeroom.
+  // Crates in the storeroom (3D models only).
   for (let i = 0; i < 4; i++) {
     const cx = x0 + 0.5 + rand() * (w - 2);
     const cz = z0 + WALL_T + 0.3 + rand() * (zs - z0 - 1.5);
-    b.block(PAL.crate, cx, 0, cz, 0.8, 0.6 + rand() * 0.4, 0.8, 'wood', true);
-    if (i < 2) b.container('crate', cx + 0.4, cz + 0.4);
+    const cp = new Place(b, cx + 0.4, 0, cz + 0.4, Math.floor(rand() * 4) as F.Quarter);
+    cp.resetBounds();
+    cp.model('woodenCrate', rand, 0, 0, 0, 0, 1, 0.8, 0.1, true);
+    if (i < 2) cp.container('crate', 0, 0.5);
   }
 
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
@@ -598,18 +572,13 @@ function shopFloor(b: Builder, kind: F.ShopKind, xa: number, za: number, xb: num
     for (let x = xa + 1.2; x < xb - 1.0; x += 1.9) for (let z = za + 1.0; z < zb - 0.6; z += 1.9) F.cafeTable(new Place(b, x, 0, z, 0), rand, messy);
     F.cooler(new Place(b, xa, 0, za + d * 0.5, 1), rand);
   } else {
-    for (let z = za + 0.5; z < zb - 0.4; z += 0.7) F.washer(new Place(b, xa, 0, z, 1), rand, rand() < 0.3);
-    for (let z = za + 0.5; z < zb - 0.4; z += 0.7) F.washer(new Place(b, xb, 0, z, 3), rand, rand() < 0.3);
+    for (let z = za + 0.5; z < zb - 0.4; z += 1.5) F.washer(new Place(b, xa, 0, z, 1), rand, rand() < 0.3);
+    for (let z = za + 0.5; z < zb - 0.4; z += 1.5) F.washer(new Place(b, xb, 0, z, 3), rand, rand() < 0.3);
     if (w > 4) {
       const T = new Place(b, (xa + xb) / 2, 0, za + d / 2, 0);
-      T.box(0x8a8070, 0, 0.8, 0, 0.8, 0.04, 1.6);
-      T.box(0x3a3a3a, 0, 0, -0.7, 0.6, 0.8, 0.05, 'metal');
-      T.box(0x3a3a3a, 0, 0, 0.7, 0.6, 0.8, 0.05, 'metal');
-      T.solid(0, 0, 0.8, 1.6, 0.85);
-      F.clothesPile(T, rand, 0.9, 0, 2);
+      F.diningTable(T, rand, 0, false);
     }
   }
-  if (messy) F.papers(new Place(b, xa, 0, za), rand, 0.3, 0.3, w - 0.3, d - 0.3, 6);
 }
 
 /**
@@ -657,23 +626,6 @@ export function fence(
     [a, gapAt - gapW / 2],
     [gapAt + gapW / 2, c],
   ];
-  const put = (along: number, y: number, size: number, h: number, thick: number) => {
-    if (alongX) b.block(PAL.fence, along, y, fixed - thick / 2, size, h, thick, 'wood');
-    else b.block(PAL.fence, fixed - thick / 2, y, along, thick, h, size, 'wood');
-  };
-  const solid = (s0: number, s1: number) => {
-    if (s1 - s0 < 0.05) return;
-    if (alongX) b.colliders.addBox(s0, fixed - 0.08, s1, fixed + 0.08);
-    else b.colliders.addBox(fixed - 0.08, s0, fixed + 0.08, s1);
-  };
-  const lean = (along: number, len: number, h: number) => {
-    // A board torn loose, leaning against what is left of the fence.
-    const tilt = (rand!() < 0.5 ? -1 : 1) * (0.5 + rand!() * 0.5);
-    _e.set(alongX ? 0 : tilt, 0, alongX ? tilt : 0);
-    _p.set(alongX ? along + len / 2 : fixed + 0.25, h / 2, alongX ? fixed + 0.25 : along + len / 2);
-    _s.set(alongX ? len : 0.04, h, alongX ? 0.04 : len);
-    b.batch.add(b.box, PAL.fence, _m.compose(_p, _q.setFromEuler(_e), _s), 'wood');
-  };
   const barrier = pickModel(modelLibrary(), 'wallBarrier', 0);
   if (barrier) {
     const sy = style === 'board' ? 1.35 : 0.95;
@@ -707,40 +659,6 @@ export function fence(
     }
     return;
   }
-  for (const [s0, s1] of spans) {
-    if (s1 - s0 < 0.3) continue;
-    for (let x0 = s0; x0 < s1 - 0.05; x0 += 2) {
-      const x1 = Math.min(s1, x0 + 2);
-      const len = x1 - x0;
-      if (rand && rand() < 0.14) {
-        // Section kicked in: stumps of the posts, a board on the ground, a way through.
-        put(x0 - 0.05, 0, 0.1, 0.3, 0.1);
-        if (rand() < 0.6) lean(x0 + 0.2, len * 0.8, 0.12);
-        continue;
-      }
-      put(x0 - 0.05, 0, 0.1, style === 'board' ? 1.65 : 1.0, 0.1);
-      if (style === 'board') {
-        if (rand && rand() < 0.15) lean(x0 + 0.1, len - 0.2, 1.5);
-        else put(x0, 0.05, len, 1.55, 0.04);
-      } else {
-        put(x0, 0.35, len, 0.07, 0.04);
-        put(x0, 0.75, len, 0.07, 0.04);
-        for (let x = x0 + 0.25; x < x1 - 0.05; x += 0.25) {
-          if (rand && rand() < 0.2) continue;
-          put(x - 0.035, 0.1, 0.07, 0.85, 0.02);
-        }
-      }
-      solid(x0, x1);
-      // Ivy over a stretch of the fence, on one side.
-      if (spotHash(x0, fixed, 21) < 0.18) {
-        const side = spotHash(fixed, x0, 22) < 0.5 ? -1 : 1;
-        const fh = (style === 'board' ? 1.6 : 1.0) * (0.6 + spotHash(x0, fixed, 23) * 0.4);
-        if (alongX) b.life(LIFE.ivy, x0 + len / 2, 0, fixed + side * 0.06, 0, side, len, fh, spotHash(x0, fixed, 24));
-        else b.life(LIFE.ivy, fixed + side * 0.06, 0, x0 + len / 2, side, 0, len, fh, spotHash(x0, fixed, 24));
-      }
-    }
-    put(s1 - 0.05, 0, 0.1, style === 'board' ? 1.65 : 1.0, 0.1);
-  }
 }
 
 /**
@@ -762,15 +680,6 @@ export function plantTree(b: Builder, x: number, y: number, z: number, s: number
   b.batch.addShadow(new Matrix4().makeTranslation(x, y, z), (conifer ? 2.6 : 3.1) * s, (conifer ? 2.6 : 3.1) * s, 0.025);
   const t = (conifer ? 0.16 : 0.2) * s;
   b.colliders.addBox(x - t, z - t, x + t, z + t);
-  if (!conifer && spotHash(x, z, 35) < 0.3) {
-    // Branches the wind brought down.
-    for (let k = 0; k < 1 + Math.floor(spotHash(z, x, 36) * 2); k++) {
-      const a = spotHash(x + k, z, 37) * Math.PI * 2;
-      const d = 1.2 + spotHash(x, z + k, 38) * 1.8;
-      _e.set(Math.PI / 2, a, 0, 'YXZ');
-      b.batch.add(b.cyl5, PAL.trunk, _m.compose(_p.set(x + Math.cos(a) * d, y + 0.05, z + Math.sin(a) * d), _q.setFromEuler(_e), _s.set(0.05, 1.2 + spotHash(z, x + k, 39), 0.05)), 'wood');
-    }
-  }
 }
 
 /** A spruce or a pine (or a dead one): four draws from `rand`, as before. */
@@ -827,15 +736,12 @@ export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: n
   b.life(LIFE.perch, x + ax / 2, 4.14, z + az / 2, armX, armZ, 1.0, 0, spotHash(x, z, 91));
 }
 
-export function mailbox(b: Builder, x: number, z: number): void {
-  b.block(PAL.metal, x - 0.04, 0, z - 0.04, 0.08, 1.1, 0.08, 'metal', true);
-  b.block(0x5a6a7a, x - 0.19, 1.1, z - 0.25, 0.38, 0.24, 0.5, 'metal');
-}
+export function mailbox(_b: Builder, _x: number, _z: number): void {}
 
 export function trashBins(b: Builder, x: number, z: number): void {
-  b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x, 0.45, z), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
-  b.batch.add(b.cyl8, PAL.bin, _m.compose(_p.set(x + 0.7, 0.45, z + 0.1), _q.identity(), _s.set(0.3, 0.9, 0.3)), 'metal');
-  b.colliders.addBox(x - 0.35, z - 0.35, x + 1.05, z + 0.45);
-  b.container('trash', x + 0.35, z, 0, [x - 0.3, 0, z - 0.3, x + 1.0, 0.9, z + 0.4]);
+  const tp = new Place(b, x + 0.35, 0, z, 0);
+  tp.resetBounds();
+  tp.model('barrel', 0, 0, 0, 0, 0, 1, 0.65, 0.4, true);
+  tp.container('trash', 0, 0.55);
   if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, x + 0.35, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
 }
