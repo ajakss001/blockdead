@@ -1132,7 +1132,9 @@ export class WorldScene implements IScene {
     // After the camera moved: the zombies in its view, up to the fog (paused: their mixers and twitches too).
     this.models.update(this.zombies.list, this.player.controller.position, gameDt, this.camera, (this.scene.fog as Fog).far + 2);
     this.camera.getWorldDirection(this.lookDir);
+    this.ctx.profiler.begin('chunks');
     this.chunks.update(this.camera.position.x, this.camera.position.z, this.lookDir.x, this.lookDir.z);
+    this.ctx.profiler.end('chunks');
     const qp = this.ctx.quality.preset;
     const shadowDist = this.player.lightOn && qp.level === 'high' && qp.shadowMapSize > 0 ? qp.shadowDistance : 0;
     const carLodDist = qp.level === 'low' ? 16 : qp.level === 'medium' ? 28 : 42;
@@ -2228,12 +2230,16 @@ export class WorldScene implements IScene {
     this.life.roomLights = preset.roomLights;
     this.sky.searchlightLight = preset.roomLights > 0;
     this.life.fireLights = preset.fireLights;
-    this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
+    // ?foliage=0: drop grass entirely, nothing else changes (cost isolation, never a player setting).
+    const foliageCap = new URLSearchParams(location.search).get('foliage') === '0' ? 0 : preset.foliage.cap;
+    this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, foliageCap);
     this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();
-    this.chunks.radius = preset.chunkRadius;
+    // ?chunks=N overrides the world radius for a measurement run.
+    const chunksQ = new URLSearchParams(location.search).get('chunks');
+    this.chunks.radius = chunksQ !== null ? Math.max(0, Number(chunksQ) || 0) : preset.chunkRadius;
     // Sub-cell meshes (12 calls per chunk) only pay off on a desktop GPU; phones are draw-call bound.
     // ?splitcells=1 / =0 forces the mode, so the two can be A/B'd on a phone without a rebuild.
     const splitQ = new URLSearchParams(location.search).get('splitcells');

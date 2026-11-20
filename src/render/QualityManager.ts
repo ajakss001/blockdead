@@ -6,6 +6,23 @@ import { QUALITY_STORAGE_KEY } from './DeviceProfile';
 import { QUALITY_LEVELS, QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
 import type { Renderer } from './Renderer';
 
+/**
+ * Cost-isolation knobs read once from the URL: ?scale=0.75, ?shadow=0|1. They change nothing unless named,
+ * so the presets stay the only thing players see; a measurement run can take one cost away at a time.
+ */
+let knobs: { scale?: number; shadow?: 0 | 1 } | null = null;
+export function debugKnobs(): { scale?: number; shadow?: 0 | 1 } {
+  if (knobs) return knobs;
+  const p = new URLSearchParams(location.search);
+  const scale = Number(p.get('scale'));
+  const shadow = p.get('shadow');
+  knobs = {
+    scale: p.has('scale') && scale > 0 ? Math.min(1, scale) : undefined,
+    shadow: shadow === null ? undefined : shadow === '0' ? 0 : 1,
+  };
+  return knobs;
+}
+
 /** Sustained over-budget time before stepping down, ms. */
 const DEGRADE_AFTER_MS = 1500;
 /** Sustained headroom before stepping resolution back up, ms. */
@@ -134,9 +151,10 @@ export class QualityManager {
   }
 
   private apply(source: 'init' | 'auto' | 'user'): void {
+    const k = debugKnobs();
     this.renderer.setPixelRatioCap(this._preset.maxPixelRatio);
-    this.renderer.setShadows(this._preset.shadowMapSize > 0);
-    this.renderer.setResolutionScale(this._scale);
+    this.renderer.setShadows(k.shadow !== 0 && this._preset.shadowMapSize > 0);
+    this.renderer.setResolutionScale(k.scale ?? this._scale);
     this.badSince = this.goodSince = 0;
     this.cooldownUntil = performance.now() + COOLDOWN_MS;
     // Judge the new settings on fresh frames only, not on the slow history that triggered the change.

@@ -141,12 +141,17 @@ export class DebugPanel {
     const p = quality.preset;
     const extra: string[] = [];
     for (const provider of debug.lines.values()) extra.push(provider());
+    // Where the frame's time goes (EMA per named section). On a phone this is the only readout there is.
+    const secs = [...profiler.sections].map(([k, v]) => `${k} ${v.toFixed(1)}`).join('  ');
     if (this.compact) {
-      this.text.textContent = `FPS ${f.fps.toFixed(0)}  ${f.frameAvgMs.toFixed(1)}ms  p95 ${f.frameP95Ms.toFixed(0)}  ${p.level} ${quality.resolutionScale.toFixed(2)}  draw ${g.drawCalls}`;
+      this.text.textContent =
+        `FPS ${f.fps.toFixed(0)}  ${f.frameAvgMs.toFixed(1)}ms  p95 ${f.frameP95Ms.toFixed(0)}  ${p.level} ${quality.resolutionScale.toFixed(2)}  draw ${g.drawCalls}` +
+        (secs ? `\n${secs}` : '');
       return;
     }
     this.text.textContent = [
       ...extra,
+      ...(secs ? [`ms: ${secs}`] : []),
       `FPS ${f.fps.toFixed(1)}  frame ${f.frameAvgMs.toFixed(1)}ms (p95 ${f.frameP95Ms.toFixed(1)})  cpu ${f.cpuAvgMs.toFixed(2)}ms`,
       `draw ${g.drawCalls}  tris ${(g.triangles / 1000).toFixed(1)}k  geo ${g.geometries}  tex ${g.textures}`,
       `quality ${p.level}${quality.adaptive ? ' (auto)' : ''}  scale ${quality.resolutionScale.toFixed(2)}  dpr ${g.pixelRatio.toFixed(2)}  ${g.bufferWidth}×${g.bufferHeight}`,

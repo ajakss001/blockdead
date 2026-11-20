@@ -98,7 +98,9 @@ async function boot(): Promise<void> {
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
   const draw = (alpha: number, frameDt: number, gameDt: number) => {
+    profiler.begin('scene');
     scene.render(alpha, frameDt, gameDt);
+    profiler.end('scene');
     renderer.beginFrame();
     profiler.begin('draw');
     postfx.render(frameDt);
@@ -107,7 +109,11 @@ async function boot(): Promise<void> {
 
   const loop = new GameLoop(
     {
-      fixedUpdate: (dt) => scene.fixedUpdate(dt),
+      fixedUpdate: (dt) => {
+        profiler.begin('fixed');
+        scene.fixedUpdate(dt);
+        profiler.end('fixed');
+      },
       render: (alpha, frameDt, gameDt) => {
         quality.update(performance.now());
         draw(alpha, frameDt, gameDt);
