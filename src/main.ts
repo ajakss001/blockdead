@@ -67,8 +67,9 @@ async function boot(): Promise<void> {
   const renderer = new Renderer(gameEl, events, false);
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
-  // Phones get the safety net back: at most one step down when the frame budget is hopelessly blown.
-  quality.allowPresetDrop = device.type !== 'desktop';
+  // Quality is the player's choice: the preset never changes on its own. ?autodrop=1 opts into the
+  // old phone safety net (one step down under ~30 FPS) for device testing only.
+  quality.allowPresetDrop = params.get('autodrop') === '1' && device.type !== 'desktop';
   const input = new InputManager(pickInputMode(device), events);
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
   const aniso = level === 'low' ? 1 : Math.min(4, maxAniso);

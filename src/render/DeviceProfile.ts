@@ -16,16 +16,15 @@ function isLevel(v: string | null): v is QualityLevel {
 
 /**
  * Initial preset: ?quality=… override → player's saved choice → hardware heuristic.
- * The heuristic is deliberately pessimistic on mobile; QualityManager only lowers further.
- * Phones and tablets never start above medium, whatever was saved.
+ * The heuristic is deliberately pessimistic on mobile; QualityManager never lowers it on its own,
+ * and a level the player picked in the settings stays picked after a reload.
  */
 export function pickInitialLevel(device: DeviceInfo, gpuName: string): QualityLevel {
   const forced = new URLSearchParams(location.search).get('quality');
   if (isLevel(forced)) return forced;
-  const mobile = device.type !== 'desktop';
   try {
     const saved = localStorage.getItem(QUALITY_STORAGE_KEY);
-    if (isLevel(saved)) return mobile && saved === 'high' ? 'medium' : saved;
+    if (isLevel(saved)) return saved;
   } catch {
     // Storage can be blocked in third-party iframes; fall through to the heuristic.
   }
