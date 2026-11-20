@@ -67,6 +67,8 @@ async function boot(): Promise<void> {
   const renderer = new Renderer(gameEl, events, false);
   const level = pickInitialLevel(device, renderer.gpuName);
   const quality = new QualityManager(events, renderer, profiler, level);
+  // Phones get the safety net back: at most one step down when the frame budget is hopelessly blown.
+  quality.allowPresetDrop = device.type !== 'desktop';
   const input = new InputManager(pickInputMode(device), events);
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
   const aniso = level === 'low' ? 1 : Math.min(4, maxAniso);
@@ -86,6 +88,7 @@ async function boot(): Promise<void> {
   // The grade, grain and vignette cost nothing extra (one pass either way) but stay off on low.
   postfx.setGrade(level !== 'low');
   events.on('quality:changed', (e) => {
+    postfx.setLevel(e.level);
     postfx.setGrade(e.level !== 'low');
     postfx.setBypass(e.level === 'low');
   });

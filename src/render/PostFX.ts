@@ -27,6 +27,7 @@ export class PostFX {
   private dreadVal = 0;
   private deathVal = 0;
   private fadeVal = 0;
+  private level: QualityLevel;
   private cssKey = '';
   private overlayEl: HTMLDivElement | null = null;
 
@@ -36,6 +37,7 @@ export class PostFX {
     initialLevel: QualityLevel = 'high',
     private readonly mobile = false,
   ) {
+    this.level = initialLevel;
     this.bypass = initialLevel === 'low';
     this.syncToneMapping();
     if (!this.bypass) this.ensureComposer();
@@ -56,7 +58,9 @@ export class PostFX {
     if (this.composer) return;
     const gl = this.renderer.gl;
     const floatOk = gl.capabilities.isWebGL2 && (gl.extensions.has('EXT_color_buffer_float') || gl.extensions.has('EXT_color_buffer_half_float'));
-    const useHalf = !this.mobile && floatOk;
+    // 16F costs 2x the tile-memory traffic of 8-bit and only pays off on a desktop 'high'; medium and
+    // every phone get UnsignedByte (the grade is mild enough that banding is invisible).
+    const useHalf = !this.mobile && floatOk && this.level === 'high';
     const target = new WebGLRenderTarget(1, 1, {
       type: useHalf ? HalfFloatType : UnsignedByteType,
       samples: this.msaaSamples,
@@ -93,6 +97,11 @@ export class PostFX {
     }
   }
 
+  /** Tracked so a not-yet-created composer picks the right buffer type; an existing one keeps its own. */
+  setLevel(level: QualityLevel): void {
+    this.level = level;
+  }
+
   setScene(scene: Scene, camera: Camera, overlay?: { scene: Scene; camera: Camera }): void {
     this.worldScene = scene;
     this.worldCamera = camera;
@@ -104,6 +113,7 @@ export class PostFX {
   setBypass(on: boolean): void {
     if (on === this.bypass) return;
     this.bypass = on;
+    if (on) this.level = 'low';
     this.syncToneMapping();
     if (!on) {
       if (this.overlayEl) this.overlayEl.style.display = 'none';

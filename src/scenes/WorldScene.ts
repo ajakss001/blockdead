@@ -46,6 +46,7 @@ import { GunHud } from '../ui/GunHud';
 import { isGun } from '../weapons/guns';
 import type { EchoPlace } from '../audio/Sound';
 import type { RightItem } from '../player/Viewmodel';
+import { setSubCellSplit } from '../render/batchMeshes';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
 import { airTemperature, Clock, feltTemperature, Shelters } from '../systems/Climate';
@@ -2233,6 +2234,10 @@ export class WorldScene implements IScene {
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();
     this.chunks.radius = preset.chunkRadius;
+    // Sub-cell meshes (12 calls per chunk) only pay off on a desktop GPU; phones are draw-call bound.
+    // ?splitcells=1 / =0 forces the mode, so the two can be A/B'd on a phone without a rebuild.
+    const splitQ = new URLSearchParams(location.search).get('splitcells');
+    setSubCellSplit(splitQ === null ? preset.level === 'high' && this.ctx.device.type === 'desktop' : splitQ === '1');
     this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
     this.models.configure(preset.level);
     const isLow = preset.level === 'low';

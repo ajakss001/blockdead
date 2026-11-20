@@ -3,7 +3,7 @@ import type { GameEvents } from '../core/events';
 import type { Profiler } from '../core/Profiler';
 import type { QualityLevel } from '../core/types';
 import { QUALITY_STORAGE_KEY } from './DeviceProfile';
-import { QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
+import { QUALITY_LEVELS, QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
 import type { Renderer } from './Renderer';
 
 /** Sustained over-budget time before stepping down, ms. */
@@ -20,7 +20,15 @@ const SCALE_STEP = 0.05;
  * trade resolution scale within the chosen preset's own range — it never switches the preset.
  */
 export class QualityManager {
+  /** Resolution-scale adaptation inside the chosen preset. Off: the player's choice stands. */
   adaptive = false;
+  /**
+   * Second safety net, for phones only (`main.ts` turns it on for non-desktop): a device that sits at more
+   * than twice the frame budget for a second is not going to recover on its own, so the preset drops one
+   * step. Without it a phone that once saved 'medium' in localStorage had no way back to a playable frame
+   * (dropPreset was removed in 45eaf15).
+   */
+  allowPresetDrop = false;
   targetFps = 60;
 
   private _preset: QualityPreset;
@@ -62,12 +70,30 @@ export class QualityManager {
 
   /** Call once per rendered frame. */
   update(now: number): void {
-    if (!this.adaptive || now < this.cooldownUntil || this.profiler.sampleCount < 60) {
+    if (now < this.cooldownUntil || this.profiler.sampleCount < 60) {
+      this.badSince = this.goodSince = 0;
+      return;
+    }
+    if (!this.adaptive && !this.allowPresetDrop) {
       this.badSince = this.goodSince = 0;
       return;
     }
     const budget = 1000 / this.targetFps;
     const frame = this.profiler.frameAvgMs;
+    // Hopelessly slow (under ~30 FPS): no amount of resolution scaling saves it, step the preset down now.
+    if (this.allowPresetDrop && frame > budget * 2 && this._preset.level !== 'low') {
+      if (this.badSince === 0) this.badSince = now;
+      else if (now - this.badSince > 900) {
+        this.dropOneLevel();
+        return;
+      }
+    } else {
+      this.badSince = 0;
+    }
+    if (!this.adaptive) {
+      this.goodSince = 0;
+      return;
+    }
     const over = frame > budget * 1.12;
     const headroom = frame < budget * 1.04 && this.profiler.cpuAvgMs < budget * 0.5;
 
@@ -85,6 +111,16 @@ export class QualityManager {
     } else {
       this.badSince = this.goodSince = 0;
     }
+  }
+
+  /** One preset down, without recording it as the player's choice (a device can hold it, a player may not). */
+  private dropOneLevel(): void {
+    const i = QUALITY_LEVELS.indexOf(this._preset.level);
+    const next = QUALITY_LEVELS[Math.max(0, i - 1)];
+    if (next === this._preset.level) return;
+    this._preset = QUALITY_PRESETS[next];
+    this._scale = this._preset.resolutionScaleMax;
+    this.apply('auto');
   }
 
   private degrade(): void {
