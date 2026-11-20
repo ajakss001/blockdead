@@ -3,6 +3,7 @@ import type { GameEvents } from '../core/events';
 import type { Profiler } from '../core/Profiler';
 import type { QualityLevel } from '../core/types';
 import { QUALITY_STORAGE_KEY } from './DeviceProfile';
+import { overrideScale, overrideShadow } from '../debug/qualityOverrides';
 import { QUALITY_LEVELS, QUALITY_PRESETS, type QualityPreset } from './QualityPresets';
 import type { Renderer } from './Renderer';
 
@@ -135,8 +136,8 @@ export class QualityManager {
 
   private apply(source: 'init' | 'auto' | 'user'): void {
     this.renderer.setPixelRatioCap(this._preset.maxPixelRatio);
-    this.renderer.setShadows(this._preset.shadowMapSize > 0);
-    this.renderer.setResolutionScale(this._scale);
+    this.renderer.setShadows(overrideShadow === false ? false : this._preset.shadowMapSize > 0);
+    this.renderer.setResolutionScale(overrideScale ?? this._scale);
     this.badSince = this.goodSince = 0;
     this.cooldownUntil = performance.now() + COOLDOWN_MS;
     // Judge the new settings on fresh frames only, not on the slow history that triggered the change.

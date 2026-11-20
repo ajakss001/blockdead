@@ -21,6 +21,7 @@ import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
 import { langToggle, onLangChange, tr } from '../core/i18n';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
+import { overrideChunks, overrideFog } from '../debug/qualityOverrides';
 import { CHUNK, DOWNTOWN_RADIUS, ROAD_HALF } from '../world/gen/layout';
 import { type SceneKind, sceneAt } from '../world/gen/chaos';
 import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
@@ -2230,10 +2231,10 @@ export class WorldScene implements IScene {
     this.life.fireLights = preset.fireLights;
     this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, preset.foliage.cap);
     this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
-    (this.scene.fog as Fog).far = preset.fogFar;
-    this.camera.far = preset.fogFar + 5;
+    (this.scene.fog as Fog).far = overrideFog ?? preset.fogFar;
+    this.camera.far = (overrideFog ?? preset.fogFar) + 5;
     this.camera.updateProjectionMatrix();
-    this.chunks.radius = preset.chunkRadius;
+    this.chunks.radius = overrideChunks ?? preset.chunkRadius;
     // Sub-cell meshes (12 calls per chunk) only pay off on a desktop GPU; phones are draw-call bound.
     // ?splitcells=1 / =0 forces the mode, so the two can be A/B'd on a phone without a rebuild.
     const splitQ = new URLSearchParams(location.search).get('splitcells');
