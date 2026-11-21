@@ -97,7 +97,6 @@ async function boot(): Promise<void> {
 
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
-  const spikeLog = import.meta.env.DEV || params.has('debug');
   const programs = () => renderer.gl.info.programs?.length ?? 0;
   const draw = (alpha: number, frameDt: number, gameDt: number) => {
     const t0 = performance.now();
@@ -110,9 +109,10 @@ async function boot(): Promise<void> {
     postfx.render(frameDt);
     profiler.end('draw');
     const ms = performance.now() - t0;
-    if (spikeLog && ms > 40) {
-      const sec = [...profiler.last].map(([k, v]) => `${k} ${v.toFixed(1)}`).join(' ');
-      console.warn(`[spike] ${ms.toFixed(0)}ms programs ${p0}->${programs()} | ${sec}`);
+    if (ms > 40) {
+      const sec = [...profiler.last].map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ');
+      const at = new Date().toLocaleTimeString();
+      profiler.noteSpike(`${at} ${ms.toFixed(0)}ms prog ${p0}->${programs()} | ${sec}`);
     }
   };
 

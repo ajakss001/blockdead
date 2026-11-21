@@ -25,6 +25,15 @@ export class Profiler {
   readonly sections = new Map<string, number>();
   /** Raw duration of the last occurrence of each section, ms (spike diagnostics). */
   readonly last = new Map<string, number>();
+  /** Most recent frames that took over 40 ms, newest last. */
+  readonly spikes: string[] = [];
+  spikeCount = 0;
+
+  noteSpike(line: string): void {
+    this.spikeCount++;
+    this.spikes.push(line);
+    if (this.spikes.length > 4) this.spikes.shift();
+  }
 
   record(frameMs: number, cpuMs: number): void {
     const i = this.index;
