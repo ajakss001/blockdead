@@ -222,10 +222,6 @@ export class Vehicles {
   private isBraking = false;
   private lowQuality = false;
   private aniso = 4;
-  private headAttached = false;
-  private headBounceAttached = false;
-  private brakeAttached = 0;
-  private prewarmLight = false;
 
   setAnisotropy(n: number): void {
     this.aniso = Math.max(1, n);
@@ -238,43 +234,6 @@ export class Vehicles {
       this.headLightL.castShadow = false;
       this.headBounceLight.intensity = 0;
       this.brakeLightR.intensity = 0;
-    }
-    this.syncLights(this.headAttached, this.brakeAttached > 0);
-  }
-
-  prewarmLights(on: boolean): void {
-    this.prewarmLight = on;
-    this.headLightL.intensity = on ? 0.01 : 0;
-    this.headLightR.intensity = on ? 0.01 : 0;
-    this.headBounceLight.intensity = on && !this.lowQuality ? 0.01 : 0;
-    this.brakeLightL.intensity = on ? 0.01 : 0;
-    this.brakeLightR.intensity = on && !this.lowQuality ? 0.01 : 0;
-    this.syncLights(on, on);
-  }
-
-  private syncLights(needHead: boolean, needBrake: boolean): void {
-    const wantHead = needHead || this.prewarmLight;
-    const wantBounce = wantHead && !this.lowQuality;
-    if (wantHead !== this.headAttached) {
-      if (wantHead) this.scene.add(this.headLightL, this.headLightR);
-      else {
-        this.headLightL.removeFromParent();
-        this.headLightR.removeFromParent();
-      }
-      this.headAttached = wantHead;
-    }
-    if (wantBounce !== this.headBounceAttached) {
-      if (wantBounce) this.scene.add(this.headBounceLight);
-      else this.headBounceLight.removeFromParent();
-      this.headBounceAttached = wantBounce;
-    }
-    const wantBrake = needBrake || this.prewarmLight ? (this.lowQuality ? 1 : 2) : 0;
-    if (wantBrake !== this.brakeAttached) {
-      if (wantBrake >= 1 && !this.brakeLightL.parent) this.scene.add(this.brakeLightL);
-      else if (wantBrake === 0) this.brakeLightL.removeFromParent();
-      if (wantBrake === 2 && !this.brakeLightR.parent) this.scene.add(this.brakeLightR);
-      else if (wantBrake < 2) this.brakeLightR.removeFromParent();
-      this.brakeAttached = wantBrake;
     }
   }
 
@@ -315,7 +274,7 @@ export class Vehicles {
     this.brakeLightR = new PointLight(0xff2218, 0, 4.2, 2);
     this.headBounceLight = new PointLight(0xffe8b8, 0, 20, 1.4);
     this.headBounceLight.castShadow = false;
-    this.scene.add(this.headTargetL, this.headTargetR);
+    this.scene.add(this.headTargetL, this.headTargetR, this.headLightL, this.headLightR, this.headBounceLight, this.brakeLightL, this.brakeLightR);
 
     this.loadModel('sedan');
     this.loadModel('suv');
@@ -1454,6 +1413,12 @@ export class Vehicles {
     }
   }
 
+  /** Headlight shadows toggle with the lamps; both states are compiled at boot (main.ts). */
+  setHeadShadow(on: boolean): void {
+    this.headLightL.castShadow = on;
+    this.headLightL.shadow.needsUpdate = on;
+  }
+
   private updateHeadlights(): void {
     const litCar =
       (this.activeCar && this.activeCar.lightsOn && this.activeCar.battery > 0.02 ? this.activeCar : null) ??
@@ -1513,7 +1478,6 @@ export class Vehicles {
       this.brakeLightL.intensity = 0;
       this.brakeLightR.intensity = 0;
     }
-    this.syncLights(!!litCar, !!(brakeCar && brakeCar.battery > 0.02 && (this.isBraking || brakeCar.lightsOn)));
   }
 
   dispose(): void {

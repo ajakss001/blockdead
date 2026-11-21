@@ -81,9 +81,6 @@ export class Player {
   private flashT = 0;
   private readonly lightTarget: Object3D;
   private readonly bounceLight: PointLight;
-  private lightInCam = false;
-  private bounceInScene = false;
-  private prewarmLight = false;
   private suppressed = false;
   private readonly lastShadowPos = new Vector3(1e9, 0, 1e9);
   private readonly lastShadowDir = new Vector3();
@@ -126,7 +123,6 @@ export class Player {
     this.body.root.visible = false;
     this.flashlight.intensity = 0;
     this.bounceLight.intensity = 0;
-    this.syncLights(false, false);
   }
 
   /** A blow taken: the camera jolts. */
@@ -171,6 +167,9 @@ export class Player {
     if (!camera.parent) scene.add(camera);
     this.bounceLight = new PointLight(f.color, 0, 9.5, 1.8);
     this.bounceLight.castShadow = false;
+    // Lights stay in the scene for the whole run: adding or removing one changes every material's program.
+    camera.add(this.flashlight);
+    scene.add(this.bounceLight);
 
     this.applyQuality(ctx.quality.preset);
     this.unsubs.push(ctx.events.on('quality:changed', () => this.applyQuality(ctx.quality.preset)));
@@ -344,37 +343,6 @@ export class Player {
     this.bounceLight.dispose();
   }
 
-  private syncLights(beam: boolean, bounce: boolean): void {
-    if (beam && !this.lightInCam) {
-      this.camera.add(this.flashlight);
-      this.lightInCam = true;
-    } else if (!beam && this.lightInCam) {
-      this.camera.remove(this.flashlight);
-      this.lightInCam = false;
-    }
-    if (bounce && !this.bounceInScene) {
-      this.scene.add(this.bounceLight);
-      this.bounceInScene = true;
-    } else if (!bounce && this.bounceInScene) {
-      this.scene.remove(this.bounceLight);
-      this.bounceInScene = false;
-    }
-  }
-
-  /** Attach/detach flashlight lights during boot prewarm so both shader variants compile behind the loading screen. */
-  prewarmLights(on: boolean): void {
-    this.prewarmLight = on;
-    if (on) {
-      this.flashlight.intensity = 0.01;
-      this.bounceLight.intensity = 0.01;
-      this.syncLights(true, true);
-    } else {
-      this.flashlight.intensity = 0;
-      this.bounceLight.intensity = 0;
-      this.syncLights(false, false);
-    }
-  }
-
   /** Temporarily suppress the hand flashlight while seated in a vehicle. */
   suppressLight(on: boolean): void {
     if (this.suppressed === on) return;
@@ -382,7 +350,6 @@ export class Player {
     if (on) {
       this.flashlight.intensity = 0;
       this.bounceLight.intensity = 0;
-      this.syncLights(false, false);
     }
   }
 
@@ -454,15 +421,13 @@ export class Player {
    * the camera's turns a little; brightness and colour by the battery.
    */
   private aimLight(dt: number, level: number): void {
-    if (this.prewarmLight || this.suppressed) return;
+    if (this.suppressed) return;
     const L = this.flashlight;
     if (level <= 0.02) {
       L.intensity = 0;
       this.bounceLight.intensity = 0;
-      this.syncLights(false, false);
       return;
     }
-    this.syncLights(true, true);
     L.intensity = FLASHLIGHT.light.intensity * level;
     const weak = this.battery < FLASHLIGHT.battery.dim ? 1 - this.battery / FLASHLIGHT.battery.dim : 0;
     L.color.copy(LIGHT_COLOR).lerp(WEAK_COLOR, weak);

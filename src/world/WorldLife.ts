@@ -75,7 +75,6 @@ export class WorldLife {
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
   private lights: PointLight[] = [];
-  private roomsInScene = false;
   private roomSortT = 0;
   private readonly roomPicks: { isLamp: boolean; idx: number }[] = [];
   private readonly lampNearTmp: [number, number][] = [];
@@ -128,22 +127,13 @@ export class WorldLife {
   set roomLights(n: number) {
     if (n === this.lights.length) return;
     for (const l of this.lights) l.removeFromParent();
-    this.lightsInSync(false);
     this.lights = Array.from({ length: n }, () => {
       const l = new PointLight(0xffc887, 0, 9, 2);
       l.castShadow = false;
+      this.scene.add(l);
       return l;
     });
     this.roomSortT = 0;
-  }
-
-  private lightsInSync(want: boolean): void {
-    if (want === this.roomsInScene) return;
-    this.roomsInScene = want;
-    for (const l of this.lights) {
-      if (want) this.scene.add(l);
-      else l.removeFromParent();
-    }
   }
 
   /** Wind: direction (rad, xz) and gust 0..1 — the clouds drift with it. */
@@ -233,11 +223,9 @@ export class WorldLife {
   /** Fires burning (x, y, z, size, phase): the nearest get the real lights. */
   private readonly fires: number[] = [];
   private fireLightList: PointLight[] = [];
-  private firesInScene = false;
   private fireSortT = 0;
   private readonly fireNearTmp: [number, number][] = [];
   private readonly firePicks: number[] = [];
-  private prewarmActive = false;
 
   /** At most this many real lights for fires (only added to scene when a fire is in range). */
   set fireLights(n: number) {
@@ -245,27 +233,14 @@ export class WorldLife {
     while (this.fireLightList.length < n) {
       const l = new PointLight(0xff8a3a, 0, 16, 1.6);
       l.castShadow = false;
-      if (this.firesInScene || this.prewarmActive) this.scene.add(l);
+      this.scene.add(l);
       this.fireLightList.push(l);
     }
-    if (n === 0) this.firesInScene = false;
     this.fireSortT = 0;
   }
 
-  private firesInSync(want: boolean): void {
-    if (want === this.firesInScene) return;
-    this.firesInScene = want;
-    for (const l of this.fireLightList) {
-      if (want) this.scene.add(l);
-      else l.removeFromParent();
-    }
-  }
-
   private updateFireLights(player: Vector3, dt: number): void {
-    if (this.fireLightList.length === 0) {
-      this.firesInSync(false);
-      return;
-    }
+    if (this.fireLightList.length === 0) return;
     const F = this.fires;
     this.fireSortT -= dt;
     if (this.fireSortT <= 0) {
@@ -282,9 +257,11 @@ export class WorldLife {
         this.firePicks.push(near[n][1]);
       }
     }
-    const active = this.firePicks.length > 0 || this.prewarmActive;
-    this.firesInSync(active);
-    if (!active) return;
+    const active = this.firePicks.length > 0;
+    if (!active) {
+      for (const l of this.fireLightList) l.intensity = 0;
+      return;
+    }
     for (let n = 0; n < this.fireLightList.length; n++) {
       const l = this.fireLightList[n];
       const i = this.firePicks[n];
@@ -344,10 +321,7 @@ export class WorldLife {
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
   private updateRoomLights(player: Vector3, dt: number): void {
-    if (this.lights.length === 0) {
-      this.lightsInSync(false);
-      return;
-    }
+    if (this.lights.length === 0) return;
     const P = this.powered;
     this.roomSortT -= dt;
     if (this.roomSortT <= 0) {
@@ -372,9 +346,11 @@ export class WorldLife {
         else if (n - lamps.length < near.length) this.roomPicks.push({ isLamp: false, idx: near[n - lamps.length][1] });
       }
     }
-    const active = this.roomPicks.length > 0 || this.prewarmActive;
-    this.lightsInSync(active);
-    if (!active) return;
+    const active = this.roomPicks.length > 0;
+    if (!active) {
+      for (const l of this.lights) l.intensity = 0;
+      return;
+    }
     for (let n = 0; n < this.lights.length; n++) {
       const l = this.lights[n];
       const pick = this.roomPicks[n];
@@ -508,17 +484,11 @@ export class WorldLife {
     this.fireSortT = 0;
   }
 
-  /** Program compiles during the loading-screen prewarm (attach fire/room lights temporarily). */
+  /** Program compiles during the loading-screen prewarm. */
   prewarm(): () => void {
     this.glow.count = Math.max(1, this.glow.count);
-    this.prewarmActive = true;
-    this.firesInSync(this.fireLightList.length > 0);
-    this.lightsInSync(this.lights.length > 0);
     return () => {
-      this.prewarmActive = false;
       this.dirty = true;
-      this.firesInSync(this.firePicks.length > 0);
-      this.lightsInSync(this.roomPicks.length > 0);
     };
   }
 

@@ -859,19 +859,17 @@ export class WorldScene implements IScene {
     this.player.prewarmShadows();
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
-    this.vehicles.prewarmLights(true);
-    this.ctx.renderer.gl.compile(this.scene, this.camera);
-    this.vehicles.prewarmLights(false);
-    this.player.prewarmLights(true);
     this.ctx.renderer.gl.compile(this.scene, this.camera);
     return () => {
-      this.vehicles.prewarmLights(false);
-      this.player.prewarmLights(false);
       lifeDone();
       atmoDone();
       group.removeFromParent();
       g.dispose();
     };
+  }
+
+  setHeadShadow(on: boolean): void {
+    this.vehicles.setHeadShadow(on);
   }
 
   private exitVehicle(): void {

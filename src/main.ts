@@ -188,6 +188,9 @@ async function boot(): Promise<void> {
   const t0 = performance.now();
   const cleanup = scene.prewarm?.();
   draw(0, 0, 0);
+  scene.setHeadShadow?.(true);
+  draw(0, 0, 0);
+  scene.setHeadShadow?.(false);
   cleanup?.();
   // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
