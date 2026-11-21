@@ -18,7 +18,7 @@ import { QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
 import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
-import { loadCharacters, setCharacterAnisotropy } from './characters/assets';
+import { BODY_IDS, loadBody, loadCharacters, setCharacterAnisotropy } from './characters/assets';
 import { loadGearMeta, setGearAnisotropy, setGearSource } from './characters/gear';
 import { PostFX } from './render/PostFX';
 import { QUALITY_PRESETS } from './render/QualityPresets';
@@ -83,6 +83,8 @@ async function boot(): Promise<void> {
   // Up close (the player, the menu, the inventory) 2048, the zombies 1024 (lodTexture); 512 on low.
   setGearSource(level === 'low' ? 512 : 2048);
   await Promise.all([loadCharacters(level === 'low' ? 512 : 2048), loadGearMeta(), loadItemIcons()]);
+  // Every body type (costumes included): their zombies and bandits must be ready before the warm-up.
+  await Promise.all(BODY_IDS.map((id) => loadBody(id)));
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa, level, device.type !== 'desktop');
@@ -189,6 +191,12 @@ async function boot(): Promise<void> {
   const cleanup = scene.prewarm?.();
   draw(0, 0, 0);
   cleanup?.();
+  // Shadows and the post chain are off on low at boot, so their programs would compile at the first switch up.
+  postfx.setBypass(false);
+  renderer.setShadows(true);
+  draw(0, 0, 0);
+  renderer.setShadows(QUALITY_PRESETS[level].shadowMapSize > 0);
+  postfx.setBypass(level === 'low');
   // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
   draw(0, 0, 0);

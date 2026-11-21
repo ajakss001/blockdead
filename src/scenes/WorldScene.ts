@@ -12,11 +12,18 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  Matrix4,
+  type Material,
   PerspectiveCamera,
   Quaternion,
   Scene,
+  Skeleton,
+  SkinnedMesh,
+  Sphere,
   Vector3,
 } from 'three';
+import { type BodyId, bodyAsset, hasBody } from '../characters/assets';
+import { CharacterRig } from '../characters/rig';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
 import { langToggle, onLangChange, tr } from '../core/i18n';
@@ -94,8 +101,12 @@ import { LIFE } from '../world/gen/lifeKinds';
 import { labCode } from '../world/gen/scenarios';
 import { NOTE_VARS } from '../data/items';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
+import { gearGeometry, gearKind, gearTexture } from '../characters/gear';
+import { characterMaterial, LENS_TINT } from '../characters/material';
+import { buildHeldModel, FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { giveLoadout } from '../weapons/give';
+import { WEAPON_IDS } from '../weapons/config';
+import { weaponMesh } from '../weapons/buildWeapon';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
 import { type ContainerRef, searchBox } from '../systems/Containers';
@@ -859,6 +870,8 @@ export class WorldScene implements IScene {
     this.player.prewarmShadows();
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
+    const modelsDone = this.prewarmModels();
+    const deathDone = this.prewarmDeath();
     this.vehicles.prewarmLights(true);
     this.ctx.renderer.gl.compile(this.scene, this.camera);
     this.vehicles.prewarmLights(false);
@@ -869,8 +882,107 @@ export class WorldScene implements IScene {
       this.player.prewarmLights(false);
       lifeDone();
       atmoDone();
+      modelsDone();
+      deathDone();
       group.removeFromParent();
       g.dispose();
+    };
+  }
+
+  /**
+   * Programs a player meets later in a run, compiled now: the survivor's death figure in full gear, a
+   * dropped weapon, and the crowd of every body type. Measured with the in-game spike log: each of these
+   * otherwise compiles in one frame, and on a phone that frame is a 200-800 ms freeze.
+   */
+  private prewarmModels(): () => void {
+    const c = this.player.controller;
+    const here = c.position.clone();
+    const geos: BufferGeometry[] = [];
+    const group = new Group();
+    group.position.copy(here);
+    // One skeleton per body for the gear to bind to (a SkinnedMesh needs one to compute its bounds).
+    const skeletons: [BodyId, Skeleton][] = [];
+    const figs: CharacterRig[] = [];
+    for (const body of ['male', 'female'] as const) {
+      if (!hasBody(body)) continue;
+      // Both looks of the same body: plain (the player, the death figure) and covered (zombies, bandits).
+      for (const look of [{}, { cover: true, hide: { value: 0 } }]) {
+        const fig = new CharacterRig(body, 0, look);
+        fig.root.position.set(0, 0, 0);
+        figs.push(fig);
+        group.add(fig.root);
+        if (look.cover) skeletons.push([body, fig.mesh.skeleton]);
+      }
+    }
+    // Every gear piece in its three material kinds (plain, double-sided mask, see-through lens): the player
+    // may put any of them on long after boot, and each kind is a program of its own.
+    for (const id of Object.keys(ITEMS) as ItemId[]) {
+      const g = ITEMS[id].wear?.gear;
+      if (!g) continue;
+      for (const [body, skeleton] of skeletons) {
+        const asset = bodyAsset(body);
+        const rig = asset.lod0;
+        const skinned = (geo: BufferGeometry, mat: Material): SkinnedMesh => {
+          const m = new SkinnedMesh(geo, mat);
+          m.bind(skeleton, new Matrix4());
+          m.frustumCulled = false;
+          m.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
+          geos.push(geo);
+          group.add(m);
+          return m;
+        };
+        const geo = gearGeometry(body, g, 0);
+        if (geo) skinned(geo, characterMaterial(asset, rig, { map: gearTexture(g), doubleSide: gearKind(g) === 'mask' }));
+        const lensGeo = gearGeometry(body, g, 0, 'lens');
+        if (lensGeo) skinned(lensGeo, characterMaterial(asset, rig, { lens: LENS_TINT[g] ?? 0x1e1f1d }));
+      }
+    }
+    // Every modelled weapon: the first one picked up or swung compiles its own material.
+    for (const w of WEAPON_IDS) group.add(weaponMesh(w));
+    // A weapon on the ground (the one that slips out of the hand at death has its own program).
+    const drop = buildHeldModel('knife', geos);
+    group.add(drop);
+    const torch = buildHeldModel('torch', geos);
+    torch.position.x = 0.4;
+    group.add(torch);
+    this.scene.add(group);
+    const models = this.models.prewarm();
+    this.ctx.renderer.gl.compile(this.scene, this.camera);
+    return () => {
+      models();
+      group.removeFromParent();
+      for (const g of geos) g.dispose();
+      for (const f of figs) f.dispose();
+    };
+  }
+
+  /** The death figure (the survivor's outfit, gear and lenses) compiles at boot, not in the first death's frame. */
+  private prewarmDeath(): () => void {
+    const c = this.player.controller;
+    const feet = c.position.clone();
+    const inv = this.inventory;
+    // Every gear kind in one outfit: plain, double-sided (a mask) and lenses have their own programs.
+    // Exactly what the player has on now: the death figure's variants follow the worn set.
+    const worn: Worn = { ...inv.worn };
+    const death = new PlayerDeath(this.scene, {
+      look: this.look,
+      classId: this.classId,
+      worn,
+      dirt: inv.wornDirt,
+      tint: inv.wornTint,
+      hand: inv.hand,
+      feet,
+      yaw: c.yaw,
+      velocity: new Vector3(),
+      eye: this.camera.getWorldPosition(new Vector3()),
+      eyeQ: this.camera.getWorldQuaternion(new Quaternion()),
+      killer: null,
+      boxes: [],
+      around: this.deathSurroundings(feet),
+    });
+    return () => {
+      death.group.removeFromParent();
+      death.dispose();
     };
   }
 
