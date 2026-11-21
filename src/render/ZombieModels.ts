@@ -21,7 +21,7 @@ import {
   Sphere,
   Vector3,
 } from 'three';
-import { BASE_BODIES, type BaseBody, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, type RigAsset } from '../characters/assets';
+import { BASE_BODIES, type BaseBody, BODY_IDS, type BodyId, bodyAsset, bodyNow, clipFor, type ClipId, costumeBody, hasBody, type RigAsset } from '../characters/assets';
 import { coverBody, gearGeometry, gearKind, gearReady, gearTexture, hideBits, loadGear } from '../characters/gear';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import type { GearId } from '../data/items';
@@ -483,6 +483,29 @@ export class ZombieModels {
   constructor(level: QualityLevel) {
     this.group.name = 'zombie-models';
     this.configure(level);
+  }
+
+  /**
+   * Bring every body type's crowd mesh to one visible instance so its program compiles behind the loading
+   * screen instead of in the first frame a zombie walks into view.
+   */
+  prewarm(): () => void {
+    // Only the bodies already loaded (the base pair at boot): a costume would throw before its file arrives.
+    const made: Layer[] = [];
+    for (const body of BODY_IDS) if (hasBody(body)) made.push(this.layer(body));
+    const m = new Matrix4();
+    for (const l of made) {
+      l.mesh.setMatrixAt(0, m);
+      l.mesh.instanceMatrix.needsUpdate = true;
+      l.mesh.count = 1;
+      l.mesh.visible = true;
+    }
+    return () => {
+      for (const l of made) {
+        l.mesh.count = 0;
+        l.mesh.visible = false;
+      }
+    };
   }
 
   configure(level: QualityLevel): void {
