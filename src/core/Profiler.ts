@@ -23,6 +23,8 @@ export class Profiler {
   private readonly sectionStart = new Map<string, number>();
   /** Exponential moving average per named section, ms. */
   readonly sections = new Map<string, number>();
+  /** Raw duration of the last occurrence of each section, ms (spike diagnostics). */
+  readonly last = new Map<string, number>();
 
   record(frameMs: number, cpuMs: number): void {
     const i = this.index;
@@ -42,6 +44,7 @@ export class Profiler {
     const start = this.sectionStart.get(section);
     if (start === undefined) return;
     const ms = performance.now() - start;
+    this.last.set(section, ms);
     const prev = this.sections.get(section);
     this.sections.set(section, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
   }
