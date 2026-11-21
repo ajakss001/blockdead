@@ -98,6 +98,15 @@ async function boot(): Promise<void> {
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
   const programs = () => renderer.gl.info.programs?.length ?? 0;
+  const newPrograms = (from: number): string[] => {
+    const list = renderer.gl.info.programs ?? [];
+    const names: string[] = [];
+    for (let i = from; i < list.length; i++) {
+      const tag = String(list[i].cacheKey ?? '').split(',').pop() ?? '';
+      names.push(`${list[i].name || '?'}${tag ? `:${tag.slice(0, 28)}` : ''}`);
+    }
+    return names;
+  };
   const draw = (alpha: number, frameDt: number, gameDt: number) => {
     const t0 = performance.now();
     const p0 = programs();
@@ -112,7 +121,9 @@ async function boot(): Promise<void> {
     if (ms > 40) {
       const sec = [...profiler.last].map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ');
       const at = new Date().toLocaleTimeString();
-      profiler.noteSpike(`${at} ${ms.toFixed(0)}ms prog ${p0}->${programs()} | ${sec}`);
+      const added = newPrograms(p0);
+      const names = added.slice(0, 4).join(', ') + (added.length > 4 ? ` +${added.length - 4}` : '');
+      profiler.noteSpike(`${at} ${ms.toFixed(0)}ms prog ${p0}->${programs()} [${names}] | ${sec}`);
     }
   };
 
