@@ -1,6 +1,55 @@
-import { type Camera, PCFShadowMap, type Scene, WebGLRenderer } from 'three';
+import { type Camera, PCFShadowMap, type Scene, ShaderChunk, WebGLRenderer } from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { GameEvents } from '../core/events';
+
+let lightChunksPatched = false;
+
+/**
+ * Skip extinguished (`color == 0`) or out-of-cone lights in Three.js's unrolled fragment loops.
+ * Because lights stay permanently attached in the scene to avoid shader recompiles, disabled point/spot
+ * lights would otherwise execute spotLightMap texture reads, shadow lookups, and PBR BRDF on every pixel.
+ */
+function patchLightShaderChunks(): void {
+  if (lightChunksPatched) return;
+  lightChunksPatched = true;
+
+  const pars0 = ShaderChunk.lights_pars_begin;
+  const pars1 = pars0
+    .replace(
+      'void getPointLightInfo( const in PointLight pointLight, const in vec3 geometryPosition, out IncidentLight light ) {',
+      'void getPointLightInfo( const in PointLight pointLight, const in vec3 geometryPosition, out IncidentLight light ) {\n\t\tif ( pointLight.color == vec3( 0.0 ) ) { light.color = vec3( 0.0 ); light.visible = false; return; }',
+    )
+    .replace(
+      'void getSpotLightInfo( const in SpotLight spotLight, const in vec3 geometryPosition, out IncidentLight light ) {',
+      'void getSpotLightInfo( const in SpotLight spotLight, const in vec3 geometryPosition, out IncidentLight light ) {\n\t\tif ( spotLight.color == vec3( 0.0 ) ) { light.color = vec3( 0.0 ); light.visible = false; return; }',
+    );
+  if (pars1 === pars0) console.warn('[Renderer] failed to patch lights_pars_begin');
+  else ShaderChunk.lights_pars_begin = pars1;
+
+  const frag0 = ShaderChunk.lights_fragment_begin;
+  const frag1 = frag0
+    .replace(
+      'getPointLightInfo( pointLight, geometryPosition, directLight );',
+      'getPointLightInfo( pointLight, geometryPosition, directLight );\n\t\tif ( directLight.visible ) {',
+    )
+    .replace(
+      'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );\n\t}\n\t#pragma unroll_loop_end\n#endif\n#if ( NUM_SPOT_LIGHTS > 0 )',
+      'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );\n\t\t}\n\t}\n\t#pragma unroll_loop_end\n#endif\n#if ( NUM_SPOT_LIGHTS > 0 )',
+    )
+    .replace(
+      'getSpotLightInfo( spotLight, geometryPosition, directLight );',
+      'getSpotLightInfo( spotLight, geometryPosition, directLight );\n\t\tif ( directLight.visible ) {',
+    )
+    .replace(
+      'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );\n\t}\n\t#pragma unroll_loop_end\n#endif\n#if ( NUM_SUN_LIGHTS > 0 )',
+      'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );\n\t\t}\n\t}\n\t#pragma unroll_loop_end\n#endif\n#if ( NUM_SUN_LIGHTS > 0 )',
+    );
+  if (frag1 === frag0 || frag1.split('if ( directLight.visible ) {').length !== 3) {
+    console.warn('[Renderer] failed to patch lights_fragment_begin');
+  } else {
+    ShaderChunk.lights_fragment_begin = frag1;
+  }
+}
 
 export interface RenderStats {
   drawCalls: number;
@@ -31,6 +80,7 @@ export class Renderer {
     private readonly events: EventBus<GameEvents>,
     antialias: boolean,
   ) {
+    patchLightShaderChunks();
     this.gl = new WebGLRenderer({
       antialias,
       alpha: false,

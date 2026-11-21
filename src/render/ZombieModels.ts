@@ -232,10 +232,10 @@ class GearLayer {
     a.needsUpdate = true;
   }
 
-  dispose(): void {
+  dispose(keepMaterial = false): void {
     this.mesh.removeFromParent();
     this.mesh.geometry.dispose();
-    this.material.dispose();
+    if (!keepMaterial) this.material.dispose();
   }
 }
 
@@ -246,6 +246,8 @@ class GearLayer {
 class Layer {
   mesh!: InstancedMesh;
   tex!: DataTexture;
+  private skinUniform!: { value: DataTexture };
+  private bodyMat: Material | null = null;
   data!: Float32Array;
   tints!: Float32Array;
   tints2!: Float32Array;
@@ -274,14 +276,13 @@ class Layer {
     this.tints = new Float32Array(cap * 3);
     this.tints2 = new Float32Array(cap * 3);
     this.hides = new Float32Array(cap);
-    // The gear's meshes read the old skin texture: made again on the new one when next worn.
-    for (const gl of this.gear.values()) gl.dispose();
-    this.gear.clear();
     this.prevStatic.length = 0;
     coverBody(this.k.body);
     this.tex = new DataTexture(this.data, this.k.nb * 4, cap, RGBAFormat, FloatType);
     this.tex.minFilter = this.tex.magFilter = NearestFilter;
     this.tex.needsUpdate = true;
+    if (!this.skinUniform) this.skinUniform = { value: this.tex };
+    else this.skinUniform.value = this.tex;
     const src = this.k.rig.geometry;
     const g = new BufferGeometry();
     for (const [name, a] of Object.entries(src.attributes)) g.setAttribute(name, a);
@@ -292,7 +293,8 @@ class Layer {
     g.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
     // A costume keeps its own colours (only a little of the kind's tint); everyday clothes take the kind's.
     const costume = !BASE_BODIES.includes(this.k.body as BaseBody);
-    this.mesh = new InstancedMesh(g, characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skin: this.tex, tintMix: costume ? 0.18 : 0.6, cover: true }), cap);
+    this.bodyMat ??= characterMaterial(bodyAsset(this.k.body), this.k.rig, { zombie: true, skinUniform: this.skinUniform, tintMix: costume ? 0.18 : 0.6, cover: true });
+    this.mesh = new InstancedMesh(g, this.bodyMat, cap);
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.mesh.name = `zombies-${this.k.body}`;
     this.mesh.frustumCulled = false;
@@ -305,7 +307,7 @@ class Layer {
       this.tints2.set(old.t2);
       this.hides.set(old.h);
       (this.mesh.instanceMatrix.array as Float32Array).set(old.mesh.instanceMatrix.array as Float32Array);
-      this.release(old.mesh, old.tex);
+      this.release(old.mesh, old.tex, true);
     }
   }
 
@@ -358,14 +360,17 @@ class Layer {
     const geo = gearGeometry(body, g, 1, lens ? 'lens' : 'main');
     if (!geo) return null;
     const old = gl;
-    const look = lens ? { skin: this.tex, row: true, lens: LENS_TINT[g] ?? 0x1e1f1d } : { skin: this.tex, row: true, map: gearTexture(g, true), doubleSide: gearKind(g) === 'mask' };
-    gl = new GearLayer(geo, characterMaterial(bodyAsset(body), this.k.rig, look), Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${key}`);
+    const look = lens
+      ? { skinUniform: this.skinUniform, row: true, lens: LENS_TINT[g] ?? 0x1e1f1d }
+      : { skinUniform: this.skinUniform, row: true, map: gearTexture(g, true), doubleSide: gearKind(g) === 'mask' };
+    const mat = old ? old.material : characterMaterial(bodyAsset(body), this.k.rig, look);
+    gl = new GearLayer(geo, mat, Math.max(8, this.cap, (old?.cap ?? 0) * 2), this.group, `zombie-gear-${body}-${key}`);
     if (old) {
-      // Grown: the instances so far carried over.
+      // Grown: the instances so far carried over; keep shared material alive so its shader stays cached.
       (gl.mesh.instanceMatrix.array as Float32Array).set((old.mesh.instanceMatrix.array as Float32Array).subarray(0, old.n * 16));
       gl.rows.set(old.rows.subarray(0, old.n));
       gl.n = old.n;
-      old.dispose();
+      old.dispose(true);
     }
     this.gear.set(key, gl);
     return gl;
@@ -395,16 +400,16 @@ class Layer {
     }
   }
 
-  private release(mesh: InstancedMesh, tex: DataTexture): void {
+  private release(mesh: InstancedMesh, tex: DataTexture, keepMaterial = false): void {
     this.group.remove(mesh);
     mesh.geometry.dispose();
-    (mesh.material as { dispose(): void }).dispose();
+    if (!keepMaterial) (mesh.material as { dispose(): void }).dispose();
     tex.dispose();
   }
 
   dispose(): void {
-    for (const gl of this.gear.values()) gl.dispose();
-    this.release(this.mesh, this.tex);
+    for (const gl of this.gear.values()) gl.dispose(false);
+    this.release(this.mesh, this.tex, false);
   }
 }
 

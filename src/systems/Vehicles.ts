@@ -221,6 +221,7 @@ export class Vehicles {
   private brakeLightR: PointLight;
   private isBraking = false;
   private lowQuality = false;
+  private forceHeadShadow: boolean | null = null;
   private aniso = 4;
 
   setAnisotropy(n: number): void {
@@ -1414,9 +1415,12 @@ export class Vehicles {
   }
 
   /** Headlight shadows toggle with the lamps; both states are compiled at boot (main.ts). */
-  setHeadShadow(on: boolean): void {
-    this.headLightL.castShadow = on;
-    this.headLightL.shadow.needsUpdate = on;
+  setHeadShadow(on: boolean | null): void {
+    this.forceHeadShadow = on;
+    if (on !== null) {
+      this.headLightL.castShadow = on;
+      this.headLightL.shadow.needsUpdate = on;
+    }
   }
 
   private updateHeadlights(): void {
@@ -1452,6 +1456,10 @@ export class Vehicles {
 
       this.headBounceLight.position.set(litCar.x + fwdX * (front + 2.8), litCar.y + 0.75, litCar.z + fwdZ * (front + 2.8));
       this.headBounceLight.intensity = this.lowQuality ? 0 : power * 0.15;
+    }
+    if (this.forceHeadShadow !== null) {
+      this.headLightL.castShadow = this.forceHeadShadow;
+      this.headLightL.shadow.needsUpdate = this.forceHeadShadow;
     }
 
     const brakeCar = this.activeCar ?? litCar;

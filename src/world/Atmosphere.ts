@@ -1,4 +1,4 @@
-import type { Camera, Color, Scene, Vector3 } from 'three';
+import { type Camera, type Color, Matrix4, type Scene, type Vector3 } from 'three';
 import { LOUD_LOOPS, type LoopKind, sfx } from '../audio/Sound';
 import { Foliage, Ground } from '../render/Foliage';
 import type { Particles } from '../render/Particles';
@@ -14,6 +14,7 @@ import { LIFE_STRIDE } from './WorldLife';
 
 /** Tree spot tag → species (lifeKinds TREE). */
 const TREE_SPECIES: Species[] = ['maple', 'oak', 'elm', 'spruce', 'pine', 'dead'];
+const _ident = new Matrix4();
 
 /** Leaks drip (seen and heard) within this distance, m; taps, loops, phones — their own. */
 const DRIP_RANGE = 14;
@@ -616,13 +617,23 @@ export class Atmosphere {
 
   /** Programs compile during the loading-screen prewarm. */
   prewarm(): () => void {
-    this.foliage.mesh.count = Math.max(1, this.foliage.mesh.count);
-    this.wet.mesh.count = Math.max(1, this.wet.mesh.count);
-    this.street.critters.mesh.count = Math.max(1, this.street.critters.mesh.count);
-    this.vegetation.prewarm();
+    this.keepPrewarmVisible();
     return () => {
       this.dirty = true;
     };
+  }
+
+  /** Keep atmosphere instanced meshes visible through scene.render() during boot prewarm. */
+  keepPrewarmVisible(): void {
+    for (const mesh of [this.foliage.mesh, this.wet.mesh, this.street.critters.mesh]) {
+      if (mesh.count === 0) {
+        mesh.setMatrixAt(0, _ident);
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.count = 1;
+      }
+      mesh.visible = true;
+    }
+    this.vegetation.prewarm();
   }
 
   dispose(): void {

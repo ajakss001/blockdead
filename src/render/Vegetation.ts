@@ -187,10 +187,14 @@ vMapUv = (vec2(mod(aTile, ${IMP_GRID}.0), floor(aTile / ${IMP_GRID}.0)) + uv) / 
   /** Quality preset: distances, cards kept, variants per species; alpha-to-coverage with MSAA. */
   configure(lod: VegetationLod, msaa: boolean): void {
     this.lod = lod;
-    this.material.alphaToCoverage = msaa;
-    this.impMaterial.alphaToCoverage = msaa;
-    this.material.needsUpdate = true;
-    this.impMaterial.needsUpdate = true;
+    if (this.material.alphaToCoverage !== msaa) {
+      this.material.alphaToCoverage = msaa;
+      this.material.needsUpdate = true;
+    }
+    if (this.impMaterial.alphaToCoverage !== msaa) {
+      this.impMaterial.alphaToCoverage = msaa;
+      this.impMaterial.needsUpdate = true;
+    }
     this.dirty = true;
   }
 
@@ -362,11 +366,20 @@ void main() {
 
   /** Programs compile during the loading-screen prewarm. */
   prewarm(): void {
-    for (const m of this.meshes) {
-      m.count = Math.max(1, m.count);
-      m.visible = true;
+    const first = this.meshes[0];
+    if (first) {
+      if (first.count === 0) {
+        first.setMatrixAt(0, _m.identity());
+        first.instanceMatrix.needsUpdate = true;
+        first.count = 1;
+      }
+      first.visible = true;
     }
-    this.impostor.count = Math.max(1, this.impostor.count);
+    if (this.impostor.count === 0) {
+      this.impostor.setMatrixAt(0, _m.identity());
+      this.impostor.instanceMatrix.needsUpdate = true;
+      this.impostor.count = 1;
+    }
     this.impostor.visible = true;
     this.dirty = true;
   }

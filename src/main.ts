@@ -187,14 +187,41 @@ async function boot(): Promise<void> {
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.
   const t0 = performance.now();
   const cleanup = scene.prewarm?.();
-  draw(0, 0, 0);
-  scene.setHeadShadow?.(true);
-  draw(0, 0, 0);
-  scene.setHeadShadow?.(false);
+  if (device.type === 'desktop') {
+    postfx.setBypass(false);
+    renderer.setShadows(true);
+    scene.setFlashlightShadow?.(false);
+    scene.setHeadShadow?.(false);
+    draw(0, 0, 0);
+    scene.setHeadShadow?.(true);
+    draw(0, 0, 0);
+    scene.setFlashlightShadow?.(true);
+    scene.setHeadShadow?.(false);
+    draw(0, 0, 0);
+    scene.setHeadShadow?.(true);
+    draw(0, 0, 0);
+    renderer.setShadows(false);
+    scene.setFlashlightShadow?.(false);
+    scene.setHeadShadow?.(false);
+    postfx.setBypass(true);
+    draw(0, 0, 0);
+    postfx.setBypass(level === 'low');
+    renderer.setShadows(QUALITY_PRESETS[level].shadowMapSize > 0);
+    scene.setFlashlightShadow?.(null);
+    scene.setHeadShadow?.(null);
+  } else {
+    draw(0, 0, 0);
+    if (QUALITY_PRESETS[level].shadowMapSize > 0) {
+      scene.setHeadShadow?.(true);
+      draw(0, 0, 0);
+      scene.setHeadShadow?.(false);
+    }
+  }
   cleanup?.();
   // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
   draw(0, 0, 0);
+  profiler.clearSpikes();
   console.info(`[boot] shaders warmed in ${Math.round(performance.now() - t0)} ms`);
   document.getElementById('loading')?.remove();
   platform.gameReady();

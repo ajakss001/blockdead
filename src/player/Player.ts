@@ -82,6 +82,7 @@ export class Player {
   private readonly lightTarget: Object3D;
   private readonly bounceLight: PointLight;
   private suppressed = false;
+  private forceFlashShadow: boolean | null = null;
   private readonly lastShadowPos = new Vector3(1e9, 0, 1e9);
   private readonly lastShadowDir = new Vector3();
   private shadowAccum = 0;
@@ -358,6 +359,22 @@ export class Player {
     this.flashlight.shadow.needsUpdate = true;
   }
 
+  /** Prewarm only: force the flashlight shadow state during boot compilation, or restore the preset's. */
+  setFlashlightShadow(on: boolean | null): void {
+    this.forceFlashShadow = on;
+    if (on !== null) {
+      this.flashlight.castShadow = on;
+      if (on && this.flashlight.shadow.mapSize.x < 256) {
+        this.flashlight.shadow.mapSize.set(512, 512);
+        this.flashlight.shadow.map?.dispose();
+        this.flashlight.shadow.map = null;
+      }
+      this.flashlight.shadow.needsUpdate = on;
+    } else {
+      this.applyQuality(this.ctx.quality.preset);
+    }
+  }
+
   /** The flashlight is actually shining. */
   get lightOn(): boolean {
     return !this.suppressed && this.flashlightOn && this.battery > 0 && !this.viewmodel.lightBlocked;
@@ -466,15 +483,15 @@ export class Player {
 
 
   private applyQuality(preset: QualityPreset): void {
-    // Shadows from the flashlight on high quality only.
-    const shadows = preset.level === 'high' && preset.shadowMapSize > 0;
+    // Shadows from the flashlight on high quality only (unless pinned by boot prewarm).
+    const shadows = this.forceFlashShadow ?? (preset.level === 'high' && preset.shadowMapSize > 0);
     this.flashlight.shadow.autoUpdate = false;
     if (this.flashlight.castShadow !== shadows) {
       this.flashlight.castShadow = shadows;
       this.lastShadowPos.x = 1e9;
-      this.flashlight.shadow.needsUpdate = shadows && this.flashlightOn;
+      this.flashlight.shadow.needsUpdate = shadows && (this.flashlightOn || this.forceFlashShadow === true);
     }
-    const size = Math.max(preset.shadowMapSize, 1);
+    const size = Math.max(this.forceFlashShadow ? Math.max(preset.shadowMapSize, 512) : preset.shadowMapSize, 1);
     const shadow = this.flashlight.shadow;
     if (shadow.camera.far !== preset.shadowDistance) {
       shadow.camera.far = preset.shadowDistance;

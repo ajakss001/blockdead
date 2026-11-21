@@ -35,6 +35,11 @@ export class Profiler {
     if (this.spikes.length > 4) this.spikes.shift();
   }
 
+  clearSpikes(): void {
+    this.spikes.length = 0;
+    this.spikeCount = 0;
+  }
+
   record(frameMs: number, cpuMs: number): void {
     const i = this.index;
     this.frameSum += frameMs - this.frameMs[i];

@@ -481,6 +481,36 @@ export class Doors {
     _s.set(1, 1, 1);
   }
 
+  /** Ensure all door pools and plank mesh render at least one dummy instance during boot prewarm. */
+  prewarm(): () => void {
+    this.keepPrewarmVisible();
+    return () => {
+      for (const pool of Object.values(this.pools)) this.writeAll(pool);
+      this.writePlanks();
+    };
+  }
+
+  /** Keep all door meshes visible through scene.render() during boot prewarm. */
+  keepPrewarmVisible(): void {
+    _m.identity();
+    for (const pool of Object.values(this.pools)) {
+      for (const mesh of pool.meshes) {
+        if (mesh.count === 0) {
+          mesh.setMatrixAt(0, _m);
+          mesh.instanceMatrix.needsUpdate = true;
+          mesh.count = 1;
+        }
+        mesh.visible = true;
+      }
+    }
+    if (this.plankMesh.count === 0) {
+      this.plankMesh.setMatrixAt(0, _m);
+      this.plankMesh.instanceMatrix.needsUpdate = true;
+      this.plankMesh.count = 1;
+    }
+    this.plankMesh.visible = true;
+  }
+
   /** Animate swinging leaves; only pools with moving doors re-upload their matrices. */
   update(dt: number): void {
     for (const pool of Object.values(this.pools)) {

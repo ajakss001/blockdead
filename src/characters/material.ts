@@ -18,6 +18,8 @@ export interface CharacterLook {
   zombie?: boolean;
   /** The instanced batch's skin rows. */
   skin?: DataTexture;
+  /** Shared skin uniform holder (lets ZombieModels grow its DataTexture without recreating/disposing materials). */
+  skinUniform?: { value: DataTexture };
   /** A single zombie's clothes (linear): top, bottom (a batch has them per instance). */
   tint?: [Color, Color];
   /** How much the clothes take the tint (0.6 everyday clothes; a costume keeps its colours). */
@@ -130,17 +132,20 @@ export function characterMaterial(body: BodyAsset, rig: RigAsset, o: CharacterLo
   const hide = o.hide ?? { value: 0 };
   const b = bounds(rig);
   const zombie = !!o.zombie;
-  const batched = !!o.skin;
+  const batched = !!(o.skin || o.skinUniform);
   mat.name = `character-${body.id}${zombie ? '-zombie' : ''}${batched ? '-batch' : ''}`;
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uMinY = { value: b.minY };
     sh.uniforms.uHeight = { value: b.height };
     sh.uniforms.uHips = { value: b.hips };
     sh.uniforms.uNoiseTex = { value: noiseTexture() };
-    if (o.skin) sh.uniforms.uSkin = { value: o.skin };
+    if (o.skinUniform) sh.uniforms.uSkin = o.skinUniform;
+    else if (o.skin) sh.uniforms.uSkin = { value: o.skin };
     if (cover && !batched) sh.uniforms.uHide = hide;
     sh.uniforms.uTint = { value: o.tint?.[0] ?? new Color(1, 1, 1) };
     sh.uniforms.uTint2 = { value: o.tint?.[1] ?? new Color(1, 1, 1) };
+    sh.uniforms.uTintMix = { value: o.tintMix ?? 0.6 };
+    sh.uniforms.uNear = { value: near };
     const skinDecl = batched
       ? `
 attribute vec4 skinIndex;
@@ -176,7 +181,7 @@ vTint2 = aTint2;`
       ? `
   float zl = dot(diffuseColor.rgb, ${LUM});
   vec3 zt = vBindPos.y > uHips ? vTint : vTint2;
-  vec3 zcloth = mix(diffuseColor.rgb, zl * zt / max(dot(zt, ${LUM}), 0.03), ${(o.tintMix ?? 0.6).toFixed(3)});
+  vec3 zcloth = mix(diffuseColor.rgb, zl * zt / max(dot(zt, ${LUM}), 0.03), uTintMix);
   vec4 zn2 = texture2D(uNoiseTex, vBindPos.zy * 0.52 + vec2(vBindPos.x * 0.39, 0.61));
   zcloth = mix(zcloth, vec3(dot(zcloth, ${LUM})) * vec3(0.97, 1.0, 0.95), 0.15 + 0.35 * zn2.r);
   float zDirt = smoothstep(0.52, 0.76, zn2.b * 0.65 + zn1.a * 0.35);
@@ -185,7 +190,7 @@ vTint2 = aTint2;`
   diffuseColor.rgb = mix(zcloth, zdead, zSkin);`
       : '';
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vBindPos;\nvarying vec3 vTint;\nvarying vec3 vTint2;\nuniform float uMinY;\nuniform float uHeight;\nuniform float uHips;\nuniform mediump sampler2D uNoiseTex;\n${cover ? 'varying float vCover;\n' : ''}`)
+      .replace('#include <common>', `#include <common>\nvarying vec3 vBindPos;\nvarying vec3 vTint;\nvarying vec3 vTint2;\nuniform float uMinY;\nuniform float uHeight;\nuniform float uHips;\nuniform mediump sampler2D uNoiseTex;\n${zombie ? 'uniform float uTintMix;\n' : ''}${!batched ? 'uniform float uNear;\n' : ''}${cover ? 'varying float vCover;\n' : ''}`)
       .replace(
         '#include <opaque_fragment>',
         lens
@@ -202,7 +207,7 @@ vTint2 = aTint2;`
 #include <opaque_fragment>`
           : '#include <opaque_fragment>',
       )
-      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>${cover ? '\nif (vCover > 0.999) discard;' : ''}${near ? `\nif (length(vViewPosition) < ${near.toFixed(3)}) discard;` : ''}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>${cover ? '\nif (vCover > 0.999) discard;' : ''}${!batched ? '\nif (uNear > 0.0 && length(vViewPosition) < uNear) discard;' : ''}`)
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
@@ -216,6 +221,6 @@ vTint2 = aTint2;`
 }`,
       );
   };
-  mat.customProgramCacheKey = () => `character-${lens}-${zombie}-${batched}-${!!tex}-${o.map !== undefined}-${o.tintMix ?? 0.6}-${cover}-${row}-${near}`;
+  mat.customProgramCacheKey = () => `character-${lens}-${zombie}-${batched}-${!!tex}-${o.map !== undefined}-${cover}-${row}`;
   return mat;
 }

@@ -34,6 +34,8 @@ const ROOM_LIGHT_RANGE = 30;
 const GLOW_CAP = 320;
 /** Fires light the ground round them from this far (the nearest few get a real light). */
 const FIRE_LIGHT_RANGE = 45;
+const MAX_ROOM_LIGHTS = 2;
+const MAX_FIRE_LIGHTS = 4;
 
 const _m = new Matrix4();
 const _q = new Quaternion();
@@ -75,6 +77,7 @@ export class WorldLife {
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
   private lights: PointLight[] = [];
+  private roomLightCap = 0;
   private roomSortT = 0;
   private readonly roomPicks: { isLamp: boolean; idx: number }[] = [];
   private readonly lampNearTmp: [number, number][] = [];
@@ -121,18 +124,38 @@ export class WorldLife {
     this.glow.frustumCulled = false;
     this.glow.instanceMatrix.setUsage(DynamicDrawUsage);
     scene.add(this.glow);
+
+    // Fixed light pools keep NUM_POINT_LIGHTS constant across quality switches (intensity = 0 when unused).
+    for (let i = 0; i < MAX_ROOM_LIGHTS; i++) {
+      const l = new PointLight(0xffc887, 0, 9, 2);
+      l.castShadow = false;
+      this.scene.add(l);
+      this.lights.push(l);
+    }
+    for (let i = 0; i < MAX_FIRE_LIGHTS; i++) {
+      const l = new PointLight(0xff8a3a, 0, 16, 1.6);
+      l.castShadow = false;
+      this.scene.add(l);
+      this.fireLightList.push(l);
+    }
+    // Pre-create spinner/searchlight meshes at boot so first POI approach never compiles new programs.
+    this.spinMesh = new InstancedMesh(new BoxGeometry(1, 0.5, 0.12).translate(0, 0, 0.1), new MeshStandardMaterial({ color: 0x8a8e90, roughness: 0.6, metalness: 0.4 }), 16);
+    this.spinMesh.frustumCulled = false;
+    this.spinMesh.castShadow = true;
+    this.spinMesh.count = 0;
+    this.spinMesh.visible = false;
+    const cone = new ConeGeometry(1, 1, 12, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2);
+    this.beamMesh = new InstancedMesh(cone, new MeshBasicMaterial({ color: 0xfff2c8, transparent: true, opacity: 0.08, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }), 16);
+    this.beamMesh.frustumCulled = false;
+    this.beamMesh.count = 0;
+    this.beamMesh.visible = false;
+    this.scene.add(this.spinMesh, this.beamMesh);
   }
 
   /** Number of real point lights for lit rooms (0 on weak phones: the fake glow does it alone). */
   set roomLights(n: number) {
-    if (n === this.lights.length) return;
-    for (const l of this.lights) l.removeFromParent();
-    this.lights = Array.from({ length: n }, () => {
-      const l = new PointLight(0xffc887, 0, 9, 2);
-      l.castShadow = false;
-      this.scene.add(l);
-      return l;
-    });
+    this.roomLightCap = Math.max(0, Math.min(n, this.lights.length));
+    for (let i = this.roomLightCap; i < this.lights.length; i++) this.lights[i].intensity = 0;
     this.roomSortT = 0;
   }
 
@@ -223,24 +246,24 @@ export class WorldLife {
   /** Fires burning (x, y, z, size, phase): the nearest get the real lights. */
   private readonly fires: number[] = [];
   private fireLightList: PointLight[] = [];
+  private fireLightCap = 0;
   private fireSortT = 0;
   private readonly fireNearTmp: [number, number][] = [];
   private readonly firePicks: number[] = [];
 
-  /** At most this many real lights for fires (only added to scene when a fire is in range). */
+  /** At most this many real lights for fires (fixed pool, intensity = 0 when unused). */
   set fireLights(n: number) {
-    while (this.fireLightList.length > n) this.fireLightList.pop()!.removeFromParent();
-    while (this.fireLightList.length < n) {
-      const l = new PointLight(0xff8a3a, 0, 16, 1.6);
-      l.castShadow = false;
-      this.scene.add(l);
-      this.fireLightList.push(l);
-    }
+    this.fireLightCap = Math.max(0, Math.min(n, this.fireLightList.length));
+    for (let i = this.fireLightCap; i < this.fireLightList.length; i++) this.fireLightList[i].intensity = 0;
     this.fireSortT = 0;
   }
 
   private updateFireLights(player: Vector3, dt: number): void {
-    if (this.fireLightList.length === 0) return;
+    const cap = this.fireLightCap;
+    if (cap === 0) {
+      for (const l of this.fireLightList) l.intensity = 0;
+      return;
+    }
     const F = this.fires;
     this.fireSortT -= dt;
     if (this.fireSortT <= 0) {
@@ -253,7 +276,7 @@ export class WorldLife {
       }
       near.sort((a, b) => a[0] - b[0]);
       this.firePicks.length = 0;
-      for (let n = 0; n < this.fireLightList.length && n < near.length; n++) {
+      for (let n = 0; n < cap && n < near.length; n++) {
         this.firePicks.push(near[n][1]);
       }
     }
@@ -264,7 +287,7 @@ export class WorldLife {
     }
     for (let n = 0; n < this.fireLightList.length; n++) {
       const l = this.fireLightList[n];
-      const i = this.firePicks[n];
+      const i = n < cap ? this.firePicks[n] : undefined;
       if (i === undefined || i + 4 >= F.length) {
         l.intensity = 0;
         continue;
@@ -321,7 +344,11 @@ export class WorldLife {
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
   private updateRoomLights(player: Vector3, dt: number): void {
-    if (this.lights.length === 0) return;
+    const cap = this.roomLightCap;
+    if (cap === 0) {
+      for (const l of this.lights) l.intensity = 0;
+      return;
+    }
     const P = this.powered;
     this.roomSortT -= dt;
     if (this.roomSortT <= 0) {
@@ -341,7 +368,7 @@ export class WorldLife {
       }
       near.sort((a, b) => a[0] - b[0]);
       this.roomPicks.length = 0;
-      for (let n = 0; n < this.lights.length; n++) {
+      for (let n = 0; n < cap; n++) {
         if (n < lamps.length) this.roomPicks.push({ isLamp: true, idx: lamps[n][1] });
         else if (n - lamps.length < near.length) this.roomPicks.push({ isLamp: false, idx: near[n - lamps.length][1] });
       }
@@ -353,7 +380,7 @@ export class WorldLife {
     }
     for (let n = 0; n < this.lights.length; n++) {
       const l = this.lights[n];
-      const pick = this.roomPicks[n];
+      const pick = n < cap ? this.roomPicks[n] : undefined;
       if (!pick) {
         l.intensity = 0;
         continue;
@@ -486,10 +513,37 @@ export class WorldLife {
 
   /** Program compiles during the loading-screen prewarm. */
   prewarm(): () => void {
-    this.glow.count = Math.max(1, this.glow.count);
+    this.keepPrewarmVisible();
     return () => {
       this.dirty = true;
+      if (this.spinMesh) {
+        this.spinMesh.count = 0;
+        this.spinMesh.visible = false;
+      }
+      if (this.beamMesh) {
+        this.beamMesh.count = 0;
+        this.beamMesh.visible = false;
+      }
     };
+  }
+
+  /** Keep dynamic meshes visible through scene.render() during boot prewarm. */
+  keepPrewarmVisible(): void {
+    if (this.glow.count === 0) {
+      this.glow.setMatrixAt(0, _m.identity());
+      this.glow.instanceMatrix.needsUpdate = true;
+      this.glow.count = 1;
+    }
+    this.glow.visible = true;
+    for (const m of [this.spinMesh, this.beamMesh]) {
+      if (!m) continue;
+      if (m.count === 0) {
+        m.setMatrixAt(0, _m.identity());
+        m.instanceMatrix.needsUpdate = true;
+        m.count = 1;
+      }
+      m.visible = true;
+    }
   }
 
   dispose(): void {

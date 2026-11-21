@@ -1,22 +1,37 @@
-import { wornGear } from '../characters/gear';
+import { coverBody, wornGear } from '../characters/gear';
 import {
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   Color,
+  DataTexture,
   DirectionalLight,
+  FloatType,
   Fog,
   Group,
   HemisphereLight,
+  InstancedBufferAttribute,
+  InstancedMesh,
   LineBasicMaterial,
   LineSegments,
+  type Material,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
+  MeshLambertMaterial,
+  NearestFilter,
   PerspectiveCamera,
   Quaternion,
+  RGBAFormat,
   Scene,
+  SkinnedMesh,
+  Sphere,
+  type Texture,
   Vector3,
 } from 'three';
+import { bodyAsset, hasBody } from '../characters/assets';
+import { characterMaterial, LENS_TINT } from '../characters/material';
+import { CharacterRig } from '../characters/rig';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
 import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
 import { langToggle, onLangChange, tr } from '../core/i18n';
@@ -47,8 +62,10 @@ import { isGun } from '../weapons/guns';
 import type { EchoPlace } from '../audio/Sound';
 import type { RightItem } from '../player/Viewmodel';
 import { setSubCellSplit } from '../render/batchMeshes';
+import { bladeMaterial, characterMaterial as lookCharacterMaterial } from '../render/look/materials';
 import { BUCKETS } from '../render/look/surfaces';
 import { worldMaterials } from '../render/look/worldMaterials';
+import { buildWeapon, weaponHighlightMaterial, weaponMesh } from '../weapons/buildWeapon';
 import { airTemperature, Clock, feltTemperature, Shelters } from '../systems/Climate';
 import { dirtSteps, soilClothes } from '../systems/Dirt';
 import { Containers } from '../systems/Containers';
@@ -348,9 +365,14 @@ export class WorldScene implements IScene {
   private readonly twinZombies = new Map<number, Zombie>();
   /** The editor is open: nothing to save yet (hiding the tab must not save a default survivor). */
   private creating = false;
+  private bootMsaa = false;
+  private prewarming = false;
+  private readonly pinnedMaterials: Material[] = [];
+  private readonly pinnedTextures: Texture[] = [];
 
   init(ctx: GameContext): void {
     this.ctx = ctx;
+    this.bootMsaa = ctx.quality.preset.msaa > 0;
     this.scene.background = new Color(NIGHT.sky);
     this.scene.fog = new GrimFog(NIGHT.sky, NIGHT.fogNear, ctx.quality.preset.fogFar);
     this.ambient = new HemisphereLight(NIGHT.hemi.sky, NIGHT.hemi.ground, NIGHT.hemi.intensity);
@@ -836,6 +858,7 @@ export class WorldScene implements IScene {
    * its shader compiles), plus one shadow-map render for the flashlight's depth shaders.
    */
   prewarm(): () => void {
+    this.prewarming = true;
     const group = new Group();
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(new Float32Array([0, 0, 0, 0.001, 0, 0, 0, 0.001, 0]), 3));
@@ -853,23 +876,138 @@ export class WorldScene implements IScene {
       m.frustumCulled = false;
       group.add(m);
     }
+
+    const tempGeos: BufferGeometry[] = [g];
+    const tempFigs: CharacterRig[] = [];
+    const vmGroup = new Group();
+    const tiny = new Matrix4().makeScale(0.001, 0.001, 0.001);
+    const pin = (mat: Material): Material => {
+      this.pinnedMaterials.push(mat);
+      return mat;
+    };
+
+    if (hasBody('male')) {
+      coverBody('male');
+      const asset = bodyAsset('male');
+      const rig0 = asset.lod0;
+      const rig1 = asset.lod1;
+      const skinData = new Float32Array(rig1.names.length * 16);
+      for (let i = 0; i < rig1.names.length; i++) {
+        const o = i * 16;
+        skinData[o] = skinData[o + 5] = skinData[o + 10] = skinData[o + 15] = 1;
+      }
+      const dummySkin = new DataTexture(skinData, rig1.names.length * 4, 1, RGBAFormat, FloatType);
+      dummySkin.minFilter = dummySkin.magFilter = NearestFilter;
+      dummySkin.needsUpdate = true;
+      this.pinnedTextures.push(dummySkin);
+
+      const cloneSkinGeo = (extra: Record<string, InstancedBufferAttribute>): BufferGeometry => {
+        const bg = new BufferGeometry();
+        for (const [k, a] of Object.entries(rig1.geometry.attributes)) bg.setAttribute(k, a);
+        bg.setIndex(rig1.geometry.index);
+        for (const [k, a] of Object.entries(extra)) bg.setAttribute(k, a);
+        bg.boundingSphere = new Sphere(new Vector3(0, 0.9, 0), 1.4);
+        tempGeos.push(bg);
+        return bg;
+      };
+      const addInst = (mat: Material, geo: BufferGeometry) => {
+        const m = new InstancedMesh(geo, pin(mat), 1);
+        m.setMatrixAt(0, tiny);
+        m.instanceMatrix.needsUpdate = true;
+        m.count = 1;
+        m.frustumCulled = false;
+        group.add(m);
+      };
+
+      // 1-4. Batched zombie crowd body + zombie gear (1-sided, 2-sided mask, lens).
+      addInst(
+        characterMaterial(asset, rig1, { zombie: true, skin: dummySkin, cover: true }),
+        cloneSkinGeo({
+          aTint: new InstancedBufferAttribute(new Float32Array([1, 1, 1]), 3),
+          aTint2: new InstancedBufferAttribute(new Float32Array([1, 1, 1]), 3),
+          aHide: new InstancedBufferAttribute(new Float32Array([0]), 1),
+        }),
+      );
+      const tex = asset.textureLod ?? asset.texture;
+      addInst(characterMaterial(asset, rig1, { skin: dummySkin, row: true, map: tex, doubleSide: false }), cloneSkinGeo({ aRow: new InstancedBufferAttribute(new Float32Array([0]), 1) }));
+      addInst(characterMaterial(asset, rig1, { skin: dummySkin, row: true, map: tex, doubleSide: true }), cloneSkinGeo({ aRow: new InstancedBufferAttribute(new Float32Array([0]), 1) }));
+      addInst(characterMaterial(asset, rig1, { skin: dummySkin, row: true, lens: LENS_TINT.goggles_tactical ?? 0x1e1f1d }), cloneSkinGeo({ aRow: new InstancedBufferAttribute(new Float32Array([0]), 1) }));
+
+      // 5-9. Skinned character archetypes (player / bandit / death body & gear, plain + cover + mask + lens).
+      const fig = new CharacterRig('male', 0);
+      tempFigs.push(fig);
+      const addSkinned = (mat: Material) => {
+        const sm = new SkinnedMesh(rig0.geometry, pin(mat));
+        sm.bind(fig.mesh.skeleton, fig.mesh.bindMatrix);
+        sm.scale.setScalar(0.001);
+        sm.castShadow = true;
+        sm.receiveShadow = true;
+        sm.frustumCulled = false;
+        group.add(sm);
+      };
+      addSkinned(characterMaterial(asset, rig0));
+      addSkinned(characterMaterial(asset, rig0, { cover: true, hide: { value: 0 } }));
+      addSkinned(characterMaterial(asset, rig0, { map: asset.texture, doubleSide: false }));
+      addSkinned(characterMaterial(asset, rig0, { map: asset.texture, doubleSide: true }));
+      addSkinned(characterMaterial(asset, rig0, { lens: LENS_TINT.goggles_tactical ?? 0x1e1f1d }));
+
+      // 10-12. Rigid gear box, world melee & highlight, GunModel / Vehicles / look materials.
+      const tinyBox = new BoxGeometry(0.001, 0.001, 0.001);
+      tempGeos.push(tinyBox);
+      const addWorld = (mat: Material, castShadow = true, target = group, geo: BufferGeometry = tinyBox) => {
+        const m = new Mesh(geo, pin(mat));
+        m.scale.setScalar(0.001);
+        m.castShadow = castShadow;
+        m.receiveShadow = true;
+        m.frustumCulled = false;
+        target.add(m);
+      };
+      addWorld(characterMaterial(asset, rig0, { map: asset.texture }));
+      const wMesh = weaponMesh('tacticalKnife');
+      wMesh.scale.setScalar(0.001);
+      wMesh.frustumCulled = false;
+      pin(wMesh.material as Material);
+      group.add(wMesh);
+      addWorld(weaponHighlightMaterial(), false, group, buildWeapon('tacticalKnife').geometry);
+      addWorld(new MeshLambertMaterial({ color: 0xffffff, map: asset.texture }));
+      addWorld(new MeshLambertMaterial({ color: 0x3c3f42 }));
+      addWorld(new MeshBasicMaterial({ map: asset.texture, transparent: true, depthWrite: false }), false);
+      addWorld(lookCharacterMaterial('handle', 0x5a4632));
+      addWorld(bladeMaterial());
+
+      // Viewmodel GunModel (textured Lambert) in overlay scene; knife & fp-arms are already attached there.
+      addWorld(new MeshLambertMaterial({ color: 0xffffff, map: asset.texture }), false, vmGroup);
+      vmGroup.position.set(0, 0, -0.5);
+      this.player.viewmodel.scene.add(vmGroup);
+    }
+
     this.camera.getWorldDirection(this.lookDir);
     group.position.copy(this.camera.position).addScaledVector(this.lookDir, 0.5);
     this.scene.add(group);
     this.player.prewarmShadows();
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
+    const doorsDone = this.doors.prewarm();
     this.ctx.renderer.gl.compile(this.scene, this.camera);
+    this.ctx.renderer.gl.compile(this.player.viewmodel.scene, this.player.viewmodel.camera);
     return () => {
+      this.prewarming = false;
       lifeDone();
       atmoDone();
+      doorsDone();
       group.removeFromParent();
-      g.dispose();
+      vmGroup.removeFromParent();
+      for (const f of tempFigs) f.dispose();
+      for (const geo of tempGeos) geo.dispose();
     };
   }
 
-  setHeadShadow(on: boolean): void {
+  setHeadShadow(on: boolean | null): void {
     this.vehicles.setHeadShadow(on);
+  }
+
+  setFlashlightShadow(on: boolean | null): void {
+    this.player.setFlashlightShadow(on);
   }
 
   private exitVehicle(): void {
@@ -1193,6 +1331,11 @@ export class WorldScene implements IScene {
     if (gameDt > 0) sfx.update(gameDt);
     this.saveT += gameDt;
     if (gameDt > 0 && this.saveT >= AUTOSAVE_INTERVAL) this.save();
+    if (this.prewarming) {
+      this.atmo.keepPrewarmVisible();
+      this.life.keepPrewarmVisible();
+      this.doors.keepPrewarmVisible();
+    }
   }
 
   /** Day / night: sky, fog, ambient, sun or moon, clouds, lit windows, the arms' own lights. */
@@ -2219,6 +2362,10 @@ export class WorldScene implements IScene {
     this.player.dispose();
     this.life.dispose();
     this.chunks.dispose();
+    for (const m of this.pinnedMaterials) m.dispose();
+    for (const t of this.pinnedTextures) t.dispose();
+    this.pinnedMaterials.length = 0;
+    this.pinnedTextures.length = 0;
   }
 
   private applyQuality(): void {
@@ -2231,7 +2378,7 @@ export class WorldScene implements IScene {
     // ?foliage=0: drop grass entirely, nothing else changes (cost isolation, never a player setting).
     const foliageCap = new URLSearchParams(location.search).get('foliage') === '0' ? 0 : preset.foliage.cap;
     this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, foliageCap);
-    this.atmo?.vegetation.configure(preset.vegetation, preset.msaa > 0);
+    this.atmo?.vegetation.configure(preset.vegetation, this.bootMsaa);
     (this.scene.fog as Fog).far = preset.fogFar;
     this.camera.far = preset.fogFar + 5;
     this.camera.updateProjectionMatrix();

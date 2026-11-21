@@ -15,7 +15,9 @@ export interface IScene {
    */
   prewarm?(): () => void;
   /** Prewarm only: the headlights' shadow-casting program, compiled once at boot. */
-  setHeadShadow?(on: boolean): void;
+  setHeadShadow?(on: boolean | null): void;
+  /** Prewarm only: force the flashlight shadow state across quality levels at boot. */
+  setFlashlightShadow?(on: boolean | null): void;
   /** Optional: a new game asks who the survivor is (character editor) before play starts. */
   createCharacter?(): Promise<void>;
   /** Fixed-rate simulation step. */

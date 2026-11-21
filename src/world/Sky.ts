@@ -151,18 +151,14 @@ export class Sky {
     this.pool.name = 'sky:searchlightPool';
     this.pool.visible = false;
     this.pool.renderOrder = 2;
-    scene.add(this.pool, this.spotTarget);
-    this.scene = scene;
+    scene.add(this.pool, this.spot, this.spotTarget);
   }
 
-  private readonly scene: Scene;
-
-  /** A real spot light on the ground (medium/high) or only the glow disc (low). Changing it rebuilds shaders once. */
+  /** A real spot light on the ground (medium/high) or only the glow disc (low). Intensity is 0 on low. */
   set searchlightLight(on: boolean) {
     if (on === this.realSpot) return;
     this.realSpot = on;
-    if (on) this.scene.add(this.spot);
-    else this.scene.remove(this.spot);
+    if (!on) this.spot.intensity = 0;
   }
 
   /** Daylight 0..1 (the game is always at night for now; stage 5 drives this). */
