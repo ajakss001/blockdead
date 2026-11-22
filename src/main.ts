@@ -193,11 +193,13 @@ async function boot(): Promise<void> {
     scene.setFlashlightShadow?.(false);
     scene.setHeadShadow?.(false);
     draw(0, 0, 0);
-    scene.setHeadShadow?.(true);
-    draw(0, 0, 0);
     scene.setFlashlightShadow?.(true);
     scene.setHeadShadow?.(false);
     draw(0, 0, 0);
+    scene.setHeadShadow?.(true);
+    draw(0, 0, 0);
+    // WebGLShadowMap renders before setupLights() populates lights.state.spotShadow, so a second
+    // draw at 2 shadow-casting spots is needed to compile all MeshDepthMaterial variants at boot.
     scene.setHeadShadow?.(true);
     draw(0, 0, 0);
     renderer.setShadows(false);

@@ -1418,6 +1418,13 @@ export class Vehicles {
   setHeadShadow(on: boolean | null): void {
     this.forceHeadShadow = on;
     if (on !== null) {
+      if (on && this.headLightL.position.distanceToSquared(this.headTargetL.position) < 0.01) {
+        this.headTargetL.position.set(
+          this.headLightL.position.x,
+          this.headLightL.position.y,
+          this.headLightL.position.z - 5,
+        );
+      }
       this.headLightL.castShadow = on;
       this.headLightL.shadow.needsUpdate = on;
     }

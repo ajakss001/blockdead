@@ -119,6 +119,7 @@ import { type ContainerRef, searchBox } from '../systems/Containers';
 import type { TwinRecord } from '../systems/SaveGame';
 import { GrimFog } from '../render/GrimFog';
 import { DAY, NIGHT } from '../style/stage';
+import { flashlightMaterial, lensMaterial } from '../items/flashlight';
 
 // Day and night light (style/stage, CLAUDE.md «Визуальный стиль»): an overcast cold day — a grey sky
 // hemisphere over dark earth, a weak cold sun, grey exponential fog; at night a floor of light, a weak cold
@@ -954,6 +955,12 @@ export class WorldScene implements IScene {
       // 10-12. Rigid gear box, world melee & highlight, GunModel / Vehicles / look materials.
       const tinyBox = new BoxGeometry(0.001, 0.001, 0.001);
       tempGeos.push(tinyBox);
+      const tinyColorBox = tinyBox.clone();
+      tinyColorBox.setAttribute(
+        'color',
+        new BufferAttribute(new Float32Array(tinyColorBox.attributes.position.count * 3).fill(1), 3),
+      );
+      tempGeos.push(tinyColorBox);
       const addWorld = (mat: Material, castShadow = true, target = group, geo: BufferGeometry = tinyBox) => {
         const m = new Mesh(geo, pin(mat));
         m.scale.setScalar(0.001);
@@ -971,12 +978,15 @@ export class WorldScene implements IScene {
       addWorld(weaponHighlightMaterial(), false, group, buildWeapon('tacticalKnife').geometry);
       addWorld(new MeshLambertMaterial({ color: 0xffffff, map: asset.texture }));
       addWorld(new MeshLambertMaterial({ color: 0x3c3f42 }));
+      addWorld(new MeshLambertMaterial({ vertexColors: true }), true, group, tinyColorBox);
       addWorld(new MeshBasicMaterial({ map: asset.texture, transparent: true, depthWrite: false }), false);
       addWorld(lookCharacterMaterial('handle', 0x5a4632));
       addWorld(bladeMaterial());
 
-      // Viewmodel GunModel (textured Lambert) in overlay scene; knife & fp-arms are already attached there.
+      // Viewmodel GunModel (textured Lambert) and flashlight (body + lens) in overlay scene; knife & fp-arms are already attached there.
       addWorld(new MeshLambertMaterial({ color: 0xffffff, map: asset.texture }), false, vmGroup);
+      addWorld(flashlightMaterial(), false, vmGroup, tinyColorBox);
+      addWorld(lensMaterial(), false, vmGroup);
       vmGroup.position.set(0, 0, -0.5);
       this.player.viewmodel.scene.add(vmGroup);
     }
