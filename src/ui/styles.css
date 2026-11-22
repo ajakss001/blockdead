@@ -2080,69 +2080,183 @@ body.main-menu-open .sleep {
   transform: translateY(-1px);
 }
 
-/* Resident Evil–style Main Menu over live 3D foggy city */
+/* Escape from Tarkov–style Main Menu ("Dead Perimeter") */
 .main-menu {
   position: fixed;
   inset: 0;
   z-index: 15;
   display: flex;
-  align-items: stretch;
-  background:
-    radial-gradient(circle at 22% 52%, rgba(128, 18, 16, 0.18), transparent 52%),
-    linear-gradient(90deg, rgba(5, 6, 8, 0.90) 0%, rgba(9, 8, 10, 0.64) 38%, rgba(5, 6, 8, 0.0) 76%),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 4px);
-  color: #ece9e2;
+  flex-direction: column;
+  justify-content: space-between;
+  background: #080a0b;
+  color: #e8e4da;
   user-select: none;
+  overflow: hidden;
 }
 
 .main-menu[hidden] {
   display: none;
 }
 
-.main-menu__panel {
-  width: min(520px, 100%);
+.main-menu__bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.main-menu__bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.04);
+  filter: blur(2.2px) brightness(0.95) contrast(1.06) saturate(0.94);
+}
+
+.main-menu__vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 44%, rgba(16, 18, 16, 0.06) 0%, rgba(5, 6, 7, 0.64) 86%),
+    linear-gradient(180deg, rgba(6, 7, 8, 0.42) 0%, rgba(6, 7, 8, 0.08) 42%, rgba(6, 7, 8, 0.78) 100%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 4px);
+}
+
+.main-menu__foliage {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: clamp(220px, 38vw, 520px);
+  height: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.85));
+  opacity: 0.94;
+}
+
+.main-menu__foliage svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.main-menu__center {
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: max(28px, env(safe-area-inset-top, 28px)) 24px max(20px, env(safe-area-inset-bottom, 20px))
-    max(48px, env(safe-area-inset-left, 48px));
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: max(18px, env(safe-area-inset-top, 18px)) 20px 14px;
 }
 
 .main-menu__brand {
-  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  max-width: 720px;
+}
+
+.main-menu__dp-wrap {
+  flex: 0 0 auto;
+  width: clamp(72px, 10vw, 104px);
+  height: clamp(72px, 10vw, 104px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.main-menu__dp {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  opacity: 0.94;
+}
+
+.main-menu__title-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .main-menu__eyebrow {
-  font: 700 11px/1.2 ui-monospace, Consolas, monospace;
+  font: 700 11px/1.15 system-ui, 'Segoe UI', sans-serif;
   letter-spacing: 3px;
-  color: #b4342e;
-  margin-bottom: 6px;
+  color: #e4ded2;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.95);
+  margin-bottom: 4px;
 }
 
 .main-menu__logo {
-  font: 800 clamp(34px, 5vw, 52px)/0.95 system-ui, 'Segoe UI', sans-serif;
-  letter-spacing: 6px;
-  color: #f3f0e8;
-  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  line-height: 0.9;
+  text-transform: uppercase;
 }
 
-.main-menu__dead {
-  color: #c22822;
+.main-menu__logo-top {
+  font: 900 clamp(22px, 3vw, 34px)/0.92 Impact, 'Arial Black', 'Segoe UI Black', system-ui, sans-serif;
+  letter-spacing: clamp(5px, 0.8vw, 9px);
+  color: #ebe6db;
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.9);
 }
 
-.main-menu__rule {
-  margin-top: 12px;
-  width: 240px;
-  height: 2px;
-  background: linear-gradient(90deg, #c22822 0%, rgba(194, 40, 34, 0.25) 75%, transparent 100%);
+.main-menu__logo-main {
+  font: 900 clamp(38px, 6.2vw, 66px)/0.9 Impact, 'Arial Black', 'Segoe UI Black', system-ui, sans-serif;
+  letter-spacing: clamp(2px, 0.45vw, 5px);
+  background: linear-gradient(180deg, #faf7f0 0%, #dcd7cc 56%, #b4afa4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.92));
 }
 
+/* Tarkov-style orange/amber Early Access notice banner */
+.main-menu__notice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(640px, 92vw);
+  padding: 10px 18px;
+  background: rgba(196, 98, 22, 0.88);
+  border: 1px solid rgba(255, 178, 92, 0.34);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  color: #150c05;
+}
+
+.main-menu__notice-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.main-menu__notice-text {
+  min-width: 0;
+}
+
+.main-menu__notice-title {
+  font: 700 13px/1.25 system-ui, 'Segoe UI', sans-serif;
+  color: #120903;
+}
+
+.main-menu__notice-sub {
+  font: 500 11.5px/1.3 system-ui, 'Segoe UI', sans-serif;
+  color: #261306;
+  margin-top: 2px;
+}
+
+/* Clean centered Tarkov vertical menu list */
 .main-menu__nav {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
-  margin: auto 0;
-  padding: 24px 0;
+  margin-top: 4px;
 }
 
 .main-menu__item {
@@ -2150,81 +2264,176 @@ body.main-menu-open .sleep {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  width: 100%;
-  max-width: 390px;
-  padding: 11px 16px 11px 18px;
-  border: 1px solid transparent;
-  border-left: 3px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), transparent 85%);
-  color: #c4c0b8;
-  text-align: left;
+  align-items: center;
+  gap: 2px;
+  min-width: 280px;
+  padding: 7px 26px;
+  border: none;
+  background: transparent;
+  color: #cfcbc0;
+  text-align: center;
   cursor: pointer;
-  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+  transition: color 0.14s ease, text-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.main-menu__item::before,
+.main-menu__item::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 1px;
+  background: #e08d38;
+  transition: width 0.16s ease, opacity 0.16s ease;
+  opacity: 0;
+}
+
+.main-menu__item::before {
+  left: 0;
+}
+
+.main-menu__item::after {
+  right: 0;
 }
 
 .main-menu__item:hover,
 .main-menu__item.is-selected {
-  transform: translateX(8px);
-  border-left-color: #d62d26;
-  border-top-color: rgba(214, 45, 38, 0.22);
-  border-bottom-color: rgba(214, 45, 38, 0.18);
-  background: linear-gradient(90deg, rgba(168, 28, 24, 0.28) 0%, rgba(42, 14, 16, 0.14) 70%, transparent 100%);
   color: #ffffff;
+  text-shadow: 0 0 18px rgba(232, 138, 42, 0.55), 0 2px 10px rgba(0, 0, 0, 0.9);
+  transform: scale(1.03);
+}
+
+.main-menu__item:hover::before,
+.main-menu__item:hover::after,
+.main-menu__item.is-selected::before,
+.main-menu__item.is-selected::after {
+  width: 14px;
+  opacity: 0.95;
 }
 
 .main-menu__item-title {
-  font: 700 18px/1.15 system-ui, sans-serif;
-  letter-spacing: 2.2px;
+  font: 300 22px/1.15 system-ui, 'Segoe UI', sans-serif;
+  letter-spacing: 3.5px;
+  text-transform: uppercase;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.92);
 }
 
 .main-menu__item-sub {
-  font: 400 11px/1.3 ui-monospace, Consolas, monospace;
-  color: #9b9992;
+  font: 500 11px/1.25 ui-monospace, Consolas, monospace;
+  color: #cfc6b4;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95);
 }
 
-.main-menu__item.is-selected .main-menu__item-sub,
-.main-menu__item:hover .main-menu__item-sub {
-  color: #ddd6ca;
-}
-
-.main-menu__footer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  max-width: 400px;
-}
-
-.main-menu__footer-left {
+/* Thin dark Tarkov bottom taskbar */
+.main-menu__taskbar {
+  position: relative;
+  z-index: 2;
+  height: 36px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
+  padding: 0 max(12px, env(safe-area-inset-right, 12px)) 0 max(12px, env(safe-area-inset-left, 12px));
+  background: rgba(11, 12, 14, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font: 600 11px/1 system-ui, 'Segoe UI', sans-serif;
+  letter-spacing: 0.9px;
 }
 
-.main-menu__footer-hint {
-  font: 11px ui-monospace, Consolas, monospace;
-  color: #93979c;
+.main-menu__tb-left,
+.main-menu__tb-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.main-menu__footer-status {
-  font: 11px ui-monospace, Consolas, monospace;
-  color: #84888d;
+.main-menu__tb-version {
+  font: 500 11px/1 ui-monospace, Consolas, monospace;
+  color: #7c8187;
+  padding-right: 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: nowrap;
+}
+
+.main-menu__tb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  background: #d8d4ca;
+  color: #141517;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.main-menu__tb-ico {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.main-menu__tb-hint {
+  font: 500 10.5px/1 ui-monospace, Consolas, monospace;
+  color: #7c8187;
+  white-space: nowrap;
+}
+
+.main-menu__tb-status {
+  font: 600 10.5px/1 ui-monospace, Consolas, monospace;
+  color: #aeb3b8;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+}
+
+.main-menu__tb-lang {
+  display: inline-flex;
+  align-items: center;
+}
+
+.main-menu__tb-lang button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d7d4cb;
+  font: 600 11px/1 ui-monospace, Consolas, monospace;
+  cursor: pointer;
+}
+
+.main-menu__tb-gear {
+  appearance: none;
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #c7c4ba;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.main-menu__tb-gear:hover {
+  color: #ffffff;
+  border-color: #e08d38;
+  background: rgba(224, 141, 56, 0.18);
 }
 
 /* Confirmation dialog over Main Menu */
 .main-menu__confirm {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 4;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, 0.74);
   backdrop-filter: blur(4px);
 }
 
@@ -2233,11 +2442,11 @@ body.main-menu-open .sleep {
 }
 
 .main-menu__confirm-card {
-  width: min(420px, 100%);
+  width: min(430px, 100%);
   padding: 22px 24px;
-  background: rgba(18, 17, 20, 0.96);
-  border: 1px solid rgba(194, 40, 34, 0.65);
-  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.85);
+  background: rgba(16, 17, 19, 0.97);
+  border: 1px solid rgba(217, 122, 38, 0.65);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.88);
 }
 
 .main-menu__confirm-title {
@@ -2275,26 +2484,55 @@ body.main-menu-open .sleep {
 
 .main-menu__confirm-btn.is-danger {
   border-color: #c22822;
-  background: rgba(184, 34, 28, 0.34);
+  background: rgba(184, 34, 28, 0.36);
   color: #fff2ef;
 }
 
 .main-menu__confirm-btn.is-danger:hover {
-  background: rgba(206, 40, 34, 0.52);
+  background: rgba(206, 40, 34, 0.54);
 }
 
-@media (max-width: 820px) {
-  .main-menu__panel {
-    padding: 14px 16px 12px max(22px, env(safe-area-inset-left, 22px));
+@media (max-width: 820px), (max-height: 540px) {
+  .main-menu__center {
+    gap: 10px;
+    padding: 10px 14px 8px;
+  }
+  .main-menu__brand {
+    gap: 12px;
+  }
+  .main-menu__dp-wrap {
+    width: 58px;
+    height: 58px;
+  }
+  .main-menu__logo-top {
+    font-size: 18px;
+  }
+  .main-menu__logo-main {
+    font-size: 32px;
+  }
+  .main-menu__notice {
+    padding: 7px 12px;
+    gap: 10px;
+  }
+  .main-menu__notice-title {
+    font-size: 11.5px;
+  }
+  .main-menu__notice-sub {
+    font-size: 10px;
   }
   .main-menu__nav {
-    padding: 10px 0;
-    gap: 4px;
+    gap: 2px;
   }
   .main-menu__item {
-    padding: 7px 12px 7px 14px;
+    padding: 4px 18px;
+    min-width: 220px;
   }
   .main-menu__item-title {
-    font-size: 15px;
+    font-size: 16px;
+    letter-spacing: 2.5px;
+  }
+  .main-menu__tb-version,
+  .main-menu__tb-hint {
+    display: none;
   }
 }

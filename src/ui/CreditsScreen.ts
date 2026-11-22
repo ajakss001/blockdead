@@ -14,8 +14,8 @@ export function openCredits(parent: HTMLElement): void {
       'p',
       'credits__note',
       tr(
-        'BlockDead: мир создан процедурно для этой игры; большая часть звуков синтезируется в игре.',
-        'BlockDead: the world is procedurally generated for this game; most sounds are synthesized in-game.',
+        'Dead Perimeter: мир создан процедурно для этой игры; большая часть звуков синтезируется в игре.',
+        'Dead Perimeter: the world is procedurally generated for this game; most sounds are synthesized in-game.',
       ),
     ),
   );
