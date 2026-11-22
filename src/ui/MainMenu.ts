@@ -71,24 +71,13 @@ export class MainMenu {
     const brand = document.createElement('header');
     brand.className = 'main-menu__brand';
 
-    const dpWrap = document.createElement('div');
-    dpWrap.className = 'main-menu__dp-wrap';
-    const dpImg = document.createElement('img');
-    dpImg.className = 'main-menu__dp';
-    dpImg.src = `${import.meta.env.BASE_URL}ui/dp-logo.jpg`;
-    dpImg.alt = 'DP';
-    dpWrap.append(dpImg);
-
-    const titleStack = document.createElement('div');
-    titleStack.className = 'main-menu__title-stack';
     this.eyebrow.className = 'main-menu__eyebrow';
-    const logo = document.createElement('div');
-    logo.className = 'main-menu__logo';
-    logo.innerHTML =
-      `<span class="main-menu__logo-top">DEAD</span>` +
-      `<span class="main-menu__logo-main">PERIMETER</span>`;
-    titleStack.append(this.eyebrow, logo);
-    brand.append(dpWrap, titleStack);
+    const wordmark = document.createElement('img');
+    wordmark.className = 'main-menu__wordmark';
+    wordmark.src = `${import.meta.env.BASE_URL}ui/dp-wordmark.jpg`;
+    wordmark.alt = 'DEAD PERIMETER';
+    wordmark.decoding = 'async';
+    brand.append(this.eyebrow, wordmark);
 
     this.nav.className = 'main-menu__nav';
 

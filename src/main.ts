@@ -45,8 +45,10 @@ function setLoadingStatus(text: string, sub?: string, shaderPct?: number): void 
   if (textEl) textEl.textContent = text;
   if (subEl && sub !== undefined) subEl.textContent = sub;
   if (shaderPct !== undefined && root && barFill) {
+    const pct = Math.max(0, Math.min(100, Math.round(shaderPct)));
     root.classList.add('loading--shaders');
-    barFill.style.width = `${Math.max(4, Math.min(100, Math.round(shaderPct)))}%`;
+    root.style.setProperty('--load-pct', String(pct));
+    barFill.style.width = `${Math.max(4, pct)}%`;
   }
 }
 

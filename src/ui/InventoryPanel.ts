@@ -1,4 +1,4 @@
-import { langToggle, onLangChange, registerDataLocalizer, tr } from '../core/i18n';
+import { onLangChange, registerDataLocalizer, tr } from '../core/i18n';
 import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
 import { type Skills, SKILLS, XP } from '../systems/Skills';
 import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/Crafting';
@@ -9,9 +9,6 @@ import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
-import { openCredits } from './CreditsScreen';
-import { qualityControl } from './QualityControl';
-import { volumeControl } from './VolumeControl';
 import { itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
 import { Inventory, QUICK_SLOTS } from '../systems/Inventory';
@@ -220,8 +217,6 @@ export class InventoryPanel {
       this.crafting = !this.crafting;
       this.render();
     });
-    const credits = el('button', 'credits-link inv__credits', tr('Авторы', 'Credits'));
-    credits.addEventListener('click', () => openCredits(this.root.parentElement ?? this.root));
     const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', tr('Новый персонаж', 'New character'));
     fresh.addEventListener('click', () => this.host.newCharacter?.());
     const unit = tr('кг', 'kg');
@@ -230,11 +225,7 @@ export class InventoryPanel {
       bar,
       el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} ${unit} (${tr('без лимита', 'no limit')})` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} ${unit}`),
       craftBtn,
-      qualityControl(this.ctx, 'inv__quality'),
-      volumeControl('inv__volume'),
-      langToggle('inv__lang'),
       ...(this.host.newCharacter ? [fresh] : []),
-      credits,
       close,
     );
 

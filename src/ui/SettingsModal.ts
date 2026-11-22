@@ -15,6 +15,7 @@ import type {
 } from '../core/Settings';
 import type { QualityLevel } from '../core/types';
 import type { GameContext } from '../GameContext';
+import { openCredits } from './CreditsScreen';
 
 type TabId = 'graphics' | 'accessibility' | 'gamepad' | 'controls' | 'audio' | 'interface';
 
@@ -981,6 +982,17 @@ export class SettingsModal {
         titleEn: 'GAME LANGUAGE',
         descRu: 'Переключает все меню, задачи, предметы и подсказки между русским и английским.',
         descEn: 'Switches all menus, objectives, item names, and hints between Russian and English.',
+      },
+    );
+    this.addActionButton(
+      ['Авторы и лицензии', 'Credits & Licenses'],
+      ['Открыть', 'Open'],
+      () => openCredits(this.root.parentElement ?? document.body),
+      {
+        titleRu: 'АВТОРЫ',
+        titleEn: 'CREDITS',
+        descRu: 'Открывает список использованных 3D-моделей, звуков, библиотек и сведений об игре.',
+        descEn: 'Opens the list of 3D models, audio assets, libraries, and game credits.',
       },
     );
   }

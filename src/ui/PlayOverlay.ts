@@ -1,9 +1,6 @@
-import { langToggle, onLangChange, tr } from '../core/i18n';
+import { onLangChange, tr } from '../core/i18n';
 import type { GameContext } from '../GameContext';
 import type { KeyboardMouseInput } from '../input/KeyboardMouseInput';
-import { openCredits } from './CreditsScreen';
-import { qualityControl } from './QualityControl';
-import { volumeControl } from './VolumeControl';
 
 const CONTROLS: readonly [[string, string], [string, string]][] = [
   [['WASD', 'WASD'], ['движение', 'move']],
@@ -72,12 +69,6 @@ export class PlayOverlay {
     });
     btnRow.append(settingsBtn, menuBtn);
 
-    const credits = document.createElement('button');
-    credits.className = 'credits-link';
-    credits.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openCredits(parent);
-    });
     const syncText = () => {
       title.textContent = tr('Нажмите, чтобы играть', 'Click to play');
       settingsBtn.textContent = tr('⚙ Параметры', '⚙ Settings');
@@ -90,7 +81,6 @@ export class PlayOverlay {
         span.textContent = tr(what[0], what[1]);
         list.append(k, span);
       }
-      credits.textContent = tr('Авторы', 'Credits');
       this.soft.textContent = tr('Кликните, чтобы продолжить', 'Click to continue');
       if (this.hint.textContent) {
         this.hint.textContent = tr('Подождите секунду и нажмите ещё раз', 'Wait a second and click again');
@@ -98,7 +88,7 @@ export class PlayOverlay {
     };
     syncText();
     onLangChange(syncText);
-    this.root.append(title, btnRow, list, this.hint, qualityControl(this.ctx), volumeControl(), langToggle(), credits);
+    this.root.append(title, btnRow, list, this.hint);
     this.soft.className = 'soft-hint';
     this.soft.hidden = true;
     parent.append(this.root, this.soft);

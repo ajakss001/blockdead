@@ -16,27 +16,15 @@
     <div id="loading">
       <div class="loading__title">DEAD PERIMETER</div>
       <div class="loading__shader" id="loading-shader">
-        <svg class="loading__zombie" viewBox="0 0 64 72" width="54" height="62" aria-hidden="true">
-          <g class="zombie-body">
-            <!-- Trailing/dragging leg (limp) -->
-            <g class="zombie-leg-drag">
-              <path d="M27 42 L21 57 L16 66" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-            </g>
-            <!-- Good stepping leg -->
-            <g class="zombie-leg-step">
-              <path d="M33 42 L38 55 L42 66" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-            </g>
-            <!-- Hunched torso -->
-            <path d="M30 20 L30 43" stroke="currentColor" stroke-width="8" stroke-linecap="round" fill="none" />
-            <!-- Tilted zombie head + glowing eye -->
-            <circle cx="33" cy="12" r="6.5" fill="currentColor" />
-            <circle cx="36" cy="11" r="1.4" fill="#d8e878" />
-            <!-- Outstretched arms -->
-            <g class="zombie-arms">
-              <path d="M32 23 L48 25 L55 29" stroke="currentColor" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-              <path d="M30 25 L44 30 L51 35" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.82" />
-            </g>
-          </g>
+        <svg class="loading__hand" viewBox="0 0 64 80" width="54" height="68" aria-hidden="true">
+          <defs>
+            <path
+              id="loading-hand-shape"
+              d="M27 77 L27 52 L22 46 L11 35 L7 25 L11 22 L17 29 L23 36 L24 31 L18 14 L17 7 L21 6 L25 16 L28 29 L30 28 L31 10 L33 3 L37 4 L36 14 L35 29 L38 30 L43 13 L46 7 L50 9 L46 19 L40 34 L43 36 L50 23 L55 18 L58 21 L52 31 L44 45 L39 51 L38 77 Z"
+            />
+          </defs>
+          <use href="#loading-hand-shape" class="hand-base" />
+          <use href="#loading-hand-shape" class="hand-fill" />
         </svg>
         <div class="loading__shader-info">
           <div class="loading__text" id="loading-text">Загрузка мира…</div>
