@@ -14,6 +14,7 @@ const CONTROLS: readonly [[string, string], [string, string]][] = [
   [['1–4 / H', '1–4 / H'], ['быстрые слоты / убрать', 'quickslots / holster']],
   [['ПКМ', 'RMB'], ['прицел', 'aim']],
   [['R / V', 'R / V'], ['перезарядка / осмотр', 'reload / inspect']],
+  [['T / Alt+T', 'T / Alt+T'], ['проверка магазина', 'check magazine']],
   [['B / Q', 'B / Q'], ['режим огня / удар прикладом', 'fire mode / buttstroke']],
   [['Esc', 'Esc'], ['пауза', 'pause']],
 ];

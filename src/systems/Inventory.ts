@@ -1,4 +1,4 @@
-import { BACKPACK_CAPACITY, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
+import { BACKPACK_CAPACITY, ensureStackUid, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
 import { GUNS, type GunId, isGun, MOD_FITS, MOD_IDS, MODS, type ModId } from '../weapons/guns';
 import { type GunInst, newInst } from '../weapons/gunState';
 
@@ -95,8 +95,8 @@ export class Inventory {
     return Math.max(0, Math.floor((this.limit - this.weight + 1e-6) / (ITEMS[id].weight * (1 - this.reduce))));
   }
 
-  /** Adds up to `count`; returns how many were actually added. Clothing keeps its `dirt`. */
-  add(id: ItemId, count = 1, dirt = 0, tint?: number): number {
+  /** Adds up to `count`; returns how many were actually added. Clothing keeps its `dirt` and guns keep `mods`. */
+  add(id: ItemId, count = 1, dirt = 0, tint?: number, mods?: ModId[]): number {
     const def = ITEMS[id];
     let left = Math.min(count, this.room(id));
     const added = left;
@@ -109,14 +109,35 @@ export class Inventory {
     }
     while (left > 0) {
       const put = Math.min(left, def.stack);
-      this.stacks.push(onePiece(def) ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}) } : { id, count: put });
+      const s: ItemStack = onePiece(def)
+        ? { id, count: put, dirt, ...(tint !== undefined ? { tint } : {}), ...(mods?.length ? { mods: [...mods] } : {}) }
+        : { id, count: put };
+      ensureStackUid(s);
+      this.stacks.push(s);
       left -= put;
     }
     if (added > 0) {
+      if (isGun(id) && mods?.length) {
+        const inst = this.gun(id);
+        for (const m of mods) {
+          if (MOD_FITS[m].includes(id) && !inst.mods.some((x) => MODS[x].slot === MODS[m].slot)) {
+            inst.mods.push(m);
+          }
+        }
+      }
       this.version++;
       if (ITEMS[id].equip) this.autoQuick(id);
     }
     return added;
+  }
+
+  /** True if the player holds or carries any firearm. */
+  hasAnyGun(): boolean {
+    return (!!this.hand && isGun(this.hand)) || this.stacks.some((s) => isGun(s.id));
+  }
+
+  stackByUid(uid: string): ItemStack | undefined {
+    return this.stacks.find((s) => ensureStackUid(s) === uid);
   }
 
   /** The state of a firearm kind (made on first use: empty, no mods). */
@@ -196,6 +217,68 @@ export class Inventory {
     }
     if (left < count) this.version++;
     return count - left;
+  }
+
+  /** Removes up to `count` strictly from the stack identified by `uid`. */
+  removeByUid(uid: string, count = 1): number {
+    const idx = this.stacks.findIndex((s) => ensureStackUid(s) === uid);
+    if (idx < 0) return 0;
+    const s = this.stacks[idx];
+    const take = Math.min(count, s.count);
+    s.count -= take;
+    if (s.count <= 0) this.stacks.splice(idx, 1);
+    if (take > 0) this.version++;
+    return take;
+  }
+
+  wearByUid(uid: string): boolean {
+    const s = this.stackByUid(uid);
+    if (!s) return false;
+    const id = s.id;
+    const slot = ITEMS[id].wear?.slot;
+    if (!slot) return false;
+    const old = this.worn[slot];
+    const oldDirt = this.wornDirt[slot];
+    const oldTint = this.wornTint[slot];
+    const dirt = s.dirt ?? 0;
+    const tint = s.tint;
+    this.removeByUid(uid, 1);
+    if (old && this.add(old, 1, oldDirt, oldTint) === 0) {
+      this.add(id, 1, dirt, tint);
+      return false;
+    }
+    this.worn[slot] = id;
+    this.wornDirt[slot] = dirt;
+    if (tint !== undefined) this.wornTint[slot] = tint;
+    else delete this.wornTint[slot];
+    this.version++;
+    return true;
+  }
+
+  equipByUid(uid: string): boolean {
+    const s = this.stackByUid(uid);
+    if (!s) return false;
+    const id = s.id;
+    if (!ITEMS[id].equip || this.hand === id) return false;
+    const wear = s.dirt ?? 0;
+    const mods = s.mods ? [...s.mods] : undefined;
+    if (this.removeByUid(uid, 1) === 0) return false;
+    const prev = this.hand;
+    const prevWear = this.handWear;
+    this.hand = id;
+    this.handWear = wear;
+    if (mods?.length && isGun(id)) {
+      const inst = this.gun(id);
+      for (const m of mods) if (MOD_FITS[m].includes(id) && !inst.mods.some((x) => MODS[x].slot === MODS[m].slot)) inst.mods.push(m);
+    }
+    if (prev && this.add(prev, 1, prevWear) === 0) {
+      this.hand = prev;
+      this.handWear = prevWear;
+      this.add(id, 1, wear, undefined, mods);
+      return false;
+    }
+    this.version++;
+    return true;
   }
 
   /**
@@ -300,7 +383,9 @@ export class Inventory {
     this.stacks.length = 0;
     for (const [id, count, dirt, tint] of data.stacks) {
       if (!ITEMS[id]) continue;
-      this.stacks.push(onePiece(ITEMS[id]) ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count });
+      const s: ItemStack = onePiece(ITEMS[id]) ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count };
+      ensureStackUid(s);
+      this.stacks.push(s);
     }
     this.hand = data.hand && ITEMS[data.hand] ? data.hand : null;
     this.handWear = this.hand ? Math.min(1, Math.max(0, data.handWear ?? 0)) : 0;

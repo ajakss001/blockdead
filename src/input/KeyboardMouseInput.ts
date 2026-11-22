@@ -16,6 +16,7 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   KeyH: 'item2',
   KeyR: 'reload',
   KeyV: 'inspect',
+  KeyT: 'checkAmmo',
   KeyB: 'fireMode',
   KeyQ: 'bash',
   Space: 'jump',

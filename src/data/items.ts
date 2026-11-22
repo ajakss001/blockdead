@@ -396,12 +396,21 @@ export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: k
 }
 
 export interface ItemStack {
+  /** Runtime unique stack instance id (for per-cell selection, drag, and drop). */
+  uid?: string;
   id: ItemId;
   count: number;
   /** Clothing (one per stack): how dirty, 0..1; a weapon: how worn, 0..1 (1 = broken). */
   dirt?: number;
   /** Clothing only: color of this piece if it differs from the item's default. */
   tint?: number;
+  /** Firearms only: attached weapon mods carried on this gun item. */
+  mods?: ModId[];
+}
+
+let nextStackSeq = 1;
+export function ensureStackUid(s: ItemStack): string {
+  return (s.uid ??= `s${nextStackSeq++}`);
 }
 
 /** What a use button says for an item, or null if it can't be used directly. */

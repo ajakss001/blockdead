@@ -216,6 +216,17 @@ const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
 const entranceKey = (chunkKey: number) => -1 - chunkKey;
 /** Sidewalk of the road along z = 0 in the heart of downtown, looking down the street. */
+function bulletArmor(worn: Worn, dirt: Inventory['wornDirt']): number {
+  let reduction = 0;
+  if (worn.vest === 'vestSwat') reduction += 0.38 * (1 - (dirt.vest ?? 0) * 0.22);
+  else if (worn.vest === 'vestMilitary') reduction += 0.34 * (1 - (dirt.vest ?? 0) * 0.22);
+  else if (worn.vest) reduction += 0.12 * (1 - (dirt.vest ?? 0) * 0.22);
+  if (worn.head === 'helmetSwat' || worn.head === 'helmetMilitary') {
+    reduction += 0.04 * (1 - (dirt.head ?? 0) * 0.2);
+  }
+  return Math.min(0.4, Math.max(0, reduction));
+}
+
 const SPAWN = new Vector3(20, 0, 4.6);
 const SPAWN_YAW = -Math.PI / 2;
 const AUTOSAVE_INTERVAL = 20;
@@ -346,6 +357,7 @@ export class WorldScene implements IScene {
   private hordeEar = 0;
   /** No save was found: a new game asks for a character first. */
   private isNewGame = true;
+  private playerArmed = false;
   private readonly particles = new Particles();
   /** Guns in the hands: shots, noise, the RPG's blast. */
   private firearms!: Firearms;
@@ -459,7 +471,13 @@ export class WorldScene implements IScene {
         this.hordes.hear(x, z, r);
         this.bandits.onNoise(x, z, r);
       },
-      hurtPlayer: (hp, _fx, _fz, cause) => this.hurt(hp, cause, true),
+      hurtPlayer: (hp, fx, fz, cause) => {
+        const armor = bulletArmor(this.inventory.worn, this.inventory.wornDirt);
+        if (this.inventory.worn.vest) {
+          this.inventory.wornDirt.vest = Math.min(1, (this.inventory.wornDirt.vest ?? 0) + 0.03);
+        }
+        this.hurt(hp * (1 - armor), cause, true, new Vector3(fx, this.player.controller.position.y, fz));
+      },
       placeAt: () => this.echoPlace(),
       onDropLoot: (bot) => {
         const rd = bot.ragdoll;
@@ -476,7 +494,7 @@ export class WorldScene implements IScene {
           zone: this.chunks.zoneAt(pelvis.x, pelvis.z),
           box,
         };
-        this.containers.addLoose(ref, bot.loot);
+        this.containers.addLoose(ref, bot.loot, bot.corpse);
       },
       onRemoveCorpse: (bot) => this.containers.removeLoose(BANDIT_BODY_ID + bot.id),
     });
@@ -790,6 +808,7 @@ export class WorldScene implements IScene {
     }
     if (save && !save.dead) {
       this.isNewGame = false;
+      this.playerArmed = Boolean(save.playerArmed);
       // Saves before the editor: the default survivor and class, no editor.
       this.look = sanitizeAppearance(save.character?.appearance);
       this.classId = classDef(save.character?.classId).id;
@@ -1089,6 +1108,7 @@ export class WorldScene implements IScene {
     _zView.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
     _zs.bandits = this.bandits.list;
     this.zombies.update(dt, _zs, _zView);
+    if (!this.playerArmed && this.inventory.hasAnyGun()) this.playerArmed = true;
     this.bandits.update(
       dt,
       c.position.x,
@@ -1100,6 +1120,7 @@ export class WorldScene implements IScene {
       c.velocity.x,
       c.velocity.z,
       this.weather.fog,
+      this.playerArmed,
     );
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
       const car = this.vehicles.activeCar;
@@ -1440,23 +1461,35 @@ export class WorldScene implements IScene {
     await this.saves.clear();
   }
 
+  needsFreshReset(): boolean {
+    return (
+      !this.isNewGame ||
+      this.dead ||
+      this.twins.length > 0 ||
+      this.bodies.length > 0 ||
+      this.clock.minutes > this.bornAt + 2 ||
+      this.playerArmed
+    );
+  }
+
+  /** Complete wipe & world regeneration into character creation (?menu=0, fresh seed). */
+  async startFreshGame(): Promise<void> {
+    this.dead = false;
+    await this.saves.clear();
+    const nextUrl = new URL(location.href);
+    const nextSeed = ((this.layout.seed + 137 + Math.floor(Math.random() * 9000)) | 0) || DEFAULT_SEED + 1;
+    nextUrl.searchParams.set('seed', String(nextSeed));
+    nextUrl.searchParams.set('menu', '0');
+    nextUrl.searchParams.delete('editor');
+    location.assign(nextUrl.toString());
+  }
+
   /**
-   * «Новый персонаж» from the inventory: this survivor is retired (the save is marked as after a death, so
-   * the world stays as it is), and the page loads again into the character editor. No body, no zombie twin.
+   * «Новый персонаж» from the inventory: full clean reset of character, stats, inventory, and world,
+   * restarting straight into character creation for a new session.
    */
   async newCharacter(): Promise<void> {
-    if (
-      !confirm(
-        tr(
-          'Начать новым персонажем? Текущий выживший и его вещи пропадут, мир останется.',
-          'Start with a new character? Your current survivor and their gear will be lost, the world will remain.',
-        ),
-      )
-    )
-      return;
-    this.dead = true;
-    await this.save();
-    location.reload();
+    await this.startFreshGame();
   }
 
   private save(): Promise<void> {
@@ -1485,6 +1518,7 @@ export class WorldScene implements IScene {
       base: this.base.serialize(),
       story: this.story.serialize(),
       cars: this.vehicles.serialize(),
+      playerArmed: this.playerArmed || undefined,
     });
   }
 
@@ -1521,13 +1555,20 @@ export class WorldScene implements IScene {
 
   /** Looks, class, uniform or starter outfit (with its color), the class kit. */
   private applyChoice(choice: CharacterChoice): void {
+    this.isNewGame = false;
+    this.dead = false;
+    this.playerArmed = false;
     this.look = { ...choice.appearance };
     this.classId = choice.classId;
     this.traits = [...choice.traits];
     // A new survivor doesn't know the city: a blank map, except the active story target.
     this.mapMemory.clear();
-    const p = this.player.controller.position;
-    this.story.init(p.x, p.z, this.story.serialize());
+    const c = this.player.controller;
+    c.position.copy(SPAWN);
+    c.prevPosition.copy(SPAWN);
+    c.yaw = SPAWN_YAW;
+    c.velocity.set(0, 0, 0);
+    this.story.init(c.position.x, c.position.z, this.story.serialize());
     const cls = classDef(choice.classId);
     const worn = choiceWorn(choice);
     this.inventory.restore({ stacks: cls.items.map(([id, n]) => [id, n] as [typeof id, number]), hand: cls.hand, worn, wornTint: choiceTint(choice) });
@@ -1535,6 +1576,7 @@ export class WorldScene implements IScene {
     this.applyClass();
     this.giveDebug();
     this.syncBody();
+    if (this.inventory.hasAnyGun()) this.playerArmed = true;
   }
 
   /** ?give=rifle_m4a1,mod_suppressor (or all, guns, mods, melee): the guns loaded and in hand, for checking them (weapons/give.ts). */
@@ -1951,7 +1993,12 @@ export class WorldScene implements IScene {
     const btn = document.createElement('button');
     btn.className = 'death-screen__new';
     btn.style.cssText = 'margin-top:10px;padding:12px 26px;font:inherit;font-size:18px;background:#3a3630;color:#eee;border:1px solid #6a6458;border-radius:4px;cursor:pointer';
-    btn.addEventListener('click', () => location.reload());
+    btn.addEventListener('click', () => {
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set('menu', '0');
+      nextUrl.searchParams.delete('editor');
+      location.assign(nextUrl.toString());
+    });
     const menu = btn.cloneNode() as HTMLButtonElement;
     menu.className = 'death-screen__menu';
     menu.addEventListener('click', () => location.replace(location.pathname));

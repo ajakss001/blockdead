@@ -28,6 +28,12 @@ export interface IScene {
   setFlashlightShadow?(on: boolean | null): void;
   /** Optional: a new game asks who the survivor is (character editor) before play starts. */
   createCharacter?(): Promise<void>;
+  /** True when starting a new game needs a hard world/seed/session reset. */
+  needsFreshReset?(): boolean;
+  /** Wipe save, rotate seed, and reload into character creation for a clean session. */
+  startFreshGame?(): Promise<void>;
+  /** Retire / restart with a new character cleanly. */
+  newCharacter?(): Promise<void>;
   /** Summary of current save state for Main Menu Continue / New Game flow. */
   saveSummary?(): SaveSummary;
   /** Persist current progress immediately (e.g. before returning to Main Menu). */

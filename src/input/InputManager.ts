@@ -17,6 +17,7 @@ export type Action =
   | 'aim'
   | 'reload'
   | 'inspect'
+  | 'checkAmmo'
   | 'fireMode'
   | 'bash'
   | 'slot1'

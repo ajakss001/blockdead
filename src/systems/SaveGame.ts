@@ -56,6 +56,8 @@ export interface SaveV1 {
   story?: StorySave;
   /** Drivable vehicles and their condition (fuel, battery, engine, tires, keys). */
   cars?: CarSave[];
+  /** True once the survivor has held any firearm (boosts armored/elite bandit spawns). */
+  playerArmed?: boolean;
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

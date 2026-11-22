@@ -265,13 +265,22 @@ async function boot(): Promise<void> {
       scene.saveSummary?.() ?? { hasSave: false, day: 1, time: '00:00', kills: 0, health: 100 },
     onContinue: () => {},
     onNewGame: () => {
-      void scene.createCharacter?.();
+      if (scene.needsFreshReset?.()) {
+        void scene.startFreshGame?.();
+      } else {
+        void scene.createCharacter?.();
+      }
     },
     onNewGameOverwrite: async () => {
-      await scene.resetSave?.();
-      const nextUrl = new URL(location.href);
-      nextUrl.searchParams.set('menu', '0');
-      location.href = nextUrl.toString();
+      if (scene.startFreshGame) {
+        await scene.startFreshGame();
+      } else {
+        await scene.resetSave?.();
+        const nextUrl = new URL(location.href);
+        nextUrl.searchParams.set('menu', '0');
+        nextUrl.searchParams.delete('editor');
+        location.assign(nextUrl.toString());
+      }
     },
     onOpenSettings: (tab) => settingsModal.open(tab),
     isSubModalOpen: () => settingsModal.isOpen || !!document.querySelector('.credits'),

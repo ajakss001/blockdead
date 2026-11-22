@@ -1,9 +1,11 @@
 import { onLangChange, registerDataLocalizer, tr } from '../core/i18n';
 import {
   dirtLabel,
+  ensureStackUid,
   type ItemDef,
   type ItemId,
   ITEMS,
+  type ItemStack,
   noteText,
   onePiece,
   useVerb,
@@ -15,7 +17,7 @@ import { type Skills, SKILLS, XP } from '../systems/Skills';
 import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/Crafting';
 import type { GameContext } from '../GameContext';
 import type { Player } from '../player/Player';
-import type { ContainerRef, Containers } from '../systems/Containers';
+import type { ContainerRef, Containers, CorpseData, CorpseSlotKey, CorpseZone } from '../systems/Containers';
 import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
@@ -44,9 +46,30 @@ export interface InventoryHost {
 type Slot = WearSlot | 'hand';
 type InvTab = 'gear' | 'health' | 'craft' | 'skills';
 type FilterCat = 'all' | 'weapons' | 'apparel' | 'supplies' | 'misc';
+type BagZone = 'rig' | 'pockets' | 'pack' | 'stash';
 
-/** Where a dragged or selected item lives. */
-type Place = { from: 'bag'; id: ItemId } | { from: 'box'; id: ItemId } | { from: 'slot'; slot: Slot };
+/** Magazines occupy 1×2 vertical cells in rigs, backpacks, and containers. */
+const MAG_ITEMS: ReadonlySet<ItemId> = new Set<ItemId>([
+  'mag_ak',
+  'mag_m4',
+  'mag_g17',
+  'mag_m1911',
+  'mod_ext_mag_ak',
+  'mod_ext_mag_m4',
+  'mod_ext_mag_g17',
+]);
+
+function itemGridSize(id: ItemId): [number, number] {
+  return MAG_ITEMS.has(id) ? [1, 2] : [1, 1];
+}
+
+/** Where a dragged or selected item lives (bound to unique instance uid + container zone). */
+type Place =
+  | { from: 'bag'; uid: string; id: ItemId; zone: BagZone }
+  | { from: 'box'; uid: string; id: ItemId }
+  | { from: 'corpseSlot'; slot: CorpseSlotKey; id: ItemId }
+  | { from: 'corpseZone'; cz: CorpseZone; uid: string; id: ItemId }
+  | { from: 'slot'; slot: Slot };
 type DropTarget = 'bag' | 'box' | `slot:${Slot}` | `quick:${number}`;
 
 const DOLL_LEFT: readonly Slot[] = ['head', 'mask', 'vest', 'hand', 'bag'];
@@ -114,6 +137,10 @@ export class InventoryPanel {
   private readonly heldAtOpen = new Set<string>();
   private releasing = false;
   private escDown = false;
+  private confirmNewChar = false;
+  private searchingZone: CorpseZone | null = null;
+  private searchProgress = 0;
+  private searchTimer: number | null = null;
   private drag: { place: Place; x: number; y: number; ghost: HTMLImageElement | null; pointer: number } | null = null;
 
   constructor(
@@ -166,6 +193,8 @@ export class InventoryPanel {
   open(container: ContainerRef | null): void {
     this.container = container;
     this.selected = null;
+    this.confirmNewChar = false;
+    this.stopSearch();
     if (container) this.activeTab = 'gear';
     if (!this.isOpen) {
       this.isOpen = true;
@@ -187,6 +216,8 @@ export class InventoryPanel {
 
   close(viaEsc = false): void {
     if (!this.isOpen) return;
+    this.stopSearch();
+    this.confirmNewChar = false;
     this.cancelDrag();
     this.isOpen = false;
     this.preview.stop();
@@ -200,6 +231,37 @@ export class InventoryPanel {
     void viaEsc;
     this.ctx.requestPointerLock();
     this.host.onClose();
+  }
+
+  private stopSearch(): void {
+    if (this.searchTimer !== null) {
+      window.clearInterval(this.searchTimer);
+      this.searchTimer = null;
+    }
+    this.searchingZone = null;
+    this.searchProgress = 0;
+  }
+
+  private startCorpseSearch(ref: ContainerRef, zone: CorpseZone): void {
+    const corpse = this.host.containers.corpseOf(ref);
+    if (!corpse || isCorpseZoneSearched(corpse, zone) || this.searchingZone === zone) return;
+    this.stopSearch();
+    this.searchingZone = zone;
+    this.searchProgress = 0;
+    sfx.item('drag');
+    const started = performance.now();
+    const duration = zone === 'backpack' ? 950 : zone === 'rig' ? 800 : 650;
+    this.searchTimer = window.setInterval(() => {
+      const p = Math.min(1, (performance.now() - started) / duration);
+      this.searchProgress = p;
+      if (p >= 1) {
+        this.host.containers.searchCorpseZone(ref, zone);
+        this.stopSearch();
+        sfx.item('pick');
+      }
+      if (this.isOpen) this.render();
+    }, 55);
+    this.render();
   }
 
   // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -231,7 +293,10 @@ export class InventoryPanel {
     const headRight = el('div', 'inv__head-right');
     if (this.host.newCharacter) {
       const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', tr('Новый персонаж', 'New character'));
-      fresh.addEventListener('click', () => this.host.newCharacter?.());
+      fresh.addEventListener('click', () => {
+        this.confirmNewChar = true;
+        this.render();
+      });
       headRight.append(fresh);
     }
     const close = el('button', 'inv__close', '✕');
@@ -245,7 +310,39 @@ export class InventoryPanel {
     else if (this.activeTab === 'craft') body = this.craftPane();
     else body = this.skillsBoard();
 
-    this.root.replaceChildren(topbar, body);
+    if (this.confirmNewChar) {
+      const backdrop = el('div', 'inv__confirm');
+      const card = el('div', 'inv__confirm-card');
+      card.append(
+        el('div', 'inv__confirm-title', tr('НОВЫЙ ПЕРСОНАЖ', 'NEW CHARACTER')),
+        el(
+          'div',
+          'inv__confirm-text',
+          tr(
+            'Начать новую игру новым персонажем? Текущий прогресс, инвентарь и мир будут полностью сброшены.',
+            'Start a new game with a new character? Current progress, inventory, and world will be completely reset.',
+          ),
+        ),
+      );
+      const row = el('div', 'inv__confirm-actions');
+      const yes = el('button', 'inv__btn inv__confirm-yes', tr('Создать нового персонажа', 'Start new character'));
+      yes.addEventListener('click', () => {
+        this.confirmNewChar = false;
+        this.close();
+        this.host.newCharacter?.();
+      });
+      const no = el('button', 'inv__btn inv__btn--quiet inv__confirm-no', tr('Отмена', 'Cancel'));
+      no.addEventListener('click', () => {
+        this.confirmNewChar = false;
+        this.render();
+      });
+      row.append(yes, no);
+      card.append(row);
+      backdrop.append(card);
+      this.root.replaceChildren(topbar, body, backdrop);
+    } else {
+      this.root.replaceChildren(topbar, body);
+    }
   }
 
   private gearBoard(): HTMLElement {
@@ -320,27 +417,31 @@ export class InventoryPanel {
     const inv = this.host.inventory;
     const col = el('div', 'inv__col inv__col-gear');
 
-    // Partition carried stacks cleanly once (rig -> pockets -> backpack) with zero duplicates
-    const rigIds = new Set<ItemId>();
-    const pocketIds = new Set<ItemId>();
-    const rigStacks: typeof inv.stacks = [];
-    const pocketStacks: typeof inv.stacks = [];
-    const packStacks: typeof inv.stacks = [];
+    // Partition carried stacks cleanly once (rig -> pockets -> backpack) respecting 1×2 magazine footprint.
+    const rigStacks: ItemStack[] = [];
+    const pocketStacks: ItemStack[] = [];
+    const packStacks: ItemStack[] = [];
+    let rigUsed = 0;
+    let pocketUsed = 0;
+    let packUsed = 0;
 
     for (const s of inv.stacks) {
+      ensureStackUid(s);
       const def = ITEMS[s.id];
-      if (inv.worn.vest && def.kind === 'ammo' && rigStacks.length < RIG_SLOTS) {
+      const [, ch] = itemGridSize(s.id);
+      if (inv.worn.vest && (MAG_ITEMS.has(s.id) || def.kind === 'ammo') && rigUsed + ch <= RIG_SLOTS) {
         rigStacks.push(s);
-        rigIds.add(s.id);
-      } else if (def.weight <= 0.6 && pocketStacks.length < POCKET_SLOTS && !rigIds.has(s.id)) {
+        rigUsed += ch;
+      } else if (ch === 1 && def.weight <= 0.6 && pocketUsed + 1 <= POCKET_SLOTS) {
         pocketStacks.push(s);
-        pocketIds.add(s.id);
+        pocketUsed += 1;
       } else {
         packStacks.push(s);
+        packUsed += ch;
       }
     }
 
-    // 1. РАЗГРУЗКА (Tactical Rig)
+    // 1. РАЗГРУЗКА (Tactical Rig) — 4×2 grid supporting 1×2 vertical magazines
     const rigSec = el('section', 'inv__section');
     const rigHead = el('div', 'inv__sec-head', tr('РАЗГРУЗКА', 'TACTICAL RIG'));
     const rigBody = el('div', 'inv__sec-split');
@@ -349,20 +450,24 @@ export class InventoryPanel {
     vestSlot.classList.add('cell--featured');
     const rigGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
     rigGrid.dataset.drop = 'bag';
-    for (const s of rigStacks) rigGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
-    for (let i = rigStacks.length; i < RIG_SLOTS; i++) {
+    for (const s of rigStacks) {
+      rigGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'rig' }, s.id, s.count));
+    }
+    for (let i = rigUsed; i < RIG_SLOTS; i++) {
       rigGrid.append(el('div', `cell cell--empty${inv.worn.vest ? '' : ' cell--locked'}`));
     }
     rigBody.append(vestSlot, rigGrid);
     rigSec.append(rigHead, rigBody);
 
-    // 2. КАРМАНЫ (Pockets)
+    // 2. КАРМАНЫ (Pockets) — 4×1 (only 1×1 items)
     const pocketsSec = el('section', 'inv__section');
     pocketsSec.append(el('div', 'inv__sec-head', tr('КАРМАНЫ', 'POCKETS')));
     const pocketsGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
     pocketsGrid.dataset.drop = 'bag';
-    for (const s of pocketStacks) pocketsGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
-    for (let i = pocketStacks.length; i < POCKET_SLOTS; i++) pocketsGrid.append(el('div', 'cell cell--empty'));
+    for (const s of pocketStacks) {
+      pocketsGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'pockets' }, s.id, s.count));
+    }
+    for (let i = pocketUsed; i < POCKET_SLOTS; i++) pocketsGrid.append(el('div', 'cell cell--empty'));
     pocketsSec.append(pocketsGrid);
 
     // 3. РЮКЗАК (Backpack)
@@ -374,8 +479,10 @@ export class InventoryPanel {
     backSlot.classList.add('cell--featured');
     const packGrid = el('div', 'inv__grid');
     packGrid.dataset.drop = 'bag';
-    for (const s of packStacks) packGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
-    for (let n = packStacks.length; n < Math.max(PACK_MIN_CELLS, packStacks.length + 4); n++) {
+    for (const s of packStacks) {
+      packGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'pack' }, s.id, s.count));
+    }
+    for (let n = packUsed; n < Math.max(PACK_MIN_CELLS, packUsed + 4); n++) {
       packGrid.append(el('div', 'cell cell--empty'));
     }
     packBody.append(backSlot, packGrid);
@@ -399,14 +506,21 @@ export class InventoryPanel {
         if (cnt > 1) cell.append(el('span', 'cell__count', String(cnt)));
         cell.title = `${ITEMS[qId].name} (${tr('ПКМ — очистить', 'Right-click — clear')})`;
         cell.addEventListener('click', () => {
-          if (inv.hand === qId) this.selected = { from: 'slot', slot: 'hand' };
-          else if (inv.count(qId) > 0) this.selected = { from: 'bag', id: qId };
+          if (inv.hand === qId) {
+            this.selected = { from: 'slot', slot: 'hand' };
+          } else {
+            const match = inv.stacks.find((s) => s.id === qId);
+            if (match) this.selected = { from: 'bag', uid: ensureStackUid(match), id: qId, zone: 'pack' };
+          }
           this.render();
         });
         cell.addEventListener('dblclick', () => {
           const def = ITEMS[qId];
-          if (def.equip && inv.count(qId) > 0) this.equip(qId);
-          else if (useVerb(def) && inv.count(qId) > 0) this.use(qId);
+          const match = inv.stacks.find((s) => s.id === qId);
+          if (!match) return;
+          const place: Place = { from: 'bag', uid: ensureStackUid(match), id: qId, zone: 'pack' };
+          if (def.equip) this.equip(place);
+          else if (useVerb(def)) this.use(place);
         });
         cell.addEventListener('contextmenu', (e) => {
           e.preventDefault();
@@ -423,24 +537,28 @@ export class InventoryPanel {
     return col;
   }
 
-  /** Right column: category filter rail + Container loot / Filtered carried items + Item Inspector card. */
+  /** Right column: Corpse Looting Pane (if bandit corpse) OR Filter rail + Container/Carried + Inspector. */
   private rightColumn(): HTMLElement {
     const col = el('div', 'inv__col inv__col-right');
+    const corpse = this.container ? this.host.containers.corpseOf(this.container) : undefined;
 
     const topArea = el('div', 'inv__stash-area');
-    const filters = el('div', 'inv__filters');
-    for (const f of FILTERS) {
-      const b = el('button', `inv__filter-btn${this.filter === f.id ? ' is-active' : ''}`, tr(f.ru, f.en)) as HTMLButtonElement;
-      b.type = 'button';
-      b.addEventListener('click', () => {
-        this.filter = f.id;
-        this.render();
-      });
-      filters.append(b);
+    if (this.container && corpse) {
+      topArea.append(this.corpsePane(this.container, corpse));
+    } else {
+      const filters = el('div', 'inv__filters');
+      for (const f of FILTERS) {
+        const b = el('button', `inv__filter-btn${this.filter === f.id ? ' is-active' : ''}`, tr(f.ru, f.en)) as HTMLButtonElement;
+        b.type = 'button';
+        b.addEventListener('click', () => {
+          this.filter = f.id;
+          this.render();
+        });
+        filters.append(b);
+      }
+      const pane = this.container ? this.boxPane(this.container) : this.filteredCarriedPane();
+      topArea.append(filters, pane);
     }
-
-    const pane = this.container ? this.boxPane(this.container) : this.filteredCarriedPane();
-    topArea.append(filters, pane);
 
     const inspector = this.inspectorCard();
     col.append(topArea, inspector);
@@ -464,8 +582,13 @@ export class InventoryPanel {
     const list = this.host.inventory.stacks.filter((s) => this.matchesFilter(s.id));
     const grid = el('div', 'inv__grid');
     grid.dataset.drop = 'bag';
-    for (const s of list) grid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
-    for (let n = list.length; n < Math.max(BOX_MIN_CELLS, list.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
+    let used = 0;
+    for (const s of list) {
+      const [, ch] = itemGridSize(s.id);
+      used += ch;
+      grid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'stash' }, s.id, s.count));
+    }
+    for (let n = used; n < Math.max(BOX_MIN_CELLS, used + 2); n++) grid.append(el('div', 'cell cell--empty'));
     if (list.length === 0) pane.append(el('div', 'inv__empty', tr('В этой категории ничего нет', 'Nothing in this category')));
     pane.append(grid);
     return pane;
@@ -484,10 +607,127 @@ export class InventoryPanel {
     }
     pane.append(title);
     const grid = el('div', 'inv__grid');
-    for (const s of items) grid.append(this.itemCell({ from: 'box', id: s.id }, s.id, s.count));
-    for (let n = items.length; n < Math.max(BOX_MIN_CELLS, items.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
+    let used = 0;
+    for (const s of items) {
+      const [, ch] = itemGridSize(s.id);
+      used += ch;
+      grid.append(this.itemCell({ from: 'box', uid: ensureStackUid(s), id: s.id }, s.id, s.count));
+    }
+    for (let n = used; n < Math.max(BOX_MIN_CELLS, used + 2); n++) grid.append(el('div', 'cell cell--empty'));
     if (allItems.length === 0) pane.append(el('div', 'inv__empty', tr('Ничего полезного', 'Nothing useful')));
     pane.append(grid);
+    return pane;
+  }
+
+  /** EFT-style structured corpse inventory: equipped slots + searchable tactical rig, pockets, backpack. */
+  private corpsePane(ref: ContainerRef, corpse: CorpseData): HTMLElement {
+    const pane = el('div', 'inv__pane inv__pane--box inv__pane--corpse');
+    pane.dataset.drop = 'box';
+
+    const tierLabel = corpse.tier === 'elite' ? tr('Элитный боец', 'Elite Fighter') : tr('Бандит-выживший', 'Bandit Survivor');
+    const title = el('div', 'inv__title', `${corpse.name} · ${tierLabel}`);
+    const hasRevealed =
+      Object.values(corpse.slots).some(Boolean) ||
+      (corpse.searchedRig && corpse.rig.length > 0) ||
+      (corpse.searchedPockets && corpse.pockets.length > 0) ||
+      (corpse.searchedBackpack && corpse.backpack.length > 0);
+    if (hasRevealed) {
+      const all = el('button', 'inv__btn inv__btn--small', tr('Взять всё', 'Take all'));
+      all.addEventListener('click', () => this.takeAll());
+      title.append(all);
+    }
+    pane.append(title);
+
+    // 1. Equipped slots on body (honest weapon, armor vest, helmet, uniform, bag, clothes)
+    const equipSec = el('section', 'inv__corpse-sec');
+    equipSec.append(el('div', 'inv__sec-head', tr('СНАРЯЖЕНИЕ ТЕЛА', 'EQUIPPED ON BODY')));
+    const equipGrid = el('div', 'inv__corpse-slots');
+    const order: readonly CorpseSlotKey[] = ['hand', 'head', 'vest', 'outfit', 'back', 'torso', 'legs', 'feet', 'mask', 'face'];
+    for (const slot of order) {
+      const st = corpse.slots[slot];
+      const coreEmpty = slot === 'hand' || slot === 'head' || slot === 'vest' || slot === 'back';
+      if (!st && !coreEmpty) continue;
+      const cell = el('div', `cell cell--slot${st ? '' : ' cell--vacant'}`);
+      if (slot === 'hand') cell.classList.add('cell--wide');
+      const lbl = SLOT_LABELS[slot as Slot] ? tr(SLOT_LABELS[slot as Slot][0], SLOT_LABELS[slot as Slot][1]) : slot;
+      if (st) {
+        cell.append(icon(st.id));
+        if (st.mods?.length) cell.append(el('span', 'cell__count', `+${st.mods.length}`));
+        cell.title = ITEMS[st.id].name;
+        const place: Place = { from: 'corpseSlot', slot, id: st.id };
+        if (this.same(place, this.selected)) cell.classList.add('cell--sel');
+        this.bindCell(cell, place);
+      }
+      cell.append(el('span', 'cell__label', lbl));
+      equipGrid.append(cell);
+    }
+    equipSec.append(equipGrid);
+    pane.append(equipSec);
+
+    // 2. Searchable zones (РАЗГРУЗКА, КАРМАНЫ, РЮКЗАК)
+    const zones: { cz: CorpseZone; head: [string, string]; searchBtn: [string, string]; show: boolean; items: ItemStack[]; cols: number; minCells: number }[] = [
+      {
+        cz: 'rig',
+        head: ['РАЗГРУЗКА', 'TACTICAL RIG'],
+        searchBtn: ['Обыскать разгрузку', 'Search tactical rig'],
+        show: Boolean(corpse.slots.vest || corpse.rig.length > 0 || corpse.searchedRig),
+        items: corpse.rig,
+        cols: 4,
+        minCells: 8,
+      },
+      {
+        cz: 'pockets',
+        head: ['КАРМАНЫ', 'POCKETS'],
+        searchBtn: ['Обыскать карманы', 'Search pockets'],
+        show: true,
+        items: corpse.pockets,
+        cols: 4,
+        minCells: 4,
+      },
+      {
+        cz: 'backpack',
+        head: ['РЮКЗАК', 'BACKPACK'],
+        searchBtn: ['Обыскать рюкзак', 'Search backpack'],
+        show: Boolean(corpse.slots.back || corpse.backpack.length > 0 || corpse.searchedBackpack),
+        items: corpse.backpack,
+        cols: 6,
+        minCells: 6,
+      },
+    ];
+
+    for (const z of zones) {
+      if (!z.show) continue;
+      const sec = el('section', 'inv__corpse-sec');
+      const secHead = el('div', 'inv__sec-head', tr(z.head[0], z.head[1]));
+      sec.append(secHead);
+      if (!isCorpseZoneSearched(corpse, z.cz)) {
+        const searchRow = el('div', 'inv__corpse-unsearched');
+        if (this.searchingZone === z.cz) {
+          const pct = Math.round(this.searchProgress * 100);
+          searchRow.append(this.statMeter(tr('Обыск...', 'Searching...'), `${pct}%`, this.searchProgress, false));
+        } else {
+          const btn = el('button', 'inv__btn inv__btn--small inv__corpse-search', tr(z.searchBtn[0], z.searchBtn[1])) as HTMLButtonElement;
+          btn.type = 'button';
+          btn.dataset.search = z.cz;
+          btn.addEventListener('click', () => this.startCorpseSearch(ref, z.cz));
+          searchRow.append(btn);
+        }
+        sec.append(searchRow);
+      } else {
+        const grid = el('div', z.cols === 4 ? 'inv__mini-grid inv__mini-grid--4' : 'inv__grid');
+        let used = 0;
+        for (const s of z.items) {
+          const [, ch] = itemGridSize(s.id);
+          used += ch;
+          grid.append(this.itemCell({ from: 'corpseZone', cz: z.cz, uid: ensureStackUid(s), id: s.id }, s.id, s.count));
+        }
+        for (let n = used; n < z.minCells; n++) grid.append(el('div', 'cell cell--empty'));
+        if (z.items.length === 0) sec.append(el('div', 'inv__empty', tr('Пусто', 'Empty')));
+        sec.append(grid);
+      }
+      pane.append(sec);
+    }
+
     return pane;
   }
 
@@ -515,10 +755,13 @@ export class InventoryPanel {
     head.append(icon(id, 'inv__card-icon'));
     const text = el('div', 'inv__card-text');
     const def = ITEMS[id];
+    const stack = this.stackAt(sel);
     const dirt = def.wear ? this.dirtAt(sel) : null;
     const worn = def.durability ? this.dirtAt(sel) : null;
+    const modNames = stack?.mods?.length ? stack.mods.map((m) => MODS[m].name).join(', ') : '';
     const info =
       describe(def) +
+      (modNames ? ` · ${modNames}` : '') +
       (dirt !== null ? ` · ${tr('грязь', 'dirt')} ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
       (worn !== null ? ` · ${tr('прочность', 'durability')} ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
     text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
@@ -574,7 +817,7 @@ export class InventoryPanel {
         const txt = el('div', 'inv__card-text');
         txt.append(el('div', 'inv__card-name', `${def.name} ×${s.count}`), el('div', 'inv__card-info', describe(def)));
         const btn = el('button', 'inv__btn inv__btn--small', useVerb(def) ?? tr('Использовать', 'Use'));
-        btn.addEventListener('click', () => this.use(s.id));
+        btn.addEventListener('click', () => this.use({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'pack' }));
         row.append(txt, btn);
         list.append(row);
       }
@@ -641,7 +884,10 @@ export class InventoryPanel {
   }
 
   private itemCell(place: Place, id: ItemId, count: number): HTMLElement {
-    const cell = el('div', 'cell');
+    const [, ch] = itemGridSize(id);
+    const cell = el('div', `cell${ch === 2 ? ' cell--tall' : ''}`);
+    cell.dataset.item = id;
+    if ('uid' in place) cell.dataset.uid = place.uid;
     if (this.same(place, this.selected)) cell.classList.add('cell--sel');
     cell.append(icon(id));
     if (count > 1) cell.append(el('span', 'cell__count', String(count)));
@@ -735,18 +981,33 @@ export class InventoryPanel {
       if (this.container) out.push([tr('Положить', 'Store'), () => this.unslot(place.slot, true)]);
       return out;
     }
+    if (place.from === 'corpseSlot') {
+      out.push([tr('Взять', 'Take'), () => this.takeFromCorpseSlot(place.slot)]);
+      if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.takeFromCorpseSlot(place.slot, true)]);
+      if (def.equip) out.push([tr('В руку', 'Equip'), () => this.takeFromCorpseSlot(place.slot, true)]);
+      return out;
+    }
+    if (place.from === 'corpseZone') {
+      const cnt = this.corpseZoneCount(place.cz, place.uid);
+      out.push([tr('Взять', 'Take'), () => this.takeFromCorpseZone(place.cz, place.uid, cnt)]);
+      if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.takeFromCorpseZone(place.cz, place.uid, 1, 'wear')]);
+      if (def.equip) out.push([tr('В руку', 'Equip'), () => this.takeFromCorpseZone(place.cz, place.uid, 1, 'equip')]);
+      return out;
+    }
     if (place.from === 'box') {
-      out.push([tr('Взять', 'Take'), () => this.take(id, this.boxCount(id))]);
-      if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.take(id, 1) && this.wear(id)]);
-      if (def.equip) out.push([tr('В руку', 'Equip'), () => this.take(id, 1) && this.equip(id)]);
+      const cnt = this.boxStack(place.uid)?.count ?? 1;
+      out.push([tr('Взять', 'Take'), () => this.take(place.uid, cnt)]);
+      if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.take(place.uid, 1, 'wear')]);
+      if (def.equip) out.push([tr('В руку', 'Equip'), () => this.take(place.uid, 1, 'equip')]);
       return out;
     }
     const verb = useVerb(def);
-    if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.wear(id)]);
-    else if (verb) out.push([verb, () => this.use(id)]);
-    if (def.equip) out.push([tr('В руку', 'Equip'), () => this.equip(id)]);
-    if (this.container) out.push([tr('Положить', 'Store'), () => this.store(id, this.host.inventory.count(id))]);
-    else out.push([tr('Выбросить', 'Drop'), () => this.drop(id), true]);
+    if (def.wear) out.push([tr('Надеть', 'Wear'), () => this.wear(place)]);
+    else if (verb) out.push([verb, () => this.use(place)]);
+    if (def.equip) out.push([tr('В руку', 'Equip'), () => this.equip(place)]);
+    const stackCount = this.host.inventory.stackByUid(place.uid)?.count ?? 1;
+    if (this.container) out.push([tr('Положить', 'Store'), () => this.store(place, stackCount)]);
+    else out.push([tr('Выбросить', 'Drop'), () => this.drop(place), true]);
     return out;
   }
 
@@ -814,12 +1075,17 @@ export class InventoryPanel {
 
   private primary(place: Place): void {
     if (place.from === 'slot') return this.unslot(place.slot);
-    if (place.from === 'box') return void this.take(place.id, this.boxCount(place.id));
+    if (place.from === 'corpseSlot') return void this.takeFromCorpseSlot(place.slot);
+    if (place.from === 'corpseZone') {
+      return void this.takeFromCorpseZone(place.cz, place.uid, this.corpseZoneCount(place.cz, place.uid));
+    }
+    if (place.from === 'box') return void this.take(place.uid, this.boxStack(place.uid)?.count ?? 1);
     const def = ITEMS[place.id];
-    if (this.container) this.store(place.id, this.host.inventory.count(place.id));
-    else if (def.wear) this.wear(place.id);
-    else if (def.equip) this.equip(place.id);
-    else if (useVerb(def)) this.use(place.id);
+    const count = this.host.inventory.stackByUid(place.uid)?.count ?? 1;
+    if (this.container) this.store(place, count);
+    else if (def.wear) this.wear(place);
+    else if (def.equip) this.equip(place);
+    else if (useVerb(def)) this.use(place);
   }
 
   private move(place: Place, to: DropTarget): void {
@@ -827,7 +1093,9 @@ export class InventoryPanel {
     if (!id) return;
     if (to.startsWith('quick:')) {
       const qi = Number(to.slice(6));
-      if (place.from === 'box' && !this.take(id, 1)) return;
+      if (place.from === 'box' && !this.take(place.uid, 1)) return;
+      if (place.from === 'corpseSlot' && !this.takeFromCorpseSlot(place.slot)) return;
+      if (place.from === 'corpseZone' && !this.takeFromCorpseZone(place.cz, place.uid, 1)) return;
       this.host.inventory.setQuick(qi, id);
       sfx.item('move');
       this.render();
@@ -841,24 +1109,43 @@ export class InventoryPanel {
         this.render();
         return;
       }
-      if (place.from === 'box' && !this.take(id, 1)) return;
+      if (place.from === 'box') {
+        this.take(place.uid, 1, slot === 'hand' ? 'equip' : 'wear');
+        return;
+      }
+      if (place.from === 'corpseSlot') {
+        this.takeFromCorpseSlot(place.slot, true);
+        return;
+      }
+      if (place.from === 'corpseZone') {
+        this.takeFromCorpseZone(place.cz, place.uid, 1, slot === 'hand' ? 'equip' : 'wear');
+        return;
+      }
       if (place.from === 'slot') return this.render();
-      if (slot === 'hand') this.equip(id);
-      else this.wear(id);
+      if (slot === 'hand') this.equip(place);
+      else this.wear(place);
       return;
     }
     if (place.from === 'slot') return this.unslot(place.slot, to === 'box');
-    if (place.from === 'bag' && to === 'box') return this.store(id, this.host.inventory.count(id));
-    if (place.from === 'box' && to === 'bag') return void this.take(id, this.boxCount(id));
+    if (place.from === 'bag' && to === 'box') {
+      const count = this.host.inventory.stackByUid(place.uid)?.count ?? 1;
+      return this.store(place, count);
+    }
+    if (place.from === 'box' && to === 'bag') return void this.take(place.uid, this.boxStack(place.uid)?.count ?? 1);
+    if (place.from === 'corpseSlot' && to === 'bag') return void this.takeFromCorpseSlot(place.slot);
+    if (place.from === 'corpseZone' && to === 'bag') {
+      return void this.takeFromCorpseZone(place.cz, place.uid, this.corpseZoneCount(place.cz, place.uid));
+    }
     this.render();
   }
 
   // ─── Actions ──────────────────────────────────────────────────────────────────
 
-  private use(id: ItemId): void {
+  private use(place: Place): void {
+    if (place.from !== 'bag') return;
     const { inventory, survival, player } = this.host;
-    const def = ITEMS[id];
-    if (inventory.remove(id, 1) === 0) return;
+    const def = ITEMS[place.id];
+    if (inventory.removeByUid(place.uid, 1) === 0) return;
     sfx.item(def.kind === 'drink' ? 'drink' : def.kind === 'food' ? 'eat' : def.kind === 'medical' ? 'bandage' : 'pick');
     if (def.battery) {
       player.rechargeBattery(def.battery);
@@ -871,18 +1158,20 @@ export class InventoryPanel {
     this.render();
   }
 
-  private wear(id: ItemId): void {
-    if (!this.host.inventory.wear(id)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
+  private wear(place: Place): void {
+    if (place.from !== 'bag') return;
+    if (!this.host.inventory.wearByUid(place.uid)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
       sfx.item('cloth');
-      this.selected = { from: 'slot', slot: ITEMS[id].wear!.slot };
+      this.selected = { from: 'slot', slot: ITEMS[place.id].wear!.slot };
     }
     this.host.syncBody();
     this.render();
   }
 
-  private equip(id: ItemId): void {
-    if (!this.host.inventory.equip(id)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
+  private equip(place: Place): void {
+    if (place.from !== 'bag') return;
+    if (!this.host.inventory.equipByUid(place.uid)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
       sfx.item('weapon');
       this.selected = { from: 'slot', slot: 'hand' };
@@ -895,103 +1184,255 @@ export class InventoryPanel {
     const inv = this.host.inventory;
     const id = slot === 'hand' ? inv.hand : inv.worn[slot];
     if (!id) return;
+    const beforeUids = new Set(inv.stacks.map((s) => ensureStackUid(s)));
     const ok = slot === 'hand' ? inv.holster() : inv.takeOff(slot);
-    if (!ok) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
-    else {
+    if (!ok) {
+      this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
+      this.selected = null;
+    } else {
       sfx.item(slot === 'hand' ? 'move' : 'cloth');
-      if (toBox) this.store(id, 1);
+      const addedStack = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === id);
+      const newUid = addedStack ? ensureStackUid(addedStack) : null;
+      if (toBox && newUid) {
+        this.store({ from: 'bag', uid: newUid, id, zone: 'pack' }, 1);
+        return;
+      }
+      this.selected = !toBox && newUid ? { from: 'bag', uid: newUid, id, zone: 'pack' } : null;
     }
-    this.selected = ok && !toBox ? { from: 'bag', id } : null;
     this.host.syncBody();
     this.render();
   }
 
-  private take(id: ItemId, count: number): boolean {
+  private take(uid: string, count: number, then?: 'wear' | 'equip'): boolean {
     const ref = this.container;
     if (!ref) return false;
+    const target = this.boxStack(uid);
+    if (!target) return false;
+    const id = target.id;
     let got = 0;
+    let addedStackUid: string | null = null;
+    const inv = this.host.inventory;
+    const beforeUids = new Set(inv.stacks.map((s) => ensureStackUid(s)));
+
     if (onePiece(ITEMS[id])) {
-      for (let n = 0; n < count; n++) {
-        const dirt = this.host.containers.peekDirt(ref, id);
-        if (this.host.inventory.add(id, 1, dirt, this.host.containers.peekTint(ref, id)) === 0) break;
-        this.host.containers.take(ref, id, 1);
-        got++;
+      if (inv.add(id, 1, target.dirt ?? 0, target.tint, target.mods) > 0) {
+        this.host.containers.takeByUid(ref, uid, 1);
+        got = 1;
       }
     } else {
-      got = this.host.inventory.add(id, count);
-      if (got > 0) this.host.containers.take(ref, id, got);
+      got = inv.add(id, count);
+      if (got > 0) this.host.containers.takeByUid(ref, uid, got);
+    }
+
+    if (got > 0) {
+      const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === id);
+      addedStackUid = added ? ensureStackUid(added) : null;
+      sfx.item('pick');
     }
     if (got < count) this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
-    if (got > 0) sfx.item('pick');
-    this.selected = got > 0 ? { from: 'bag', id } : this.selected;
+    if (got > 0 && then === 'wear' && addedStackUid) {
+      this.wear({ from: 'bag', uid: addedStackUid, id, zone: 'pack' });
+      return true;
+    }
+    if (got > 0 && then === 'equip' && addedStackUid) {
+      this.equip({ from: 'bag', uid: addedStackUid, id, zone: 'pack' });
+      return true;
+    }
+    this.selected = got > 0 && addedStackUid ? { from: 'bag', uid: addedStackUid, id, zone: 'pack' } : this.selected;
     this.render();
     return got > 0;
+  }
+
+  private takeFromCorpseSlot(slot: CorpseSlotKey, autoAction = false): boolean {
+    const ref = this.container;
+    if (!ref) return false;
+    const corpse = this.host.containers.corpseOf(ref);
+    const st = corpse?.slots[slot];
+    if (!corpse || !st) return false;
+    const inv = this.host.inventory;
+    if (inv.room(st.id) < 1) {
+      this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
+      return false;
+    }
+    const taken = this.host.containers.takeCorpseSlot(ref, slot);
+    if (!taken) return false;
+    const beforeUids = new Set(inv.stacks.map((s) => ensureStackUid(s)));
+    const got = inv.add(taken.id, taken.count, taken.dirt ?? 0, taken.tint, taken.mods);
+    if (got === 0) {
+      corpse.slots[slot] = taken;
+      this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
+      return false;
+    }
+    const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === taken.id);
+    const newUid = added ? ensureStackUid(added) : null;
+    sfx.item('pick');
+    if (autoAction && newUid) {
+      if (ITEMS[taken.id].wear) {
+        this.wear({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
+        return true;
+      }
+      if (ITEMS[taken.id].equip) {
+        this.equip({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
+        return true;
+      }
+    }
+    this.selected = newUid ? { from: 'bag', uid: newUid, id: taken.id, zone: 'pack' } : null;
+    this.render();
+    return true;
+  }
+
+  private takeFromCorpseZone(cz: CorpseZone, uid: string, count: number, then?: 'wear' | 'equip'): boolean {
+    const ref = this.container;
+    if (!ref) return false;
+    const corpse = this.host.containers.corpseOf(ref);
+    if (!corpse) return false;
+    const target = corpseList(corpse, cz).find((s) => ensureStackUid(s) === uid);
+    if (!target) return false;
+    const inv = this.host.inventory;
+    const want = Math.min(count, target.count);
+    const room = inv.room(target.id);
+    if (room <= 0) {
+      this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
+      return false;
+    }
+    const taken = this.host.containers.takeCorpseItem(ref, cz, uid, want);
+    if (!taken) return false;
+    const beforeUids = new Set(inv.stacks.map((s) => ensureStackUid(s)));
+    const got = inv.add(taken.id, taken.count, taken.dirt ?? 0, taken.tint, taken.mods);
+    if (got < taken.count) {
+      this.host.containers.putCorpseItem(ref, cz, { ...taken, count: taken.count - got });
+    }
+    if (got <= 0) {
+      this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
+      return false;
+    }
+    const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === taken.id);
+    const newUid = added ? ensureStackUid(added) : null;
+    sfx.item('pick');
+    if (got < count) this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
+    if (then === 'wear' && newUid) {
+      this.wear({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
+      return true;
+    }
+    if (then === 'equip' && newUid) {
+      this.equip({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
+      return true;
+    }
+    this.selected = newUid ? { from: 'bag', uid: newUid, id: taken.id, zone: 'pack' } : this.selected;
+    this.render();
+    return true;
   }
 
   private takeAll(): void {
     const ref = this.container;
     if (!ref) return;
+    const corpse = this.host.containers.corpseOf(ref);
     let full = false;
-    for (const s of [...this.host.containers.contents(ref)]) {
-      const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint);
-      if (got > 0) this.host.containers.take(ref, s.id, got);
-      if (got < s.count) full = true;
+    if (corpse) {
+      for (const slot of Object.keys(corpse.slots) as CorpseSlotKey[]) {
+        const st = corpse.slots[slot];
+        if (!st) continue;
+        const got = this.host.inventory.add(st.id, st.count, st.dirt ?? 0, st.tint, st.mods);
+        if (got > 0) this.host.containers.takeCorpseSlot(ref, slot);
+        else full = true;
+      }
+      for (const cz of ['rig', 'pockets', 'backpack'] as const) {
+        if (!isCorpseZoneSearched(corpse, cz)) continue;
+        for (const s of [...corpseList(corpse, cz)]) {
+          const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint, s.mods);
+          if (got > 0) {
+            this.host.containers.takeCorpseItem(ref, cz, ensureStackUid(s), got);
+          }
+          if (got < s.count) full = true;
+        }
+      }
+    } else {
+      for (const s of [...this.host.containers.contents(ref)]) {
+        const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint, s.mods);
+        if (got > 0) this.host.containers.takeByUid(ref, ensureStackUid(s), got);
+        if (got < s.count) full = true;
+      }
     }
     if (full) this.ctx.hud.toast(tr('Не всё влезло', 'Not everything fit'));
     sfx.item('pick');
+    this.selected = null;
     this.render();
   }
 
-  private store(id: ItemId, count: number): void {
+  private store(place: Place, count: number): void {
     const ref = this.container;
-    if (!ref) return;
-    if (onePiece(ITEMS[id])) {
-      for (let k = 0; k < count; k++) {
-        const dirt = this.host.inventory.peekDirt(id);
-        const tint = this.host.inventory.peekTint(id);
-        if (this.host.inventory.remove(id, 1) === 0) break;
-        this.host.containers.put(ref, id, 1, dirt, tint);
+    if (!ref || place.from !== 'bag') return;
+    const stack = this.host.inventory.stackByUid(place.uid);
+    if (!stack) return;
+    const id = stack.id;
+    const dirt = stack.dirt;
+    const tint = stack.tint;
+    const mods = stack.mods;
+    const corpse = this.host.containers.corpseOf(ref);
+    const removed = this.host.inventory.removeByUid(place.uid, count);
+    if (removed > 0) {
+      if (corpse) {
+        this.host.containers.putCorpseItem(ref, 'backpack', {
+          id,
+          count: removed,
+          ...(dirt !== undefined ? { dirt } : {}),
+          ...(tint !== undefined ? { tint } : {}),
+          ...(mods?.length ? { mods: [...mods] } : {}),
+        });
+      } else {
+        this.host.containers.put(ref, id, removed, dirt, tint);
       }
-    } else {
-      const n = this.host.inventory.remove(id, count);
-      if (n > 0) this.host.containers.put(ref, id, n);
     }
     sfx.item('move');
     this.selected = null;
     this.render();
   }
 
-  private drop(id: ItemId): void {
-    this.host.inventory.remove(id, this.host.inventory.count(id));
+  private drop(place: Place): void {
+    if (place.from !== 'bag') return;
+    const s = this.host.inventory.stackByUid(place.uid);
+    if (s) this.host.inventory.removeByUid(place.uid, s.count);
     this.selected = null;
     this.render();
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+  private stackAt(p: Place): ItemStack | null {
+    const inv = this.host.inventory;
+    if (p.from === 'bag') return inv.stackByUid(p.uid) ?? null;
+    if (p.from === 'box') return this.boxStack(p.uid) ?? null;
+    const corpse = this.container ? this.host.containers.corpseOf(this.container) : undefined;
+    if (p.from === 'corpseSlot') return corpse?.slots[p.slot] ?? null;
+    if (p.from === 'corpseZone') return corpse ? corpseList(corpse, p.cz).find((s) => ensureStackUid(s) === p.uid) ?? null : null;
+    return null;
+  }
+
   private itemAt(p: Place): ItemId | null {
     const inv = this.host.inventory;
     if (p.from === 'slot') return p.slot === 'hand' ? inv.hand : inv.worn[p.slot];
-    if (p.from === 'bag') return inv.count(p.id) > 0 ? p.id : null;
-    return this.boxCount(p.id) > 0 ? p.id : null;
+    return this.stackAt(p)?.id ?? null;
   }
 
   private dirtAt(p: Place): number {
     const inv = this.host.inventory;
     if (p.from === 'slot') return p.slot === 'hand' ? inv.handWear : inv.wornDirt[p.slot];
-    if (p.from === 'bag') return inv.peekDirt(p.id);
-    return this.container ? this.host.containers.peekDirt(this.container, p.id) : 0;
+    return this.stackAt(p)?.dirt ?? 0;
   }
 
   private exists(p: Place): boolean {
     return this.itemAt(p) !== null;
   }
 
-  private boxCount(id: ItemId): number {
-    if (!this.container) return 0;
-    let n = 0;
-    for (const s of this.host.containers.contents(this.container)) if (s.id === id) n += s.count;
-    return n;
+  private boxStack(uid: string): ItemStack | undefined {
+    if (!this.container) return undefined;
+    return this.host.containers.contents(this.container).find((s) => ensureStackUid(s) === uid);
+  }
+
+  private corpseZoneCount(cz: CorpseZone, uid: string): number {
+    const corpse = this.container ? this.host.containers.corpseOf(this.container) : undefined;
+    if (!corpse) return 0;
+    return corpseList(corpse, cz).find((s) => ensureStackUid(s) === uid)?.count ?? 0;
   }
 
   private same(a: Place | null, b: Place | null): boolean {
@@ -999,8 +1440,20 @@ export class InventoryPanel {
   }
 }
 
+function isCorpseZoneSearched(c: CorpseData, cz: CorpseZone): boolean {
+  return cz === 'pockets' ? c.searchedPockets : cz === 'rig' ? c.searchedRig : c.searchedBackpack;
+}
+
+function corpseList(c: CorpseData, cz: CorpseZone): ItemStack[] {
+  return cz === 'pockets' ? c.pockets : cz === 'rig' ? c.rig : c.backpack;
+}
+
 function placeKey(p: Place): string {
-  return p.from === 'slot' ? `slot:${p.slot}` : `${p.from}:${p.id}`;
+  if (p.from === 'slot') return `slot:${p.slot}`;
+  if (p.from === 'corpseSlot') return `cslot:${p.slot}`;
+  if (p.from === 'corpseZone') return `czone:${p.cz}:${p.uid}`;
+  if (p.from === 'bag') return `bag:${p.zone}:${p.uid}`;
+  return `box:${p.uid}`;
 }
 
 function describe(def: ItemDef): string {
@@ -1033,6 +1486,6 @@ function icon(id: ItemId, cls = 'cell__icon'): HTMLImageElement {
   return img;
 }
 
-function place0(p: { from: string }): boolean {
-  return p.from !== 'box';
+function place0(p: Place): boolean {
+  return p.from === 'bag' || p.from === 'slot';
 }

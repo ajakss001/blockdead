@@ -72,6 +72,8 @@ export interface GunHudState {
   reloading: boolean;
   jammed: boolean;
   ads: boolean;
+  /** Seconds left for the Tarkov-style mag-check readout beside the white silhouette. */
+  magCheckLeft: number;
   /** Crosshair spread now (deg), the kind of crosshair. */
   spread: number;
   crosshair: 'cross' | 'circle' | 'none';
@@ -133,6 +135,8 @@ export class Firearms {
   private climb = 0;
   /** Seconds since the last shot (the HUD fades out 3 s after). */
   sinceUse = 99;
+  /** Seconds left for temporary ammo-status readout beside the silhouette (check mag / reload / shot). */
+  magCheckT = 0;
   /** The noise of the last shot (the HUD's wave), m, and how long ago. */
   lastNoise = 0;
   /** A hit to show: 'body' | 'head', fresh. */
@@ -172,6 +176,7 @@ export class Firearms {
     const vm = player.viewmodel;
     const hand = inv.hand;
     this.sinceUse += dt;
+    this.magCheckT = Math.max(0, this.magCheckT - dt);
     this.hitMarkT += dt;
     this.updateRockets(dt);
     // The gun in the hands is the one the viewmodel shows (after the switch).
@@ -185,6 +190,7 @@ export class Firearms {
         this.state = new GunState(id, inst, this.ammo(id));
         this.state.speed = 1 + (this.w.handling() - 1) * 0.4;
         this.sinceUse = 0;
+        this.magCheckT = 0;
         sfx.gunMech('draw');
       } else this.state = null;
     }
@@ -193,6 +199,7 @@ export class Firearms {
       // Keep the gun's state shown to the viewmodel during the switch away.
       input.consumePressed('reload');
       input.consumePressed('inspect');
+      input.consumePressed('checkAmmo');
       input.consumePressed('fireMode');
       input.consumePressed('bash');
       return;
@@ -207,9 +214,15 @@ export class Firearms {
     const reachOut = g.cls === 'pistol' ? 0.62 : g.cls === 'launcher' ? 0.55 : 0.85;
     vm.gunView.wall = Math.max(0, Math.min(1, (reachOut + 0.15 - this.wallDist) / 0.45));
     vm.gunView.wallDist = this.wallDist;
-    // R: a tap reloads, held inspects.
+    // R: a tap reloads, held inspects. T / Alt+T checks magazine status cleanly.
     let reload = false;
     let inspect = input.consumePressed('inspect');
+    const checkAmmo = input.consumePressed('checkAmmo');
+    if (checkAmmo && !player.busy && !vm.switching) {
+      this.magCheckT = 2.8;
+      inspect = true;
+      sfx.gunMech('magOut', id === 'rifle_ak' ? 0.85 : id.startsWith('pistol') ? 1.15 : 1);
+    }
     if (input.consumePressed('reload')) {
       this.reloadHeld = 0;
       this.inspectFromHold = false;
@@ -307,6 +320,7 @@ export class Firearms {
       reloading: gs.action === 'reload' || gs.action === 'reloadEmpty' || gs.action.startsWith('load') || gs.action === 'unjam',
       jammed: inst.jammed,
       ads: vm.ads > 0.6,
+      magCheckLeft: Math.max(0, this.magCheckT),
       spread: this.spread(id),
       crosshair: g.cls === 'launcher' ? 'none' : g.pellets ? 'circle' : 'cross',
     };
@@ -332,6 +346,7 @@ export class Firearms {
     switch (e.kind) {
       case 'shot': {
         this.sinceUse = 0;
+        this.magCheckT = Math.max(this.magCheckT, 1.8);
         const handling = this.w.handling();
         const suppressed = mods.includes('mod_suppressor');
         // Recoil: the gun in the hands, the view (climbing in a burst), the camera's jolt.
@@ -378,6 +393,7 @@ export class Firearms {
         break;
       case 'magIn':
         mech('magIn');
+        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rack':
         mech(id === 'rifle_m4a1' ? 'boltCatch' : 'rack');
@@ -387,15 +403,19 @@ export class Firearms {
         break;
       case 'shellIn':
         mech('shell');
+        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rocketIn':
         mech('rocket');
+        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'mode':
         mech('mode');
+        this.magCheckT = Math.max(this.magCheckT, 2.0);
         break;
       case 'unjammed':
         this.ejectCase(id);
+        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'bash':
         this.bash(id);

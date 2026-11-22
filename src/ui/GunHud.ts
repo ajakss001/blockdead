@@ -34,7 +34,14 @@ export interface GunHudFrame {
 }
 
 const WHITE = 'rgba(214,212,202,';
-const RUST = '#a0603e';
+
+function magCheckLabel(mag: number, cap: number): string {
+  if (mag <= 0) return tr('Пусто', 'Empty');
+  const k = mag / Math.max(1, cap);
+  if (k >= 0.85) return tr('Полон', 'Full');
+  if (k >= 0.45) return tr('Половина', 'Half');
+  return tr('Мало', 'Low');
+}
 
 export class GunHud {
   private readonly canvas = document.createElement('canvas');
@@ -45,6 +52,7 @@ export class GunHud {
   private readonly count = document.createElement('div');
   private readonly mode = document.createElement('div');
   private readonly reload = document.createElement('div');
+  private readonly textWrap = document.createElement('div');
   private readonly slots = document.createElement('div');
   private readonly slotEls: HTMLButtonElement[] = [];
   private readonly dot: HTMLElement | null;
@@ -68,10 +76,9 @@ export class GunHud {
     this.reload.hidden = true;
     this.icon.className = 'gunhud__icon';
     this.icon.alt = '';
-    const text = document.createElement('div');
-    text.className = 'gunhud__text';
-    text.append(this.name, this.count, this.mode);
-    this.panel.append(this.icon, text);
+    this.textWrap.className = 'gunhud__text';
+    this.textWrap.append(this.count, this.mode);
+    this.panel.append(this.textWrap, this.icon);
     this.slots.className = 'quickslots';
     for (let i = 0; i < 4; i++) {
       const b = document.createElement('button');
@@ -110,22 +117,25 @@ export class GunHud {
     this.panel.hidden = !gun;
     if (!gun) {
       this.reload.hidden = true;
+      this.textWrap.classList.remove('is-visible');
       return;
     }
     const low = gun.mag <= Math.max(1, Math.floor(gun.capacity * 0.25));
-    const key = `${gun.id}|${gun.mag}|${gun.reserve}|${gun.mode}|${low}|${gun.jammed}|${f.touch}|${getLang()}`;
+    const magCheck = gun.magCheckLeft > 0 || gun.reloading || gun.jammed;
+    const label = magCheckLabel(gun.mag, gun.capacity);
+    const key = `${gun.id}|${gun.mag}|${gun.capacity}|${gun.mode}|${low}|${gun.jammed}|${magCheck}|${f.touch}|${getLang()}`;
     if (key !== this.key) {
       this.key = key;
-      this.name.textContent = gun.name;
       this.icon.src = itemIcon(gun.id as ItemId);
-      this.count.textContent = `${gun.mag} / ${gun.reserve}`;
-      this.count.style.color = low ? RUST : '';
-      // A gun with more than one fire mode: the key that switches it (B) next to the mode.
-      this.mode.textContent = gun.jammed ? tr('ЗАКЛИНИЛО', 'JAMMED') : GUNS[gun.id].modes.length > 1 && !f.touch ? `${gun.mode} · B` : gun.mode;
+      this.icon.className = isCustomItemIcon(gun.id as ItemId) ? 'gunhud__icon is-hd' : 'gunhud__icon';
+      this.count.textContent = gun.jammed ? tr('ЗАКЛИНИЛО', 'JAMMED') : `${gun.mag} / ${gun.capacity} · ${label}`;
+      this.count.style.color = gun.jammed || gun.mag === 0 || low ? '#e27468' : '';
+      const modeText = GUNS[gun.id].modes.length > 1 ? gun.mode : '';
+      this.mode.textContent = modeText;
+      this.mode.hidden = !modeText;
     }
-    // Fades out 3 s after the last use; back when low or busy.
-    const show = f.sinceUse < 3 || low || gun.busy;
-    this.panel.style.opacity = show ? '1' : '0';
+    this.panel.style.opacity = '1';
+    this.textWrap.classList.toggle('is-visible', magCheck);
     const wantReload = gun.mag === 0 && !gun.reloading && gun.reserve > 0;
     this.reload.hidden = !wantReload && !gun.jammed;
     this.reload.textContent = gun.jammed
