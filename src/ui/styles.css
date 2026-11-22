@@ -1519,9 +1519,9 @@ body.high-contrast-hud .crosshair {
   appearance: none;
   padding: 9px 18px;
   border-radius: 4px;
-  border: 1px solid rgba(224, 168, 46, 0.72);
-  background: linear-gradient(180deg, rgba(44, 46, 48, 0.92), rgba(24, 25, 28, 0.94));
-  color: #f6efe0;
+  border: 1px solid rgba(194, 40, 34, 0.72);
+  background: linear-gradient(180deg, rgba(56, 20, 20, 0.92), rgba(26, 12, 14, 0.95));
+  color: #f4e6e4;
   font: 700 13px/1.2 system-ui, sans-serif;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -1530,12 +1530,12 @@ body.high-contrast-hud .crosshair {
 }
 
 .play-overlay__settings:hover {
-  background: linear-gradient(180deg, rgba(64, 58, 42, 0.95), rgba(34, 32, 26, 0.96));
-  border-color: #f4c14e;
+  background: linear-gradient(180deg, rgba(84, 28, 28, 0.96), rgba(40, 16, 18, 0.96));
+  border-color: #e2423a;
   transform: translateY(-1px);
 }
 
-/* Call of Duty–style Settings Modal */
+/* Dead Perimeter Settings Modal (matches Main Menu dark smoky crimson styling) */
 .settings-modal {
   position: fixed;
   inset: 0;
@@ -1544,8 +1544,9 @@ body.high-contrast-hud .crosshair {
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(circle at 82% 28%, rgba(160, 42, 32, 0.16), transparent 44%),
-    linear-gradient(180deg, rgba(16, 17, 20, 0.95), rgba(10, 11, 13, 0.97));
+    radial-gradient(circle at 18% 82%, rgba(128, 18, 16, 0.2), transparent 54%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 4px),
+    rgba(7, 8, 10, 0.76);
   backdrop-filter: blur(8px);
   color: #e6e4de;
   padding: max(12px, env(safe-area-inset-top, 12px)) max(16px, env(safe-area-inset-right, 16px))
@@ -1561,21 +1562,22 @@ body.high-contrast-hud .crosshair {
   height: min(740px, 100%);
   display: flex;
   flex-direction: column;
-  background: rgba(20, 22, 24, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.78);
+  background: rgba(12, 13, 15, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-top: 2px solid #c22822;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.86);
 }
 
 .settings__header {
   padding: 14px 22px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   background:
     repeating-linear-gradient(
       -25deg,
       rgba(255, 255, 255, 0.015) 0 1px,
       transparent 1px 18px
     ),
-    rgba(26, 28, 31, 0.9);
+    rgba(16, 17, 20, 0.94);
 }
 
 .settings__title-row {
@@ -1589,14 +1591,15 @@ body.high-contrast-hud .crosshair {
 .settings__title {
   margin: 0;
   font: 300 24px/1.1 system-ui, sans-serif;
-  letter-spacing: 3px;
-  color: #f3f1ea;
+  letter-spacing: 4px;
+  color: #f3efe6;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
 }
 
 .settings__subtitle {
   font: 600 11px/1 ui-monospace, Consolas, monospace;
   letter-spacing: 1.5px;
-  color: #8d9298;
+  color: #c93832;
 }
 
 .settings__tabs {
@@ -1617,7 +1620,7 @@ body.high-contrast-hud .crosshair {
   letter-spacing: 1px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 0.14s, border-color 0.14s;
+  transition: color 0.14s, border-color 0.14s, text-shadow 0.14s;
 }
 
 .settings__tab:hover {
@@ -1625,8 +1628,9 @@ body.high-contrast-hud .crosshair {
 }
 
 .settings__tab.is-active {
-  color: #f4c14e;
-  border-bottom-color: #e0a82e;
+  color: #ffffff;
+  border-bottom-color: #c22822;
+  text-shadow: 0 0 14px rgba(194, 40, 34, 0.55);
 }
 
 .settings__body {
@@ -1644,6 +1648,29 @@ body.high-contrast-hud .crosshair {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(194, 40, 34, 0.55) rgba(8, 9, 11, 0.85);
+}
+
+.settings__list::-webkit-scrollbar,
+.settings__side::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings__list::-webkit-scrollbar-track,
+.settings__side::-webkit-scrollbar-track {
+  background: rgba(8, 9, 11, 0.85);
+}
+
+.settings__list::-webkit-scrollbar-thumb,
+.settings__side::-webkit-scrollbar-thumb {
+  background: rgba(194, 40, 34, 0.55);
+  border-radius: 3px;
+}
+
+.settings__list::-webkit-scrollbar-thumb:hover,
+.settings__side::-webkit-scrollbar-thumb:hover {
+  background: rgba(214, 45, 38, 0.85);
 }
 
 .settings__group {
@@ -1675,9 +1702,9 @@ body.high-contrast-hud .crosshair {
 
 .settings__row:hover,
 .settings__row.is-selected {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.16);
-  border-left-color: #e0a82e;
+  background: linear-gradient(90deg, rgba(168, 28, 24, 0.22) 0%, rgba(255, 255, 255, 0.04) 75%);
+  border-color: rgba(255, 255, 255, 0.14);
+  border-left-color: #c22822;
 }
 
 .settings__row-label {
@@ -1706,7 +1733,8 @@ body.high-contrast-hud .crosshair {
 }
 
 .settings__step-btn:hover {
-  border-color: #e0a82e;
+  border-color: #c22822;
+  background: rgba(194, 40, 34, 0.22);
   color: #fff;
 }
 
@@ -1733,7 +1761,7 @@ body.high-contrast-hud .crosshair {
 
 .settings__slider {
   width: 120px;
-  accent-color: #e0a82e;
+  accent-color: #c22822;
   cursor: pointer;
 }
 
@@ -1745,6 +1773,8 @@ body.high-contrast-hud .crosshair {
   min-height: 0;
   overflow-y: auto;
   padding-left: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(194, 40, 34, 0.55) rgba(8, 9, 11, 0.85);
 }
 
 .settings__info-title {
@@ -1753,7 +1783,7 @@ body.high-contrast-hud .crosshair {
   letter-spacing: 0.8px;
   color: #f5f2e9;
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(224, 168, 46, 0.4);
+  border-bottom: 1px solid rgba(194, 40, 34, 0.55);
 }
 
 .settings__preview {
@@ -1882,7 +1912,7 @@ body.high-contrast-hud .crosshair {
 
 .settings__gp-k {
   font-family: ui-monospace, Consolas, monospace;
-  color: #f4c14e;
+  color: #e05a52;
 }
 
 .settings__gp-v {
@@ -1908,7 +1938,7 @@ body.high-contrast-hud .crosshair {
 }
 
 .settings__tip--gold {
-  color: #e6b84c;
+  color: #d96b64;
 }
 
 .settings__vram {
@@ -1971,8 +2001,8 @@ body.high-contrast-hud .crosshair {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 22px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(14, 15, 18, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(11, 12, 14, 0.94);
 }
 
 .settings__footer-btns {
@@ -1996,14 +2026,19 @@ body.high-contrast-hud .crosshair {
 }
 
 .settings__btn:hover {
-  border-color: #e0a82e;
+  border-color: #c22822;
   color: #fff;
 }
 
 .settings__btn--primary {
-  border-color: rgba(224, 168, 46, 0.72);
-  background: rgba(224, 168, 46, 0.18);
-  color: #fae8be;
+  border-color: rgba(194, 40, 34, 0.78);
+  background: rgba(184, 34, 28, 0.28);
+  color: #fff2ef;
+}
+
+.settings__btn--primary:hover {
+  border-color: #d62d26;
+  background: rgba(206, 40, 34, 0.46);
 }
 
 .settings__btn--inline {
