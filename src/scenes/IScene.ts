@@ -1,6 +1,14 @@
 import type { Camera, PerspectiveCamera, Scene } from 'three';
 import type { GameContext } from '../GameContext';
 
+export interface SaveSummary {
+  hasSave: boolean;
+  day: number;
+  time: string;
+  kills: number;
+  health: number;
+}
+
 export interface IScene {
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
@@ -20,6 +28,12 @@ export interface IScene {
   setFlashlightShadow?(on: boolean | null): void;
   /** Optional: a new game asks who the survivor is (character editor) before play starts. */
   createCharacter?(): Promise<void>;
+  /** Summary of current save state for Main Menu Continue / New Game flow. */
+  saveSummary?(): SaveSummary;
+  /** Persist current progress immediately (e.g. before returning to Main Menu). */
+  saveNow?(): Promise<void>;
+  /** Wipe current world save before starting a clean New Game. */
+  resetSave?(): Promise<void>;
   /** Fixed-rate simulation step. */
   fixedUpdate(dt: number): void;
   /**

@@ -103,4 +103,12 @@ export class SaveGame {
       console.warn('[save] failed', e);
     }
   }
+
+  async clear(): Promise<void> {
+    try {
+      await this.platform.save({});
+    } catch (e) {
+      console.warn('[save] clear failed', e);
+    }
+  }
 }

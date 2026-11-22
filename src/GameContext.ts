@@ -30,6 +30,8 @@ export interface GameContext {
   requestPointerLock(): void;
   /** Open the full settings modal (CoD-style options screen). */
   openSettings(): void;
+  /** Open the Resident Evil–style main title menu (auto-saving active progress first). */
+  openMainMenu(): void;
   /** Trigger controller rumble when available and enabled. */
   rumble(strong?: number, weak?: number, ms?: number): void;
 }

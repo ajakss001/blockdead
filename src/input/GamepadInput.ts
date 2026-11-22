@@ -10,6 +10,8 @@ export interface GamepadHooks {
   isModalOpen(): boolean;
   onMenuToggle(): void;
   onModalBack(): void;
+  onModalNav?(dir: -1 | 1): void;
+  onModalConfirm?(): void;
   onActivate(): void;
   toast(text: string): void;
 }
@@ -34,6 +36,7 @@ export class GamepadInput {
   private slotIdx = 0;
   private useLatchedAction: 'use' | 'reload' | null = null;
   private hasTarget = false;
+  private stickNavDir: -1 | 0 | 1 = 0;
 
   constructor(
     private readonly input: InputManager,
@@ -142,6 +145,16 @@ export class GamepadInput {
     const modal = this.hooks.isModalOpen();
     if (modal) {
       if (bJustPressed) this.hooks.onModalBack();
+      const upDown = btnDown(pad, 12);
+      const downDown = btnDown(pad, 13);
+      const aDown = btnDown(pad, 0);
+      if (upDown && !this.prev[12]) this.hooks.onModalNav?.(-1);
+      if (downDown && !this.prev[13]) this.hooks.onModalNav?.(1);
+      if (aDown && !this.prev[0]) this.hooks.onModalConfirm?.();
+      const lyModal = pad.axes[1] ?? 0;
+      const curStickDir: -1 | 0 | 1 = lyModal < -0.55 ? -1 : lyModal > 0.55 ? 1 : 0;
+      if (curStickDir !== 0 && curStickDir !== this.stickNavDir) this.hooks.onModalNav?.(curStickDir);
+      this.stickNavDir = curStickDir;
       // Keep prev synced while modal is open so closing doesn't fire a stale crouch/attack.
       for (let i = 0; i < Math.min(pad.buttons.length, this.prev.length); i++) {
         this.prev[i] = btnDown(pad, i);
@@ -152,6 +165,7 @@ export class GamepadInput {
       }
       return;
     }
+    this.stickNavDir = 0;
 
     const dz = cfg.gamepadDeadzone;
     const lx = pad.axes[0] ?? 0;

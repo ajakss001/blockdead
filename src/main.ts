@@ -28,6 +28,7 @@ import type { IScene } from './scenes/IScene';
 import { WorldScene } from './scenes/WorldScene';
 import { TestScene } from './scenes/TestScene';
 import { ColorblindFilter } from './ui/ColorblindFilter';
+import { MainMenu } from './ui/MainMenu';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
 import { Hud } from './ui/Hud';
 import { SettingsModal } from './ui/SettingsModal';
@@ -119,6 +120,7 @@ async function boot(): Promise<void> {
   });
   const hud = new Hud(uiEl);
   const settingsModal = new SettingsModal(uiEl);
+  const mainMenu = new MainMenu(uiEl);
   let modalOpen = false;
   events.on('ui:modal', ({ open }) => {
     modalOpen = open;
@@ -178,12 +180,21 @@ async function boot(): Promise<void> {
   sfx.attach(events, loop);
   const kbm = input.mode === 'kbm' ? new KeyboardMouseInput(input, renderer.gl.domElement) : null;
   gamepad = new GamepadInput(input, settings, events, {
-    isModalOpen: () => modalOpen || settingsModal.isOpen,
+    isModalOpen: () => modalOpen || settingsModal.isOpen || mainMenu.isOpen,
     onMenuToggle: () => {
-      if (settingsModal.isOpen || !modalOpen) settingsModal.toggle();
+      if (settingsModal.isOpen) settingsModal.close(false);
+      else if (mainMenu.isOpen) settingsModal.open();
+      else if (!modalOpen) settingsModal.open();
     },
     onModalBack: () => {
       if (settingsModal.isOpen) settingsModal.close(false);
+      else if (mainMenu.isOpen) mainMenu.cancelConfirm();
+    },
+    onModalNav: (dir) => {
+      if (mainMenu.isOpen && !settingsModal.isOpen && !document.querySelector('.credits')) mainMenu.moveSelection(dir);
+    },
+    onModalConfirm: () => {
+      if (mainMenu.isOpen && !settingsModal.isOpen && !document.querySelector('.credits')) mainMenu.confirmSelection();
     },
     onActivate: () => input.setActive(true),
     toast: (text) => hud.toast(text),
@@ -204,6 +215,10 @@ async function boot(): Promise<void> {
     fx: { setDread: (amount) => postfx.setDread(amount), setDeath: (death, fade) => postfx.setDeath(death, fade) },
     requestPointerLock: () => void kbm?.requestLock(),
     openSettings: () => settingsModal.open(),
+    openMainMenu: () => {
+      void scene.saveNow?.();
+      mainMenu.open();
+    },
     rumble: (strong, weak, ms) => gamepad.rumble(strong, weak, ms),
   };
   scene.init(ctx);
@@ -241,10 +256,28 @@ async function boot(): Promise<void> {
   events.on('settings:changed', applyGlobalSettings);
   events.on('quality:changed', applyGlobalSettings);
   events.on('gamepad:changed', applyGlobalSettings);
-  settingsModal.bind(ctx, () => ({ connected: gamepad.connected, name: gamepad.name }));
+  settingsModal.bind(ctx, () => ({ connected: gamepad.connected, name: gamepad.name }), () => mainMenu.isOpen);
+  mainMenu.bind({
+    ctx,
+    getSaveSummary: () =>
+      scene.saveSummary?.() ?? { hasSave: false, day: 1, time: '00:00', kills: 0, health: 100 },
+    onContinue: () => {},
+    onNewGame: () => {
+      void scene.createCharacter?.();
+    },
+    onNewGameOverwrite: async () => {
+      await scene.resetSave?.();
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set('menu', '0');
+      location.href = nextUrl.toString();
+    },
+    onOpenSettings: (tab) => settingsModal.open(tab),
+    isSubModalOpen: () => settingsModal.isOpen || !!document.querySelector('.credits'),
+    getGamepadInfo: () => ({ connected: gamepad.connected, name: gamepad.name }),
+  });
   applyGlobalSettings();
 
-  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx, settings, gamepad, settingsModal } });
+  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx, settings, gamepad, settingsModal, mainMenu } });
   if (params.has('animdebug') && scene instanceof WorldScene) {
     const vm = scene.viewmodel;
     void import('./debug/animDebug').then((m) => m.installAnimDebug(vm, uiEl));
@@ -324,8 +357,12 @@ async function boot(): Promise<void> {
 
   wireLifecycle(ctx);
   loop.start();
-  // New game: the character editor over the paused world.
-  await scene.createCharacter?.();
+  if (params.get('menu') === '0') {
+    // Direct entry (after New Game reset or automated runs): open CharacterEditor if fresh.
+    await scene.createCharacter?.();
+  } else {
+    mainMenu.open();
+  }
 }
 
 /** Pause/resume rules shared by every scene: hidden tab, ads, portrait phone, lost GL context. */

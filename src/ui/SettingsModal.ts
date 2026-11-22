@@ -74,6 +74,7 @@ export class SettingsModal {
   private openState = false;
   private ctx!: GameContext;
   private getGamepadInfo: () => { connected: boolean; name: string } = () => ({ connected: false, name: '' });
+  private isParentModalOpen: () => boolean = () => false;
 
   constructor(parent: HTMLElement) {
     this.activeMeta = {
@@ -186,9 +187,10 @@ export class SettingsModal {
     });
   }
 
-  bind(ctx: GameContext, getGamepadInfo: () => { connected: boolean; name: string }): void {
+  bind(ctx: GameContext, getGamepadInfo: () => { connected: boolean; name: string }, isParentModalOpen: () => boolean = () => false): void {
     this.ctx = ctx;
     this.getGamepadInfo = getGamepadInfo;
+    this.isParentModalOpen = isParentModalOpen;
     ctx.events.on('settings:changed', () => this.syncAll());
     ctx.events.on('quality:changed', () => this.syncAll());
     ctx.events.on('gamepad:changed', () => this.syncAll());
@@ -207,7 +209,7 @@ export class SettingsModal {
     }
     this.openState = true;
     this.root.hidden = false;
-    this.ctx.loop.pause('menu');
+    this.ctx.loop.pause('settings');
     this.ctx.events.emit('ui:modal', { open: true });
     this.renderAll();
   }
@@ -216,8 +218,9 @@ export class SettingsModal {
     if (!this.openState) return;
     this.openState = false;
     this.root.hidden = true;
+    this.ctx.loop.resume('settings');
+    if (this.isParentModalOpen()) return;
     this.ctx.events.emit('ui:modal', { open: false });
-    this.ctx.loop.resume('menu');
     if (fromClick) this.ctx.requestPointerLock();
   }
 

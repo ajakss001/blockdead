@@ -1418,6 +1418,28 @@ export class WorldScene implements IScene {
     return urban && h > 0.05 ? 'concrete' : 'grass';
   }
 
+  saveSummary() {
+    const day = Math.floor(this.clock.minutes / 1440) + 1;
+    const dayMin = Math.floor(((this.clock.minutes % 1440) + 1440) % 1440);
+    const hh = String(Math.floor(dayMin / 60)).padStart(2, '0');
+    const mm = String(dayMin % 60).padStart(2, '0');
+    return {
+      hasSave: !this.isNewGame && !this.dead,
+      day,
+      time: `${hh}:${mm}`,
+      kills: this.skills.kills,
+      health: Math.round(this.survival.health * 100),
+    };
+  }
+
+  saveNow(): Promise<void> {
+    return this.dead || this.creating ? Promise.resolve() : this.save();
+  }
+
+  async resetSave(): Promise<void> {
+    await this.saves.clear();
+  }
+
   /**
    * «Новый персонаж» from the inventory: this survivor is retired (the save is marked as after a death, so
    * the world stays as it is), and the page loads again into the character editor. No body, no zombie twin.
