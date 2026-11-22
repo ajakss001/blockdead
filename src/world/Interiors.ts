@@ -12,11 +12,11 @@ import { CHUNK } from './gen/layout';
 const bCellKey = (ci: number, cj: number) => (ci + 32768) * 65536 + (cj + 32768);
 
 /** Start streaming a building's interior within this distance of its footprint, m. */
-const LOAD_MARGIN = 16;
+const LOAD_MARGIN = 34;
 /** Drop it beyond this one (hysteresis). */
-const UNLOAD_MARGIN = 36;
+const UNLOAD_MARGIN = 50;
 /** Upper bound (shader cut-out slots); the quality preset may allow fewer. */
-const MAX_LOADED = 2;
+const MAX_LOADED = 6;
 const CHECK_INTERVAL = 0.25;
 /** Interior collider/container owners live above chunk keys. */
 const INTERIOR_OWNER_BASE = 2e15;
@@ -35,6 +35,7 @@ export class Interiors {
   private readonly readyQueue: InteriorData[] = [];
   /** Storey each loaded interior is furnished around. */
   private readonly focus = new Map<number, number>();
+  private lastKeep = new Set<number>();
   private t = 0;
   /** Interiors kept at once (quality preset). */
   maxLoaded = MAX_LOADED;
@@ -136,7 +137,7 @@ export class Interiors {
     return null;
   }
 
-  update(dt: number, x: number, z: number, y = 0): void {
+  update(dt: number, x: number, z: number, y = 0, dirX = 0, dirZ = 0): void {
     // Apply at most one streamed interior per frame to avoid micro-freezes when approaching buildings.
     const next = this.readyQueue.shift();
     if (next) this.applyInterior(next);
@@ -144,15 +145,41 @@ export class Interiors {
     this.t -= dt;
     if (this.t > 0) return;
     this.t = CHECK_INTERVAL;
-    const near: { b: BuildingDesc; d: number }[] = [];
+    const len = Math.hypot(dirX, dirZ);
+    const nx = len > 1e-4 ? dirX / len : 0;
+    const nz = len > 1e-4 ? dirZ / len : 0;
+    const candidates: { b: BuildingDesc; d: number; score: number }[] = [];
     for (const b of this.buildings.values()) {
       const d = Math.max(Math.abs(x - b.cx) - b.w / 2, Math.abs(z - b.cz) - b.d / 2, 0);
-      if (d <= LOAD_MARGIN) near.push({ b, d });
-      else if (d > UNLOAD_MARGIN) this.unload(b.id);
+      if (d > UNLOAD_MARGIN) {
+        this.unload(b.id);
+        continue;
+      }
+      if (d > LOAD_MARGIN && !this.loaded.has(b.id)) continue;
+      let score: number;
+      if (d === 0) {
+        score = -1000;
+      } else {
+        score = d;
+        if (len > 1e-4) {
+          const toX = b.cx - x;
+          const toZ = b.cz - z;
+          const dist = Math.hypot(toX, toZ);
+          if (dist > 1e-4) {
+            const dot = (toX * nx + toZ * nz) / dist;
+            if (dot > 0) score -= dot * 12;
+          }
+        }
+        if (this.loaded.has(b.id)) score -= 4;
+      }
+      candidates.push({ b, d, score });
     }
-    near.sort((a, c) => a.d - c.d);
+    candidates.sort((a, c) => a.score - c.score);
     const max = Math.min(this.maxLoaded, MAX_LOADED);
-    for (const { b } of near.slice(0, max)) {
+    const top = candidates.slice(0, max);
+    this.lastKeep = new Set(top.map((c) => c.b.id));
+    for (const { b, d } of top) {
+      if (d > LOAD_MARGIN) continue;
       // Furnished around the player's storey inside, around the street level outside.
       const want = insideFootprint(b, x, z, 0.5) ? Math.max(0, Math.min(b.floors - 1, Math.round(y / FLOOR_H))) : 0;
       if (this.pending.has(b.id) || (this.loaded.has(b.id) && this.focus.get(b.id) === want)) continue;
@@ -161,8 +188,7 @@ export class Interiors {
     }
     // Keep at most `max`: drop the farthest extras.
     if (this.loaded.size > max) {
-      const keep = new Set(near.slice(0, max).map((n) => n.b.id));
-      for (const id of [...this.loaded.keys()]) if (!keep.has(id)) this.unload(id);
+      for (const id of [...this.loaded.keys()]) if (!this.lastKeep.has(id)) this.unload(id);
     }
   }
 
@@ -181,7 +207,23 @@ export class Interiors {
     // A rebuild around another storey replaces the old one in place; doors keep their state.
     const rebuild = this.loaded.has(id);
     const keep = rebuild ? this.doors.openStates(id) : null;
-    if (rebuild) this.release(id);
+    if (rebuild) {
+      this.release(id);
+    } else {
+      const max = Math.min(this.maxLoaded, MAX_LOADED);
+      while (this.loaded.size >= max) {
+        let victim: number | null = null;
+        for (const loadedId of this.loaded.keys()) {
+          if (!this.lastKeep.has(loadedId)) {
+            victim = loadedId;
+            break;
+          }
+          victim ??= loadedId;
+        }
+        if (victim === null) break;
+        this.unload(victim);
+      }
+    }
     const owner = INTERIOR_OWNER_BASE + id;
     const group = meshesFromBuffers(data.surfaces, `interior ${id}`);
     this.scene.add(group);

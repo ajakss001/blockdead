@@ -290,7 +290,8 @@ export class Vehicles {
 
     Promise.all([
       gltfLoader.loadAsync(`${base}.glb?v=6`),
-      texLoader.loadAsync(`${base}.webp?v=6`).then((t: Texture) => {
+      texLoader.loadAsync(`${base}.webp?v=6`).then(async (t: Texture) => {
+        await (t.image as HTMLImageElement | undefined)?.decode?.().catch(() => {});
         t.colorSpace = SRGBColorSpace;
         t.flipY = false;
         t.minFilter = LinearMipmapLinearFilter;

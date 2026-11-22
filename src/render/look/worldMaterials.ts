@@ -74,8 +74,8 @@ export async function loadModelAtlas(url: string, layerSize: number, anisotropy:
   }
 }
 
-/** Up to two loaded high-rises whose intact windows are cut open (see setWindowCutouts). */
-const MAX_CUTOUTS = 2;
+/** Up to six loaded high-rises whose intact windows are cut open (see setWindowCutouts). */
+const MAX_CUTOUTS = 6;
 const cutUniforms = {
   /** minX, minZ, maxX, maxZ per building (empty = an impossible box). */
   uCutXZ: { value: Array.from({ length: MAX_CUTOUTS }, () => new Vector4(1, 1, 0, 0)) },

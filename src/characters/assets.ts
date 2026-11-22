@@ -157,7 +157,8 @@ function fetchBody(id: BodyId): Promise<BodyAsset | null> {
     loader.setMeshoptDecoder(MeshoptDecoder);
     const texLoader = new TextureLoader();
     const loadTex = (size: TexSize) =>
-      texLoader.loadAsync(`${base}${id}_${size}.webp`).then((t) => {
+      texLoader.loadAsync(`${base}${id}_${size}.webp`).then(async (t) => {
+        await (t.image as HTMLImageElement | undefined)?.decode?.().catch(() => {});
         t.colorSpace = SRGBColorSpace;
         t.minFilter = LinearMipmapLinearFilter;
         t.anisotropy = charAnisotropy;

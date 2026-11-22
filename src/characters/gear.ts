@@ -93,7 +93,8 @@ function loadPiece(g: GearId): Promise<void> {
     const base = `${import.meta.env?.BASE_URL ?? '/'}models/gear/`;
     const crowd = lodSize(texSize);
     const tex = (size: TexSize) =>
-      new TextureLoader().loadAsync(`${base}${g}_${size}.webp`).then((t) => {
+      new TextureLoader().loadAsync(`${base}${g}_${size}.webp`).then(async (t) => {
+        await (t.image as HTMLImageElement | undefined)?.decode?.().catch(() => {});
         t.colorSpace = SRGBColorSpace;
         t.flipY = false;
         t.minFilter = LinearMipmapLinearFilter;

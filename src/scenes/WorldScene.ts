@@ -1287,7 +1287,14 @@ export class WorldScene implements IScene {
     this.chunks.updateDetail(this.camera.position.x, this.camera.position.z, shadowDist, carLodDist);
     this.interaction.render(frameDt);
     this.drawSearchZones(frameDt);
-    this.interiors.update(frameDt, this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y);
+    this.interiors.update(
+      frameDt,
+      this.player.controller.position.x,
+      this.player.controller.position.z,
+      this.player.controller.position.y,
+      this.lookDir.x,
+      this.lookDir.z,
+    );
     this.doors.update(gameDt);
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
