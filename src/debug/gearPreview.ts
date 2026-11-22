@@ -51,8 +51,8 @@ const HELMET_ROWS: Row[] = (['helmetMilitary', 'helmetSwat', 'helmetFire', 'helm
   { name: `${h} (ж)`, sex: 'female' as const, worn: { head: h } },
 ]);
 const KIT_ROWS: Row[] = [
-  { name: 'Военный (м)', sex: 'male', worn: { outfit: 'outfitMilitary', head: 'helmetMilitary', face: 'glassesBallistic', mask: 'shemagh', vest: 'vestMilitary' } as Partial<Worn> },
-  { name: 'Военный (ж)', sex: 'female', worn: { torso: 'militaryJacket', legs: 'militaryPants', feet: 'combatBoots', head: 'helmetMilitary', face: 'glassesBallistic', mask: 'shemagh', vest: 'vestMilitary' } as Partial<Worn> },
+  { name: 'Военный (м)', sex: 'male', worn: { outfit: 'outfitMilitary', head: 'helmetMilitary', mask: 'shemagh', vest: 'vestMilitary' } as Partial<Worn> },
+  { name: 'Военный (ж)', sex: 'female', worn: { torso: 'militaryJacket', legs: 'militaryPants', feet: 'combatBoots', head: 'helmetMilitary', mask: 'shemagh', vest: 'vestMilitary' } as Partial<Worn> },
   { name: 'SWAT (м)', sex: 'male', worn: { outfit: 'outfitSwat', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', vest: 'vestSwat' } as Partial<Worn> },
   { name: 'SWAT (ж)', sex: 'female', worn: { torso: 'swatShirt', legs: 'swatPants', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', vest: 'vestSwat' } as Partial<Worn> },
   { name: 'Полумаска (м)', sex: 'male', worn: { outfit: 'outfitBuilder', head: 'helmetConstruction', mask: 'maskHalf' } as Partial<Worn> },

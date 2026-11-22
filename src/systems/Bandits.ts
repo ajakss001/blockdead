@@ -98,7 +98,7 @@ const FACTION_OUTFITS: Record<FactionId, readonly Worn[]> = {
   scavs: [
     { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
     { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: 'workGloves', legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
-    { outfit: 'outfitMechanic', head: null, face: 'glassesBallistic', mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: 'backpackSchool', bag: null },
+    { outfit: 'outfitMechanic', head: null, face: null, mask: null, torso: null, vest: null, hands: null, legs: null, feet: null, back: 'backpackSchool', bag: null },
     { outfit: null, head: null, face: null, mask: 'maskHalf', torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
   ],
   pmc: [

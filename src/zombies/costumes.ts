@@ -46,7 +46,7 @@ export function zombieCostume(id: number, kind: ModelKind, female: boolean, own?
 
 /** Per costume, then per kind: [piece, share] — what a zombie of it still wears over its clothes. */
 const GEAR_BY_COSTUME: Partial<Record<CostumeId, [GearId, number][]>> = {
-  military: [['helmet_military', 0.8], ['vest_military', 0.7], ['backpack_military', 0.3], ['glasses_ballistic', 0.3], ['shemagh', 0.35]],
+  military: [['helmet_military', 0.8], ['vest_military', 0.7], ['backpack_military', 0.3], ['shemagh', 0.35]],
   swat: [['helmet_swat', 0.85], ['vest_swat', 0.9], ['goggles_tactical', 0.35], ['balaclava', 0.5]],
   firefighter: [['helmet_firefighter', 0.75]],
   builder: [['helmet_construction', 0.8], ['mask_half', 0.3]],
@@ -54,7 +54,7 @@ const GEAR_BY_COSTUME: Partial<Record<CostumeId, [GearId, number][]>> = {
   doctor: [['bag_medic', 0.4]],
 };
 const GEAR_BY_KIND: Partial<Record<ModelKind, [GearId, number][]>> = {
-  soldier: [['helmet_military', 0.5], ['vest_military', 0.3], ['shemagh', 0.2], ['glasses_ballistic', 0.15]],
+  soldier: [['helmet_military', 0.5], ['vest_military', 0.3], ['shemagh', 0.2]],
   firefighter: [['helmet_firefighter', 0.5]],
   builder: [['helmet_construction', 0.6], ['mask_half', 0.25]],
   medic: [['bag_medic', 0.25]],

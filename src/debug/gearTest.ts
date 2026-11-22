@@ -22,9 +22,9 @@ import { loadCharactersNode } from './nodeCharacters';
 type Fs = { readFileSync(p: string): Uint8Array };
 const process = (globalThis as unknown as { process: { env: Record<string, string> } }).process;
 const fs = (globalThis as unknown as { process: { getBuiltinModule(m: string): Fs } }).process.getBuiltinModule('node:fs');
-const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic', 'glasses_ballistic', 'goggles_tactical', 'balaclava', 'shemagh', 'mask_half'];
+const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic', 'goggles_tactical', 'balaclava', 'shemagh', 'mask_half'];
 const HELMETS: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction'];
-const FACE: GearId[] = ['glasses_ballistic', 'goggles_tactical'];
+const FACE: GearId[] = ['goggles_tactical'];
 const MASK: GearId[] = ['balaclava', 'shemagh', 'mask_half'];
 /**
  * Worn together (the body under all of them hidden at once — the check that nothing of it comes through any
@@ -34,7 +34,7 @@ const COMBOS: GearId[][] = [
   ...HELMETS.flatMap((h) => [...FACE, ...MASK].map((x) => [h, x])),
   ...FACE.flatMap((g) => MASK.map((m) => [g, m])),
   ...HELMETS.flatMap((h) => FACE.flatMap((g) => MASK.map((m) => [h, g, m]))),
-  ['helmet_military', 'glasses_ballistic', 'shemagh', 'vest_military'],
+  ['helmet_military', 'shemagh', 'vest_military'],
   ['helmet_swat', 'goggles_tactical', 'balaclava', 'vest_swat'],
 ];
 const POSES: { name: string; clip: ClipId; t: number; swing?: boolean }[] = [

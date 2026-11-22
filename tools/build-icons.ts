@@ -40,7 +40,6 @@ const CUTS: Record<string, Cut> = {
   backpackHiking: gear(0, 2),
   bagMedic: gear(1, 2),
   toolboxMechanic: gear(2, 2),
-  glassesBallistic: gear(3, 2),
   gogglesTactical: gear(0, 3),
   balaclava: gear(1, 3),
   shemagh: gear(2, 3),

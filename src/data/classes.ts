@@ -82,7 +82,7 @@ export const CLASSES: readonly ClassDef[] = [
     pros: ['Выносливость +20%', 'Тревога растёт на 30% медленнее', 'Рюкзак +4 кг', 'Американская полевая форма, разгрузка и армейский рюкзак'],
     cons: ['Голод и жажда +15%: привык к пайку'],
     mods: { stamina: 0.8, anxiety: 0.7, carry: 4, hunger: 1.15, firearms: 1.3 },
-    uniform: { outfit: 'outfitMilitary', head: 'helmetMilitary', face: 'glassesBallistic', mask: 'shemagh', vest: 'vestMilitary', feet: 'combatBoots', back: 'backpackMilitary' },
+    uniform: { outfit: 'outfitMilitary', head: 'helmetMilitary', mask: 'shemagh', vest: 'vestMilitary', feet: 'combatBoots', back: 'backpackMilitary' },
     items: [['water', 2], ['beans', 1], ['bandage', 2]],
     hand: 'knife',
   },

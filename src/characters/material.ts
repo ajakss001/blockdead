@@ -115,7 +115,7 @@ const LUM = 'vec3(0.2126, 0.7152, 0.0722)';
 /** Lenses: dark sunglasses, the eyes behind them not seen. */
 export const LENS_OPACITY = 0.85;
 /** Lens tints by piece (already dark: through the grim palette's spirit, nothing bright). */
-export const LENS_TINT: Partial<Record<string, number>> = { goggles_tactical: 0x1b1d1f, glasses_ballistic: 0x261a12 };
+export const LENS_TINT: Partial<Record<string, number>> = { goggles_tactical: 0x1b1d1f };
 
 export function characterMaterial(body: BodyAsset, rig: RigAsset, o: CharacterLook = {}): MeshLambertMaterial {
   const lens = o.lens !== undefined;

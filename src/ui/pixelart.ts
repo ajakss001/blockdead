@@ -795,14 +795,6 @@ const WEAR_DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
     s.rect(10, 5, 1, 2, G.metal);
     s.rect(7, 10, 2, 1, G.metal); // latch
   },
-  glassesBallistic: (s) => {
-    s.rect(2, 6, 5, 4, 0x4a4a42);
-    s.rect(9, 6, 5, 4, 0x4a4a42);
-    s.rect(7, 7, 2, 1, ITEMS.glassesBallistic.wear!.color);
-    s.rect(2, 5, 12, 1, ITEMS.glassesBallistic.wear!.color);
-    s.dot(3, 7, 0x7a7a70);
-    s.dot(10, 7, 0x7a7a70);
-  },
   gogglesTactical: (s) => {
     s.rect(2, 5, 12, 6, 0x2a2c2e);
     s.rect(3, 6, 4, 4, 0x4a4e4a);

@@ -58,7 +58,6 @@ export const GEAR = {
   bag_medic: { kind: 'bag', tris: 2500, width: 0.38 },
   toolbox_mechanic: { kind: 'box', tris: 2500, width: 0.44 },
   // The face slot: glasses (lenses apart: their own dark see-through material in the game) and masks.
-  glasses_ballistic: { kind: 'glasses', tris: 2000, lens: { by: 'color', sat: 48 } },
   goggles_tactical: { kind: 'glasses', tris: 2000, lens: { by: 'window', inset: 0.1 } },
   balaclava: { kind: 'mask', tris: 2000, mask: 'head', cut: { light: 90 } },
   shemagh: { kind: 'mask', tris: 2000, mask: 'neck', standIn: shemaghStandIn },

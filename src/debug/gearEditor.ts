@@ -23,7 +23,7 @@ import { applyStage } from './viewerStage';
  */
 
 type Target = 'piece' | 'pivot' | 'earL' | 'earR';
-const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'glasses_ballistic', 'goggles_tactical', 'balaclava', 'shemagh', 'mask_half', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic'];
+const GEAR: GearId[] = ['helmet_military', 'helmet_swat', 'helmet_firefighter', 'helmet_construction', 'goggles_tactical', 'balaclava', 'shemagh', 'mask_half', 'vest_military', 'vest_swat', 'backpack_military', 'backpack_school', 'backpack_hiking', 'bag_medic', 'toolbox_mechanic'];
 const POSES: { clip: ClipId; name: string }[] = [
   { clip: 'idle', name: 'стоит' },
   { clip: 'walking', name: 'идёт' },
