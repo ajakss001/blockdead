@@ -26,6 +26,7 @@ export function qualityControl(ctx: GameContext, className = ''): HTMLElement {
     btn.className = 'quality__btn';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      ctx.settings.applyPresetDefaults(lvl.id);
       ctx.quality.setLevel(lvl.id);
     });
     wrap.append(btn);

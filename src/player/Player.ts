@@ -7,6 +7,7 @@ import { tr } from '../core/i18n';
 import { clamp, damp, lerp } from '../core/math';
 import type { GameContext } from '../GameContext';
 import type { LookDelta } from '../input/InputManager';
+import type { ShadowQuality } from '../core/Settings';
 import type { QualityPreset } from '../render/QualityPresets';
 import type { CollisionWorld } from '../world/CollisionWorld';
 import type { Appearance } from './appearance';
@@ -64,6 +65,8 @@ export class Player {
   battery = 1;
   /** Set by the scene while a timed action runs: no attacking with your hands full. */
   busy = false;
+  /** 0..1 multiplier for walking head-bob, landing dip, and combat recoil jolt. */
+  cameraBob = 1;
 
   private readonly look: LookDelta = { x: 0, y: 0 };
   private readonly frame: ViewmodelFrame = {
@@ -83,6 +86,7 @@ export class Player {
   private readonly bounceLight: PointLight;
   private suppressed = false;
   private forceFlashShadow: boolean | null = null;
+  private shadowOverride: ShadowQuality | null = null;
   private readonly lastShadowPos = new Vector3(1e9, 0, 1e9);
   private readonly lastShadowDir = new Vector3();
   private shadowAccum = 0;
@@ -285,8 +289,9 @@ export class Player {
     this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
     this.body.root.visible = crouchT < 0.25;
     const eye = this.body.eyePosition(_eye, frameDt);
+    const bob = this.cameraBob;
     const baseY = y + c.eyeHeight(alpha);
-    const headBobY = clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08) * (1 - crouchT * 0.75);
+    const headBobY = clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08) * (1 - crouchT * 0.75) * bob;
     eye.y = baseY + headBobY;
     // Keep crouched camera horizontally centered on the controller so crouched_walking head sway never jerks or clips walls.
     eye.x = lerp(eye.x, x, crouchT);
@@ -307,10 +312,10 @@ export class Player {
     }
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
-    this.camera.position.set(eye.x, eye.y - this.landDip, eye.z);
+    this.camera.position.set(eye.x, eye.y - this.landDip * bob, eye.z);
     this.shakeT = damp(this.shakeT, 0, 14, frameDt);
-    const sh = this.shakeT * 0.02;
-    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp + (Math.random() - 0.5) * sh, 'YXZ');
+    const sh = this.shakeT * 0.02 * bob;
+    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick * bob + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp * bob + (Math.random() - 0.5) * sh, 'YXZ');
     // The sights narrow the view a little (the scene sets the base field of view on resize).
     if (!this.baseFov) this.baseFov = this.camera.fov;
     const want = 1 + (this.zoom - 1) * this.viewmodel.ads;
@@ -482,19 +487,34 @@ export class Player {
   }
 
 
+  setShadowOverride(mode: ShadowQuality | null): void {
+    this.shadowOverride = mode;
+    this.applyQuality(this.ctx.quality.preset);
+  }
+
   private applyQuality(preset: QualityPreset): void {
-    // Shadows from the flashlight on high quality only (unless pinned by boot prewarm).
-    const shadows = this.forceFlashShadow ?? (preset.level === 'high' && preset.shadowMapSize > 0);
+    // Shadows from the flashlight on high quality only (unless pinned by boot prewarm or settings).
+    const wantFlash = this.shadowOverride ? this.shadowOverride === 'high' : preset.level === 'high' && preset.shadowMapSize > 0;
+    const shadows = this.forceFlashShadow ?? wantFlash;
     this.flashlight.shadow.autoUpdate = false;
     if (this.flashlight.castShadow !== shadows) {
       this.flashlight.castShadow = shadows;
       this.lastShadowPos.x = 1e9;
       this.flashlight.shadow.needsUpdate = shadows && (this.flashlightOn || this.forceFlashShadow === true);
     }
-    const size = Math.max(this.forceFlashShadow ? Math.max(preset.shadowMapSize, 512) : preset.shadowMapSize, 1);
+    const wantSize =
+      this.shadowOverride === 'off'
+        ? 0
+        : this.shadowOverride === 'medium'
+          ? 1024
+          : this.shadowOverride === 'high'
+            ? 2048
+            : preset.shadowMapSize;
+    const wantDist = this.shadowOverride === 'high' ? 32 : this.shadowOverride === 'medium' ? 22 : preset.shadowDistance;
+    const size = Math.max(this.forceFlashShadow ? Math.max(wantSize, 512) : wantSize, 1);
     const shadow = this.flashlight.shadow;
-    if (shadow.camera.far !== preset.shadowDistance) {
-      shadow.camera.far = preset.shadowDistance;
+    if (shadow.camera.far !== wantDist) {
+      shadow.camera.far = wantDist;
       shadow.camera.updateProjectionMatrix();
     }
     if (shadow.mapSize.x !== size) {

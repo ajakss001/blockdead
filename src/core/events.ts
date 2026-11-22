@@ -7,6 +7,8 @@ import type { AdKind, AdResult, PauseReason, QualityLevel } from './types';
 export interface GameEvents {
   'viewport:resize': { width: number; height: number };
   'quality:changed': { level: QualityLevel; resolutionScale: number; source: 'init' | 'auto' | 'user' };
+  'settings:changed': { key?: string };
+  'gamepad:changed': { connected: boolean; name: string };
   'loop:pause': { reason: PauseReason };
   'loop:resume': { reason: PauseReason };
   'ad:start': { kind: AdKind };

@@ -6,15 +6,17 @@ import { sfx } from './audio/Sound';
 import type { GameEvents } from './core/events';
 import { GameLoop } from './core/GameLoop';
 import { Profiler } from './core/Profiler';
+import { Settings } from './core/Settings';
 import { DebugInfo } from './debug/DebugInfo';
 import { DebugPanel } from './debug/DebugPanel';
 import type { GameContext } from './GameContext';
+import { GamepadInput } from './input/GamepadInput';
 import { InputManager, type InputMode } from './input/InputManager';
 import { KeyboardMouseInput } from './input/KeyboardMouseInput';
 import { TouchInput } from './input/TouchInput';
 import { createPlatform } from './platform/createPlatform';
 import { pickInitialLevel } from './render/DeviceProfile';
-import { QualityManager } from './render/QualityManager';
+import { debugKnobs, QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
 import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
@@ -25,9 +27,27 @@ import { QUALITY_PRESETS } from './render/QualityPresets';
 import type { IScene } from './scenes/IScene';
 import { WorldScene } from './scenes/WorldScene';
 import { TestScene } from './scenes/TestScene';
+import { ColorblindFilter } from './ui/ColorblindFilter';
 import { mountCrosshair, PlayOverlay } from './ui/PlayOverlay';
 import { Hud } from './ui/Hud';
+import { SettingsModal } from './ui/SettingsModal';
 import { loadItemIcons } from './ui/pixelart';
+
+const nextPaint = (): Promise<void> =>
+  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0))));
+
+function setLoadingStatus(text: string, sub?: string, shaderPct?: number): void {
+  const root = document.getElementById('loading');
+  const textEl = document.getElementById('loading-text');
+  const subEl = document.getElementById('loading-sub');
+  const barFill = document.querySelector<HTMLDivElement>('#loading-bar > div');
+  if (textEl) textEl.textContent = text;
+  if (subEl && sub !== undefined) subEl.textContent = sub;
+  if (shaderPct !== undefined && root && barFill) {
+    root.classList.add('loading--shaders');
+    barFill.style.width = `${Math.max(4, Math.min(100, Math.round(shaderPct)))}%`;
+  }
+}
 
 const params = new URLSearchParams(location.search);
 
@@ -56,6 +76,7 @@ async function boot(): Promise<void> {
   }
   const gameEl = document.getElementById('game')!;
   const uiEl = document.getElementById('ui')!;
+  setLoadingStatus(tr('Загрузка мира и моделей…', 'Loading world & models…'));
 
   const events = new EventBus<GameEvents>();
   const profiler = new Profiler();
@@ -70,6 +91,10 @@ async function boot(): Promise<void> {
   // Quality is the player's choice: the preset never changes on its own. ?autodrop=1 opts into the
   // old phone safety net (one step down under ~30 FPS) for device testing only.
   quality.allowPresetDrop = params.get('autodrop') === '1' && device.type !== 'desktop';
+  const settings = new Settings(events, level);
+  const colorblind = new ColorblindFilter();
+  colorblind.apply(settings.data);
+
   const input = new InputManager(pickInputMode(device), events);
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
   const aniso = level === 'low' ? 1 : Math.min(4, maxAniso);
@@ -86,14 +111,18 @@ async function boot(): Promise<void> {
   // Anti-aliasing lives in the post-processing target (the canvas itself has none): MSAA is chosen
   // once at boot from the initial preset, like a context-level setting would be.
   const postfx = new PostFX(renderer, QUALITY_PRESETS[level].msaa, level, device.type !== 'desktop');
-  // The grade, grain and vignette cost nothing extra (one pass either way) but stay off on low.
-  postfx.setGrade(level !== 'low');
+  postfx.setGrade(settings.data.postFxGrade);
   events.on('quality:changed', (e) => {
     postfx.setLevel(e.level);
-    postfx.setGrade(e.level !== 'low');
+    postfx.setGrade(settings.data.postFxGrade);
     postfx.setBypass(e.level === 'low');
   });
   const hud = new Hud(uiEl);
+  const settingsModal = new SettingsModal(uiEl);
+  let modalOpen = false;
+  events.on('ui:modal', ({ open }) => {
+    modalOpen = open;
+  });
 
   // ?scene=bench — the stage 0 rendering benchmark.
   const scene: IScene = params.get('scene') === 'bench' ? new TestScene() : new WorldScene();
@@ -127,6 +156,7 @@ async function boot(): Promise<void> {
     }
   };
 
+  let gamepad!: GamepadInput;
   const loop = new GameLoop(
     {
       fixedUpdate: (dt) => {
@@ -135,6 +165,7 @@ async function boot(): Promise<void> {
         profiler.end('fixed');
       },
       render: (alpha, frameDt, gameDt) => {
+        gamepad.update(frameDt);
         quality.update(performance.now());
         draw(alpha, frameDt, gameDt);
       },
@@ -146,6 +177,18 @@ async function boot(): Promise<void> {
   // One sound system: unlocked by the first gesture, muted with the pause reasons.
   sfx.attach(events, loop);
   const kbm = input.mode === 'kbm' ? new KeyboardMouseInput(input, renderer.gl.domElement) : null;
+  gamepad = new GamepadInput(input, settings, events, {
+    isModalOpen: () => modalOpen || settingsModal.isOpen,
+    onMenuToggle: () => {
+      if (settingsModal.isOpen || !modalOpen) settingsModal.toggle();
+    },
+    onModalBack: () => {
+      if (settingsModal.isOpen) settingsModal.close(false);
+    },
+    onActivate: () => input.setActive(true),
+    toast: (text) => hud.toast(text),
+  });
+
   const ctx: GameContext = {
     events,
     profiler,
@@ -153,12 +196,15 @@ async function boot(): Promise<void> {
     platform,
     renderer,
     quality,
+    settings,
     device,
     input,
     debug,
     hud,
     fx: { setDread: (amount) => postfx.setDread(amount), setDeath: (death, fade) => postfx.setDeath(death, fade) },
     requestPointerLock: () => void kbm?.requestLock(),
+    openSettings: () => settingsModal.open(),
+    rumble: (strong, weak, ms) => gamepad.rumble(strong, weak, ms),
   };
   scene.init(ctx);
   await scene.load?.();
@@ -172,11 +218,33 @@ async function boot(): Promise<void> {
   }
 
   mountCrosshair(uiEl);
+  let touch: TouchInput | null = null;
   if (kbm) new PlayOverlay(ctx, kbm, uiEl);
-  else new TouchInput(input, uiEl, events);
+  else touch = new TouchInput(input, uiEl, events, () => settingsModal.open());
   new DebugPanel(ctx, uiEl);
 
-  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx } });
+  const applyGlobalSettings = () => {
+    const s = settings.data;
+    const k = debugKnobs();
+    if (k.scale === undefined) renderer.setResolutionScale(s.renderScale / 100);
+    postfx.setGrade(s.postFxGrade);
+    colorblind.apply(s);
+    if (kbm) {
+      kbm.sensitivity = 0.0022 * s.mouseSens;
+      kbm.invertY = s.mouseInvertY;
+    }
+    if (touch) {
+      touch.lookSensitivity = 0.0065 * s.touchSens;
+      touch.setGamepadHidden(s.gamepadEnabled && s.gamepadHideTouch && gamepad.connected);
+    }
+  };
+  events.on('settings:changed', applyGlobalSettings);
+  events.on('quality:changed', applyGlobalSettings);
+  events.on('gamepad:changed', applyGlobalSettings);
+  settingsModal.bind(ctx, () => ({ connected: gamepad.connected, name: gamepad.name }));
+  applyGlobalSettings();
+
+  if (import.meta.env.DEV) Object.assign(window, { __game: { ctx, scene, draw, postfx, settings, gamepad, settingsModal } });
   if (params.has('animdebug') && scene instanceof WorldScene) {
     const vm = scene.viewmodel;
     void import('./debug/animDebug').then((m) => m.installAnimDebug(vm, uiEl));
@@ -186,40 +254,66 @@ async function boot(): Promise<void> {
   // Shaders compile on first use, and on Windows (ANGLE → D3D) each one can stall a frame for
   // 100–500 ms. Draw every material, the shadow map and all post passes now, behind the loading screen.
   const t0 = performance.now();
+  const warmLabel = tr('Компиляция шейдеров…', 'Compiling shaders…');
+  setLoadingStatus(warmLabel, tr('Подготовка графики (0%)', 'Preparing graphics (0%)'), 5);
+  await nextPaint();
+
   const cleanup = scene.prewarm?.();
   if (device.type === 'desktop') {
     postfx.setBypass(false);
     renderer.setShadows(true);
     scene.setFlashlightShadow?.(false);
     scene.setHeadShadow?.(false);
+    setLoadingStatus(warmLabel, tr('Компиляция: материалы мира (20%)', 'Compiling: world materials (20%)'), 20);
+    await nextPaint();
     draw(0, 0, 0);
+
     scene.setFlashlightShadow?.(true);
     scene.setHeadShadow?.(false);
+    setLoadingStatus(warmLabel, tr('Компиляция: фонарик и тени (40%)', 'Compiling: flashlight & shadows (40%)'), 40);
+    await nextPaint();
     draw(0, 0, 0);
+
     scene.setHeadShadow?.(true);
+    setLoadingStatus(warmLabel, tr('Компиляция: фары и двойные тени (60%)', 'Compiling: headlights & depth (60%)'), 60);
+    await nextPaint();
     draw(0, 0, 0);
+
     // WebGLShadowMap renders before setupLights() populates lights.state.spotShadow, so a second
     // draw at 2 shadow-casting spots is needed to compile all MeshDepthMaterial variants at boot.
     scene.setHeadShadow?.(true);
+    setLoadingStatus(warmLabel, tr('Компиляция: карты глубины (80%)', 'Compiling: shadow depth maps (80%)'), 80);
+    await nextPaint();
     draw(0, 0, 0);
+
     renderer.setShadows(false);
     scene.setFlashlightShadow?.(false);
     scene.setHeadShadow?.(false);
     postfx.setBypass(true);
+    setLoadingStatus(warmLabel, tr('Компиляция: режим без постобработки (95%)', 'Compiling: bypass pass (95%)'), 95);
+    await nextPaint();
     draw(0, 0, 0);
+
     postfx.setBypass(level === 'low');
     renderer.setShadows(QUALITY_PRESETS[level].shadowMapSize > 0);
     scene.setFlashlightShadow?.(null);
     scene.setHeadShadow?.(null);
   } else {
+    setLoadingStatus(warmLabel, tr('Компиляция: основные шейдеры (50%)', 'Compiling: core shaders (50%)'), 50);
+    await nextPaint();
     draw(0, 0, 0);
     if (QUALITY_PRESETS[level].shadowMapSize > 0) {
       scene.setHeadShadow?.(true);
+      setLoadingStatus(warmLabel, tr('Компиляция: тени (90%)', 'Compiling: shadows (90%)'), 90);
+      await nextPaint();
       draw(0, 0, 0);
       scene.setHeadShadow?.(false);
     }
   }
   cleanup?.();
+  applyGlobalSettings();
+  events.emit('settings:changed', {});
+  setLoadingStatus(warmLabel, tr('Готово (100%)', 'Ready (100%)'), 100);
   // Also the first real frame, drawn synchronously, so the game reports ready even when it boots into
   // a hard pause (portrait phone, hidden tab) — otherwise gameReady() would wait for rotation.
   draw(0, 0, 0);

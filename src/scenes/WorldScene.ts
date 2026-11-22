@@ -120,6 +120,7 @@ import type { TwinRecord } from '../systems/SaveGame';
 import { GrimFog } from '../render/GrimFog';
 import { DAY, NIGHT } from '../style/stage';
 import { flashlightMaterial, lensMaterial } from '../items/flashlight';
+import { QUALITY_PRESETS } from '../render/QualityPresets';
 
 // Day and night light (style/stage, CLAUDE.md «Визуальный стиль»): an overcast cold day — a grey sky
 // hemisphere over dark earth, a weak cold sun, grey exponential fog; at night a floor of light, a weak cold
@@ -720,6 +721,7 @@ export class WorldScene implements IScene {
     this.unsubs.push(
       ctx.events.on('viewport:resize', ({ width, height }) => this.resize(width, height)),
       ctx.events.on('quality:changed', () => this.applyQuality()),
+      ctx.events.on('settings:changed', () => this.applySettings()),
     );
 
     const c = this.player.controller;
@@ -1328,7 +1330,7 @@ export class WorldScene implements IScene {
     this.fogK += (fogWant - this.fogK) * Math.min(1, gameDt / ATMO.night.fogLag);
     const sceneFog = this.scene.fog as Fog;
     sceneFog.near = NIGHT.fogNear * (1 - 0.65 * this.weather.fog);
-    sceneFog.far = Math.max(15, this.ctx.quality.preset.fogFar * this.fogK);
+    sceneFog.far = Math.max(15, this.drawDistFogFar() * this.fogK);
     this.indoorK += ((this.indoors ? 1 : 0) - this.indoorK) * Math.min(1, gameDt * 1.5);
     (this.scene.fog as Fog).color.copy(this.scene.background as Color).lerp(_indoorHaze, 0.85 * this.indoorK);
     this.landmarks.update(gameDt, this.camera.position, this.scene.fog as Fog);
@@ -2385,6 +2387,11 @@ export class WorldScene implements IScene {
     this.pinnedTextures.length = 0;
   }
 
+  private drawDistFogFar(): number {
+    const d = this.ctx.settings.data.drawDistance;
+    return d === 'near' ? 42 : d === 'medium' ? 66 : 115;
+  }
+
   private applyQuality(): void {
     const preset = this.ctx.quality.preset;
     this.interiors.maxLoaded = preset.interiors;
@@ -2392,37 +2399,63 @@ export class WorldScene implements IScene {
     this.life.roomLights = preset.roomLights;
     this.sky.searchlightLight = preset.roomLights > 0;
     this.life.fireLights = preset.fireLights;
-    // ?foliage=0: drop grass entirely, nothing else changes (cost isolation, never a player setting).
-    const foliageCap = new URLSearchParams(location.search).get('foliage') === '0' ? 0 : preset.foliage.cap;
-    this.atmo?.configure(preset.foliage.radius, preset.foliage.cell, foliageCap);
-    this.atmo?.vegetation.configure(preset.vegetation, this.bootMsaa);
-    (this.scene.fog as Fog).far = preset.fogFar;
-    this.camera.far = preset.fogFar + 5;
-    this.camera.updateProjectionMatrix();
-    // ?chunks=N overrides the world radius for a measurement run.
-    const chunksQ = new URLSearchParams(location.search).get('chunks');
-    this.chunks.radius = chunksQ !== null ? Math.max(0, Number(chunksQ) || 0) : preset.chunkRadius;
+    this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
+    this.models.configure(preset.level);
     // Sub-cell meshes (12 calls per chunk) only pay off on a desktop GPU; phones are draw-call bound.
     // ?splitcells=1 / =0 forces the mode, so the two can be A/B'd on a phone without a rebuild.
     const splitQ = new URLSearchParams(location.search).get('splitcells');
     setSubCellSplit(splitQ === null ? preset.level === 'high' && this.ctx.device.type === 'desktop' : splitQ === '1');
-    this.ragdolls.limit = preset.level === 'low' ? 2 : 4;
-    this.models.configure(preset.level);
     const isLow = preset.level === 'low';
-    this.vehicles?.setLowQuality(isLow);
     this.vehicles?.setAnisotropy(isLow ? 1 : Math.min(4, this.ctx.renderer.gl.capabilities.getMaxAnisotropy()));
     this.bandits?.setMaxActive(isLow ? 2 : 4);
-    this.weather?.setSnowDensity(isLow ? 0.36 : 1.0);
+    this.applySettings();
+  }
+
+  private applySettings(): void {
+    const s = this.ctx.settings.data;
+    const preset = this.ctx.quality.preset;
+    this.resize(this.ctx.renderer.width, this.ctx.renderer.height);
+    this.ctx.loop.targetFps = s.fpsCap;
+    this.ctx.quality.adaptive = s.adaptiveRes;
+    this.interiors.maxLoaded = s.interiorsLimit;
+
+    const fogFar = this.drawDistFogFar();
+    (this.scene.fog as Fog).far = Math.max(15, fogFar * this.fogK);
+    this.camera.far = fogFar + 5;
+    this.camera.updateProjectionMatrix();
+
+    const chunksQ = new URLSearchParams(location.search).get('chunks');
+    this.chunks.radius = chunksQ !== null ? Math.max(0, Number(chunksQ) || 0) : s.drawDistance === 'far' ? 2 : 1;
+
+    // ?foliage=0 keeps cost-isolation override working alongside user settings.
+    const foliageForcedOff = new URLSearchParams(location.search).get('foliage') === '0';
+    const folPreset = QUALITY_PRESETS[s.foliageQuality === 'off' ? 'low' : s.foliageQuality];
+    const foliageCap = foliageForcedOff || s.foliageQuality === 'off' ? 0 : folPreset.foliage.cap;
+    this.atmo?.configure(folPreset.foliage.radius, folPreset.foliage.cell, foliageCap);
+    // Keep alphaToCoverage shader state aligned with the active preset's MSAA so toggling foliage never recompiles shaders.
+    const baseVariants = preset.level === 'low' ? 1 : Math.max(2, folPreset.vegetation.variants);
+    this.atmo?.vegetation.configure(
+      s.foliageQuality === 'off' ? { near: 0, mid: 0, fullKeep: 0, midKeep: 0, variants: baseVariants } : { ...folPreset.vegetation, variants: baseVariants },
+      this.bootMsaa,
+    );
+
+    const shadowForcedOff = new URLSearchParams(location.search).get('shadow') === '0';
+    this.ctx.renderer.setShadows(!shadowForcedOff && s.shadows !== 'off');
+    this.player.setShadowOverride(s.shadows);
+    this.vehicles?.setLowQuality(preset.level === 'low' || s.shadows === 'off');
+    this.weather?.setSnowDensity(s.weatherDensity === 'low' ? 0.36 : 1.0);
+    this.player.cameraBob = s.cameraBob / 100;
   }
 
   private resize(width: number, height: number): void {
     if (height === 0) return;
     const aspect = width / height;
     this.camera.aspect = aspect;
-    // Vertical FOV 75°, but never wider than 100° horizontally: on a 812×375 phone a fixed 75° would
-    // be ~117° across, stretching everything near the edges (legs looked long, feet far away).
-    const maxV = (2 * Math.atan(Math.tan((MAX_HFOV * Math.PI) / 360) / aspect) * 180) / Math.PI;
-    this.player.setBaseFov(Math.min(BASE_VFOV, maxV));
+    const baseFov = this.ctx.settings.data.fov;
+    const maxH = baseFov <= 75 ? MAX_HFOV : MAX_HFOV + (baseFov - 75) * 1.4;
+    // Vertical FOV tracks user setting, while keeping portrait/ultra-wide screens undistorted.
+    const maxV = (2 * Math.atan(Math.tan((maxH * Math.PI) / 360) / aspect) * 180) / Math.PI;
+    this.player.setBaseFov(Math.min(baseFov, maxV));
     this.player.viewmodel.setAspect(width / height);
   }
 }

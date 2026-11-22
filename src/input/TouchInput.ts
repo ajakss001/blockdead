@@ -54,6 +54,7 @@ export class TouchInput {
     private readonly input: InputManager,
     parent: HTMLElement,
     events?: EventBus<GameEvents>,
+    onOpenSettings?: () => void,
   ) {
     this.root.className = 'touch';
     this.stick.className = 'touch__stick';
@@ -69,6 +70,25 @@ export class TouchInput {
       this.button(['Свет', 'Light'], 'flashlight', 'toggle', 'touch__pill'),
       this.weaponButton(),
     );
+    if (onOpenSettings) {
+      const cfgBtn = document.createElement('button');
+      cfgBtn.type = 'button';
+      cfgBtn.className = 'touch__btn touch__pill touch__pill--settings';
+      cfgBtn.textContent = '⚙';
+      const syncCfg = () => {
+        const text = tr('Параметры', 'Settings');
+        cfgBtn.setAttribute('aria-label', text);
+        cfgBtn.title = text;
+      };
+      syncCfg();
+      onLangChange(syncCfg);
+      cfgBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenSettings();
+      });
+      topBar.append(cfgBtn);
+    }
 
     // Compact bottom-right combat & movement cluster.
     const buttons = document.createElement('div');
@@ -93,6 +113,10 @@ export class TouchInput {
     this.root.addEventListener('pointerup', this.onUp);
     this.root.addEventListener('pointercancel', this.onUp);
     input.setActive(true);
+  }
+
+  setGamepadHidden(hidden: boolean): void {
+    this.root.classList.toggle('touch--gamepad', hidden);
   }
 
   private readonly onDown = (e: PointerEvent): void => {

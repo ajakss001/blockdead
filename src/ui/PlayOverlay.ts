@@ -52,6 +52,14 @@ export class PlayOverlay {
     const list = document.createElement('div');
     list.className = 'play-overlay__controls';
     this.hint.className = 'play-overlay__hint';
+    const settingsBtn = document.createElement('button');
+    settingsBtn.type = 'button';
+    settingsBtn.className = 'play-overlay__settings';
+    settingsBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    settingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ctx.openSettings();
+    });
     const credits = document.createElement('button');
     credits.className = 'credits-link';
     credits.addEventListener('click', (e) => {
@@ -60,6 +68,7 @@ export class PlayOverlay {
     });
     const syncText = () => {
       title.textContent = tr('Нажмите, чтобы играть', 'Click to play');
+      settingsBtn.textContent = tr('⚙ Параметры (графика, дальтонизм, геймпад)', '⚙ Settings (Graphics, Colorblind, Gamepad)');
       list.replaceChildren();
       for (const [key, what] of CONTROLS) {
         const k = document.createElement('kbd');
@@ -76,7 +85,7 @@ export class PlayOverlay {
     };
     syncText();
     onLangChange(syncText);
-    this.root.append(title, list, this.hint, qualityControl(this.ctx), volumeControl(), langToggle(), credits);
+    this.root.append(title, settingsBtn, list, this.hint, qualityControl(this.ctx), volumeControl(), langToggle(), credits);
     this.soft.className = 'soft-hint';
     this.soft.hidden = true;
     parent.append(this.root, this.soft);

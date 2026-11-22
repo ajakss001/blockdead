@@ -3,6 +3,7 @@ import type { EventBus } from './core/EventBus';
 import type { GameEvents } from './core/events';
 import type { GameLoop } from './core/GameLoop';
 import type { Profiler } from './core/Profiler';
+import type { Settings } from './core/Settings';
 import type { DebugInfo } from './debug/DebugInfo';
 import type { InputManager } from './input/InputManager';
 import type { IPlatform } from './platform/IPlatform';
@@ -18,6 +19,7 @@ export interface GameContext {
   readonly platform: IPlatform;
   readonly renderer: Renderer;
   readonly quality: QualityManager;
+  readonly settings: Settings;
   readonly device: DeviceInfo;
   readonly input: InputManager;
   readonly debug: DebugInfo;
@@ -26,4 +28,8 @@ export interface GameContext {
   readonly fx: { setDread(amount: number): void; setDeath(death: number, fade: number): void };
   /** PC: re-acquire pointer lock after a UI closes (no-op on touch). Must run inside a user gesture. */
   requestPointerLock(): void;
+  /** Open the full settings modal (CoD-style options screen). */
+  openSettings(): void;
+  /** Trigger controller rumble when available and enabled. */
+  rumble(strong?: number, weak?: number, ms?: number): void;
 }

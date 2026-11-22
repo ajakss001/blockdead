@@ -15,7 +15,35 @@
     <div id="ui"></div>
     <div id="loading">
       <div class="loading__title">BlockDead</div>
-      <div class="loading__bar"><div></div></div>
+      <div class="loading__shader" id="loading-shader">
+        <svg class="loading__zombie" viewBox="0 0 64 72" width="54" height="62" aria-hidden="true">
+          <g class="zombie-body">
+            <!-- Trailing/dragging leg (limp) -->
+            <g class="zombie-leg-drag">
+              <path d="M27 42 L21 57 L16 66" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </g>
+            <!-- Good stepping leg -->
+            <g class="zombie-leg-step">
+              <path d="M33 42 L38 55 L42 66" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </g>
+            <!-- Hunched torso -->
+            <path d="M30 20 L30 43" stroke="currentColor" stroke-width="8" stroke-linecap="round" fill="none" />
+            <!-- Tilted zombie head + glowing eye -->
+            <circle cx="33" cy="12" r="6.5" fill="currentColor" />
+            <circle cx="36" cy="11" r="1.4" fill="#d8e878" />
+            <!-- Outstretched arms -->
+            <g class="zombie-arms">
+              <path d="M32 23 L48 25 L55 29" stroke="currentColor" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              <path d="M30 25 L44 30 L51 35" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.82" />
+            </g>
+          </g>
+        </svg>
+        <div class="loading__shader-info">
+          <div class="loading__text" id="loading-text">Загрузка мира…</div>
+          <div class="loading__sub" id="loading-sub"></div>
+        </div>
+      </div>
+      <div class="loading__bar" id="loading-bar"><div></div></div>
     </div>
     <div id="rotate">Поверните устройство горизонтально</div>
     <script type="module" src="/src/main.ts"></script>

@@ -33,6 +33,7 @@ const MAX_MOUSE_DELTA = 400;
 export class KeyboardMouseInput {
   /** Radians per mouse count. */
   sensitivity = 0.0022;
+  invertY = false;
 
   private readonly keys = new Set<string>();
   /** Quiet "click to continue" state after a game window: keys work, mouse look waits for a click. */
@@ -98,7 +99,8 @@ export class KeyboardMouseInput {
   private readonly onMouseMove = (e: MouseEvent): void => {
     if (!this.locked) return;
     if (Math.abs(e.movementX) > MAX_MOUSE_DELTA || Math.abs(e.movementY) > MAX_MOUSE_DELTA) return;
-    this.input.addLook(e.movementX * this.sensitivity, e.movementY * this.sensitivity);
+    const ySign = this.invertY ? -1 : 1;
+    this.input.addLook(e.movementX * this.sensitivity, e.movementY * this.sensitivity * ySign);
   };
 
   private readonly onMouseDown = (e: MouseEvent): void => {
