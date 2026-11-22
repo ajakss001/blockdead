@@ -1,5 +1,6 @@
 import type { ItemId } from '../data/items';
 import { ITEMS } from '../data/items';
+import { RENDERED_ITEM_ICONS } from './renderedIcons';
 
 /**
  * Lo-fi pixel art drawn in code: every icon is a few primitives on a 16×16 grid, then one shared
@@ -1072,6 +1073,8 @@ export async function loadItemIcons(): Promise<void> {
   }
 }
 
+const RENDERED_SET = new Set<ItemId>(RENDERED_ITEM_ICONS);
+
 const CUSTOM_ITEM_ICONS = new Set<ItemId>([
   'carKey',
   'jerrycan',
@@ -1082,9 +1085,15 @@ const CUSTOM_ITEM_ICONS = new Set<ItemId>([
   'storyScanner',
   'storySample',
   'storyTransponder',
+  ...RENDERED_ITEM_ICONS,
 ]);
 
-/** Data URL of the item's icon: the drawn one if there is, else the 16×16 code one (cached). */
+/** True when the item's icon is a 3D-rendered smooth PNG (use smooth scaling instead of pixelated). */
+export function isCustomItemIcon(id: ItemId): boolean {
+  return RENDERED_SET.has(id);
+}
+
+/** Data URL of the item's icon: the rendered/custom PNG if there is, else the atlas or 16×16 code one. */
 export function itemIcon(id: ItemId): string {
   if (CUSTOM_ITEM_ICONS.has(id)) return `${import.meta.env.BASE_URL}icons/items/${id}.png`;
   const drawn = sheetIcons.get(id);

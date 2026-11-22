@@ -20,7 +20,7 @@ import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
 import { CONTAINER_SOUND, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
-import { itemIcon } from './pixelart';
+import { isCustomItemIcon, itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
 import { Inventory, QUICK_SLOTS } from '../systems/Inventory';
 
@@ -1026,7 +1026,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 
 function icon(id: ItemId, cls = 'cell__icon'): HTMLImageElement {
   const img = document.createElement('img');
-  img.className = cls;
+  img.className = isCustomItemIcon(id) ? `${cls} is-hd` : cls;
   img.src = itemIcon(id);
   img.alt = ITEMS[id].name;
   img.draggable = false;

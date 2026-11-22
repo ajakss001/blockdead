@@ -9,6 +9,7 @@
     "characters": "node tools/build-characters.mjs",
     "gear": "node tools/build-gear.mjs",
     "import:icons": "node tools/vite-run.mjs tools/build-icons.ts",
+    "render:icons": "node tools/render-icons.mjs",
     "import:assets": "node tools/build-characters.mjs && node tools/build-gear.mjs && node tools/import-assets.mjs && node tools/build-sounds.mjs && node tools/vite-run.mjs tools/build-icons.ts",
     "sounds": "node tools/build-sounds.mjs",
     "preview": "vite preview --host",

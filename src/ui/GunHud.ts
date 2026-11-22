@@ -2,7 +2,7 @@ import { getLang, tr } from '../core/i18n';
 import type { InputManager } from '../input/InputManager';
 import type { GunHudState } from '../systems/Firearms';
 import { type ItemId, ITEMS } from '../data/items';
-import { itemIcon } from './pixelart';
+import { isCustomItemIcon, itemIcon } from './pixelart';
 import { GUNS } from '../weapons/guns';
 
 /**
@@ -152,6 +152,7 @@ export class GunHud {
       b.title = id ? ITEMS[id].name : tr('Пусто', 'Empty');
       if (id) {
         const img = document.createElement('img');
+        if (isCustomItemIcon(id)) img.className = 'is-hd';
         img.src = itemIcon(id);
         img.alt = ITEMS[id].name;
         b.append(img);

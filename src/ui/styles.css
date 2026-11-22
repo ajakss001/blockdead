@@ -3024,3 +3024,36 @@ body.main-menu-open .sleep {
   border-top-color: rgba(255, 255, 255, 0.1);
   color: #d96b64;
 }
+
+/* 3D-rendered & custom HD item icons: preserve natural proportions in every cell, card, ghost, and hotbar */
+.cell__icon {
+  inset: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  object-fit: contain;
+}
+.cell--wide {
+  width: calc(var(--cell) * 1.75);
+}
+.inv__card-icon {
+  width: 72px;
+  height: 48px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.inv__ghost {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+.quickslot img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.cell__icon.is-hd,
+.inv__card-icon.is-hd,
+.inv__ghost.is-hd,
+.quickslot img.is-hd {
+  image-rendering: auto;
+}
