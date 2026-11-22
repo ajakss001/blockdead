@@ -1,5 +1,16 @@
 import { onLangChange, registerDataLocalizer, tr } from '../core/i18n';
-import { dirtLabel, type ItemDef, type ItemId, ITEMS, noteText, onePiece, useVerb, WEAR_STATS, type WearSlot, wornStat } from '../data/items';
+import {
+  dirtLabel,
+  type ItemDef,
+  type ItemId,
+  ITEMS,
+  noteText,
+  onePiece,
+  useVerb,
+  WEAR_STATS,
+  type WearSlot,
+  wornStat,
+} from '../data/items';
 import { type Skills, SKILLS, XP } from '../systems/Skills';
 import { blocker, craft, type CraftWorld, needsLine, RECIPES } from '../systems/Crafting';
 import type { GameContext } from '../GameContext';
@@ -31,80 +42,77 @@ export interface InventoryHost {
 }
 
 type Slot = WearSlot | 'hand';
+type InvTab = 'gear' | 'health' | 'craft' | 'skills';
+type FilterCat = 'all' | 'weapons' | 'apparel' | 'supplies' | 'misc';
+
 /** Where a dragged or selected item lives. */
 type Place = { from: 'bag'; id: ItemId } | { from: 'box'; id: ItemId } | { from: 'slot'; slot: Slot };
-type DropTarget = 'bag' | 'box' | `slot:${Slot}`;
+type DropTarget = 'bag' | 'box' | `slot:${Slot}` | `quick:${number}`;
 
-const SLOTS: { slot: Slot; label: string }[] = [
-  { slot: 'outfit', label: 'Костюм' },
-  { slot: 'head', label: 'Голова' },
-  { slot: 'face', label: 'Лицо: очки' },
-  { slot: 'mask', label: 'Лицо: маска' },
-  { slot: 'torso', label: 'Торс' },
-  { slot: 'vest', label: 'Жилет' },
-  { slot: 'hands', label: 'Руки' },
-  { slot: 'legs', label: 'Ноги' },
-  { slot: 'feet', label: 'Обувь' },
-  { slot: 'back', label: 'Рюкзак' },
-  { slot: 'bag', label: 'Сумка' },
-];
+const DOLL_LEFT: readonly Slot[] = ['head', 'mask', 'vest', 'hand', 'bag'];
+const DOLL_RIGHT: readonly WearSlot[] = ['outfit', 'face', 'torso', 'hands', 'legs', 'feet'];
 
-const SLOT_LABELS: Readonly<Record<WearSlot, [string, string]>> = {
+const SLOT_LABELS: Readonly<Record<Slot, [string, string]>> = {
   outfit: ['Костюм', 'Outfit'],
-  head: ['Голова', 'Head'],
-  face: ['Лицо: очки', 'Face: eyewear'],
-  mask: ['Лицо: маска', 'Face: mask'],
+  head: ['Шлем', 'Head'],
+  face: ['Очки', 'Eyewear'],
+  mask: ['Маска', 'Mask'],
   torso: ['Торс', 'Torso'],
-  vest: ['Жилет', 'Vest'],
-  hands: ['Руки', 'Hands'],
-  legs: ['Ноги', 'Legs'],
+  vest: ['Разгрузка', 'Rig / Vest'],
+  hands: ['Перчатки', 'Hands'],
+  legs: ['Штаны', 'Legs'],
   feet: ['Обувь', 'Footwear'],
   back: ['Рюкзак', 'Backpack'],
   bag: ['Сумка', 'Bag'],
+  hand: ['В руке', 'Weapon'],
 };
+
+const FILTERS: readonly { id: FilterCat; ru: string; en: string }[] = [
+  { id: 'all', ru: 'Все', en: 'All' },
+  { id: 'weapons', ru: 'Оружие', en: 'Gear' },
+  { id: 'apparel', ru: 'Одежда', en: 'Apparel' },
+  { id: 'supplies', ru: 'Еда/Мед', en: 'Supplies' },
+  { id: 'misc', ru: 'Разное', en: 'Misc' },
+];
 
 registerDataLocalizer((lang) => {
   const idx = lang === 'en' ? 1 : 0;
   SLOT_NAMES.muzzle = idx ? 'Muzzle' : 'Ствол';
   SLOT_NAMES.mag = idx ? 'Magazine' : 'Магазин';
   SLOT_NAMES.rail = idx ? 'Rail' : 'Планка';
-  for (const s of SLOTS) {
-    s.label = SLOT_LABELS[s.slot as WearSlot][idx];
-  }
 });
 
-const BAG_MIN_CELLS = 24;
-const BOX_MIN_CELLS = 12;
+const RIG_SLOTS = 8;
+const POCKET_SLOTS = 4;
+const PACK_MIN_CELLS = 18;
+const BOX_MIN_CELLS = 18;
 const DRAG_THRESHOLD = 6;
 const DOUBLE_TAP_MS = 320;
 /** E and Esc close every game window (PC); Tab / I toggle the inventory. */
 const CLOSE_KEYS = ['KeyE', 'Escape', 'Tab', 'KeyI'];
 
-const WORDS_RU = ['нет', 'лёгкий', 'сильный', 'критический'];
-const WORDS_EN = ['none', 'mild', 'severe', 'critical'];
+const WORDS_RU = ['норма', 'лёгкий', 'сильный', 'критич.'];
+const WORDS_EN = ['ok', 'mild', 'severe', 'critical'];
 const level = (v: number) => (v >= 0.75 ? 3 : v >= 0.5 ? 2 : v >= 0.25 ? 1 : 0);
 
 /**
- * Zomboid-style inventory: a 3D figure (drag to turn) with equipment slots, the backpack grid and the open
- * container's grid. Tap selects (item card with actions), double tap does the obvious thing,
- * drag & drop moves between grids and slots (mouse and touch alike). The game is paused while
- * it is open; on PC the pointer lock is released and re-acquired on close.
+ * Tarkov-inspired Dead Perimeter inventory screen:
+ *  - Top bar tabs: СНАРЯЖЕНИЕ | ЗДОРОВЬЕ | КРАФТ | НАВЫКИ
+ *  - 3-column Gear layout: Doll + Slots + Vitals | Разгрузка + Карманы + Рюкзак + Быстрый доступ | Контейнер/Фильтр + Инспектор
+ * Supports tap/click select, double-tap/click default action, and drag & drop across slots, grids, containers, and Quick Access 1–4.
  */
 export class InventoryPanel {
   isOpen = false;
+  private activeTab: InvTab = 'gear';
+  private filter: FilterCat = 'all';
   private container: ContainerRef | null = null;
-  /** The recipe list instead of the container pane. */
-  private crafting = false;
   private selected: Place | null = null;
   private readonly root = document.createElement('div');
-  /** 3D figure in the worn clothes; renders only while the panel is open. */
+  /** 3D figure in the worn clothes; renders only while the panel's Gear tab is visible. */
   private readonly preview = new CharacterPreview();
   private lastTap = { key: '', t: 0 };
-  /** Close keys that were already down when the window opened. */
   private readonly heldAtOpen = new Set<string>();
-  /** We are releasing the pointer lock ourselves (opening); any other loss of the lock is the player's Esc. */
   private releasing = false;
-  /** An Esc keydown reached us (when the browser swallows it to drop the lock, only the keyup arrives). */
   private escDown = false;
   private drag: { place: Place; x: number; y: number; ghost: HTMLImageElement | null; pointer: number } | null = null;
 
@@ -122,8 +130,6 @@ export class InventoryPanel {
       if (!this.isOpen || !CLOSE_KEYS.includes(e.code)) return;
       e.preventDefault();
       e.stopPropagation();
-      // A key still held from before the window opened (holding E through the search) or its
-      // auto-repeat must not close it: only a new press after a release does.
       if (e.repeat || this.heldAtOpen.has(e.code)) return;
       this.close(e.code === 'Escape');
     });
@@ -134,7 +140,6 @@ export class InventoryPanel {
         this.escDown = false;
       }
     });
-    // Esc while the mouse was still captured: the browser eats the keydown and just drops the lock.
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return;
       if (this.releasing) this.releasing = false;
@@ -149,7 +154,6 @@ export class InventoryPanel {
     });
   }
 
-  /** Looks of the survivor (from the character editor / save) for the 3D figure. */
   setAppearance(a: Appearance, classId?: string): void {
     this.preview.setAppearance(a, classId);
   }
@@ -162,6 +166,7 @@ export class InventoryPanel {
   open(container: ContainerRef | null): void {
     this.container = container;
     this.selected = null;
+    if (container) this.activeTab = 'gear';
     if (!this.isOpen) {
       this.isOpen = true;
       this.heldAtOpen.clear();
@@ -200,91 +205,412 @@ export class InventoryPanel {
   // ─── Rendering ────────────────────────────────────────────────────────────────
 
   private render(): void {
-    const { inventory: inv } = this.host;
     if (this.selected && !this.exists(this.selected)) this.selected = null;
 
-    const head = el('div', 'inv__head');
-    const ratio = Inventory.noOverload ? 0 : inv.weight / inv.limit;
-    const bar = el('div', 'inv__load');
-    const fill = el('div', 'inv__load-fill');
-    fill.style.width = `${Math.min(100, ratio * 100)}%`;
-    if (ratio > 0.9) fill.classList.add('inv__load-fill--full');
-    bar.append(fill);
+    const topbar = el('div', 'inv__topbar');
+    const tabs = el('div', 'inv__tabs');
+    const defs: readonly { id: InvTab; ico: string; ru: string; en: string }[] = [
+      { id: 'gear', ico: '▣', ru: 'СНАРЯЖЕНИЕ', en: 'GEAR' },
+      { id: 'health', ico: '♥', ru: 'ЗДОРОВЬЕ', en: 'HEALTH' },
+      { id: 'craft', ico: '⚒', ru: 'КРАФТ', en: 'CRAFT' },
+      { id: 'skills', ico: '✦', ru: 'НАВЫКИ', en: 'SKILLS' },
+    ];
+    for (const d of defs) {
+      const btn = el('button', `inv__tab${this.activeTab === d.id ? ' is-active' : ''}`) as HTMLButtonElement;
+      btn.type = 'button';
+      btn.append(el('span', 'inv__tab-ico', d.ico), el('span', '', tr(d.ru, d.en)));
+      btn.addEventListener('click', () => {
+        this.activeTab = d.id;
+        if (d.id === 'gear') this.preview.start();
+        else this.preview.stop();
+        this.render();
+      });
+      tabs.append(btn);
+    }
+
+    const headRight = el('div', 'inv__head-right');
+    if (this.host.newCharacter) {
+      const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', tr('Новый персонаж', 'New character'));
+      fresh.addEventListener('click', () => this.host.newCharacter?.());
+      headRight.append(fresh);
+    }
     const close = el('button', 'inv__close', '✕');
     close.addEventListener('click', () => this.close());
-    const craftBtn = el('button', `inv__btn inv__btn--small inv__craft-btn${this.crafting ? ' on' : ''}`, tr('Крафт', 'Craft'));
-    craftBtn.addEventListener('click', () => {
-      this.crafting = !this.crafting;
-      this.render();
-    });
-    const fresh = el('button', 'inv__btn inv__btn--small inv__btn--quiet inv__new', tr('Новый персонаж', 'New character'));
-    fresh.addEventListener('click', () => this.host.newCharacter?.());
-    const unit = tr('кг', 'kg');
-    head.append(
-      el('div', 'inv__heading', tr('Инвентарь', 'Inventory')),
-      bar,
-      el('div', 'inv__kg', Inventory.noOverload ? `${inv.weight.toFixed(1)} ${unit} (${tr('без лимита', 'no limit')})` : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} ${unit}`),
-      craftBtn,
-      ...(this.host.newCharacter ? [fresh] : []),
-      close,
-    );
+    headRight.append(close);
+    topbar.append(tabs, headRight);
 
-    // Half the window is the survivor; the other half is the backpack (split with the container
-    // when one is open).
-    const main = el('div', 'inv__main');
-    const storage = el('div', 'inv__storage');
-    storage.append(this.bagPane());
-    if (this.crafting) storage.append(this.craftPane());
-    else if (this.container) storage.append(this.boxPane(this.container));
-    main.append(this.equipment(), storage);
+    let body: HTMLElement;
+    if (this.activeTab === 'gear') body = this.gearBoard();
+    else if (this.activeTab === 'health') body = this.healthBoard();
+    else if (this.activeTab === 'craft') body = this.craftPane();
+    else body = this.skillsBoard();
 
-    this.root.replaceChildren(head, main, this.card());
+    this.root.replaceChildren(topbar, body);
   }
 
-  private equipment(): HTMLElement {
-    const inv = this.host.inventory;
-    const pane = el('div', 'inv__equip');
-    // Clothing slots down the left, level with head, torso, legs and feet of the figure.
-    const left = el('div', 'inv__slots');
-    // Body down the left (head, torso, legs, feet); what goes over it on the right (vest, gloves, bag).
-    const over = new Set<Slot>(['vest', 'hands', 'back', 'bag']);
-    for (const { slot, label } of SLOTS) if (!over.has(slot)) left.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
+  private gearBoard(): HTMLElement {
+    const board = el('div', 'inv__board');
+    board.append(this.charColumn(), this.gearColumn(), this.rightColumn());
+    return board;
+  }
+
+  /** Left column: equipment slots around 3D figure + weight/HP/protection bars at bottom. */
+  private charColumn(): HTMLElement {
+    const { inventory: inv, survival: sv } = this.host;
+    const col = el('div', 'inv__col inv__col-char');
+
+    const stage = el('div', 'inv__doll-stage');
+    const leftSlots = el('div', 'inv__doll-side');
+    for (const slot of DOLL_LEFT) {
+      const itemId = slot === 'hand' ? inv.hand : inv.worn[slot];
+      const cell = this.slotCell(slot, tr(SLOT_LABELS[slot][0], SLOT_LABELS[slot][1]), itemId);
+      if (slot === 'hand') cell.classList.add('cell--wide');
+      leftSlots.append(cell);
+    }
+
     this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint);
     const figure = el('div', 'inv__figure');
     figure.append(this.preview.canvas, el('div', 'inv__figure-hint', '↔'));
-    // In the hand, vest, gloves, bag, then the totals of every clothing stat (bite: over the four body
-    // parts, the vest and gloves adding on top, at most 95%).
-    const right = el('div', 'inv__slots inv__slots--right');
-    right.append(this.slotCell('hand', tr('В руке', 'In hand'), inv.hand));
-    for (const { slot, label } of SLOTS) if (over.has(slot)) right.append(this.slotCell(slot, label, inv.worn[slot as WearSlot]));
-    const worn = inv.worn;
-    const stats = el('div', 'inv__armor');
-    for (const { key, label, format } of WEAR_STATS) {
-      const row = el('div', 'inv__armor-row');
-      row.append(el('span', '', label), el('b', '', format(key === 'bite' ? Math.min(0.95, wornStat(worn, key) / 4) : wornStat(worn, key))));
-      stats.append(row);
+
+    const rightSlots = el('div', 'inv__doll-side');
+    for (const slot of DOLL_RIGHT) {
+      rightSlots.append(this.slotCell(slot, tr(SLOT_LABELS[slot][0], SLOT_LABELS[slot][1]), inv.worn[slot]));
     }
-    right.append(stats);
-    pane.append(left, figure, right);
-    return pane;
+    stage.append(leftSlots, figure, rightSlots);
+
+    // Character vitals summary underneath the figure
+    const stats = el('div', 'inv__char-stats');
+    const unit = tr('кг', 'kg');
+    const weightRatio = Inventory.noOverload ? Math.min(1, inv.weight / Math.max(1, inv.limit)) : Math.min(1, inv.weight / Math.max(1, inv.limit));
+    const weightText = Inventory.noOverload
+      ? `${inv.weight.toFixed(1)} ${unit} (${tr('без лимита', '∞')})`
+      : `${inv.weight.toFixed(1)} / ${inv.limit.toFixed(0)} ${unit}`;
+    stats.append(this.statMeter(tr('Вес', 'Weight'), weightText, weightRatio, !Inventory.noOverload && weightRatio > 0.9));
+
+    const hpPct = Math.round(sv.health * 100);
+    stats.append(this.statMeter(tr('Здоровье', 'Health'), `${hpPct} / 100`, sv.health, hpPct < 30));
+
+    const metaGrid = el('div', 'inv__armor-line');
+    for (const { key, label, format } of WEAR_STATS) {
+      const val = key === 'bite' ? Math.min(0.95, wornStat(inv.worn, key) / 4) : wornStat(inv.worn, key);
+      const pill = el('div', 'inv__armor-pill');
+      pill.append(el('span', '', tr(label, key === 'bite' ? 'Bite res.' : 'Warmth')), el('b', '', format(val)));
+      metaGrid.append(pill);
+    }
+    stats.append(metaGrid);
+
+    col.append(stage, stats);
+    return col;
   }
 
-  private bagPane(): HTMLElement {
-    const pane = el('div', 'inv__pane');
+  private statMeter(label: string, valText: string, ratio: number, crit: boolean): HTMLElement {
+    const row = el('div', 'inv__meter');
+    const head = el('div', 'inv__meter-head');
+    head.append(el('span', '', label), el('b', '', valText));
+    const track = el('div', 'inv__meter-track');
+    const fill = el('div', `inv__meter-fill${crit ? ' is-crit' : ''}`);
+    fill.style.width = `${Math.max(0, Math.min(100, Math.round(ratio * 100)))}%`;
+    track.append(fill);
+    row.append(head, track);
+    return row;
+  }
+
+  /** Center column: РАЗГРУЗКА (vest), КАРМАНЫ (pockets), РЮКЗАК (backpack), and БЫСТРЫЙ ДОСТУП (1–4). */
+  private gearColumn(): HTMLElement {
+    const inv = this.host.inventory;
+    const col = el('div', 'inv__col inv__col-gear');
+
+    // Partition carried stacks cleanly once (rig -> pockets -> backpack) with zero duplicates
+    const rigIds = new Set<ItemId>();
+    const pocketIds = new Set<ItemId>();
+    const rigStacks: typeof inv.stacks = [];
+    const pocketStacks: typeof inv.stacks = [];
+    const packStacks: typeof inv.stacks = [];
+
+    for (const s of inv.stacks) {
+      const def = ITEMS[s.id];
+      if (inv.worn.vest && def.kind === 'ammo' && rigStacks.length < RIG_SLOTS) {
+        rigStacks.push(s);
+        rigIds.add(s.id);
+      } else if (def.weight <= 0.6 && pocketStacks.length < POCKET_SLOTS && !rigIds.has(s.id)) {
+        pocketStacks.push(s);
+        pocketIds.add(s.id);
+      } else {
+        packStacks.push(s);
+      }
+    }
+
+    // 1. РАЗГРУЗКА (Tactical Rig)
+    const rigSec = el('section', 'inv__section');
+    const rigHead = el('div', 'inv__sec-head', tr('РАЗГРУЗКА', 'TACTICAL RIG'));
+    const rigBody = el('div', 'inv__sec-split');
+    rigBody.dataset.drop = 'bag';
+    const vestSlot = this.slotCell('vest', inv.worn.vest ? ITEMS[inv.worn.vest].name : tr('Разгрузка', 'Rig'), inv.worn.vest);
+    vestSlot.classList.add('cell--featured');
+    const rigGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
+    rigGrid.dataset.drop = 'bag';
+    for (const s of rigStacks) rigGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
+    for (let i = rigStacks.length; i < RIG_SLOTS; i++) {
+      rigGrid.append(el('div', `cell cell--empty${inv.worn.vest ? '' : ' cell--locked'}`));
+    }
+    rigBody.append(vestSlot, rigGrid);
+    rigSec.append(rigHead, rigBody);
+
+    // 2. КАРМАНЫ (Pockets)
+    const pocketsSec = el('section', 'inv__section');
+    pocketsSec.append(el('div', 'inv__sec-head', tr('КАРМАНЫ', 'POCKETS')));
+    const pocketsGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
+    pocketsGrid.dataset.drop = 'bag';
+    for (const s of pocketStacks) pocketsGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
+    for (let i = pocketStacks.length; i < POCKET_SLOTS; i++) pocketsGrid.append(el('div', 'cell cell--empty'));
+    pocketsSec.append(pocketsGrid);
+
+    // 3. РЮКЗАК (Backpack)
+    const packSec = el('section', 'inv__section inv__section--grow');
+    const packHead = el('div', 'inv__sec-head', tr('РЮКЗАК', 'BACKPACK'));
+    const packBody = el('div', 'inv__sec-split inv__sec-split--grow');
+    packBody.dataset.drop = 'bag';
+    const backSlot = this.slotCell('back', inv.worn.back ? ITEMS[inv.worn.back].name : tr('Рюкзак', 'Backpack'), inv.worn.back);
+    backSlot.classList.add('cell--featured');
+    const packGrid = el('div', 'inv__grid');
+    packGrid.dataset.drop = 'bag';
+    for (const s of packStacks) packGrid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
+    for (let n = packStacks.length; n < Math.max(PACK_MIN_CELLS, packStacks.length + 4); n++) {
+      packGrid.append(el('div', 'cell cell--empty'));
+    }
+    packBody.append(backSlot, packGrid);
+    packSec.append(packHead, packBody);
+
+    // 4. БЫСТРЫЙ ДОСТУП (Quick Access 1–4)
+    const quickSec = el('section', 'inv__section inv__quickbar');
+    quickSec.append(el('div', 'inv__sec-head', tr('БЫСТРЫЙ ДОСТУП', 'QUICK ACCESS')));
+    const quickRow = el('div', 'inv__quick-cells');
+    for (let i = 0; i < QUICK_SLOTS; i++) {
+      const qId = inv.quick[i];
+      const cell = el('div', `cell cell--quick${qId ? '' : ' cell--vacant'}`);
+      cell.dataset.drop = `quick:${i}`;
+      cell.append(el('span', 'cell__qnum', String(i + 1)));
+      if (qId) {
+        const has = inv.has(qId);
+        const ic = icon(qId);
+        if (!has) ic.classList.add('is-missing');
+        cell.append(ic);
+        const cnt = inv.count(qId);
+        if (cnt > 1) cell.append(el('span', 'cell__count', String(cnt)));
+        cell.title = `${ITEMS[qId].name} (${tr('ПКМ — очистить', 'Right-click — clear')})`;
+        cell.addEventListener('click', () => {
+          if (inv.hand === qId) this.selected = { from: 'slot', slot: 'hand' };
+          else if (inv.count(qId) > 0) this.selected = { from: 'bag', id: qId };
+          this.render();
+        });
+        cell.addEventListener('dblclick', () => {
+          const def = ITEMS[qId];
+          if (def.equip && inv.count(qId) > 0) this.equip(qId);
+          else if (useVerb(def) && inv.count(qId) > 0) this.use(qId);
+        });
+        cell.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          inv.setQuick(i, null);
+          this.render();
+        });
+      }
+      quickRow.append(cell);
+    }
+    quickSec.append(quickRow);
+
+    col.append(rigSec, pocketsSec, packSec, quickSec);
+    return col;
+  }
+
+  /** Right column: category filter rail + Container loot / Filtered carried items + Item Inspector card. */
+  private rightColumn(): HTMLElement {
+    const col = el('div', 'inv__col inv__col-right');
+
+    const topArea = el('div', 'inv__stash-area');
+    const filters = el('div', 'inv__filters');
+    for (const f of FILTERS) {
+      const b = el('button', `inv__filter-btn${this.filter === f.id ? ' is-active' : ''}`, tr(f.ru, f.en)) as HTMLButtonElement;
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        this.filter = f.id;
+        this.render();
+      });
+      filters.append(b);
+    }
+
+    const pane = this.container ? this.boxPane(this.container) : this.filteredCarriedPane();
+    topArea.append(filters, pane);
+
+    const inspector = this.inspectorCard();
+    col.append(topArea, inspector);
+    return col;
+  }
+
+  private matchesFilter(id: ItemId): boolean {
+    if (this.filter === 'all') return true;
+    const k = ITEMS[id].kind;
+    if (this.filter === 'weapons') return k === 'weapon' || k === 'ammo';
+    if (this.filter === 'apparel') return k === 'clothing';
+    if (this.filter === 'supplies') return k === 'food' || k === 'drink' || k === 'medical';
+    return k === 'tool' || k === 'material' || k === 'junk';
+  }
+
+  private filteredCarriedPane(): HTMLElement {
+    const pane = el('div', 'inv__pane inv__pane--stash');
     pane.dataset.drop = 'bag';
-    pane.append(el('div', 'inv__title', tr('Рюкзак', 'Backpack')));
+    const fObj = FILTERS.find((x) => x.id === this.filter) ?? FILTERS[0];
+    pane.append(el('div', 'inv__title', `${tr('СНАРЯЖЕНИЕ', 'CARRIED')} · ${tr(fObj.ru, fObj.en)}`));
+    const list = this.host.inventory.stacks.filter((s) => this.matchesFilter(s.id));
     const grid = el('div', 'inv__grid');
-    const stacks = this.host.inventory.stacks;
-    for (const s of stacks) grid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
-    for (let n = stacks.length; n < Math.max(BAG_MIN_CELLS, stacks.length + 4); n++) grid.append(el('div', 'cell cell--empty'));
+    grid.dataset.drop = 'bag';
+    for (const s of list) grid.append(this.itemCell({ from: 'bag', id: s.id }, s.id, s.count));
+    for (let n = list.length; n < Math.max(BOX_MIN_CELLS, list.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
+    if (list.length === 0) pane.append(el('div', 'inv__empty', tr('В этой категории ничего нет', 'Nothing in this category')));
     pane.append(grid);
     return pane;
   }
 
-  /** Every recipe: what it takes (what is in the bag), why not yet, a button. */
+  private boxPane(ref: ContainerRef): HTMLElement {
+    const pane = el('div', 'inv__pane inv__pane--box');
+    pane.dataset.drop = 'box';
+    const allItems = this.host.containers.contents(ref);
+    const items = allItems.filter((s) => this.matchesFilter(s.id));
+    const title = el('div', 'inv__title', this.host.containers.name(ref));
+    if (allItems.length > 0) {
+      const all = el('button', 'inv__btn inv__btn--small', tr('Взять всё', 'Take all'));
+      all.addEventListener('click', () => this.takeAll());
+      title.append(all);
+    }
+    pane.append(title);
+    const grid = el('div', 'inv__grid');
+    for (const s of items) grid.append(this.itemCell({ from: 'box', id: s.id }, s.id, s.count));
+    for (let n = items.length; n < Math.max(BOX_MIN_CELLS, items.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
+    if (allItems.length === 0) pane.append(el('div', 'inv__empty', tr('Ничего полезного', 'Nothing useful')));
+    pane.append(grid);
+    return pane;
+  }
+
+  private inspectorCard(): HTMLElement {
+    const card = el('div', 'inv__card inv__inspector');
+    const sel = this.selected;
+    const id = sel ? this.itemAt(sel) : null;
+    if (!sel || !id) {
+      card.append(
+        el(
+          'div',
+          'inv__hint',
+          this.ctx.input.mode === 'kbm'
+            ? tr(
+                'Клик — осмотреть · Двойной клик — действие · Перетащите на слот или в «Быстрый доступ» (1–4)',
+                'Click — inspect · Double-click — action · Drag to slot or Quick Access (1–4)',
+              )
+            : tr('Тап — осмотреть · Двойной тап — действие · Перетащи в слот', 'Tap — inspect · Double-tap — action · Drag to slot'),
+        ),
+      );
+      return card;
+    }
+
+    const head = el('div', 'inv__insp-head');
+    head.append(icon(id, 'inv__card-icon'));
+    const text = el('div', 'inv__card-text');
+    const def = ITEMS[id];
+    const dirt = def.wear ? this.dirtAt(sel) : null;
+    const worn = def.durability ? this.dirtAt(sel) : null;
+    const info =
+      describe(def) +
+      (dirt !== null ? ` · ${tr('грязь', 'dirt')} ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
+      (worn !== null ? ` · ${tr('прочность', 'durability')} ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
+    text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
+    head.append(text);
+    card.append(head);
+
+    const actions = el('div', 'inv__actions');
+    for (const [label, fn, quiet] of this.actionsFor(sel, id)) {
+      const b = el('button', `inv__btn inv__btn--small${quiet ? ' inv__btn--quiet' : ''}`, label);
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fn();
+      });
+      actions.append(b);
+    }
+    card.append(actions);
+
+    if (place0(sel) && isGun(id)) card.append(this.gunMods(id));
+    else if ((MOD_IDS as readonly string[]).includes(id))
+      card.append(el('div', 'inv__hint', `${tr('Подходит', 'Fits')}: ` + MOD_FITS[id as ModId].map((g) => GUNS[g].name).join(', ')));
+    if (place0(sel) && (def.equip || useVerb(def))) card.append(this.quickRow(id));
+    return card;
+  }
+
+  /** Health tab: detailed vitals breakdown & direct med/food use buttons. */
+  private healthBoard(): HTMLElement {
+    const { survival: sv, player, inventory: inv } = this.host;
+    const wrap = el('div', 'inv__subboard inv__health-board');
+    const words = tr(WORDS_RU, WORDS_EN);
+
+    const vitals = el('div', 'inv__pane inv__health-vitals');
+    vitals.append(el('div', 'inv__title', tr('СОСТОЯНИЕ ВЫЖИВШЕГО', 'SURVIVOR VITALS')));
+    vitals.append(
+      this.statMeter(tr('Здоровье', 'Health'), `${Math.round(sv.health * 100)}%`, sv.health, sv.health < 0.3),
+      this.statMeter(tr('Голод', 'Hunger'), words[level(sv.hunger)], 1 - sv.hunger, sv.hunger > 0.65),
+      this.statMeter(tr('Жажда', 'Thirst'), words[level(sv.thirst)], 1 - sv.thirst, sv.thirst > 0.65),
+      this.statMeter(tr('Усталость', 'Fatigue'), words[level(sv.fatigue)], 1 - sv.fatigue, sv.fatigue > 0.65),
+      this.statMeter(tr('Фонарь', 'Flashlight'), `${Math.round(player.battery * 100)}%`, player.battery, player.battery < 0.2),
+    );
+    if (sv.wounded) vitals.append(el('div', 'inv__wound-alert', tr('⚠ Открытая рана — требуется перевязка!', '⚠ Bleeding wound — bandage required!')));
+
+    const medsPane = el('div', 'inv__pane inv__health-meds');
+    medsPane.append(el('div', 'inv__title', tr('МЕДИЦИНА И ПРИПАСЫ', 'MEDICAL & RATIONS')));
+    const usable = inv.stacks.filter((s) => useVerb(ITEMS[s.id]));
+    if (usable.length === 0) {
+      medsPane.append(el('div', 'inv__empty', tr('Нет медикаментов или еды в рюкзаке', 'No medical items or rations carried')));
+    } else {
+      const list = el('div', 'inv__med-list');
+      for (const s of usable) {
+        const def = ITEMS[s.id];
+        const row = el('div', 'inv__med-row');
+        row.append(icon(s.id, 'inv__card-icon'));
+        const txt = el('div', 'inv__card-text');
+        txt.append(el('div', 'inv__card-name', `${def.name} ×${s.count}`), el('div', 'inv__card-info', describe(def)));
+        const btn = el('button', 'inv__btn inv__btn--small', useVerb(def) ?? tr('Использовать', 'Use'));
+        btn.addEventListener('click', () => this.use(s.id));
+        row.append(txt, btn);
+        list.append(row);
+      }
+      medsPane.append(list);
+    }
+
+    wrap.append(vitals, medsPane);
+    return wrap;
+  }
+
+  /** Skills tab: full grid of all skills & XP bars. */
+  private skillsBoard(): HTMLElement {
+    const sk = this.host.skills;
+    const wrap = el('div', 'inv__subboard inv__skills-board');
+    const grid = el('div', 'inv__skills-grid');
+    for (const s of SKILLS) {
+      const l = sk.level(s.id);
+      const pct = Math.round(sk.progress(s.id) * 100);
+      const card = el('div', `inv__skill-card${l ? '' : ' is-zero'}`);
+      const top = el('div', 'inv__skill-top');
+      top.append(el('span', 'inv__skill-name', s.name), el('b', 'inv__skill-lvl', `${tr('Ур.', 'Lv.')} ${l}`));
+      const sub = el('div', 'inv__skill-per', `${s.per} ${tr('за уровень', 'per level')}`);
+      const track = el('div', 'inv__meter-track');
+      const fill = el('div', 'inv__meter-fill');
+      fill.style.width = `${pct}%`;
+      track.append(fill);
+      card.append(top, sub, track);
+      grid.append(card);
+    }
+    wrap.append(grid);
+    return wrap;
+  }
+
   private craftPane(): HTMLElement {
     const pane = el('div', 'inv__pane inv__pane--craft');
-    pane.append(el('div', 'inv__title', tr('Крафт', 'Craft')));
+    pane.append(el('div', 'inv__title', tr('КРАФТ И ВЕРСТАК', 'CRAFTING')));
     const list = el('div', 'inv__recipes');
     const w = this.host.craft;
     for (const r of RECIPES) {
@@ -304,7 +630,6 @@ export class InventoryPanel {
         this.ctx.hud.toast(res.text, 1600);
         sfx.item(r.place ? 'drop' : 'cloth');
         this.host.syncBody();
-        // Something set down in the world: close, so it is seen.
         if (r.place && res.ok) this.close();
         else this.render();
       });
@@ -312,25 +637,6 @@ export class InventoryPanel {
       list.append(row);
     }
     pane.append(list);
-    return pane;
-  }
-
-  private boxPane(ref: ContainerRef): HTMLElement {
-    const pane = el('div', 'inv__pane inv__pane--box');
-    pane.dataset.drop = 'box';
-    const items = this.host.containers.contents(ref);
-    const title = el('div', 'inv__title', this.host.containers.name(ref));
-    if (items.length > 1) {
-      const all = el('button', 'inv__btn inv__btn--small', tr('Взять всё', 'Take all'));
-      all.addEventListener('click', () => this.takeAll());
-      title.append(all);
-    }
-    pane.append(title);
-    const grid = el('div', 'inv__grid');
-    for (const s of items) grid.append(this.itemCell({ from: 'box', id: s.id }, s.id, s.count));
-    for (let n = items.length; n < Math.max(BOX_MIN_CELLS, items.length + 2); n++) grid.append(el('div', 'cell cell--empty'));
-    if (items.length === 0) pane.append(el('div', 'inv__empty', tr('Ничего полезного', 'Nothing useful')));
-    pane.append(grid);
     return pane;
   }
 
@@ -360,82 +666,6 @@ export class InventoryPanel {
     return cell;
   }
 
-  /** The survivor's skills: level and progress to the next (all eight, the untrained dim). */
-  private skillRow(): HTMLElement {
-    const sk = this.host.skills;
-    const row = el('div', 'inv__skills');
-    for (const s of SKILLS) {
-      const l = sk.level(s.id);
-      const cell = el('div', `inv__skill${l ? '' : ' inv__skill--none'}`);
-      cell.title = `${s.name}: ${s.per} ${tr('за уровень', 'per level')}`;
-      const bar = el('i', 'inv__skill-bar');
-      bar.style.width = `${Math.round(sk.progress(s.id) * 100)}%`;
-      cell.append(el('span', '', s.name), el('b', '', String(l)), bar);
-      row.append(cell);
-    }
-    return row;
-  }
-
-  /** Item card: what is selected and what can be done with it; otherwise the survivor's condition. */
-  private card(): HTMLElement {
-    const card = el('div', 'inv__card');
-    const sel = this.selected;
-    const id = sel ? this.itemAt(sel) : null;
-    if (!sel || !id) {
-      const { survival: sv, player } = this.host;
-      const words = tr(WORDS_RU, WORDS_EN);
-      const line = [
-        `${tr('Здоровье', 'Health')} ${Math.round(sv.health * 100)}%`,
-        `${tr('Голод', 'Hunger')}: ${words[level(sv.hunger)]}`,
-        `${tr('Жажда', 'Thirst')}: ${words[level(sv.thirst)]}`,
-        `${tr('Усталость', 'Fatigue')}: ${words[level(sv.fatigue)]}`,
-        sv.wounded ? tr('Рана!', 'Wounded!') : '',
-        `${tr('Фонарь', 'Flashlight')} ${Math.round(player.battery * 100)}%`,
-      ]
-        .filter(Boolean)
-        .join('   ·   ');
-      card.append(el('div', 'inv__stats', line));
-      card.append(this.skillRow());
-      card.append(
-        el(
-          'div',
-          'inv__hint',
-          this.ctx.input.mode === 'kbm'
-            ? tr('Клик — выбрать, двойной клик — действие, перетаскивание — переложить', 'Click — select, double-click — action, drag — move')
-            : tr('Тап — выбрать, двойной тап — действие, перетащи пальцем — переложить', 'Tap — select, double-tap — action, drag — move'),
-        ),
-      );
-      return card;
-    }
-    const def = ITEMS[id];
-    card.append(icon(id, 'inv__card-icon'));
-    const text = el('div', 'inv__card-text');
-    const dirt = def.wear ? this.dirtAt(sel) : null;
-    const worn = def.durability ? this.dirtAt(sel) : null;
-    const info =
-      describe(def) +
-      (dirt !== null ? ` · ${tr('грязь', 'dirt')} ${Math.round(dirt * 100)}% (${dirtLabel(dirt)})` : '') +
-      (worn !== null ? ` · ${tr('прочность', 'durability')} ${Math.max(1, Math.round((1 - worn) * 100))}%` : '');
-    text.append(el('div', 'inv__card-name', def.name), el('div', 'inv__card-info', info));
-    card.append(text);
-    const actions = el('div', 'inv__actions');
-    for (const [label, fn, quiet] of this.actionsFor(sel, id)) {
-      const b = el('button', `inv__btn${quiet ? ' inv__btn--quiet' : ''}`, label);
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        fn();
-      });
-      actions.append(b);
-    }
-    card.append(actions);
-    if (place0(sel) && isGun(id)) card.append(this.gunMods(id));
-    else if ((MOD_IDS as readonly string[]).includes(id))
-      card.append(el('div', 'inv__hint', `${tr('Подходит', 'Fits')}: ` + MOD_FITS[id as ModId].map((g) => GUNS[g].name).join(', ')));
-    if (place0(sel) && def.equip) card.append(this.quickRow(id));
-    return card;
-  }
-
-  /** The gun's mod slots: what is on (tap — take off), what from the pack fits (tap — put on); the rounds in it. */
   private gunMods(id: ItemId & keyof typeof GUNS): HTMLElement {
     const inv = this.host.inventory;
     const inst = inv.gun(id);
@@ -455,7 +685,7 @@ export class InventoryPanel {
       row.append(el('span', 'inv__mod-slot', SLOT_NAMES[slot]));
       const on = inst.mods.find((m) => MODS[m].slot === slot) as ModId | undefined;
       if (on) {
-        const b = el('button', 'inv__btn', `${MODS[on].name} ✕`);
+        const b = el('button', 'inv__btn inv__btn--small', `${MODS[on].name} ✕`);
         b.title = tr('Снять', 'Remove');
         b.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -467,7 +697,7 @@ export class InventoryPanel {
       } else row.append(el('span', 'inv__mod-empty', tr('пусто', 'empty')));
       for (const m of MOD_IDS) {
         if (m === on || MODS[m].slot !== slot || !MOD_FITS[m].includes(id) || inv.count(m) === 0) continue;
-        const b = el('button', 'inv__btn inv__btn--quiet', `+ ${MODS[m].name}`);
+        const b = el('button', 'inv__btn inv__btn--small inv__btn--quiet', `+ ${MODS[m].name}`);
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           inv.attachMod(id, m);
@@ -481,13 +711,12 @@ export class InventoryPanel {
     return box;
   }
 
-  /** Quick slots 1–4: put the item on one (keys 1–4 / the buttons on the HUD). */
   private quickRow(id: ItemId): HTMLElement {
     const inv = this.host.inventory;
     const row = el('div', 'inv__mod');
-    row.append(el('span', 'inv__mod-slot', tr('Слот', 'Slot')));
+    row.append(el('span', 'inv__mod-slot', tr('Быстрый доступ', 'Quick Access')));
     for (let i = 0; i < QUICK_SLOTS; i++) {
-      const b = el('button', `inv__btn${inv.quick[i] === id ? '' : ' inv__btn--quiet'}`, String(i + 1));
+      const b = el('button', `inv__btn inv__btn--small${inv.quick[i] === id ? '' : ' inv__btn--quiet'}`, String(i + 1));
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         inv.setQuick(i, inv.quick[i] === id ? null : id);
@@ -502,7 +731,7 @@ export class InventoryPanel {
     const def = ITEMS[id];
     const out: [string, () => void, boolean?][] = [];
     if (place.from === 'slot') {
-      out.push([place.slot === 'hand' ? tr('Убрать в рюкзак', 'Holster to backpack') : tr('Снять', 'Take off'), () => this.unslot(place.slot)]);
+      out.push([place.slot === 'hand' ? tr('Убрать в рюкзак', 'Holster') : tr('Снять', 'Take off'), () => this.unslot(place.slot)]);
       if (this.container) out.push([tr('Положить', 'Store'), () => this.unslot(place.slot, true)]);
       return out;
     }
@@ -561,7 +790,6 @@ export class InventoryPanel {
       } else this.render();
       return;
     }
-    // A tap: select; a second tap on the same item soon after: default action.
     const key = placeKey(d.place);
     const now = performance.now();
     if (this.lastTap.key === key && now - this.lastTap.t < DOUBLE_TAP_MS) {
@@ -584,7 +812,6 @@ export class InventoryPanel {
     return hit ? { el: hit, target: hit.dataset.drop as DropTarget } : null;
   }
 
-  /** Double tap: bag → container if one is open, else wear/equip/use; container → bag; slot → bag. */
   private primary(place: Place): void {
     if (place.from === 'slot') return this.unslot(place.slot);
     if (place.from === 'box') return void this.take(place.id, this.boxCount(place.id));
@@ -598,6 +825,14 @@ export class InventoryPanel {
   private move(place: Place, to: DropTarget): void {
     const id = this.itemAt(place);
     if (!id) return;
+    if (to.startsWith('quick:')) {
+      const qi = Number(to.slice(6));
+      if (place.from === 'box' && !this.take(id, 1)) return;
+      this.host.inventory.setQuick(qi, id);
+      sfx.item('move');
+      this.render();
+      return;
+    }
     if (to.startsWith('slot:')) {
       const slot = to.slice(5) as Slot;
       const fits = slot === 'hand' ? !!ITEMS[id].equip : ITEMS[id].wear?.slot === slot;
@@ -656,7 +891,6 @@ export class InventoryPanel {
     this.render();
   }
 
-  /** Slot → backpack (or straight into the open container). */
   private unslot(slot: Slot, toBox = false): void {
     const inv = this.host.inventory;
     const id = slot === 'hand' ? inv.hand : inv.worn[slot];
@@ -672,13 +906,11 @@ export class InventoryPanel {
     this.render();
   }
 
-  /** Container → backpack; returns false if nothing fit. */
   private take(id: ItemId, count: number): boolean {
     const ref = this.container;
     if (!ref) return false;
     let got = 0;
     if (onePiece(ITEMS[id])) {
-      // Clothing and weapons: piece by piece, each with its own dirt / wear.
       for (let n = 0; n < count; n++) {
         const dirt = this.host.containers.peekDirt(ref, id);
         if (this.host.inventory.add(id, 1, dirt, this.host.containers.peekTint(ref, id)) === 0) break;
@@ -744,7 +976,6 @@ export class InventoryPanel {
     return this.boxCount(p.id) > 0 ? p.id : null;
   }
 
-  /** Dirt of the selected piece of clothing (the one an action would move). */
   private dirtAt(p: Place): number {
     const inv = this.host.inventory;
     if (p.from === 'slot') return p.slot === 'hand' ? inv.handWear : inv.wornDirt[p.slot];
@@ -766,7 +997,6 @@ export class InventoryPanel {
   private same(a: Place | null, b: Place | null): boolean {
     return !!a && !!b && placeKey(a) === placeKey(b);
   }
-
 }
 
 function placeKey(p: Place): string {
@@ -797,14 +1027,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 function icon(id: ItemId, cls = 'cell__icon'): HTMLImageElement {
   const img = document.createElement('img');
   img.className = cls;
-  // Pixel art for everything, gear too (ui/pixelart).
   img.src = itemIcon(id);
   img.alt = ITEMS[id].name;
   img.draggable = false;
   return img;
 }
 
-/** Items in the pack or in the hand (not in a container): their mods and quick slots can be set. */
 function place0(p: { from: string }): boolean {
   return p.from !== 'box';
 }
