@@ -72,21 +72,31 @@ body {
 }
 
 .loading__hand {
+  position: relative;
+  width: 48px;
+  height: 74px;
   flex-shrink: 0;
-  display: block;
 }
 
-.loading__hand .hand-base {
-  fill: #2d1818;
-  stroke: rgba(194, 40, 34, 0.48);
-  stroke-width: 1;
+.loading__hand img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
-.loading__hand .hand-fill {
-  fill: #f6f2eb;
+.loading__hand-base {
+  filter: sepia(1) saturate(4.5) hue-rotate(316deg) brightness(0.24) drop-shadow(0 0 1px rgba(194, 40, 34, 0.55));
+  opacity: 0.92;
+}
+
+.loading__hand-fill {
   clip-path: inset(calc(100% - var(--load-pct, 0) * 1%) 0 0 0);
   transition: clip-path 0.25s ease-out;
-  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.42));
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.45));
 }
 
 .loading__shader-info {
@@ -2577,4 +2587,34 @@ body.main-menu-open .sleep {
     font-size: 16px;
     letter-spacing: 2.5px;
   }
+}
+
+/* Dead Perimeter Quest Tracker & Briefing (crimson HUD matching Main Menu) */
+.story-tracker {
+  border-left: 2px solid #c22822;
+  background: rgba(10, 11, 13, 0.64);
+}
+.story-tracker__act {
+  color: #d94a42;
+}
+.story-tracker__dist {
+  color: #f0ece3;
+}
+.story-tracker--done {
+  border-left-color: #6ab068;
+}
+.story-tracker--done .story-tracker__act {
+  color: #84c880;
+}
+.story-briefing {
+  background: rgba(12, 13, 15, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid #c22822;
+}
+.story-briefing__code {
+  color: #c93832;
+}
+.story-briefing__foot {
+  border-top-color: rgba(255, 255, 255, 0.1);
+  color: #d96b64;
 }

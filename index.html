@@ -16,16 +16,10 @@
     <div id="loading">
       <div class="loading__title">DEAD PERIMETER</div>
       <div class="loading__shader" id="loading-shader">
-        <svg class="loading__hand" viewBox="0 0 64 80" width="54" height="68" aria-hidden="true">
-          <defs>
-            <path
-              id="loading-hand-shape"
-              d="M27 77 L27 52 L22 46 L11 35 L7 25 L11 22 L17 29 L23 36 L24 31 L18 14 L17 7 L21 6 L25 16 L28 29 L30 28 L31 10 L33 3 L37 4 L36 14 L35 29 L38 30 L43 13 L46 7 L50 9 L46 19 L40 34 L43 36 L50 23 L55 18 L58 21 L52 31 L44 45 L39 51 L38 77 Z"
-            />
-          </defs>
-          <use href="#loading-hand-shape" class="hand-base" />
-          <use href="#loading-hand-shape" class="hand-fill" />
-        </svg>
+        <div class="loading__hand" aria-hidden="true">
+          <img class="loading__hand-base" src="./ui/loading-hand.png" alt="" />
+          <img class="loading__hand-fill" src="./ui/loading-hand.png" alt="" />
+        </div>
         <div class="loading__shader-info">
           <div class="loading__text" id="loading-text">Загрузка мира…</div>
           <div class="loading__sub" id="loading-sub"></div>
