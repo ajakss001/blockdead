@@ -18,8 +18,8 @@ import type { GearId } from '../data/items';
  */
 const NEAR = 0.36;
 
-const SPEED_WALK = 1.4;
-const SPEED_RUN = 3.6;
+const SPEED_WALK = 1.65;
+const SPEED_RUN = 3.65;
 /** The eyes from the head bone (its frame: +Y up the skull, +Z the face), m on a 1.8 m body. */
 const EYE = new Vector3(0, 0.085, 0.1);
 

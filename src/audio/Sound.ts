@@ -354,16 +354,19 @@ export class Sound {
 
   // ── Game sounds ────────────────────────────────────────────────────────────
 
-  step(surface: StepSurface, gait: Gait, pos: Pos, loud = 1, isPlayer = false): void {
+  step(surface: StepSurface, gait: Gait, pos: Pos, loud = 1, isPlayer = false, foot?: 0 | 1): void {
     const v = isPlayer ? this.playerStepVoice() : this.voice(pos, 0.45, 1.5, false, 'footsteps');
     if (!v) return;
     if (isPlayer) this.playerStepsPlayed++;
     const [out, t] = v;
     const diffFloor = !isPlayer && Math.abs(pos.y - this.ly) > 2.5;
-    const volRand = 0.88 + Math.random() * 0.12;
-    const g = (gait === 'run' ? 0.94 : gait === 'walk' ? 0.74 : 0.46) * loud * volRand;
+    const surfBal = surface === 'grass' ? 0.86 : surface === 'metal' ? 0.92 : 1;
+    const footWeight = foot === undefined ? 1 : foot === 0 ? 0.96 : 1.04;
+    const footPitch = foot === undefined ? 1 : foot === 0 ? 0.985 : 1.015;
+    const volRand = 0.9 + Math.random() * 0.1;
+    const g = (gait === 'run' ? 0.76 : gait === 'walk' ? 0.56 : 0.34) * loud * surfBal * footWeight * volRand;
 
-    if (diffFloor && this.sample(out, t, 'stepMuffled', { vary: 0.08, gain: g * 0.9 })) return;
+    if (diffFloor && this.sample(out, t, 'stepMuffled', { rate: footPitch, vary: 0.06, gain: g * 0.9 })) return;
 
     let grp: SampleGroup | null = null;
     if (surface === 'glass') {
@@ -382,9 +385,9 @@ export class Sound {
       grp = gait === 'run' ? 'stepConcreteRun' : 'stepConcreteWalk';
     }
 
-    if (grp && this.sample(out, t, grp, { vary: 0.07, gain: g })) {
-      if (surface === 'wood' && Math.random() < 0.27) {
-        this.sample(out, t + 0.02 + Math.random() * 0.04, 'woodCreak', { vary: 0.08, gain: 0.48 * volRand });
+    if (grp && this.sample(out, t, grp, { rate: footPitch, vary: 0.05, gain: g })) {
+      if (surface === 'wood' && Math.random() < 0.24) {
+        this.sample(out, t + 0.02 + Math.random() * 0.03, 'woodCreak', { vary: 0.08, gain: 0.42 * volRand });
       }
       return;
     }
@@ -1683,7 +1686,7 @@ export class Sound {
     this.weaponsBus.connect(this.world);
 
     this.footstepsBus = ac.createGain();
-    this.footstepsBus.gain.value = 0.9;
+    this.footstepsBus.gain.value = 0.68;
     this.footstepsBus.connect(this.world);
 
     this.foleyBus = ac.createGain();

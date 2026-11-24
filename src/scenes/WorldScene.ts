@@ -33,10 +33,10 @@ import { bodyAsset, hasBody } from '../characters/assets';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig } from '../characters/rig';
 import { AnxietyAudio } from '../audio/AnxietyAudio';
-import { type FleshBlow, sfx, type StepSurface } from '../audio/Sound';
+import { type FleshBlow, type Gait, sfx, type StepSurface } from '../audio/Sound';
 import { langToggle, onLangChange, tr } from '../core/i18n';
 import { FLOOR_H, inStairCore } from '../world/gen/highrise';
-import { CHUNK, DOWNTOWN_RADIUS, ROAD_HALF } from '../world/gen/layout';
+import { BAND, CHUNK, DOWNTOWN_RADIUS, ROAD_HALF } from '../world/gen/layout';
 import { type SceneKind, sceneAt } from '../world/gen/chaos';
 import { type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot, wornStat } from '../data/items';
 import type { Worn } from '../systems/Inventory';
@@ -1225,7 +1225,8 @@ export class WorldScene implements IScene {
     if (c.stepped) {
       const wet = this.atmo.puddleAt(feet.x, feet.z, c.position.y);
       if (wet) this.atmo.ripple(feet.x, c.position.y, feet.z);
-      sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet, 1, true);
+      const gait: Gait = c.crouched ? 'crouch' : (c.sprinting && c.speed > 2.8) || c.speed > 3.35 ? 'run' : 'walk';
+      sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), gait, feet, 1, true, c.stepFoot);
     }
     this.turnCd = Math.max(0, this.turnCd - dt);
     if (!this.turnInited) {
@@ -1492,14 +1493,32 @@ export class WorldScene implements IScene {
     }
     const zone = this.chunks.zoneAt(x, z);
     if (this.indoors) return zone === 'town' ? 'tile' : 'wood';
-    const urban = zone === 'downtown' || zone === 'town' || zone === 'suburb';
-    const h = this.layout.walkHeightAt(x, z);
-    if (zone === 'downtown' || zone === 'town') return h > 0.035 ? 'concrete' : 'asphalt';
-    // Suburbs and the country: the roads on the chunk grid, grass and dirt elsewhere.
-    const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
-    const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
-    if (rx < ROAD_HALF || rz < ROAD_HALF) return 'asphalt';
-    return urban && h > 0.05 ? 'concrete' : 'grass';
+
+    // Mirror WorldLayout.walkHeightAt + buildChunk exactly so parks, yards, roads, and sidewalks match footsteps.
+    const li = Math.round(x / CHUNK);
+    const lj = Math.round(z / CHUNK);
+    const dx = Math.abs(x - li * CHUNK);
+    const dz = Math.abs(z - lj * CHUNK);
+    const bi = Math.floor(x / CHUNK);
+    const bj = Math.floor(z / CHUNK);
+    if (dx <= BAND && dz <= BAND) {
+      if (this.layout.roadX(li, lj) || this.layout.roadZ(li, lj) || this.layout.roadX(li, lj - 1) || this.layout.roadZ(li - 1, lj)) {
+        if (dx <= ROAD_HALF || dz <= ROAD_HALF) return 'asphalt';
+        const urbanCorner = this.layout.isUrban(li, lj) || this.layout.isUrban(li - 1, lj) || this.layout.isUrban(li, lj - 1) || this.layout.isUrban(li - 1, lj - 1);
+        return urbanCorner ? 'concrete' : 'asphalt';
+      }
+    } else if (dx <= BAND && this.layout.roadX(li, bj)) {
+      if (dx <= ROAD_HALF) return 'asphalt';
+      return this.layout.urbanX(li, bj) ? 'concrete' : 'grass';
+    } else if (dz <= BAND && this.layout.roadZ(bi, lj)) {
+      if (dz <= ROAD_HALF) return 'asphalt';
+      return this.layout.urbanZ(bi, lj) ? 'concrete' : 'grass';
+    }
+
+    const site = this.layout.poi(bi, bj);
+    if (site) return site.kind === 'park' ? 'grass' : 'concrete';
+    if (this.layout.isDowntown(bi, bj)) return 'concrete';
+    return 'grass';
   }
 
   saveSummary() {

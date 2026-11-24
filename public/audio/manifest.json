@@ -120,14 +120,16 @@
     "footsteps/concrete_walk_1.wav",
     "footsteps/concrete_walk_2.wav",
     "footsteps/concrete_walk_3.wav",
-    "footsteps/concrete_walk_4.wav"
+    "footsteps/concrete_walk_4.wav",
+    "footsteps/concrete_walk_5.wav"
   ],
   "stepConcreteRun": [
     "footsteps/concrete_run_1.wav",
     "footsteps/concrete_run_2.wav",
     "footsteps/concrete_run_3.wav",
     "footsteps/concrete_run_4.wav",
-    "footsteps/concrete_run_5.wav"
+    "footsteps/concrete_run_5.wav",
+    "footsteps/concrete_run_6.wav"
   ],
   "stepMuffled": [
     "footsteps/muffled_1.wav",

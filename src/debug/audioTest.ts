@@ -12,6 +12,7 @@ import { type ZombieWorld, ZombieSim } from '../systems/zombies';
 import { giveLoadout } from '../weapons/give';
 import type { GunId } from '../weapons/guns';
 import type { CollisionWorld } from '../world/CollisionWorld';
+import { BAND, CHUNK, ROAD_HALF, WorldLayout } from '../world/gen/layout';
 
 type FsMod = {
   existsSync(p: string): boolean;
@@ -218,11 +219,35 @@ function readWavMetrics(filePath: string) {
       break;
     }
   }
+  let secondaryImpact = false;
+  if (filePath.includes('footsteps')) {
+    const win = Math.round(sr * 0.012);
+    const hop = Math.round(sr * 0.004);
+    const env: { t: number; r: number }[] = [];
+    for (let pos = 0; pos + win <= n; pos += hop) {
+      let s = 0;
+      for (let k = 0; k < win; k++) {
+        const v = view.getInt16(44 + (pos + k) * 2, true) / 32768;
+        s += v * v;
+      }
+      env.push({ t: pos / sr, r: Math.sqrt(s / win) });
+    }
+    let mi = 0;
+    for (let i = 1; i < env.length; i++) if (env[i].r > env[mi].r) mi = i;
+    const mr = env[mi]?.r ?? 0;
+    const mt = env[mi]?.t ?? 0;
+    let vr = mr;
+    for (let i = mi + 1; i < env.length; i++) {
+      vr = Math.min(vr, env[i].r);
+      if (env[i].t - mt >= 0.105 && env[i].r >= mr * 0.55 && env[i].r >= vr * 1.8) secondaryImpact = true;
+    }
+  }
   return {
     dur: n / sr,
     peak,
     rms,
     leadMs: (leadSamples / sr) * 1000,
+    secondaryImpact,
     tailPeakAfter156: (() => {
       const i0 = Math.floor(1.56 * sr);
       let tp = 0;
@@ -254,6 +279,12 @@ function auditAllAudioAssets(): Record<SampleGroup, string[]> {
       assert(m.peak >= 0.2 && m.peak <= 0.995, `Peak out of range (${m.peak.toFixed(3)}): ${rel}`);
       assert(m.rms >= 0.01, `RMS too quiet (${m.rms.toFixed(4)}): ${rel}`);
       assert(m.leadMs <= 25, `Leading silence too long (${m.leadMs.toFixed(1)}ms): ${rel}`);
+      if (rel.startsWith('footsteps/')) {
+        const maxDur = rel.includes('_run_') ? 0.23 : 0.30;
+        assert(m.dur <= maxDur, `Footstep slice too long (${m.dur.toFixed(3)}s > ${maxDur}s): ${rel}`);
+        assert(m.leadMs <= 18, `Footstep attack delayed (${m.leadMs.toFixed(1)}ms): ${rel}`);
+        assert(!m.secondaryImpact, `Footstep slice contains double hit: ${rel}`);
+      }
       if (grp === 'gunReloadRifle') {
         assert(m.dur <= 1.65, `reload_rifle.wav still too long (${m.dur.toFixed(3)}s) — bolt rack tail must be trimmed`);
         assert(m.tailPeakAfter156 === 0, `reload_rifle.wav has signal past 1.56s`);
@@ -264,7 +295,7 @@ function auditAllAudioAssets(): Record<SampleGroup, string[]> {
       clipCount++;
     }
   }
-  console.log(`[audioTest] Part 1 PASS: ${clipCount} WAV clips across ${groups.length} groups audited cleanly (0 silent/delayed clips).`);
+  console.log(`[audioTest] Part 1 PASS: ${clipCount} WAV clips across ${groups.length} groups audited cleanly (0 silent/delayed/double-hit clips).`);
   return manifest;
 }
 
@@ -470,46 +501,76 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
   console.log('[audioTest] Part 2 PASS: All buses, HRTF spatialization, -1.0 dBFS limiter, priority footsteps, pistol/rifle reloads, and shotgun throttling verified.');
 }
 
-function testSprintFootstepContinuity(): void {
+function simulateGait(gait: 'sprint' | 'walk' | 'crouch', secs = 5.0) {
   const c = new PlayerController(new Vector3(0, 0, 0), 0);
+  if (gait === 'crouch') c.crouched = true;
   const world = {
     resolveCircle() {},
     ceilingAt: () => 20,
     supportAt: () => -1e4,
     ledgeAhead: () => -1,
   } as unknown as CollisionWorld;
+  let moveY = 1;
   const input = {
     moveX: 0,
-    moveY: 1,
-    isHeld: (k: string) => k === 'sprint',
+    get moveY() { return moveY; },
+    isHeld: (k: string) => gait === 'sprint' && k === 'sprint',
     consumePressed: () => false,
   } as unknown as InputManager;
 
   const stepTimes: number[] = [];
+  const stepFeet: (0 | 1)[] = [];
   const dt = 1 / 60;
-  for (let i = 0; i < 300; i++) {
-    // Inject brief 2-frame curb/step-down micro-airborne flickers at ~1.5s and ~3.2s
-    if (i === 90 || i === 91 || i === 192 || i === 193) {
+  const ticks = Math.round(secs / dt);
+  for (let i = 0; i < ticks; i++) {
+    if (gait === 'sprint' && (i === 90 || i === 91 || i === 192 || i === 193)) {
       c.airborne = true;
       c.vy = -0.5;
     }
     c.fixedUpdate(dt, input, world, () => 0);
-    if (c.stepped) stepTimes.push(i * dt);
+    if (c.stepped) {
+      stepTimes.push(i * dt);
+      stepFeet.push(c.stepFoot);
+      // Verify step triggers right at bob nadir (n + 0.5) * PI.
+      const phaseMod = ((c.stepPhase % Math.PI) + Math.PI) % Math.PI;
+      assert(Math.abs(phaseMod - Math.PI * 0.5) < 0.25, `${gait}: step missed bob nadir (phaseMod=${phaseMod.toFixed(3)} rad)`);
+    }
   }
-
-  assert(stepTimes.length >= 8 && stepTimes.length <= 12, `Unexpected sprint footstep count in 5s: ${stepTimes.length}`);
+  // Ensure stopping never emits phantom steps while bob relaxes to zero.
+  moveY = 0;
+  for (let i = 0; i < 60; i++) {
+    c.fixedUpdate(dt, input, world, () => 0);
+    if (c.stepped && c.speed < 0.2) throw new Error(`${gait}: phantom step while stopped (speed=${c.speed.toFixed(3)})`);
+  }
   let maxGap = 0;
-  for (let i = 1; i < stepTimes.length; i++) {
-    maxGap = Math.max(maxGap, stepTimes[i] - stepTimes[i - 1]);
-  }
-  assert(maxGap < 0.62, `Sprint footstep dropout detected: maxGap=${maxGap.toFixed(3)}s`);
-  console.log(`[audioTest] Part 3 PASS: ${stepTimes.length} uninterrupted sprint footsteps over 5.0s (maxGap=${maxGap.toFixed(3)}s).`);
+  for (let i = 1; i < stepTimes.length; i++) maxGap = Math.max(maxGap, stepTimes[i] - stepTimes[i - 1]);
+  return { count: stepTimes.length, maxGap, feet: stepFeet };
+}
+
+function testFootstepRhythmAndSurfaces(): void {
+  const sp = simulateGait('sprint', 5.0);
+  assert(sp.count >= 16 && sp.count <= 20, `Sprint step count should match ~0.265s/step, got ${sp.count}`);
+  assert(sp.maxGap < 0.36, `Sprint gap too wide (${sp.maxGap.toFixed(3)}s)`);
+  for (let i = 1; i < sp.feet.length; i++) assert(sp.feet[i] !== sp.feet[i - 1], 'Left/right boot alternation broke');
+
+  const wk = simulateGait('walk', 5.0);
+  assert(wk.count >= 11 && wk.count <= 15, `Walk step count should match ~0.364s/step, got ${wk.count}`);
+  assert(wk.maxGap < 0.45, `Walk gap too wide (${wk.maxGap.toFixed(3)}s)`);
+
+  const cr = simulateGait('crouch', 5.0);
+  assert(cr.count >= 7 && cr.count <= 11, `Crouch step count should match ~0.545s/step, got ${cr.count}`);
+
+  // Verify road/sidewalk/yard terrain boundary constants align with chunk builder.
+  const layout = new WorldLayout(1993);
+  assert(BAND > ROAD_HALF && CHUNK > BAND * 2, 'Invalid road layout bands');
+  assert(layout.zone(0, 0) === 'downtown', 'Expected origin downtown zone');
+  console.log(`[audioTest] Part 3 PASS: Sprint ${sp.count} steps (maxGap=${sp.maxGap.toFixed(3)}s), Walk ${wk.count} steps (maxGap=${wk.maxGap.toFixed(3)}s), Crouch ${cr.count} steps — 1:1 phase-locked with bob.`);
 }
 
 export async function main(): Promise<number> {
   const manifest = auditAllAudioAssets();
   testSoundEngineAndAllEvents(manifest);
-  testSprintFootstepContinuity();
+  testFootstepRhythmAndSurfaces();
   console.log('[audioTest] ALL AUDIO AUDITS & EVENT TESTS PASSED.');
   return 0;
 }

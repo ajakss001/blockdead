@@ -12,12 +12,10 @@ export const EYE_CROUCH = 1.08;
 
 /** Velocity response, 1/s. High enough to feel immediate, low enough to avoid jitter. */
 const ACCEL = 14;
-/** Footstep stride distances, m (walk ~1.8m, sprint ~2.4m, crouch ~1.2m). */
-const STRIDE_WALK = 0.75;
-const STRIDE_SPRINT = 1.15;
-const STEP_DIST_WALK = 1.8;
-const STEP_DIST_SPRINT = 2.4;
-const STEP_DIST_CROUCH = 1.2;
+/** Single-step stride distances phase-locked 1:1 with camera bob & weapon sway (walk ~0.80m, sprint ~1.22m, crouch ~0.60m). */
+const STRIDE_WALK = 0.80;
+const STRIDE_SPRINT = 1.22;
+const STRIDE_CROUCH = 0.60;
 const PITCH_LIMIT = 1.45;
 /** How fast the feet follow the ground (1/s): smooths steps and slope changes. */
 const GROUND_FOLLOW = 18;
@@ -76,9 +74,10 @@ export class PlayerController {
   jumpFactor = 1;
   airborne = false;
   vy = 0;
-  /** Distance-based stride footstep event on this fixed step (stops immediately when stationary). */
+  /** Phase-locked stride footstep event on this fixed step (fires at exact nadir of camera/weapon bob). */
   stepped = false;
-  private stepDist = 0;
+  /** Alternating left/right foot index (0 | 1) synced to stepPhase. */
+  stepFoot: 0 | 1 = 0;
   private airGraceT = 0;
   private stopGraceT = 0;
   /** Non-null on the fixed step crouch state toggled. */
@@ -233,31 +232,30 @@ export class PlayerController {
     const moved = Math.hypot(dx, dz);
     this.speed = damp(this.speed, moved / dt, 10, dt);
 
-    // Distance-based footstep sync: triggers only from actual displacement, with short curb/bump grace
-    // so brief 1-2 frame terrain steps never swallow accumulated sprint stride.
+    // Phase-locked footstep sync: triggers strictly at each half-cycle nadir (n + 0.5) * PI of camera/weapon bob
+    // with brief curb/bump grace so small steps never swallow sprint rhythm.
     if (this.airborne) this.airGraceT += dt;
     else this.airGraceT = 0;
 
+    this.prevStepPhase = this.stepPhase;
+    const runT = clamp((this.speed - SPEED_WALK) / (SPEED_SPRINT - SPEED_WALK), 0, 1);
     if (this.airGraceT < 0.14 && moved > 0.0015) {
       this.stopGraceT = 0;
-      this.stepDist += moved;
-      const strideM = this.crouched ? STEP_DIST_CROUCH : this.sprinting ? STEP_DIST_SPRINT : STEP_DIST_WALK;
-      if (this.stepDist >= strideM) {
-        this.stepDist = Math.min(this.stepDist - strideM, strideM * 0.5);
+      const strideM = this.crouched ? STRIDE_CROUCH : lerp(STRIDE_WALK, STRIDE_SPRINT, runT);
+      this.stepPhase += (moved / strideM) * Math.PI;
+      const prevIdx = Math.floor((this.prevStepPhase - Math.PI * 0.5) / Math.PI);
+      const currIdx = Math.floor((this.stepPhase - Math.PI * 0.5) / Math.PI);
+      if (currIdx > prevIdx) {
         this.stepped = true;
+        this.stepFoot = (currIdx & 1) as 0 | 1;
       }
-    } else if (this.airGraceT >= 0.14) {
-      this.stepDist = Math.min(this.stepDist, 0.25);
     } else {
-      this.stopGraceT += dt;
-      if (this.stopGraceT >= 0.12) {
-        this.stepDist = Math.min(this.stepDist, 0.25);
+      if (this.airGraceT < 0.14) this.stopGraceT += dt;
+      if (this.airGraceT >= 0.14 || this.stopGraceT >= 0.12) {
+        const restPhase = Math.round(this.stepPhase / Math.PI) * Math.PI;
+        this.stepPhase = damp(this.stepPhase, restPhase, 10, dt);
       }
     }
-
-    const runT = clamp((this.speed - SPEED_WALK) / (SPEED_SPRINT - SPEED_WALK), 0, 1);
-    this.prevStepPhase = this.stepPhase;
-    this.stepPhase += (moved / lerp(STRIDE_WALK, STRIDE_SPRINT, runT)) * Math.PI;
 
     this.prevCrouchT = this.crouchT;
     this.crouchT = damp(this.crouchT, this.crouched ? 1 : 0, 8, dt);

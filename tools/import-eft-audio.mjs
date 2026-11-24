@@ -18,7 +18,7 @@ const TARGET_SR = 32000;
 
 const TARGET_PEAK = {
   weapon: 0.90,
-  footstep: 0.74,
+  footstep: 0.66,
   casing: 0.74,
   foley: 0.72,
   env: 0.72,
@@ -219,7 +219,8 @@ function trimAndFade(samples, sr, opts = {}) {
     if (sqSum > maxWinSq) maxWinSq = sqSum;
   }
   const maxRms = Math.sqrt(Math.max(0, maxWinSq) / win);
-  const onsetRmsThresh = Math.max(0.012, maxRms * 0.08, peak * 0.045);
+  const absFloor = opts.relative ? 0.0015 : 0.012;
+  const onsetRmsThresh = Math.max(absFloor, maxRms * (opts.onsetRmsFrac ?? 0.08), peak * (opts.onsetPeakFrac ?? 0.045));
   const targetWinSq = onsetRmsThresh * onsetRmsThresh * win;
 
   let onsetWinEnd = win;
@@ -240,7 +241,7 @@ function trimAndFade(samples, sr, opts = {}) {
 
   let start = 0;
   const searchFrom = Math.max(0, onsetWinEnd - win);
-  const sampleThresh = Math.max(0.008, peak * 0.035);
+  const sampleThresh = Math.max(opts.relative ? 0.001 : 0.008, peak * 0.035);
   let foundStart = false;
   for (let i = searchFrom; i < samples.length; i++) {
     if (Math.abs(samples[i]) >= sampleThresh) {
@@ -251,14 +252,14 @@ function trimAndFade(samples, sr, opts = {}) {
   }
   if (!foundStart) {
     for (let i = 0; i < samples.length; i++) {
-      if (Math.abs(samples[i]) >= Math.max(0.005, peak * 0.02)) {
+      if (Math.abs(samples[i]) >= Math.max(0.001, peak * 0.02)) {
         start = Math.max(0, i - Math.round(sr * (opts.leadPadSec ?? 0.002)));
         break;
       }
     }
   }
 
-  const endThresh = Math.max(0.002, peak * 0.004);
+  const endThresh = Math.max(opts.relative ? 0.0005 : 0.002, peak * 0.005);
   let end = samples.length;
   for (let i = samples.length - 1; i > start; i--) {
     if (Math.abs(samples[i]) >= endThresh) {
@@ -268,31 +269,16 @@ function trimAndFade(samples, sr, opts = {}) {
   }
   const out = samples.slice(start, Math.max(start + 64, end));
   const fadeIn = Math.min(Math.floor(out.length / 4), Math.round(sr * (opts.fadeInSec ?? 0.002)));
-  const fadeOut = Math.min(Math.floor(out.length / 3), Math.round(sr * (opts.fadeOutSec ?? 0.008)));
+  const fadeOut = Math.min(Math.floor(out.length / 2), Math.round(sr * (opts.fadeOutSec ?? 0.008)));
   for (let i = 0; i < fadeIn; i++) out[i] *= i / Math.max(1, fadeIn);
-  for (let i = 0; i < fadeOut; i++) out[out.length - 1 - i] *= i / Math.max(1, fadeOut);
+  for (let i = 0; i < fadeOut; i++) {
+    const k = i / Math.max(1, fadeOut);
+    out[out.length - 1 - i] *= opts.cosineFadeOut ? 0.5 * (1 - Math.cos(Math.PI * k)) : k;
+  }
   return out;
 }
 
-function sliceSteps(samples, sr, targetPeak, maxGain) {
-  const win = Math.round(sr * 0.01); // 10 ms RMS
-  const hop = Math.round(sr * 0.004); // 4 ms hop
-  const env = [];
-  for (let pos = 0; pos + win <= samples.length; pos += hop) {
-    let sum = 0;
-    for (let k = 0; k < win; k++) {
-      const v = samples[pos + k];
-      sum += v * v;
-    }
-    env.push({ idx: pos, rms: Math.sqrt(sum / win) });
-  }
-  if (env.length === 0) return [normalizePeak(trimAndFade(samples, sr), targetPeak, maxGain)];
-
-  const maxRms = env.reduce((m, e) => (e.rms > m ? e.rms : m), 0);
-  const thresh = Math.max(0.018, maxRms * 0.16);
-  const minGapSamples = Math.round(sr * 0.23);
-
-  // Detect local energy peaks representing individual footstep impacts.
+function detectPeaks(env, thresh, minGapSamples) {
   const peaks = [];
   let lastPeakIdx = -minGapSamples;
   for (let i = 2; i < env.length - 2; i++) {
@@ -313,50 +299,146 @@ function sliceSteps(samples, sr, targetPeak, maxGain) {
       }
     }
   }
+  return peaks;
+}
 
-  let selected = peaks;
-  if (selected.length > 6) {
-    // Keep up to 6 clearest impacts in chronological order.
-    selected = [...selected]
-      .sort((a, b) => b.rms - a.rms)
+function hasSecondaryImpact(slice, sr) {
+  const win = Math.round(sr * 0.012);
+  const hop = Math.round(sr * 0.004);
+  const env = [];
+  for (let pos = 0; pos + win <= slice.length; pos += hop) {
+    let sum = 0;
+    for (let k = 0; k < win; k++) {
+      const v = slice[pos + k];
+      sum += v * v;
+    }
+    env.push({ t: pos / sr, r: Math.sqrt(sum / win) });
+  }
+  if (env.length < 4) return { secondary: false, valleyIdx: slice.length };
+  let mainI = 0;
+  for (let i = 1; i < env.length; i++) if (env[i].r > env[mainI].r) mainI = i;
+  const mainR = env[mainI].r;
+  const mainT = env[mainI].t;
+  let valleyR = mainR;
+  let valleyT = env.length - 1;
+  for (let i = mainI + 1; i < env.length; i++) {
+    if (env[i].r < valleyR) {
+      valleyR = env[i].r;
+      valleyT = i;
+    }
+    if (env[i].t - mainT >= 0.105 && env[i].r >= mainR * 0.52 && env[i].r >= valleyR * 1.8) {
+      return { secondary: true, valleyIdx: Math.round(env[valleyT].t * sr) };
+    }
+  }
+  return { secondary: false, valleyIdx: slice.length };
+}
+
+function sliceSteps(samples, sr, targetPeak, maxGain, isRun = false) {
+  const win = Math.round(sr * 0.008); // 8 ms RMS
+  const hop = Math.round(sr * 0.003); // 3 ms hop
+  const env = [];
+  for (let pos = 0; pos + win <= samples.length; pos += hop) {
+    let sum = 0;
+    for (let k = 0; k < win; k++) {
+      const v = samples[pos + k];
+      sum += v * v;
+    }
+    env.push({ idx: pos, rms: Math.sqrt(sum / win) });
+  }
+  if (env.length === 0) return [normalizePeak(trimAndFade(samples, sr), targetPeak, maxGain)];
+
+  const maxRms = env.reduce((m, e) => (e.rms > m ? e.rms : m), 0);
+  const minGapSamples = Math.round(sr * (isRun ? 0.17 : 0.22));
+  let allPeaks = detectPeaks(env, Math.max(0.008, maxRms * 0.14), minGapSamples);
+  if (allPeaks.length < 4) {
+    allPeaks = detectPeaks(env, Math.max(0.0025, maxRms * 0.07), minGapSamples);
+  }
+
+  // Isolate each footstep from its immediate neighboring hits BEFORE choosing the cleanest 6.
+  const preSec = isRun ? 0.022 : 0.026;
+  const postSec = isRun ? 0.165 : 0.215;
+  const minDurSamples = Math.round(sr * 0.082);
+  const minRawPeak = Math.max(0.006, findPeakAbs(samples) * 0.05);
+
+  const candidates = [];
+  for (let i = 0; i < allPeaks.length; i++) {
+    const pIdx = allPeaks[i].idx;
+    const prevGuard = i > 0 ? Math.floor(allPeaks[i - 1].idx + (pIdx - allPeaks[i - 1].idx) * 0.65) : 0;
+    const nextGuard = i + 1 < allPeaks.length ? Math.floor(pIdx + (allPeaks[i + 1].idx - pIdx) * 0.56) : samples.length;
+    const sStart = Math.max(prevGuard, pIdx - Math.round(sr * preSec));
+    let sEnd = Math.min(nextGuard, pIdx + Math.round(sr * postSec));
+    if (sEnd - sStart < minDurSamples) continue;
+
+    let seg = samples.slice(sStart, sEnd);
+    const sec = hasSecondaryImpact(seg, sr);
+    if (sec.secondary && sec.valleyIdx >= minDurSamples) {
+      seg = seg.slice(0, sec.valleyIdx);
+    }
+
+    const cand = trimAndFade(seg, sr, {
+      relative: true,
+      onsetRmsFrac: 0.08,
+      onsetPeakFrac: 0.04,
+      leadPadSec: 0.002,
+      tailPadSec: 0.012,
+      fadeInSec: 0.002,
+      fadeOutSec: 0.028,
+      cosineFadeOut: true,
+    });
+    if (cand.length < minDurSamples) continue;
+    const pk = findPeakAbs(cand);
+    const rms = measureRms(cand);
+    if (pk < minRawPeak || rms < 0.0012) continue;
+    const check2 = hasSecondaryImpact(cand, sr);
+    candidates.push({
+      idx: pIdx,
+      rms: allPeaks[i].rms,
+      clean: !check2.secondary,
+      samples: cand,
+    });
+  }
+
+  let chosen = candidates.filter((c) => c.clean);
+  if (chosen.length < 4) chosen = candidates;
+  if (chosen.length > 6) {
+    // Prefer middle-energy consistent impacts (closest to median RMS) rather than extreme outliers.
+    const sortedRms = [...chosen].sort((a, b) => a.rms - b.rms);
+    const med = sortedRms[Math.floor(sortedRms.length / 2)].rms;
+    chosen = [...chosen]
+      .sort((a, b) => Math.abs(a.rms - med) - Math.abs(b.rms - med))
       .slice(0, 6)
       .sort((a, b) => a.idx - b.idx);
   }
 
-  const minRawPeak = Math.max(0.018, findPeakAbs(samples) * 0.06);
-  const slices = [];
-  if (selected.length >= 4) {
-    for (let i = 0; i < selected.length; i++) {
-      const pIdx = selected[i].idx;
-      const prevMid = i > 0 ? Math.floor((selected[i - 1].idx + pIdx) / 2) : 0;
-      const nextMid = i + 1 < selected.length ? Math.floor((pIdx + selected[i + 1].idx) / 2) : samples.length;
-      const sStart = Math.max(prevMid, pIdx - Math.round(sr * 0.045));
-      const sEnd = Math.min(nextMid, pIdx + Math.round(sr * 0.34));
-      if (sEnd - sStart >= Math.round(sr * 0.08)) {
-        const cand = trimAndFade(samples.slice(sStart, sEnd), sr, { leadPadSec: 0.002, tailPadSec: 0.015, fadeInSec: 0.003, fadeOutSec: 0.02 });
-        if (cand.length >= Math.round(sr * 0.08) && findPeakAbs(cand) >= minRawPeak && measureRms(cand) >= 0.003) {
-          slices.push(normalizePeak(cand, targetPeak, maxGain));
-        }
-      }
-    }
-  }
+  const slices = chosen.map((c) => normalizePeak(c.samples, targetPeak, maxGain));
 
-  if (slices.length < 4) {
-    // Fallback: divide the active signal span evenly into 4 audible steps, skipping silent segments.
+  if (slices.length < 4 && slices.length >= 2) {
+    // When a short source file only has 2-3 clear isolated steps, repeat cleanly without creating long noisy chunks.
+    while (slices.length < 4) {
+      slices.push(slices[slices.length % 2 === 0 ? 0 : Math.min(1, slices.length - 1)].slice());
+    }
+  } else if (slices.length < 4) {
     slices.length = 0;
     const active = trimAndFade(samples, sr, { leadPadSec: 0.004, tailPadSec: 0.02, fadeInSec: 0.002, fadeOutSec: 0.01 });
     const count = 4;
     const chunk = Math.floor(active.length / count);
+    const maxCap = Math.round(sr * (isRun ? 0.19 : 0.25));
     for (let i = 0; i < count; i++) {
       const s0 = i * chunk;
-      const s1 = i + 1 === count ? active.length : (i + 1) * chunk;
-      const cand = trimAndFade(active.slice(s0, s1), sr, { leadPadSec: 0.002, tailPadSec: 0.015, fadeInSec: 0.003, fadeOutSec: 0.02 });
-      if (findPeakAbs(cand) >= 0.008 && measureRms(cand) >= 0.0015) {
+      const s1 = Math.min(i + 1 === count ? active.length : (i + 1) * chunk, s0 + maxCap);
+      const cand = trimAndFade(active.slice(s0, s1), sr, {
+        relative: true,
+        leadPadSec: 0.002,
+        tailPadSec: 0.012,
+        fadeInSec: 0.002,
+        fadeOutSec: 0.028,
+        cosineFadeOut: true,
+      });
+      if (cand.length >= minDurSamples && findPeakAbs(cand) >= 0.006 && measureRms(cand) >= 0.0012) {
         slices.push(normalizePeak(cand, targetPeak, maxGain));
       }
     }
     if (slices.length < 4 && slices.length > 0) {
-      // Duplicate clearest slices with tiny gain variance rather than shipping a dead-silent clip.
       while (slices.length < 4) {
         slices.push(slices[slices.length % Math.max(1, slices.length)].slice());
       }
@@ -421,7 +503,7 @@ function main() {
     const maxGain = MAX_GAIN[entry.cat] ?? 10;
 
     if (entry.mode === 'slice') {
-      const parts = sliceSteps(mono, TARGET_SR, targetPeak, maxGain);
+      const parts = sliceSteps(mono, TARGET_SR, targetPeak, maxGain, entry.group.endsWith('Run'));
       outManifest[entry.group] = [];
       for (let i = 0; i < parts.length; i++) {
         const rel = `${entry.out}_${i + 1}.wav`;
