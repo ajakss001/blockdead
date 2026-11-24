@@ -155,7 +155,7 @@ export class GunFx {
       this.light.intensity = 0;
     }
     if (dt <= 0) return;
-    this.step(this.cases, dt, 0.005, (b) => sfx.casing(b.pos, b.shell, false));
+    this.step(this.cases, dt, 0.005, () => {});
     this.step(this.mags, dt, 0.015, (b) => sfx.magDrop(b.pos));
     this.write(this.caseMesh, this.cases.filter((c) => !c.shell));
     this.write(this.shellMesh, this.cases.filter((c) => c.shell));

@@ -1,0 +1,237 @@
+{
+  "shotAk": [
+    "weapons/shot_ak.wav"
+  ],
+  "shotM4": [
+    "weapons/shot_m4.wav"
+  ],
+  "shotShotgun": [
+    "weapons/shot_shotgun.wav"
+  ],
+  "shotPistol": [
+    "weapons/shot_pistol.wav"
+  ],
+  "shotHunting": [
+    "weapons/shot_hunting.wav"
+  ],
+  "shotRifleSup": [
+    "weapons/shot_rifle_sup.wav"
+  ],
+  "shotPistolSup": [
+    "weapons/shot_pistol_sup.wav"
+  ],
+  "shotRpg": [
+    "weapons/shot_rpg.wav"
+  ],
+  "rpgExplosion": [
+    "weapons/rpg_explosion.wav"
+  ],
+  "gunReloadRifle": [
+    "weapons/reload_rifle.wav"
+  ],
+  "gunPump": [
+    "weapons/gun_pump.wav"
+  ],
+  "gunBolt": [
+    "weapons/gun_bolt.wav"
+  ],
+  "gunMagCheck": [
+    "weapons/mag_check.wav"
+  ],
+  "gunDry": [
+    "weapons/gun_dry.wav"
+  ],
+  "armorHit": [
+    "weapons/armor_hit.wav"
+  ],
+  "adsRifle": [
+    "weapons/ads_rifle.wav"
+  ],
+  "adsPistol": [
+    "weapons/ads_pistol.wav"
+  ],
+  "casingAsphalt": [
+    "casings/casing_asphalt.wav"
+  ],
+  "casingWood": [
+    "casings/casing_wood.wav"
+  ],
+  "casingDirt": [
+    "casings/casing_dirt.wav"
+  ],
+  "casingMetal": [
+    "casings/casing_metal.wav"
+  ],
+  "casingShotgun": [
+    "casings/casing_shotgun.wav"
+  ],
+  "stepAsphaltWalk": [
+    "footsteps/asphalt_walk_1.wav",
+    "footsteps/asphalt_walk_2.wav",
+    "footsteps/asphalt_walk_3.wav",
+    "footsteps/asphalt_walk_4.wav",
+    "footsteps/asphalt_walk_5.wav",
+    "footsteps/asphalt_walk_6.wav"
+  ],
+  "stepAsphaltRun": [
+    "footsteps/asphalt_run_1.wav",
+    "footsteps/asphalt_run_2.wav",
+    "footsteps/asphalt_run_3.wav",
+    "footsteps/asphalt_run_4.wav",
+    "footsteps/asphalt_run_5.wav",
+    "footsteps/asphalt_run_6.wav"
+  ],
+  "stepDirtWalk": [
+    "footsteps/dirt_walk_1.wav",
+    "footsteps/dirt_walk_2.wav",
+    "footsteps/dirt_walk_3.wav",
+    "footsteps/dirt_walk_4.wav",
+    "footsteps/dirt_walk_5.wav"
+  ],
+  "stepDirtRun": [
+    "footsteps/dirt_run_1.wav",
+    "footsteps/dirt_run_2.wav",
+    "footsteps/dirt_run_3.wav",
+    "footsteps/dirt_run_4.wav",
+    "footsteps/dirt_run_5.wav",
+    "footsteps/dirt_run_6.wav"
+  ],
+  "stepWoodWalk": [
+    "footsteps/wood_walk_1.wav",
+    "footsteps/wood_walk_2.wav",
+    "footsteps/wood_walk_3.wav",
+    "footsteps/wood_walk_4.wav"
+  ],
+  "stepWoodRun": [
+    "footsteps/wood_run_1.wav",
+    "footsteps/wood_run_2.wav",
+    "footsteps/wood_run_3.wav",
+    "footsteps/wood_run_4.wav",
+    "footsteps/wood_run_5.wav",
+    "footsteps/wood_run_6.wav"
+  ],
+  "stepConcreteWalk": [
+    "footsteps/concrete_walk_1.wav",
+    "footsteps/concrete_walk_2.wav",
+    "footsteps/concrete_walk_3.wav",
+    "footsteps/concrete_walk_4.wav"
+  ],
+  "stepConcreteRun": [
+    "footsteps/concrete_run_1.wav",
+    "footsteps/concrete_run_2.wav",
+    "footsteps/concrete_run_3.wav",
+    "footsteps/concrete_run_4.wav",
+    "footsteps/concrete_run_5.wav"
+  ],
+  "stepMuffled": [
+    "footsteps/muffled_1.wav",
+    "footsteps/muffled_2.wav",
+    "footsteps/muffled_3.wav",
+    "footsteps/muffled_4.wav",
+    "footsteps/muffled_5.wav"
+  ],
+  "stepMetalWalk": [
+    "footsteps/metal_walk_1.wav",
+    "footsteps/metal_walk_2.wav",
+    "footsteps/metal_walk_3.wav",
+    "footsteps/metal_walk_4.wav",
+    "footsteps/metal_walk_5.wav"
+  ],
+  "stepMetalRun": [
+    "footsteps/metal_run_1.wav",
+    "footsteps/metal_run_2.wav",
+    "footsteps/metal_run_3.wav",
+    "footsteps/metal_run_4.wav",
+    "footsteps/metal_run_5.wav",
+    "footsteps/metal_run_6.wav"
+  ],
+  "pivotAsphalt": [
+    "foley/pivot_asphalt.wav"
+  ],
+  "pivotAsphaltFast": [
+    "foley/pivot_asphalt_fast.wav"
+  ],
+  "pivotWood": [
+    "foley/pivot_wood.wav"
+  ],
+  "pivotConcrete": [
+    "foley/pivot_concrete.wav"
+  ],
+  "pivotDirt": [
+    "foley/pivot_dirt.wav"
+  ],
+  "crouchDown": [
+    "foley/crouch_down.wav"
+  ],
+  "standUp": [
+    "foley/stand_up.wav"
+  ],
+  "stepCrouch": [
+    "footsteps/crouch_1.wav",
+    "footsteps/crouch_2.wav",
+    "footsteps/crouch_3.wav",
+    "footsteps/crouch_4.wav"
+  ],
+  "jumpPush": [
+    "foley/jump_push.wav"
+  ],
+  "landHard": [
+    "foley/land_hard.wav"
+  ],
+  "landMetal": [
+    "foley/land_metal.wav"
+  ],
+  "breathClear": [
+    "foley/breath_clear.wav"
+  ],
+  "breathMask": [
+    "foley/breath_mask.wav"
+  ],
+  "heartbeat": [
+    "foley/heartbeat.wav"
+  ],
+  "woodCreak": [
+    "env/wood_creak.wav"
+  ],
+  "woodCreakSharp": [
+    "env/wood_creak_sharp.wav"
+  ],
+  "buildingCreak": [
+    "env/building_creak.wav"
+  ],
+  "stepGlassWalk": [
+    "footsteps/glass_walk_1.wav",
+    "footsteps/glass_walk_2.wav",
+    "footsteps/glass_walk_3.wav",
+    "footsteps/glass_walk_4.wav"
+  ],
+  "stepGlassRun": [
+    "footsteps/glass_run_1.wav",
+    "footsteps/glass_run_2.wav",
+    "footsteps/glass_run_3.wav",
+    "footsteps/glass_run_4.wav",
+    "footsteps/glass_run_5.wav",
+    "footsteps/glass_run_6.wav"
+  ],
+  "stepGlassCrouch": [
+    "footsteps/glass_crouch_1.wav",
+    "footsteps/glass_crouch_2.wav",
+    "footsteps/glass_crouch_3.wav",
+    "footsteps/glass_crouch_4.wav"
+  ],
+  "glassBreak": [
+    "env/glass_break.wav"
+  ],
+  "glassSettle": [
+    "env/glass_settle.wav"
+  ],
+  "doorWood": [
+    "env/door_wood.wav"
+  ],
+  "doorMetal": [
+    "env/door_metal.wav"
+  ],
+  "lootSearch": [
+    "foley/loot_search.wav"
+  ]
+}

@@ -239,6 +239,7 @@ export class InventoryPanel {
       window.clearInterval(this.searchTimer);
       this.searchTimer = null;
     }
+    sfx.setLootLoop(false);
     this.searchingZone = null;
     this.searchProgress = 0;
   }
@@ -249,7 +250,7 @@ export class InventoryPanel {
     this.stopSearch();
     this.searchingZone = zone;
     this.searchProgress = 0;
-    sfx.item('drag');
+    sfx.setLootLoop(true);
     const started = performance.now();
     const duration = zone === 'backpack' ? 950 : zone === 'rig' ? 800 : 650;
     this.searchTimer = window.setInterval(() => {

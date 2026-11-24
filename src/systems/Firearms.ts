@@ -1,5 +1,5 @@
 import { type Object3D, Quaternion, type Scene, Vector3 } from 'three';
-import { type BulletHit, type EchoPlace, type GunMech, type GunSound, sfx } from '../audio/Sound';
+import { type BulletHit, type EchoPlace, type GunMech, type GunSound, sfx, type StepSurface } from '../audio/Sound';
 import { tr } from '../core/i18n';
 import type { InputManager } from '../input/InputManager';
 import type { Player } from '../player/Player';
@@ -48,6 +48,8 @@ export interface FirearmsWorld {
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
   place(): EchoPlace;
+  /** Surface under the shooter's feet for shell casing drop sound. */
+  surfaceAt?(): StepSurface;
   /** A zombie hit (skills, kills count). */
   onHit?(killed: boolean, head: boolean): void;
   /** Hostile survivor bots. */
@@ -130,6 +132,8 @@ export class Firearms {
   private reloadHeld = -1;
   private inspectFromHold = false;
   private smokeT = 0;
+  private prevAds = false;
+  private readonly pendingCasings: { t: number; shell: boolean }[] = [];
   private rockets: Rocket[] = [];
   /** The burst's climb on the view this pull. */
   private climb = 0;
@@ -178,6 +182,15 @@ export class Firearms {
     this.sinceUse += dt;
     this.magCheckT = Math.max(0, this.magCheckT - dt);
     this.hitMarkT += dt;
+    for (let i = this.pendingCasings.length - 1; i >= 0; i--) {
+      this.pendingCasings[i].t -= dt;
+      if (this.pendingCasings[i].t <= 0) {
+        const c = this.pendingCasings[i];
+        this.pendingCasings.splice(i, 1);
+        const pos = this.w.player.controller.position;
+        sfx.casing({ x: pos.x, y: pos.y + 0.05, z: pos.z }, c.shell, this.w.surfaceAt?.() ?? 'asphalt');
+      }
+    }
     this.updateRockets(dt);
     // The gun in the hands is the one the viewmodel shows (after the switch).
     const id = isGun(hand) && vm.gun === hand ? hand : null;
@@ -221,7 +234,7 @@ export class Firearms {
     if (checkAmmo && !player.busy && !vm.switching) {
       this.magCheckT = 2.8;
       inspect = true;
-      sfx.gunMech('magOut', id === 'rifle_ak' ? 0.85 : id.startsWith('pistol') ? 1.15 : 1);
+      sfx.gunMech('magCheck', id === 'rifle_ak' ? 0.94 : id.startsWith('pistol') ? 1.08 : 1);
     }
     if (input.consumePressed('reload')) {
       this.reloadHeld = 0;
@@ -265,6 +278,8 @@ export class Firearms {
     gv.chamber = gs.inst.chamber;
     gv.mods = gs.inst.mods;
     gv.ads = input.isHeld('aim');
+    if (gv.ads && !this.prevAds && !busy && !c.sprinting) sfx.ads(g.cls === 'pistol');
+    this.prevAds = gv.ads;
     player.zoom = g.zoom;
     if (gv.ads || trigger || gs.busy) this.sinceUse = Math.min(this.sinceUse, 0.5);
     // Smoke from the muzzle after a burst.
@@ -373,6 +388,9 @@ export class Firearms {
         p.controller.addNoise(Math.min(1, r / 60));
         if (g.cls === 'launcher') this.launch();
         else for (let i = 0; i < (g.pellets ?? 1); i++) this.bullet(id, mods);
+        if (g.cls !== 'launcher' && g.action !== 'pump' && g.action !== 'bolt') {
+          this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: false });
+        }
         if (gs.inst.mag === 0 && !gs.inst.chamber && g.cls === 'pistol') mech('slideLock');
         break;
       }
@@ -388,11 +406,11 @@ export class Firearms {
         this.w.toast(tr('Заклинило — R', 'Jammed — R'), 1200);
         break;
       case 'magOut':
-        mech('magOut');
+        if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magOut');
         if (e.drop) this.dropMag(id);
         break;
       case 'magIn':
-        mech('magIn');
+        if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magIn');
         this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rack':
@@ -400,6 +418,7 @@ export class Firearms {
         break;
       case 'cycle':
         mech(g.action === 'pump' ? 'pump' : 'bolt');
+        this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: !!g.pellets });
         break;
       case 'shellIn':
         mech('shell');
@@ -415,6 +434,7 @@ export class Firearms {
         break;
       case 'unjammed':
         this.ejectCase(id);
+        this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: !!g.pellets });
         this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'bash':
@@ -422,6 +442,9 @@ export class Firearms {
         break;
       case 'start':
         if (e.action === 'holster') mech('holster');
+        else if ((e.action === 'reload' || e.action === 'reloadEmpty') && (id === 'rifle_ak' || id === 'rifle_m4a1')) {
+          mech('reloadRifle');
+        }
         break;
     }
   }
@@ -500,7 +523,8 @@ export class Firearms {
     const killed = this.w.bandits!.hit(res.bot, dmg, o.x, o.z, res.head);
     this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
     this.cloth(res.point);
-    sfx.bulletHit('flesh', res.point);
+    sfx.bulletHit(res.bot.worn.vest && !res.head ? 'metal' : 'flesh', res.point);
+    if (res.bot.worn.vest && !res.head) sfx.armorHit();
     this.hitMark = res.head ? 'head' : 'body';
     this.hitMarkT = 0;
     sfx.hitMarker(res.head);

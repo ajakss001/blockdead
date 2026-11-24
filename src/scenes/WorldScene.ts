@@ -314,8 +314,14 @@ export class WorldScene implements IScene {
   private air = 0;
   private felt = 0;
   private climateT = 0;
-  /** Last step index (stepPhase / π) a footstep was played for. */
-  private stepN = 0;
+  /** Turn-in-place foot-pivot detector state. */
+  private turnYawAccum = 0;
+  private turnWindowT = 0;
+  private turnCd = 0;
+  private prevTurnYaw = 0;
+  private turnInited = false;
+  private readonly _surfOrig = new Vector3();
+  private readonly _surfDown = new Vector3(0, -1, 0);
   private layout!: WorldLayout;
   private zombies!: ZombieSim;
   /** Every zombie, living and dead: the procedural models, batched per type, up to the fog. */
@@ -475,6 +481,7 @@ export class WorldScene implements IScene {
         const armor = bulletArmor(this.inventory.worn, this.inventory.wornDirt);
         if (this.inventory.worn.vest) {
           this.inventory.wornDirt.vest = Math.min(1, (this.inventory.wornDirt.vest ?? 0) + 0.03);
+          sfx.armorHit();
         }
         this.hurt(hp * (1 - armor), cause, true, new Vector3(fx, this.player.controller.position.y, fz));
       },
@@ -700,6 +707,16 @@ export class WorldScene implements IScene {
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
+      surfaceAt: () => this.surfaceAt(this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y),
+    });
+    sfx.setOcclusionCheck((lx, ly, lz, sx, sy, sz) => {
+      const dx = sx - lx;
+      const dy = sy - ly;
+      const dz = sz - lz;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist <= 0.6) return false;
+      const hit = this.world.rayHit(lx, ly, lz, dx / dist, dy / dist, dz / dist, dist);
+      return hit >= 0 && hit < dist - 0.5;
     });
     this.gunHud = new GunHud(document.getElementById('ui')!, ctx.input);
     this.firearms.onShot = (r) => this.gunHud.shot(r);
@@ -1200,29 +1217,54 @@ export class WorldScene implements IScene {
     this.hazards(dt, c.position);
     if (c.jumped) this.survival.onJump();
     this.ctx.hud.setStamina(this.survival.stamina);
-    // Footsteps on whatever is underfoot; jump and landing.
+    // Distance-based footsteps, crouch/stand, turn-in-place pivots, jump, and landing.
     const feet = { x: c.position.x, y: c.position.y + 0.05, z: c.position.z };
-    const n = Math.floor(c.stepPhase / Math.PI);
-    if (n !== this.stepN && !c.airborne && c.speed > 0.3) {
+    if (c.crouchChanged) sfx.crouch(c.crouchChanged === 'down', feet);
+    if (c.stepped && !c.airborne) {
       const wet = this.atmo.puddleAt(feet.x, feet.z, c.position.y);
       if (wet) this.atmo.ripple(feet.x, c.position.y, feet.z);
       sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet);
     }
-    this.stepN = n;
+    this.turnCd = Math.max(0, this.turnCd - dt);
+    if (!this.turnInited) {
+      this.prevTurnYaw = c.yaw;
+      this.turnInited = true;
+    }
+    let dYaw = c.yaw - this.prevTurnYaw;
+    while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+    while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+    this.prevTurnYaw = c.yaw;
+    if (!this.dead && !c.airborne && !this.vehicles.activeCar && c.speed < 0.1) {
+      this.turnYawAccum += dYaw;
+      this.turnWindowT += dt;
+      if (this.turnWindowT > 0.45) {
+        this.turnYawAccum *= 0.35;
+        this.turnWindowT = 0;
+      }
+      if (Math.abs(this.turnYawAccum) >= (50 * Math.PI) / 180 && this.turnCd <= 0) {
+        const surf = this.surfaceAt(feet.x, feet.z, c.position.y);
+        sfx.pivot(surf, feet, Math.abs(this.turnYawAccum) >= (130 * Math.PI) / 180);
+        this.turnYawAccum = 0;
+        this.turnWindowT = 0;
+        this.turnCd = 0.6;
+      }
+    } else {
+      this.turnYawAccum = 0;
+      this.turnWindowT = 0;
+    }
     if (c.jumped) sfx.jump(feet);
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
     if (!this.dead && !this.vehicles.activeCar) this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
     this.updateGrid();
-    // Climate: where you are (under a roof or not) and the hour decide the air; clothes and movement the rest.
+    // Climate & room reverb: outdoor streets dry (0.02), downtown alleys (0.10), concrete indoors (0.42).
     this.climateT -= dt;
     if (this.climateT <= 0) {
       this.climateT = 0.25;
       const p = c.position;
       this.indoors = this.shelters.covers(p.x, p.z, p.y);
       this.air = airTemperature(this.clock.hour, this.indoors);
-      // Echo: bare rooms ring, the canyon streets downtown a little, open ground hardly at all.
-      sfx.setRoom(this.indoors ? 0.38 : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.2 : 0.06);
+      sfx.setRoom(this.indoors ? 0.42 : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.1 : 0.02);
     }
     this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting) + this.base.warmth(c.position.x, c.position.y, c.position.z);
     // Clothes get dirty: faster running, crawling, rummaging through containers.
@@ -1236,6 +1278,7 @@ export class WorldScene implements IScene {
       else if (c.crouched && threat > 0.05) this.skills.add('sneak', XP.sneak * dt);
     }
     this.survival.update(dt, c.speed, c.sprinting, { felt: this.felt, dark, batteryDead: this.player.battery <= 0, threat });
+    sfx.updateStamina(dt, this.survival.stamina, this.survival.health, Boolean(this.inventory.worn.mask), this.dead);
     // Anxiety: heartbeat and breath, and the screen edges closing in with every beat.
     const a = this.survival.anxiety;
     if (!this.dead) this.dread.update(dt, a);
@@ -1427,6 +1470,10 @@ export class WorldScene implements IScene {
       if (inStairCore(b, x, z)) return b.kind === 'offices' ? 'metal' : 'concrete';
       if (Math.round(y / FLOOR_H) <= 0) return 'tile';
       return b.kind === 'offices' ? 'tile' : 'wood';
+    }
+    if (y > 0.35) {
+      const underfoot = this.player.surfaceAlong(this._surfOrig.set(x, y + 0.35, z), this._surfDown, 0.7);
+      if (underfoot === 'metal' || underfoot === 'trim') return 'metal';
     }
     const zone = this.chunks.zoneAt(x, z);
     if (this.indoors) return zone === 'town' ? 'tile' : 'wood';
@@ -2435,6 +2482,8 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
+    sfx.setOcclusionCheck(null);
+    sfx.setLootLoop(false);
     this.editor.dispose();
     this.firearms.dispose();
     this.bandits.dispose();

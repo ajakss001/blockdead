@@ -367,7 +367,7 @@ export class Atmosphere {
     }
     this.creakT -= dt;
     if (this.creakT <= 0) {
-      this.creakT = 12 + Math.random() * 18;
+      this.creakT = 15 + Math.random() * 15;
       sfx.house('creak', around(2, 6, Math.random() < 0.6 ? 0.1 : 2.6));
     }
     this.aboveT -= dt;

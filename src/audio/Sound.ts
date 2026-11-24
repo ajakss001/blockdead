@@ -39,7 +39,24 @@ export type FleshBlow = 'blunt' | 'metal' | 'chop' | 'stab' | 'fist';
 /** Guns by how they sound: the report, its crack and boom. */
 export type GunSound = 'pistol' | 'pistol45' | 'rifle' | 'ak' | 'shotgun' | 'hunting' | 'rpg';
 /** The gun's mechanics in the hands. */
-export type GunMech = 'magOut' | 'magIn' | 'rack' | 'slideLock' | 'boltCatch' | 'pump' | 'bolt' | 'shell' | 'rocket' | 'mode' | 'dry' | 'jam' | 'draw' | 'holster' | 'lastRounds';
+export type GunMech =
+  | 'magOut'
+  | 'magIn'
+  | 'rack'
+  | 'slideLock'
+  | 'boltCatch'
+  | 'pump'
+  | 'bolt'
+  | 'shell'
+  | 'rocket'
+  | 'mode'
+  | 'dry'
+  | 'jam'
+  | 'draw'
+  | 'holster'
+  | 'lastRounds'
+  | 'magCheck'
+  | 'reloadRifle';
 /** Where the shot rings: indoors (short, dense), a street (one late slap), an alley (fluttering). */
 export type EchoPlace = 'indoor' | 'street' | 'alley';
 /** What a bullet hits. */
@@ -177,6 +194,15 @@ class Sound {
   private worldMute = false;
   private search: { kind: ContainerSound; pos: Pos; t: number } | null = null;
   private readonly loopSlots: LoopSlot[] = [];
+  /** Listener world position for vertical / obstacle occlusion checks. */
+  private lx = 0;
+  private ly = 0;
+  private lz = 0;
+  private occlusionCheck: ((lx: number, ly: number, lz: number, sx: number, sy: number, sz: number) => boolean) | null = null;
+  private breathVoice: { src: AudioBufferSourceNode; gain: GainNode; masked: boolean } | null = null;
+  private heartVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private lootVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private wantLootLoop = false;
 
   /** Wire to the game: unlock on the first gesture, mute with the pause reasons. */
   attach(events: EventBus<GameEvents>, loop: GameLoop): void {
@@ -211,13 +237,21 @@ class Sound {
     this.muffle.frequency.setTargetAtTime(20000 * Math.pow(0.012, k), this.ac.currentTime, 0.1);
   }
 
-  /** Reverb amount for where the listener is: 0 open field … 0.4 a bare room. */
+  /** Reverb amount for where the listener is: 0.02 open field … 0.42 concrete room/stairwell. */
   setRoom(wet: number): void {
-    if (this.ac && this.send) this.send.gain.setTargetAtTime(wet, this.ac.currentTime, 0.4);
+    if (this.ac && this.send) this.send.gain.setTargetAtTime(wet, this.ac.currentTime, 0.25);
+  }
+
+  /** Line-of-sight wall/floor occlusion predicate (true = muffled behind wall/floor). */
+  setOcclusionCheck(fn: ((lx: number, ly: number, lz: number, sx: number, sy: number, sz: number) => boolean) | null): void {
+    this.occlusionCheck = fn;
   }
 
   /** Listener at the camera (call every frame). */
   setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number): void {
+    this.lx = x;
+    this.ly = y;
+    this.lz = z;
     const l = this.ac?.listener;
     if (!l) return;
     if (l.positionX) {
@@ -240,49 +274,126 @@ class Sound {
   // ── Game sounds ────────────────────────────────────────────────────────────
 
   step(surface: StepSurface, gait: Gait, pos: Pos, loud = 1): void {
-    const v = this.voice(pos, 0.25);
+    const v = this.voice(pos, 0.45);
     if (!v) return;
     const [out, t] = v;
-    const g = (gait === 'run' ? 1 : gait === 'walk' ? 0.55 : 0.22) * loud;
+    const diffFloor = Math.abs(pos.y - this.ly) > 2.5;
+    const volRand = 0.85 + Math.random() * 0.15;
+    const g = (gait === 'run' ? 0.92 : gait === 'walk' ? 0.72 : 0.42) * loud * volRand;
+
+    if (diffFloor && this.sample(out, t, 'stepMuffled', { vary: 0.08, gain: g * 0.9 })) return;
+
+    let grp: SampleGroup | null = null;
+    if (surface === 'glass') {
+      grp = gait === 'crouch' ? 'stepGlassCrouch' : gait === 'run' ? 'stepGlassRun' : 'stepGlassWalk';
+    } else if (gait === 'crouch') {
+      grp = 'stepCrouch';
+    } else if (surface === 'asphalt') {
+      grp = gait === 'run' ? 'stepAsphaltRun' : 'stepAsphaltWalk';
+    } else if (surface === 'grass') {
+      grp = gait === 'run' ? 'stepDirtRun' : 'stepDirtWalk';
+    } else if (surface === 'wood') {
+      grp = gait === 'run' ? 'stepWoodRun' : 'stepWoodWalk';
+    } else if (surface === 'metal') {
+      grp = gait === 'run' ? 'stepMetalRun' : 'stepMetalWalk';
+    } else if (surface === 'concrete' || surface === 'tile') {
+      grp = gait === 'run' ? 'stepConcreteRun' : 'stepConcreteWalk';
+    }
+
+    if (grp && this.sample(out, t, grp, { vary: 0.08, gain: g })) {
+      if (surface === 'wood' && Math.random() < 0.27) {
+        this.sample(out, t + 0.02 + Math.random() * 0.04, 'woodCreak', { vary: 0.08, gain: 0.48 * volRand });
+      }
+      return;
+    }
+
+    const synthG = (gait === 'run' ? 1 : gait === 'walk' ? 0.55 : 0.22) * loud;
     const soft = gait === 'crouch' ? 0.6 : 1;
     const j = 0.85 + Math.random() * 0.3;
     switch (surface) {
       case 'asphalt':
-        this.noiseHit(out, t, { type: 'lowpass', f: 1100 * soft * j, dur: 0.09, peak: 0.5 * g });
-        this.noiseHit(out, t, { type: 'bandpass', f: 3200 * j, q: 1, dur: 0.025, peak: 0.12 * g });
+        this.noiseHit(out, t, { type: 'lowpass', f: 1100 * soft * j, dur: 0.09, peak: 0.5 * synthG });
+        this.noiseHit(out, t, { type: 'bandpass', f: 3200 * j, q: 1, dur: 0.025, peak: 0.12 * synthG });
         break;
       case 'concrete':
-        this.noiseHit(out, t, { type: 'bandpass', f: 1500 * soft * j, q: 0.9, dur: 0.07, peak: 0.55 * g });
-        this.noiseHit(out, t, { type: 'highpass', f: 5000, dur: 0.015, peak: 0.1 * g });
+        this.noiseHit(out, t, { type: 'bandpass', f: 1500 * soft * j, q: 0.9, dur: 0.07, peak: 0.55 * synthG });
+        this.noiseHit(out, t, { type: 'highpass', f: 5000, dur: 0.015, peak: 0.1 * synthG });
         break;
       case 'tile':
-        this.noiseHit(out, t, { type: 'bandpass', f: 2400 * soft * j, q: 1.2, dur: 0.05, peak: 0.5 * g });
-        this.tone(out, t, { f: 1700 * j, dur: 0.03, peak: 0.05 * g });
+        this.noiseHit(out, t, { type: 'bandpass', f: 2400 * soft * j, q: 1.2, dur: 0.05, peak: 0.5 * synthG });
+        this.tone(out, t, { f: 1700 * j, dur: 0.03, peak: 0.05 * synthG });
         break;
       case 'wood':
-        this.noiseHit(out, t, { type: 'bandpass', f: 600 * j, q: 1.4, dur: 0.09, peak: 0.6 * g });
-        this.tone(out, t, { f: 150 * j, f2: 110, dur: 0.12, peak: 0.35 * g });
-        if (Math.random() < 0.15) this.tone(out, t + 0.05, { f: 310, f2: 345, dur: 0.22, peak: 0.04 * g, type: 'sawtooth', lp: 900 });
+        this.noiseHit(out, t, { type: 'bandpass', f: 600 * j, q: 1.4, dur: 0.09, peak: 0.6 * synthG });
+        this.tone(out, t, { f: 150 * j, f2: 110, dur: 0.12, peak: 0.35 * synthG });
+        if (Math.random() < 0.25) this.tone(out, t + 0.05, { f: 310, f2: 345, dur: 0.22, peak: 0.04 * synthG, type: 'sawtooth', lp: 900 });
         break;
       case 'metal':
-        this.noiseHit(out, t, { type: 'bandpass', f: 2000 * j, q: 1, dur: 0.05, peak: 0.4 * g });
-        for (const f of [540, 870, 1310]) this.tone(out, t, { f: f * j, dur: 0.3, peak: 0.07 * g });
+        this.noiseHit(out, t, { type: 'bandpass', f: 2000 * j, q: 1, dur: 0.05, peak: 0.4 * synthG });
+        for (const f of [540, 870, 1310]) this.tone(out, t, { f: f * j, dur: 0.3, peak: 0.07 * synthG });
         break;
       case 'glass':
-        this.noiseHit(out, t, { type: 'lowpass', f: 900, dur: 0.07, peak: 0.3 * g });
-        for (let i = 0; i < 5; i++) this.noiseHit(out, t + Math.random() * 0.07, { type: 'highpass', f: 4500 + Math.random() * 2500, dur: 0.012, peak: 0.25 * g });
+        this.noiseHit(out, t, { type: 'lowpass', f: 900, dur: 0.07, peak: 0.3 * synthG });
+        for (let i = 0; i < 5; i++) this.noiseHit(out, t + Math.random() * 0.07, { type: 'highpass', f: 4500 + Math.random() * 2500, dur: 0.012, peak: 0.25 * synthG });
         break;
       case 'grass':
-        this.noiseHit(out, t, { type: 'lowpass', f: 650 * j, dur: 0.14, peak: 0.45 * g, attack: 0.02 });
-        this.noiseHit(out, t + 0.02, { type: 'highpass', f: 3500, dur: 0.1, peak: 0.06 * g, attack: 0.02 });
+        this.noiseHit(out, t, { type: 'lowpass', f: 650 * j, dur: 0.14, peak: 0.45 * synthG, attack: 0.02 });
+        this.noiseHit(out, t + 0.02, { type: 'highpass', f: 3500, dur: 0.1, peak: 0.06 * synthG, attack: 0.02 });
         break;
       case 'water':
-        // A foot in a puddle: a slap, a splash, a few drops falling back.
-        this.noiseHit(out, t, { type: 'lowpass', f: 500 * j, dur: 0.08, peak: 0.35 * g });
-        this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 1400 * j, f2: 700, q: 1.2, dur: 0.16, peak: 0.35 * g, attack: 0.01 });
-        for (let i = 0; i < 3; i++) this.tone(out, t + 0.08 + Math.random() * 0.12, { f: 1200 + Math.random() * 900, f2: 2200, dur: 0.035, peak: 0.04 * g });
+        this.noiseHit(out, t, { type: 'lowpass', f: 500 * j, dur: 0.08, peak: 0.35 * synthG });
+        this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 1400 * j, f2: 700, q: 1.2, dur: 0.16, peak: 0.35 * synthG, attack: 0.01 });
+        for (let i = 0; i < 3; i++) this.tone(out, t + 0.08 + Math.random() * 0.12, { f: 1200 + Math.random() * 900, f2: 2200, dur: 0.035, peak: 0.04 * synthG });
         break;
     }
+  }
+
+  /** Turn-in-place foot pivot or 180-deg shift matched to the surface under foot. */
+  pivot(surface: StepSurface, pos: Pos, fast = false): void {
+    const v = this.voice(pos, 0.55);
+    if (!v) return;
+    const [out, t] = v;
+    const gain = 0.68 + Math.random() * 0.16;
+    let grp: SampleGroup = 'pivotAsphalt';
+    if (fast && (surface === 'asphalt' || surface === 'concrete' || surface === 'tile')) grp = 'pivotAsphaltFast';
+    else if (surface === 'wood') grp = 'pivotWood';
+    else if (surface === 'concrete' || surface === 'tile' || surface === 'metal') grp = 'pivotConcrete';
+    else if (surface === 'grass' || surface === 'water') grp = 'pivotDirt';
+
+    if (this.sample(out, t, grp, { vary: 0.07, gain })) {
+      if (surface === 'wood' && Math.random() < 0.45) {
+        this.sample(out, t + 0.03, 'woodCreakSharp', { vary: 0.07, gain: 0.5 });
+      }
+      return;
+    }
+    this.noiseHit(out, t, { type: 'bandpass', f: 1100, q: 1.2, dur: 0.08, peak: 0.18 });
+  }
+
+  /** Entering / exiting crouch. */
+  crouch(down: boolean, pos: Pos): void {
+    const v = this.voice(pos, 0.5);
+    if (!v) return;
+    const [out, t] = v;
+    if (this.sample(out, t, down ? 'crouchDown' : 'standUp', { vary: 0.06, gain: 0.65 })) return;
+    this.noiseHit(out, t, { type: 'bandpass', f: down ? 650 : 880, q: 0.9, dur: 0.14, peak: 0.1, attack: 0.03 });
+  }
+
+  /** Aiming down sights micro-foley (rifle/shotgun vs pistol). */
+  ads(pistol: boolean): void {
+    const v = this.voice(null, 0.4);
+    if (!v) return;
+    const [out, t] = v;
+    if (this.sample(out, t, pistol ? 'adsPistol' : 'adsRifle', { vary: 0.05, gain: 0.68 })) return;
+    this.noiseHit(out, t, { type: 'bandpass', f: pistol ? 1800 : 1200, q: 1, dur: 0.12, peak: 0.08, attack: 0.02 });
+  }
+
+  /** Bullet striking equipped armor vest. */
+  armorHit(): void {
+    const v = this.voice(null, 0.55, 1, true);
+    if (!v) return;
+    const [out, t] = v;
+    if (this.sample(out, t, 'armorHit', { vary: 0.06, gain: 0.9 })) return;
+    this.noiseHit(out, t, { type: 'lowpass', f: 420, dur: 0.14, peak: 0.7 });
   }
 
   // ── The buildings ──────────────────────────────────────────────────────────
@@ -324,16 +435,21 @@ class Sound {
         this.noiseHit(out, t + 0.2, { type: 'lowpass', f: 300, f2: 120, dur: 1.0, peak: 0.05, attack: 0.3 });
       }
     } else if (kind === 'creak') {
+      if (this.sample(out, t, 'buildingCreak', { vary: 0.08, gain: 0.58 })) return;
       this.creak(out, t, 0.5 + r * 0.6, 0.6 + r * 0.3);
     } else {
       // Paces upstairs: heavy, slow, muffled by the floor between.
-      const n = 4 + Math.floor(Math.random() * 4);
+      const n = 3 + Math.floor(Math.random() * 3);
       for (let i = 0; i < n; i++) {
-        const at = t + i * (0.55 + Math.random() * 0.1);
-        this.noiseHit(out, at, { type: 'lowpass', f: 170, dur: 0.12, peak: 0.45 });
-        this.tone(out, at, { f: 62, dur: 0.1, peak: 0.25 });
+        const at = t + i * (0.48 + Math.random() * 0.14);
+        if (!this.sample(out, at, 'stepMuffled', { vary: 0.08, gain: 0.55 })) {
+          this.noiseHit(out, at, { type: 'lowpass', f: 170, dur: 0.12, peak: 0.45 });
+          this.tone(out, at, { f: 62, dur: 0.1, peak: 0.25 });
+        }
       }
-      if (r < 0.4) this.creak(out, t + n * 0.6, 0.6, 0.5);
+      if (r < 0.35 && !this.sample(out, t + n * 0.55, 'buildingCreak', { vary: 0.07, gain: 0.4 })) {
+        this.creak(out, t + n * 0.6, 0.6, 0.5);
+      }
     }
   }
 
@@ -674,18 +790,25 @@ class Sound {
   }
 
   jump(pos: Pos): void {
-    const v = this.voice(pos, 0.3);
+    const v = this.voice(pos, 0.45);
     if (!v) return;
     const [out, t] = v;
+    if (this.sample(out, t, 'jumpPush', { vary: 0.06, gain: 0.72 })) return;
     this.noiseHit(out, t, { type: 'bandpass', f: 700, f2: 1500, q: 0.8, dur: 0.18, peak: 0.12, attack: 0.04 });
   }
 
   land(surface: StepSurface, pos: Pos, speed: number): void {
     const k = Math.min(1.6, speed / 3);
-    this.step(surface, 'run', pos, 0.9 + k * 0.5);
-    const v = this.voice(pos, 0.25);
+    const v = this.voice(pos, 0.55);
     if (!v) return;
     const [out, t] = v;
+    const grp: SampleGroup = surface === 'metal' ? 'landMetal' : 'landHard';
+    if (this.sample(out, t, grp, { vary: 0.06, gain: Math.min(1, 0.58 + k * 0.28) })) {
+      if (surface === 'wood') this.sample(out, t + 0.02, 'woodCreakSharp', { vary: 0.08, gain: 0.52 });
+      else if (surface === 'glass') this.sample(out, t, 'stepGlassRun', { vary: 0.08, gain: 0.65 });
+      return;
+    }
+    this.step(surface, 'run', pos, 0.9 + k * 0.5);
     this.tone(out, t, { f: 75, f2: 45, dur: 0.14, peak: 0.45 * k });
     this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 900, q: 0.7, dur: 0.12, peak: 0.08 * k });
   }
@@ -720,46 +843,61 @@ class Sound {
    * and spatial echo tailored for indoor rooms, narrow alleys, or open streets.
    */
   gunShot(kind: GunSound, pos: Pos | null, suppressed: boolean, place: EchoPlace): void {
-    const v = this.voice(pos, 1.9, 6, true);
+    const v = this.voice(pos, 2.1, 6, true);
     if (!v) return;
     const [out, t] = v;
     const big = kind === 'rpg' ? 1.65 : kind === 'shotgun' || kind === 'hunting' ? 1.32 : kind === 'rifle' || kind === 'ak' ? 1.18 : kind === 'pistol45' ? 1.02 : 0.92;
     const low = kind === 'pistol' ? 185 : kind === 'pistol45' ? 140 : kind === 'shotgun' ? 88 : kind === 'rpg' ? 56 : kind === 'ak' ? 105 : 118;
 
-    // Soft-clipping saturator gives gunfire real Call-of-Duty-style punch and transient weight.
-    const shaper = (out.context as AudioContext).createWaveShaper();
-    shaper.curve = this.getShotCurve();
-    shaper.oversample = '2x';
-    shaper.connect(out);
+    const shotGrp: SampleGroup = suppressed
+      ? kind === 'pistol' || kind === 'pistol45'
+        ? 'shotPistolSup'
+        : 'shotRifleSup'
+      : kind === 'ak'
+        ? 'shotAk'
+        : kind === 'rifle'
+          ? 'shotM4'
+          : kind === 'shotgun'
+            ? 'shotShotgun'
+            : kind === 'hunting'
+              ? 'shotHunting'
+              : kind === 'rpg'
+                ? 'shotRpg'
+                : 'shotPistol';
 
-    if (suppressed) {
-      this.noiseHit(shaper, t, { type: 'lowpass', f: 1050, f2: 260, dur: 0.09, peak: 0.55 * big });
-      this.noiseHit(shaper, t, { type: 'bandpass', f: 2500, q: 1.6, dur: 0.025, peak: 0.22 });
-      this.tone(shaper, t, { f: low * 1.4, f2: low * 0.75, dur: 0.08, peak: 0.18 });
-      this.noiseHit(shaper, t + 0.015, { type: 'bandpass', f: 3200, q: 3, dur: 0.02, peak: 0.16 });
-    } else if (kind === 'rpg') {
-      this.noiseHit(shaper, t, { type: 'lowpass', f: 2000, f2: 180, dur: 0.65, peak: 1.05, attack: 0.008 });
-      this.noiseHit(shaper, t + 0.02, { type: 'bandpass', f: 650, f2: 2400, q: 0.8, dur: 1.15, peak: 0.42, attack: 0.08 });
-      this.tone(shaper, t, { f: 75, f2: 34, dur: 0.55, peak: 0.72 });
-    } else {
-      // 1) Supersonic muzzle crack (ultra-fast transient snap)
-      this.noiseHit(shaper, t, { type: 'highpass', f: 2300, dur: 0.022, peak: 1.15 * big });
-      // 2) Dense mid-range body blast
-      this.noiseHit(shaper, t, { type: 'lowpass', f: 3800, f2: 380, dur: 0.19 * big, peak: 0.98 * big });
-      this.noiseHit(shaper, t + 0.006, { type: 'bandpass', f: kind === 'ak' ? 920 : 1150, q: 0.85, dur: 0.15 * big, peak: 0.52 * big });
-      // 3) Chest-thump sub punch
-      this.tone(shaper, t, { f: low * 1.75, f2: Math.max(40, low * 0.42), dur: 0.19 * big, peak: 0.68 * big });
-      // 4) Crisp mechanical bolt / action snap right after ignition
-      this.noiseHit(shaper, t + 0.014, { type: 'bandpass', f: 3100, q: 2.8, dur: 0.022, peak: 0.24 * big });
+    const usedSample = this.sample(out, t, shotGrp, { vary: 0.035, gain: suppressed ? 0.8 : 0.95 });
+    if (!usedSample) {
+      // Procedural fallback while WAV buffers decode.
+      const shaper = (out.context as AudioContext).createWaveShaper();
+      shaper.curve = this.getShotCurve();
+      shaper.oversample = '2x';
+      shaper.connect(out);
+
+      if (suppressed) {
+        this.noiseHit(shaper, t, { type: 'lowpass', f: 1050, f2: 260, dur: 0.09, peak: 0.55 * big });
+        this.noiseHit(shaper, t, { type: 'bandpass', f: 2500, q: 1.6, dur: 0.025, peak: 0.22 });
+        this.tone(shaper, t, { f: low * 1.4, f2: low * 0.75, dur: 0.08, peak: 0.18 });
+        this.noiseHit(shaper, t + 0.015, { type: 'bandpass', f: 3200, q: 3, dur: 0.02, peak: 0.16 });
+      } else if (kind === 'rpg') {
+        this.noiseHit(shaper, t, { type: 'lowpass', f: 2000, f2: 180, dur: 0.65, peak: 1.05, attack: 0.008 });
+        this.noiseHit(shaper, t + 0.02, { type: 'bandpass', f: 650, f2: 2400, q: 0.8, dur: 1.15, peak: 0.42, attack: 0.08 });
+        this.tone(shaper, t, { f: 75, f2: 34, dur: 0.55, peak: 0.72 });
+      } else {
+        this.noiseHit(shaper, t, { type: 'highpass', f: 2300, dur: 0.022, peak: 1.15 * big });
+        this.noiseHit(shaper, t, { type: 'lowpass', f: 3800, f2: 380, dur: 0.19 * big, peak: 0.98 * big });
+        this.noiseHit(shaper, t + 0.006, { type: 'bandpass', f: kind === 'ak' ? 920 : 1150, q: 0.85, dur: 0.15 * big, peak: 0.52 * big });
+        this.tone(shaper, t, { f: low * 1.75, f2: Math.max(40, low * 0.42), dur: 0.19 * big, peak: 0.68 * big });
+        this.noiseHit(shaper, t + 0.014, { type: 'bandpass', f: 3100, q: 2.8, dur: 0.022, peak: 0.24 * big });
+      }
     }
 
-    // Spatial tail / reflections by environment.
-    const e = suppressed ? 0.22 : 1;
+    // Spatial tail / reflections by environment (dense indoors, slap in alleys, faint far tail outdoors).
+    const e = (suppressed ? 0.16 : 1) * (usedSample ? 0.45 : 1);
     if (place === 'indoor') {
       for (let i = 0; i < 6; i++) {
-        this.noiseHit(out, t + 0.01 + i * 0.014, { type: 'lowpass', f: 2500 - i * 310, dur: 0.075, peak: (0.36 - i * 0.048) * big * e });
+        this.noiseHit(out, t + 0.01 + i * 0.015, { type: 'lowpass', f: 2400 - i * 280, dur: 0.085, peak: (0.38 - i * 0.048) * big * e });
       }
-      this.noiseHit(out, t + 0.04, { type: 'lowpass', f: 780, f2: 240, dur: 0.42, peak: 0.28 * big * e, attack: 0.02 });
+      this.noiseHit(out, t + 0.04, { type: 'lowpass', f: 780, f2: 240, dur: 0.48, peak: 0.32 * big * e, attack: 0.02 });
     } else if (place === 'alley') {
       for (let i = 0; i < 6; i++) {
         this.noiseHit(out, t + 0.045 + i * 0.055, { type: 'bandpass', f: 1450 - i * 150, q: 0.9, dur: 0.08, peak: (0.28 - i * 0.038) * big * e });
@@ -771,23 +909,28 @@ class Sound {
     }
   }
 
-  /** The gun's own noises in the hands (magazine, slide, bolt, pump, the dry click…), at the ear. */
+  /** The gun's own noises in the hands (magazine, slide, bolt, pump, the dry click…). */
   gunMech(kind: GunMech, pitch = 1): void {
-    const v = this.voice(null, 0.6);
+    const v = this.voice(null, kind === 'reloadRifle' ? 2.4 : 0.8);
     if (!v) return;
     const [out, t] = v;
     const k = (f: number) => f * pitch;
-    // Recorded: the dry click on an empty chamber; the action's rattle (the bolt, the slide, the latch).
-    if (kind === 'dry' && this.sample(out, t, 'dry', { rate: pitch, gain: 0.55 })) return;
-    if ((kind === 'rack' || kind === 'bolt' || kind === 'pump' || kind === 'boltCatch' || kind === 'slideLock') && this.sample(out, t + (kind === 'pump' ? 0.1 : 0.06), 'rattle', { rate: pitch * (kind === 'pump' ? 0.8 : kind === 'boltCatch' || kind === 'slideLock' ? 1.15 : 1), gain: 0.5 })) {
-      this.noiseHit(out, t, { type: 'bandpass', f: k(kind === 'pump' ? 900 : 1500), q: 2, dur: 0.06, peak: 0.2 });
+    if (kind === 'dry' && (this.sample(out, t, 'gunDry', { rate: pitch, vary: 0.04, gain: 0.75 }) || this.sample(out, t, 'dry', { rate: pitch, gain: 0.55 }))) return;
+    if (kind === 'pump' && this.sample(out, t, 'gunPump', { rate: pitch, vary: 0.04, gain: 0.78 })) return;
+    if (kind === 'bolt' && this.sample(out, t, 'gunBolt', { rate: pitch, vary: 0.04, gain: 0.78 })) return;
+    if (kind === 'magCheck' && this.sample(out, t, 'gunMagCheck', { rate: pitch, vary: 0.04, gain: 0.72 })) return;
+    if (kind === 'reloadRifle' && this.sample(out, t, 'gunReloadRifle', { rate: pitch, vary: 0.03, gain: 0.82 })) return;
+    if ((kind === 'rack' || kind === 'boltCatch' || kind === 'slideLock') && this.sample(out, t + 0.06, 'rattle', { rate: pitch * (kind === 'boltCatch' || kind === 'slideLock' ? 1.15 : 1), gain: 0.5 })) {
+      this.noiseHit(out, t, { type: 'bandpass', f: k(1500), q: 2, dur: 0.06, peak: 0.2 });
       return;
     }
     switch (kind) {
+      case 'magCheck':
       case 'magOut':
         this.noiseHit(out, t, { type: 'bandpass', f: k(1800), q: 3, dur: 0.03, peak: 0.25 });
         this.noiseHit(out, t + 0.04, { type: 'bandpass', f: k(900), q: 1.5, dur: 0.12, peak: 0.12, attack: 0.03 });
         break;
+      case 'reloadRifle':
       case 'magIn':
         this.noiseHit(out, t, { type: 'bandpass', f: k(1300), q: 2, dur: 0.05, peak: 0.2 });
         this.noiseHit(out, t + 0.06, { type: 'bandpass', f: k(2600), q: 4, dur: 0.025, peak: 0.35 });
@@ -821,7 +964,6 @@ class Sound {
         this.noiseHit(out, t, { type: 'bandpass', f: k(kind === 'jam' ? 1200 : 2400), q: 5, dur: 0.02, peak: 0.3 });
         break;
       case 'lastRounds':
-        // The M4's brighter ping on the last rounds: the spring nearly bare.
         this.tone(out, t, { f: k(3200), dur: 0.09, peak: 0.08 });
         this.tone(out, t, { f: k(4700), dur: 0.06, peak: 0.04 });
         break;
@@ -833,13 +975,24 @@ class Sound {
     }
   }
 
-  /** A spent case on the floor: a few bright tinkles (a shotgun's hull: a dull plastic tap). */
-  casing(pos: Pos, shell: boolean, soft: boolean): void {
-    const v = this.voice(pos, 0.6, 1.5);
+  /** A spent case on the floor, matched to surface (Pitch 0.90–1.12). */
+  casing(pos: Pos, shell: boolean, surfaceOrSoft: StepSurface | boolean = 'asphalt'): void {
+    const v = this.voice(pos, 0.7, 1.8);
     if (!v) return;
     const [out, t] = v;
-    if (shell || soft) {
-      this.noiseHit(out, t, { type: 'bandpass', f: soft ? 500 : 900, q: 1.2, dur: 0.05, peak: soft ? 0.08 : 0.15 });
+    const grp: SampleGroup = shell
+      ? 'casingShotgun'
+      : surfaceOrSoft === 'wood'
+        ? 'casingWood'
+        : surfaceOrSoft === 'grass'
+          ? 'casingDirt'
+          : surfaceOrSoft === 'metal'
+            ? 'casingMetal'
+            : 'casingAsphalt';
+
+    if (this.sample(out, t, grp, { rate: 1.01, vary: 0.11, gain: 0.56 })) return;
+    if (shell || surfaceOrSoft === true) {
+      this.noiseHit(out, t, { type: 'bandpass', f: surfaceOrSoft === true ? 500 : 900, q: 1.2, dur: 0.05, peak: surfaceOrSoft === true ? 0.08 : 0.15 });
       return;
     }
     if (this.sample(out, t, 'casing', { rate: 1.05, vary: 0.12, gain: 0.3 })) return;
@@ -915,8 +1068,7 @@ class Sound {
     const v = this.voice(pos, 4.5, 12, true);
     if (!v) return;
     const [out, t] = v;
-    if (this.sample(out, t, 'explosion', { vary: 0.06, gain: 1 })) {
-      // The chest's thump under the recording.
+    if (this.sample(out, t, 'rpgExplosion', { vary: 0.05, gain: 1 }) || this.sample(out, t, 'explosion', { vary: 0.06, gain: 1 })) {
       this.tone(out, t, { f: 55, f2: 28, dur: 1.2, peak: 0.4 });
       return;
     }
@@ -927,7 +1079,7 @@ class Sound {
   }
 
   hit(material: HitMaterial, pos: Pos, heavy = 1): void {
-    const v = this.voice(pos, 0.8);
+    const v = this.voice(pos, 0.9);
     if (!v) return;
     const [out, t] = v;
     const g = 0.5 + heavy * 0.5;
@@ -937,7 +1089,6 @@ class Sound {
         this.noiseHit(out, t, { type: 'bandpass', f: 750, q: 1.2, dur: 0.14, peak: 0.6 * g });
         break;
       case 'metal':
-        // A car, a container, a locker: the recorded hit with its ring (a light blow higher and quieter).
         if (this.sample(out, t, 'hitMetal', { rate: 1.15 - heavy * 0.15, vary: 0.08, gain: 0.35 + 0.35 * heavy })) break;
         for (const f of [410, 735, 1120, 1690]) this.tone(out, t, { f: f * (0.95 + Math.random() * 0.1), dur: 0.6, peak: 0.09 * g });
         this.noiseHit(out, t, { type: 'highpass', f: 2500, dur: 0.05, peak: 0.4 * g });
@@ -948,6 +1099,10 @@ class Sound {
         for (let i = 0; i < 3; i++) this.noiseHit(out, t + 0.05 + Math.random() * 0.2, { type: 'bandpass', f: 2500, q: 2, dur: 0.02, peak: 0.08 * g });
         break;
       case 'glass':
+        if (this.sample(out, t, 'glassBreak', { vary: 0.06, gain: 0.85 * g })) {
+          this.sample(out, t + 0.3, 'glassSettle', { vary: 0.08, gain: 0.68 * g });
+          break;
+        }
         this.noiseHit(out, t, { type: 'highpass', f: 2500, dur: 0.12, peak: 0.5 * g });
         for (let i = 0; i < 14; i++) {
           const dt = Math.random() * 0.45;
@@ -961,22 +1116,21 @@ class Sound {
   }
 
   /**
-   * A door: a dull latch clunk and a soft brush of air and wood; a creaky door (fixed per door) moans
-   * low and slow all the way open. `pitch` — this door's own ±10%.
+   * A door: wooden interior creak, heavy steel stairwell door, or glass door.
    */
-  door(style: 'wood' | 'glass', open: boolean, pos: Pos, creaky = false, pitch = 1): void {
-    const v = this.voice(pos, creaky && open ? 1.2 : 0.7);
+  door(style: 'wood' | 'glass' | 'metal', open: boolean, pos: Pos, creaky = false, pitch = 1): void {
+    const v = this.voice(pos, creaky && open ? 1.4 : 1.1);
     if (!v) return;
     const [out, t] = v;
-    // Latch: a muffled clunk, no click.
+    if (style === 'metal' && this.sample(out, t, 'doorMetal', { rate: pitch, vary: 0.05, gain: open ? 0.82 : 0.72 })) return;
+    if (style === 'wood' && this.sample(out, t, 'doorWood', { rate: pitch, vary: 0.06, gain: open ? 0.78 : 0.64 })) return;
+    // Fallback synthesis.
     this.noiseHit(out, t, { type: 'lowpass', f: 900 * pitch, dur: 0.035, peak: 0.3 });
     this.tone(out, t, { f: 150 * pitch, dur: 0.05, peak: 0.12 });
     if (open) {
-      // The leaf swinging: a quiet rustle.
       this.noiseHit(out, t + 0.05, { type: 'bandpass', f: (style === 'wood' ? 900 : 1500) * pitch, q: 0.8, dur: 0.45, peak: 0.035, attack: 0.15 });
       if (creaky && style === 'wood') this.creak(out, t + 0.08, 0.85, pitch);
     } else {
-      // Shut: the leaf meets the frame.
       this.noiseHit(out, t + 0.02, { type: 'lowpass', f: (style === 'wood' ? 260 : 700) * pitch, dur: 0.12, peak: 0.5 });
       this.tone(out, t + 0.02, { f: (style === 'wood' ? 85 : 170) * pitch, dur: 0.12, peak: 0.22 });
     }
@@ -1066,6 +1220,8 @@ class Sound {
         for (let i = 0, n = 5 + Math.floor(r * 5); i < n; i++) this.noiseHit(out, t + i * (0.055 + Math.random() * 0.02), { type: 'bandpass', f: f(2400), q: 5, dur: 0.02, peak: 0.14 });
         break;
       case 'step':
+        if (Math.abs(pos.y - this.ly) > 2.5 && this.sample(out, t, 'stepMuffled', { rate: pitch, vary: 0.08, gain: 0.55 })) break;
+        if (this.sample(out, t, 'stepAsphaltWalk', { rate: pitch * 0.92, vary: 0.08, gain: 0.35 })) break;
         // A dragged, shuffling foot.
         this.noiseHit(out, t, { type: 'lowpass', f: 380 * (0.8 + r * 0.4), dur: 0.09, peak: 0.16 });
         this.noiseHit(out, t + 0.05, { type: 'bandpass', f: 900, q: 0.8, dur: 0.22, peak: 0.035, attack: 0.05 });
@@ -1390,20 +1546,107 @@ class Sound {
     this.noise = ac.createBuffer(1, len, ac.sampleRate);
     const ch = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
-    // Reverb: 1.4 s of decaying stereo noise.
-    const ir = ac.createBuffer(2, Math.floor(ac.sampleRate * 1.4), ac.sampleRate);
+    // Concrete stairwell / room reverb: 0.85 s crisp early reflections + rapid decay.
+    const ir = ac.createBuffer(2, Math.floor(ac.sampleRate * 0.85), ac.sampleRate);
     for (let c = 0; c < 2; c++) {
       const d = ir.getChannelData(c);
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3.2);
+      for (let i = 0; i < d.length; i++) {
+        const tm = i / ac.sampleRate;
+        const early = tm < 0.07 ? 1.25 : 1;
+        d[i] = (Math.random() * 2 - 1) * early * Math.pow(1 - i / d.length, 4.2);
+      }
     }
     const conv = ac.createConvolver();
     conv.buffer = ir;
     this.send = ac.createGain();
-    this.send.gain.value = 0.1;
+    this.send.gain.value = 0.02;
     this.world.connect(this.send).connect(conv).connect(this.master);
     this.samples = new Samples(ac);
     this.samples.load();
     this.apply();
+  }
+
+  /** Stamina breathing (< 20% stamina, mask vs clear) and heartbeat (< 15% stamina or < 25% HP). */
+  updateStamina(_dt: number, stamina: number, health: number, hasMask: boolean, dead: boolean): void {
+    const ac = this.ac;
+    if (!ac || ac.state !== 'running' || !this.world || !this.samples) return;
+    const now = ac.currentTime;
+
+    const wantBreath = !dead && !this.worldMute && stamina < 0.2;
+    const breathGain = wantBreath ? 0.14 + Math.min(1, (0.2 - stamina) / 0.2) * 0.34 : 0;
+    if (wantBreath) {
+      const grp: SampleGroup = hasMask ? 'breathMask' : 'breathClear';
+      const buf = this.samples.get(grp);
+      if (buf && (!this.breathVoice || this.breathVoice.masked !== hasMask)) {
+        if (this.breathVoice) {
+          this.breathVoice.gain.gain.setTargetAtTime(0, now, 0.08);
+          const old = this.breathVoice.src;
+          window.setTimeout(() => { try { old.stop(); } catch {} }, 350);
+          this.breathVoice = null;
+        }
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const gain = ac.createGain();
+        gain.gain.value = 0.0001;
+        src.connect(gain).connect(this.world);
+        src.start(now);
+        this.breathVoice = { src, gain, masked: hasMask };
+      }
+      if (this.breathVoice) this.breathVoice.gain.gain.setTargetAtTime(breathGain, now, 0.2);
+    } else if (this.breathVoice) {
+      this.breathVoice.gain.gain.setTargetAtTime(0, now, 0.15);
+    }
+
+    const wantHeart = !dead && !this.worldMute && (stamina < 0.15 || health < 0.25);
+    const heartGain = wantHeart ? 0.28 : 0;
+    if (wantHeart) {
+      const buf = this.samples.get('heartbeat');
+      if (buf && !this.heartVoice) {
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const gain = ac.createGain();
+        gain.gain.value = 0.0001;
+        src.connect(gain).connect(this.world);
+        src.start(now);
+        this.heartVoice = { src, gain };
+      }
+      if (this.heartVoice) this.heartVoice.gain.gain.setTargetAtTime(heartGain, now, 0.2);
+    } else if (this.heartVoice) {
+      this.heartVoice.gain.gain.setTargetAtTime(0, now, 0.18);
+    }
+  }
+
+  /** Looping search sound while searching a bandit corpse inside inventory. */
+  setLootLoop(active: boolean): void {
+    this.wantLootLoop = active;
+    this.syncLootLoop();
+  }
+
+  private syncLootLoop(): void {
+    const ac = this.ac;
+    if (!ac || ac.state !== 'running' || !this.ui || !this.samples) return;
+    const now = ac.currentTime;
+    if (this.wantLootLoop && !this.hardMute) {
+      const buf = this.samples.get('lootSearch');
+      if (buf && !this.lootVoice) {
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const gain = ac.createGain();
+        gain.gain.value = 0.0001;
+        src.connect(gain).connect(this.ui);
+        src.start(now);
+        this.lootVoice = { src, gain };
+      }
+      if (this.lootVoice) this.lootVoice.gain.gain.setTargetAtTime(0.65, now, 0.06);
+    } else if (this.lootVoice) {
+      const lv = this.lootVoice;
+      this.lootVoice = null;
+      lv.gain.gain.setTargetAtTime(0, now, 0.06);
+      window.setTimeout(() => { try { lv.src.stop(); } catch {} }, 250);
+    }
   }
 
   /**
@@ -1429,6 +1672,7 @@ class Sound {
     const t = ac.currentTime;
     this.master.gain.setTargetAtTime(this.hardMute ? 0 : this.volume, t, 0.03);
     this.world.gain.setTargetAtTime(this.worldMute ? 0 : 1, t, 0.05);
+    this.syncLootLoop();
     if (this.hardMute) void ac.suspend();
     else void ac.resume();
   }
@@ -1463,6 +1707,9 @@ class Sound {
     window.setTimeout(() => this.voices--, (life + 0.6) * 1000);
     const g = ac.createGain();
     if (pos) {
+      const dist = Math.hypot(pos.x - this.lx, pos.y - this.ly, pos.z - this.lz);
+      const diffFloor = dist > 1.6 && Math.abs(pos.y - this.ly) > 2.5;
+      const occluded = !diffFloor && dist > 1.6 && !!this.occlusionCheck?.(this.lx, this.ly, this.lz, pos.x, pos.y, pos.z);
       const p = ac.createPanner();
       p.panningModel = 'equalpower';
       p.distanceModel = 'inverse';
@@ -1474,7 +1721,16 @@ class Sound {
         p.positionY.value = pos.y;
         p.positionZ.value = pos.z;
       } else p.setPosition(pos.x, pos.y, pos.z);
-      g.connect(p).connect(this.world);
+      if (diffFloor || occluded) {
+        g.gain.value = diffFloor ? 0.48 : 0.62;
+        const lp = ac.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = diffFloor ? 650 : 750;
+        lp.Q.value = 0.7;
+        g.connect(lp).connect(p).connect(this.world);
+      } else {
+        g.connect(p).connect(this.world);
+      }
     } else g.connect(this.ui);
     return [g, ac.currentTime + 0.005];
   }

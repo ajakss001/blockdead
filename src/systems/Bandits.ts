@@ -184,6 +184,7 @@ export interface Bandit extends BanditTarget {
   investigateX: number;
   investigateZ: number;
   investigateT: number;
+  stepDist: number;
   deadT: number;
   loot: BanditLootItem[];
   corpse: CorpseData;
@@ -558,7 +559,17 @@ export class Bandits {
       if (b.investigateT > 0 && !canSeePlayer) b.investigateT -= dt;
 
       if (dt > 1e-4) {
+        const moved = Math.hypot(b.pos.x - prevX, b.pos.z - prevZ);
         b.vel.set((b.pos.x - prevX) / dt, 0, (b.pos.z - prevZ) / dt);
+        if (moved > 0.002) {
+          b.stepDist += moved;
+          const stride = moveSpeed > 3.2 ? 2.2 : 1.75;
+          if (b.stepDist >= stride) {
+            b.stepDist %= stride;
+            const surf = Math.abs(b.pos.y) > 0.4 ? 'concrete' : 'asphalt';
+            sfx.step(surf, moveSpeed > 3.2 ? 'run' : 'walk', b.pos, 0.78);
+          }
+        }
       }
 
       b.root.position.copy(b.pos);
@@ -803,6 +814,7 @@ export class Bandits {
         investigateX: rx,
         investigateZ: rz,
         investigateT: 0,
+        stepDist: 0,
         deadT: 0,
         loot: builtLoot.loot,
         corpse: builtLoot.corpse,

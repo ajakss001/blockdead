@@ -12,9 +12,12 @@ export const EYE_CROUCH = 1.08;
 
 /** Velocity response, 1/s. High enough to feel immediate, low enough to avoid jitter. */
 const ACCEL = 14;
-/** Distance covered by one step, m. One full leg cycle (2π of stepPhase) = two steps. */
+/** Footstep stride distances, m (walk ~1.8m, sprint ~2.4m, crouch ~1.2m). */
 const STRIDE_WALK = 0.75;
 const STRIDE_SPRINT = 1.15;
+const STEP_DIST_WALK = 1.8;
+const STEP_DIST_SPRINT = 2.4;
+const STEP_DIST_CROUCH = 1.2;
 const PITCH_LIMIT = 1.45;
 /** How fast the feet follow the ground (1/s): smooths steps and slope changes. */
 const GROUND_FOLLOW = 18;
@@ -73,6 +76,11 @@ export class PlayerController {
   jumpFactor = 1;
   airborne = false;
   vy = 0;
+  /** Distance-based stride footstep event on this fixed step (stops immediately when stationary). */
+  stepped = false;
+  private stepDist = 0;
+  /** Non-null on the fixed step crouch state toggled. */
+  crouchChanged: 'down' | 'up' | null = null;
   /** This step only: took off; landed with this fall speed, m/s (sound, camera, noise). */
   jumped = false;
   landed = 0;
@@ -105,11 +113,14 @@ export class PlayerController {
   }
 
   fixedUpdate(dt: number, input: InputManager, world: CollisionWorld, ground?: GroundFn): void {
+    const wasCrouched = this.crouched;
     if (input.consumePressed('crouch')) {
       // Standing up needs headroom (under a table-top lintel you stay down).
       if (!this.crouched) this.crouched = true;
       else if (world.ceilingAt(this.position.x, this.position.z, PLAYER_RADIUS * 0.9, this.position.y + HEIGHT_CROUCH - 0.05) > this.position.y + HEIGHT_STAND) this.crouched = false;
     }
+    this.crouchChanged = !wasCrouched && this.crouched ? 'down' : wasCrouched && !this.crouched ? 'up' : null;
+    this.stepped = false;
     const height = this.crouched ? HEIGHT_CROUCH : HEIGHT_STAND;
     this.jumped = false;
     this.landed = 0;
@@ -219,6 +230,18 @@ export class PlayerController {
     this.velocity.z = dz / dt;
     const moved = Math.hypot(dx, dz);
     this.speed = damp(this.speed, moved / dt, 10, dt);
+
+    // Distance-based footstep sync: triggers only from actual displacement, halting instantly at walls or stop.
+    if (!this.airborne && moved > 0.002) {
+      this.stepDist += moved;
+      const strideM = this.crouched ? STEP_DIST_CROUCH : this.sprinting ? STEP_DIST_SPRINT : STEP_DIST_WALK;
+      if (this.stepDist >= strideM) {
+        this.stepDist %= strideM;
+        this.stepped = true;
+      }
+    } else {
+      this.stepDist = Math.min(this.stepDist, 0.25);
+    }
 
     const runT = clamp((this.speed - SPEED_WALK) / (SPEED_SPRINT - SPEED_WALK), 0, 1);
     this.prevStepPhase = this.stepPhase;
