@@ -79,6 +79,8 @@ export class PlayerController {
   /** Distance-based stride footstep event on this fixed step (stops immediately when stationary). */
   stepped = false;
   private stepDist = 0;
+  private airGraceT = 0;
+  private stopGraceT = 0;
   /** Non-null on the fixed step crouch state toggled. */
   crouchChanged: 'down' | 'up' | null = null;
   /** This step only: took off; landed with this fall speed, m/s (sound, camera, noise). */
@@ -231,16 +233,26 @@ export class PlayerController {
     const moved = Math.hypot(dx, dz);
     this.speed = damp(this.speed, moved / dt, 10, dt);
 
-    // Distance-based footstep sync: triggers only from actual displacement, halting instantly at walls or stop.
-    if (!this.airborne && moved > 0.002) {
+    // Distance-based footstep sync: triggers only from actual displacement, with short curb/bump grace
+    // so brief 1-2 frame terrain steps never swallow accumulated sprint stride.
+    if (this.airborne) this.airGraceT += dt;
+    else this.airGraceT = 0;
+
+    if (this.airGraceT < 0.14 && moved > 0.0015) {
+      this.stopGraceT = 0;
       this.stepDist += moved;
       const strideM = this.crouched ? STEP_DIST_CROUCH : this.sprinting ? STEP_DIST_SPRINT : STEP_DIST_WALK;
       if (this.stepDist >= strideM) {
-        this.stepDist %= strideM;
+        this.stepDist = Math.min(this.stepDist - strideM, strideM * 0.5);
         this.stepped = true;
       }
-    } else {
+    } else if (this.airGraceT >= 0.14) {
       this.stepDist = Math.min(this.stepDist, 0.25);
+    } else {
+      this.stopGraceT += dt;
+      if (this.stopGraceT >= 0.12) {
+        this.stepDist = Math.min(this.stepDist, 0.25);
+      }
     }
 
     const runT = clamp((this.speed - SPEED_WALK) / (SPEED_SPRINT - SPEED_WALK), 0, 1);

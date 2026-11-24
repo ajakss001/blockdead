@@ -149,6 +149,11 @@ export class Firearms {
   hitMarkT = 9;
   /** Distance to a wall straight ahead (the gun goes up and back near it), m. */
   wallDist = 99;
+  private shotTotalPellets = 1;
+  private shotHitSounds = 0;
+  private shotSurfaceLookups = 0;
+  private shotLastSurface: Surface | null = null;
+  private shotHitMarked = false;
 
   constructor(private readonly w: FirearmsWorld) {
     this.fx = new GunFx(w.scene);
@@ -187,7 +192,7 @@ export class Firearms {
       if (this.pendingCasings[i].t <= 0) {
         const c = this.pendingCasings[i];
         this.pendingCasings.splice(i, 1);
-        const pos = this.w.player.controller.position;
+        const pos = this.w.player.controller?.position ?? this.w.camera.getWorldPosition(_o);
         sfx.casing({ x: pos.x, y: pos.y + 0.05, z: pos.z }, c.shell, this.w.surfaceAt?.() ?? 'asphalt');
       }
     }
@@ -387,7 +392,15 @@ export class Firearms {
         this.w.noise(eye.x, eye.y, eye.z, r);
         p.controller.addNoise(Math.min(1, r / 60));
         if (g.cls === 'launcher') this.launch();
-        else for (let i = 0; i < (g.pellets ?? 1); i++) this.bullet(id, mods);
+        else {
+          const nPellets = g.pellets ?? 1;
+          this.shotTotalPellets = nPellets;
+          this.shotHitSounds = 0;
+          this.shotSurfaceLookups = 0;
+          this.shotLastSurface = null;
+          this.shotHitMarked = false;
+          for (let i = 0; i < nPellets; i++) this.bullet(id, mods);
+        }
         if (g.cls !== 'launcher' && g.action !== 'pump' && g.action !== 'bolt') {
           this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: false });
         }
@@ -414,6 +427,8 @@ export class Firearms {
         this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rack':
+        // Rifles play trimmed mag-out + mag-in only on reload (no trailing bolt-rack); unjam still racks.
+        if ((id === 'rifle_ak' || id === 'rifle_m4a1') && gs.action === 'reloadEmpty') break;
         mech(id === 'rifle_m4a1' ? 'boltCatch' : 'rack');
         break;
       case 'cycle':
@@ -442,8 +457,9 @@ export class Firearms {
         break;
       case 'start':
         if (e.action === 'holster') mech('holster');
-        else if ((e.action === 'reload' || e.action === 'reloadEmpty') && (id === 'rifle_ak' || id === 'rifle_m4a1')) {
-          mech('reloadRifle');
+        else if (e.action === 'reload' || e.action === 'reloadEmpty') {
+          if (id === 'rifle_ak' || id === 'rifle_m4a1') mech('reloadRifle');
+          else if (g.cls === 'pistol') sfx.ads(true);
         }
         break;
     }
@@ -521,13 +537,20 @@ export class Firearms {
     const [lo, hi] = damageOf(id, mods);
     const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, res.dist) * (res.head ? 2 : 1);
     const killed = this.w.bandits!.hit(res.bot, dmg, o.x, o.z, res.head);
-    this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
-    this.cloth(res.point);
-    sfx.bulletHit(res.bot.worn.vest && !res.head ? 'metal' : 'flesh', res.point);
-    if (res.bot.worn.vest && !res.head) sfx.armorHit();
+    const isMulti = this.shotTotalPellets > 1;
+    if (!isMulti || this.shotHitSounds < 2) {
+      this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
+      this.cloth(res.point);
+      sfx.bulletHit(res.bot.worn.vest && !res.head ? 'metal' : 'flesh', res.point);
+      if (res.bot.worn.vest && !res.head) sfx.armorHit();
+      this.shotHitSounds++;
+    }
     this.hitMark = res.head ? 'head' : 'body';
     this.hitMarkT = 0;
-    sfx.hitMarker(res.head);
+    if (!isMulti || !this.shotHitMarked) {
+      sfx.hitMarker(res.head);
+      this.shotHitMarked = true;
+    }
     this.w.onHit?.(killed, res.head);
   }
 
@@ -535,13 +558,20 @@ export class Firearms {
     const [lo, hi] = damageOf(id, mods);
     const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, res.dist) * (res.head ? 2 : 1);
     const killed = this.w.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point, GUNS[id].pellets ? 1.2 : 1.4);
-    // No blood: dust off the clothes, a scrap of cloth.
-    this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
-    this.cloth(res.point);
-    sfx.bulletHit('flesh', res.point);
+    const isMulti = this.shotTotalPellets > 1;
+    if (!isMulti || this.shotHitSounds < 2) {
+      // No blood: dust off the clothes, a scrap of cloth.
+      this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
+      this.cloth(res.point);
+      sfx.bulletHit('flesh', res.point);
+      this.shotHitSounds++;
+    }
     this.hitMark = res.head ? 'head' : 'body';
     this.hitMarkT = 0;
-    sfx.hitMarker(res.head);
+    if (!isMulti || !this.shotHitMarked) {
+      sfx.hitMarker(res.head);
+      this.shotHitMarked = true;
+    }
     this.w.onHit?.(killed, res.head);
   }
 
@@ -554,14 +584,24 @@ export class Firearms {
 
   /** A bullet on the world: by what it is made of — dust, sparks and a ricochet, splinters, glass, a car's tin. */
   private hitWorld(o: Vector3, d: Vector3, dist: number): void {
-    const s = this.w.surface(o, d, dist);
+    const isMulti = this.shotTotalPellets > 1;
+    let s = this.shotLastSurface;
+    if (!isMulti || this.shotSurfaceLookups < 2) {
+      s = this.w.surface(o, d, dist);
+      this.shotSurfaceLookups++;
+      this.shotLastSurface = s;
+    }
     const kind: BulletHit = (s && BULLET[s]) ?? 'concrete';
     const at = _p.copy(o).addScaledVector(d, dist - 0.03);
-    sfx.bulletHit(kind, at);
+    if (!isMulti || this.shotHitSounds < 2) {
+      sfx.bulletHit(kind, at);
+      this.shotHitSounds++;
+    }
     const pt = this.w.particles;
-    if (kind === 'metal' || kind === 'car') pt.sparks(at.x, at.y, at.z, 6);
-    else pt.burst(at, kind === 'glass' ? 3 : 7, kind === 'soft' ? 0.4 : 0.6);
-    if (kind === 'car') this.w.carHit(at.x, at.y, at.z);
+    const nScale = isMulti && this.shotHitSounds > 1 ? 0.5 : 1;
+    if (kind === 'metal' || kind === 'car') pt.sparks(at.x, at.y, at.z, Math.max(2, Math.round(6 * nScale)));
+    else pt.burst(at, Math.max(2, Math.round((kind === 'glass' ? 3 : 7) * nScale)), kind === 'soft' ? 0.4 : 0.6);
+    if (kind === 'car' && (!isMulti || this.shotSurfaceLookups <= 2)) this.w.carHit(at.x, at.y, at.z);
   }
 
   /** The butt strike: a short push, low damage, knocks back. */

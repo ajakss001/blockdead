@@ -38,6 +38,7 @@ export type SwingKind = 'heavy' | 'blade' | 'fist';
 export type FleshBlow = 'blunt' | 'metal' | 'chop' | 'stab' | 'fist';
 /** Guns by how they sound: the report, its crack and boom. */
 export type GunSound = 'pistol' | 'pistol45' | 'rifle' | 'ak' | 'shotgun' | 'hunting' | 'rpg';
+export type MixBus = 'weapons' | 'footsteps' | 'foley' | 'env' | 'music' | 'ui' | 'world';
 /** The gun's mechanics in the hands. */
 export type GunMech =
   | 'magOut'
@@ -56,7 +57,8 @@ export type GunMech =
   | 'holster'
   | 'lastRounds'
   | 'magCheck'
-  | 'reloadRifle';
+  | 'reloadRifle'
+  | 'adsPistol';
 /** Where the shot rings: indoors (short, dense), a street (one late slap), an alley (fluttering). */
 export type EchoPlace = 'indoor' | 'street' | 'alley';
 /** What a bullet hits. */
@@ -113,7 +115,44 @@ const DISTORT = (() => {
   }
   return c;
 })();
+/** Master brickwall ceiling: -1.0 dBFS (~0.89125) to guarantee zero digital clipping. */
+const MASTER_CEILING_DBFS = -1.0;
+const MASTER_CEILING = Math.pow(10, MASTER_CEILING_DBFS / 20);
+/** Soft-knee maximizer wave-shaper capped strictly at -1.0 dBFS. */
+const MAXIMIZER_CURVE = (() => {
+  const n = 4096;
+  const c = new Float32Array(n);
+  const kneeStart = 0.76;
+  const head = MASTER_CEILING - kneeStart;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    const ax = Math.abs(x);
+    if (ax <= kneeStart) c[i] = x;
+    else c[i] = Math.sign(x) * (kneeStart + head * Math.tanh((ax - kneeStart) / head));
+  }
+  return c;
+})();
+const CEILING_MAX_ABS = MAXIMIZER_CURVE.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
 const VOLUME_KEY = 'blockdead.volume';
+
+function readStoredVolume(): number {
+  try {
+    return typeof localStorage !== 'undefined' ? Number(localStorage.getItem(VOLUME_KEY) ?? 0.8) : 0.8;
+  } catch {
+    return 0.8;
+  }
+}
+
+function writeStoredVolume(v: number): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(VOLUME_KEY, String(v));
+  } catch {}
+}
+
+function scheduleTimeout(fn: () => void, ms: number): void {
+  if (typeof window !== 'undefined') window.setTimeout(fn, ms);
+  else globalThis.setTimeout(fn, ms);
+}
 
 /** Container type (data/loot) → the sound of opening it and of rummaging inside. */
 export const CONTAINER_SOUND: Record<string, ContainerSound> = {
@@ -175,21 +214,33 @@ export const CONTAINER_SOUND: Record<string, ContainerSound> = {
 
 type Out = AudioNode;
 
-class Sound {
+export class Sound {
   ac: AudioContext | null = null;
   private master: GainNode | null = null;
   world: GainNode | null = null;
   private ui: GainNode | null = null;
+  private weaponsBus: GainNode | null = null;
+  private footstepsBus: GainNode | null = null;
+  private foleyBus: GainNode | null = null;
+  private envBus: GainNode | null = null;
+  private musicBus: GainNode | null = null;
+  /** Master mastering chain: glue compressor -> makeup gain -> brickwall limiter -> -1 dBFS ceiling shaper. */
+  private glueComp: DynamicsCompressorNode | null = null;
+  private makeupGain: GainNode | null = null;
+  private brickwallLimiter: DynamicsCompressorNode | null = null;
+  private ceilingShaper: WaveShaperNode | null = null;
   /** The world bus's low-pass (dying: everything goes dull and far). */
   private muffle: BiquadFilterNode | null = null;
   private samples: Samples | null = null;
   private send: GainNode | null = null;
   noise: AudioBuffer | null = null;
-  private voices = 0;
+  private voiceEnds: number[] = [];
+  /** Dedicated counter just for player priority footsteps diagnostics. */
+  private playerStepsPlayed = 0;
   /** Per group: when its playing sounds end (context time). */
   private readonly groupEnds = new Map<Group, number[]>();
   private readonly groupLast = new Map<Group, number>();
-  private volume = Number(localStorage.getItem(VOLUME_KEY) ?? 0.8);
+  private volume = readStoredVolume();
   private hardMute = false;
   private worldMute = false;
   private search: { kind: ContainerSound; pos: Pos; t: number } | null = null;
@@ -227,8 +278,38 @@ class Sound {
 
   setVolume(v: number): void {
     this.volume = Math.max(0, Math.min(1, v));
-    localStorage.setItem(VOLUME_KEY, String(this.volume));
+    writeStoredVolume(this.volume);
     this.apply();
+  }
+
+  /** Test/audit diagnostics for the active mixer, spatializer, and mastering chain. */
+  getDiagnostics() {
+    return {
+      ready: !!this.ac,
+      buses: {
+        master: !!this.master,
+        world: !!this.world,
+        ui: !!this.ui,
+        weapons: !!this.weaponsBus,
+        footsteps: !!this.footstepsBus,
+        foley: !!this.foleyBus,
+        env: !!this.envBus,
+        music: !!this.musicBus,
+      },
+      panningModel: 'HRTF' as const,
+      mastering: {
+        glueThreshold: this.glueComp?.threshold.value ?? null,
+        makeupGain: this.makeupGain?.gain.value ?? null,
+        limiterThreshold: this.brickwallLimiter?.threshold.value ?? null,
+        limiterRatio: this.brickwallLimiter?.ratio.value ?? null,
+        ceilingDbfs: MASTER_CEILING_DBFS,
+        ceilingLinear: MASTER_CEILING,
+        shaperMaxAbs: CEILING_MAX_ABS,
+      },
+      activeVoices: this.pruneVoices(),
+      playerStepsPlayed: this.playerStepsPlayed,
+      loadedSampleGroups: this.samples?.groupCount ?? 0,
+    };
   }
 
   /** 0 clear … 1 the world heard as if from far under water (dying). */
@@ -273,13 +354,14 @@ class Sound {
 
   // ── Game sounds ────────────────────────────────────────────────────────────
 
-  step(surface: StepSurface, gait: Gait, pos: Pos, loud = 1): void {
-    const v = this.voice(pos, 0.45);
+  step(surface: StepSurface, gait: Gait, pos: Pos, loud = 1, isPlayer = false): void {
+    const v = isPlayer ? this.playerStepVoice() : this.voice(pos, 0.45, 1.5, false, 'footsteps');
     if (!v) return;
+    if (isPlayer) this.playerStepsPlayed++;
     const [out, t] = v;
-    const diffFloor = Math.abs(pos.y - this.ly) > 2.5;
-    const volRand = 0.85 + Math.random() * 0.15;
-    const g = (gait === 'run' ? 0.92 : gait === 'walk' ? 0.72 : 0.42) * loud * volRand;
+    const diffFloor = !isPlayer && Math.abs(pos.y - this.ly) > 2.5;
+    const volRand = 0.88 + Math.random() * 0.12;
+    const g = (gait === 'run' ? 0.94 : gait === 'walk' ? 0.74 : 0.46) * loud * volRand;
 
     if (diffFloor && this.sample(out, t, 'stepMuffled', { vary: 0.08, gain: g * 0.9 })) return;
 
@@ -300,7 +382,7 @@ class Sound {
       grp = gait === 'run' ? 'stepConcreteRun' : 'stepConcreteWalk';
     }
 
-    if (grp && this.sample(out, t, grp, { vary: 0.08, gain: g })) {
+    if (grp && this.sample(out, t, grp, { vary: 0.07, gain: g })) {
       if (surface === 'wood' && Math.random() < 0.27) {
         this.sample(out, t + 0.02 + Math.random() * 0.04, 'woodCreak', { vary: 0.08, gain: 0.48 * volRand });
       }
@@ -350,7 +432,7 @@ class Sound {
 
   /** Turn-in-place foot pivot or 180-deg shift matched to the surface under foot. */
   pivot(surface: StepSurface, pos: Pos, fast = false): void {
-    const v = this.voice(pos, 0.55);
+    const v = this.voice(pos, 0.55, 1.5, true, 'footsteps');
     if (!v) return;
     const [out, t] = v;
     const gain = 0.68 + Math.random() * 0.16;
@@ -371,28 +453,28 @@ class Sound {
 
   /** Entering / exiting crouch. */
   crouch(down: boolean, pos: Pos): void {
-    const v = this.voice(pos, 0.5);
+    const v = this.voice(pos, 0.5, 1.5, true, 'foley');
     if (!v) return;
     const [out, t] = v;
-    if (this.sample(out, t, down ? 'crouchDown' : 'standUp', { vary: 0.06, gain: 0.65 })) return;
+    if (this.sample(out, t, down ? 'crouchDown' : 'standUp', { vary: 0.06, gain: 0.68 })) return;
     this.noiseHit(out, t, { type: 'bandpass', f: down ? 650 : 880, q: 0.9, dur: 0.14, peak: 0.1, attack: 0.03 });
   }
 
   /** Aiming down sights micro-foley (rifle/shotgun vs pistol). */
   ads(pistol: boolean): void {
-    const v = this.voice(null, 0.4);
+    const v = this.voice(null, 0.4, 1.5, false, 'foley');
     if (!v) return;
     const [out, t] = v;
-    if (this.sample(out, t, pistol ? 'adsPistol' : 'adsRifle', { vary: 0.05, gain: 0.68 })) return;
+    if (this.sample(out, t, pistol ? 'adsPistol' : 'adsRifle', { vary: 0.05, gain: 0.7 })) return;
     this.noiseHit(out, t, { type: 'bandpass', f: pistol ? 1800 : 1200, q: 1, dur: 0.12, peak: 0.08, attack: 0.02 });
   }
 
   /** Bullet striking equipped armor vest. */
   armorHit(): void {
-    const v = this.voice(null, 0.55, 1, true);
+    const v = this.voice(null, 0.55, 1, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
-    if (this.sample(out, t, 'armorHit', { vary: 0.06, gain: 0.9 })) return;
+    if (this.sample(out, t, 'armorHit', { vary: 0.06, gain: 0.92 })) return;
     this.noiseHit(out, t, { type: 'lowpass', f: 420, dur: 0.14, peak: 0.7 });
   }
 
@@ -401,7 +483,7 @@ class Sound {
   /** A drop hitting a puddle (or, `tap`, a steel sink): a short rising plink, the room rings with it. */
   drip(pos: Pos, tap = false): void {
     if (!this.claim('drip', 0.3)) return;
-    const v = this.voice(pos, 0.3, 1.2);
+    const v = this.voice(pos, 0.3, 1.2, false, 'env');
     if (!v) return;
     const [out, t] = v;
     const f = (tap ? 1500 : 850) * (0.85 + Math.random() * 0.3);
@@ -415,7 +497,7 @@ class Sound {
    */
   house(kind: 'pipe' | 'creak' | 'above', pos: Pos): void {
     if (!this.claim('house', kind === 'above' ? 4 : 1.6)) return;
-    const v = this.voice(pos, kind === 'above' ? 4 : 1.8, 2.5);
+    const v = this.voice(pos, kind === 'above' ? 4 : 1.8, 2.5, false, kind === 'above' ? 'footsteps' : 'env');
     if (!v) return;
     const [out, t] = v;
     const r = Math.random();
@@ -455,7 +537,7 @@ class Sound {
 
   /** A door swung shut by a draught: slow, creaking all the way if it creaks, a soft latch at the end. */
   draftDoor(pos: Pos, dur: number, creaky: boolean, pitch: number): void {
-    const v = this.voice(pos, dur + 0.5);
+    const v = this.voice(pos, dur + 0.5, 1.5, false, 'env');
     if (!v) return;
     const [out, t] = v;
     if (creaky) this.creak(out, t + 0.1, dur * 0.9, pitch * 0.85);
@@ -467,7 +549,7 @@ class Sound {
   /** Crows: `n` caws from a flock (one when idle, a racket when they take off). */
   crow(pos: Pos, n: number): void {
     if (!this.claim('street', n > 1 ? 1.5 : 0.5)) return;
-    const v = this.voice(pos, 0.4 + n * 0.28, 3);
+    const v = this.voice(pos, 0.4 + n * 0.28, 3, false, 'env');
     if (!v) return;
     const [out, t] = v;
     for (let i = 0; i < n; i++) {
@@ -482,7 +564,7 @@ class Sound {
 
   /** A car alarm right here: whoops or two-tone for `dur` s, honking, loud — it carries. */
   carAlarm(pos: Pos, dur: number): void {
-    const v = this.voice(pos, dur + 0.5, 7);
+    const v = this.voice(pos, dur + 0.5, 7, false, 'env');
     if (!v) return;
     const [out, t] = v;
     const ac = this.ac!;
@@ -517,7 +599,7 @@ class Sound {
   /** Small street noises: a rat's squeak, a cart's wheel, loose sheet metal rattling, a sign creaking. */
   street(kind: 'squeak' | 'cart' | 'rattle' | 'sign', pos: Pos): void {
     if (!this.claim('street', 0.6)) return;
-    const v = this.voice(pos, kind === 'sign' ? 1.4 : 0.7, kind === 'rattle' ? 3 : 1.5);
+    const v = this.voice(pos, kind === 'sign' ? 1.4 : 0.7, kind === 'rattle' ? 3 : 1.5, false, 'env');
     if (!v) return;
     const [out, t] = v;
     const r = Math.random();
@@ -538,7 +620,7 @@ class Sound {
 
   /** One ring of an old phone: a bell trilling twice. */
   phoneRing(pos: Pos): void {
-    const v = this.voice(pos, 2.2, 2);
+    const v = this.voice(pos, 2.2, 2, false, 'env');
     if (!v) return;
     const [out, t] = v;
     for (const at of [0, 0.5]) {
@@ -565,7 +647,7 @@ class Sound {
       if (want.some((w) => w.key === slot.key)) continue;
       slot.gain.gain.setTargetAtTime(0, now, 0.25);
       for (const n of slot.sources) n.stop(now + 1.2);
-      window.setTimeout(() => slot.panner.disconnect(), 1400);
+      scheduleTimeout(() => slot.panner.disconnect(), 1400);
       this.loopSlots.splice(i, 1);
     }
     for (const w of want) {
@@ -585,7 +667,7 @@ class Sound {
 
   private loopSlot(ac: AudioContext, key: number, kind: LoopKind): LoopSlot {
     const panner = ac.createPanner();
-    panner.panningModel = 'equalpower';
+    panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
     const loud = LOUD_LOOPS.includes(kind);
@@ -594,7 +676,7 @@ class Sound {
     panner.refDistance = loud ? 4 : 1;
     const gain = ac.createGain();
     gain.gain.value = 0;
-    gain.connect(panner).connect(this.world!);
+    gain.connect(panner).connect(this.envBus ?? this.world!);
     const sources: AudioScheduledSourceNode[] = [];
     let buzz: OscillatorNode | undefined;
     const now = ac.currentTime;
@@ -790,7 +872,7 @@ class Sound {
   }
 
   jump(pos: Pos): void {
-    const v = this.voice(pos, 0.45);
+    const v = this.voice(pos, 0.45, 1.5, true, 'foley');
     if (!v) return;
     const [out, t] = v;
     if (this.sample(out, t, 'jumpPush', { vary: 0.06, gain: 0.72 })) return;
@@ -799,7 +881,7 @@ class Sound {
 
   land(surface: StepSurface, pos: Pos, speed: number): void {
     const k = Math.min(1.6, speed / 3);
-    const v = this.voice(pos, 0.55);
+    const v = this.voice(pos, 0.55, 1.5, true, 'footsteps');
     if (!v) return;
     const [out, t] = v;
     const grp: SampleGroup = surface === 'metal' ? 'landMetal' : 'landHard';
@@ -808,13 +890,13 @@ class Sound {
       else if (surface === 'glass') this.sample(out, t, 'stepGlassRun', { vary: 0.08, gain: 0.65 });
       return;
     }
-    this.step(surface, 'run', pos, 0.9 + k * 0.5);
+    this.step(surface, 'run', pos, 0.9 + k * 0.5, true);
     this.tone(out, t, { f: 75, f2: 45, dur: 0.14, peak: 0.45 * k });
     this.noiseHit(out, t + 0.01, { type: 'bandpass', f: 900, q: 0.7, dur: 0.12, peak: 0.08 * k });
   }
 
   swing(kind: SwingKind, dur: number, pos: Pos): void {
-    const v = this.voice(pos, 0.5);
+    const v = this.voice(pos, 0.5, 1.5, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
     // The recorded whoosh for the axe, the bat and the crowbar (slower with a slower, tired swing), a blade's a
@@ -843,7 +925,7 @@ class Sound {
    * and spatial echo tailored for indoor rooms, narrow alleys, or open streets.
    */
   gunShot(kind: GunSound, pos: Pos | null, suppressed: boolean, place: EchoPlace): void {
-    const v = this.voice(pos, 2.1, 6, true);
+    const v = this.voice(pos, 2.1, 6, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
     const big = kind === 'rpg' ? 1.65 : kind === 'shotgun' || kind === 'hunting' ? 1.32 : kind === 'rifle' || kind === 'ak' ? 1.18 : kind === 'pistol45' ? 1.02 : 0.92;
@@ -891,50 +973,67 @@ class Sound {
       }
     }
 
-    // Spatial tail / reflections by environment (dense indoors, slap in alleys, faint far tail outdoors).
-    const e = (suppressed ? 0.16 : 1) * (usedSample ? 0.45 : 1);
-    if (place === 'indoor') {
-      for (let i = 0; i < 6; i++) {
-        this.noiseHit(out, t + 0.01 + i * 0.015, { type: 'lowpass', f: 2400 - i * 280, dur: 0.085, peak: (0.38 - i * 0.048) * big * e });
+    // Spatial tail / reflections by environment (lightweight single-tap when using recorded WAV to avoid frame drops).
+    if (usedSample) {
+      if (suppressed) return;
+      if (place === 'indoor') {
+        this.noiseHit(out, t + 0.035, { type: 'lowpass', f: 880, f2: 240, dur: 0.34, peak: 0.2 * big, attack: 0.015 });
+      } else if (place === 'alley') {
+        this.noiseHit(out, t + 0.06, { type: 'bandpass', f: 1300, q: 0.9, dur: 0.2, peak: 0.16 * big, attack: 0.01 });
+      } else {
+        this.noiseHit(out, t + 0.16, { type: 'lowpass', f: 820, f2: 260, dur: 0.36, peak: 0.12 * big, attack: 0.025 });
       }
-      this.noiseHit(out, t + 0.04, { type: 'lowpass', f: 780, f2: 240, dur: 0.48, peak: 0.32 * big * e, attack: 0.02 });
+      return;
+    }
+
+    const e = suppressed ? 0.16 : 1;
+    if (place === 'indoor') {
+      for (let i = 0; i < 3; i++) {
+        this.noiseHit(out, t + 0.015 + i * 0.025, { type: 'lowpass', f: 2200 - i * 420, dur: 0.1, peak: (0.35 - i * 0.07) * big * e });
+      }
     } else if (place === 'alley') {
-      for (let i = 0; i < 6; i++) {
-        this.noiseHit(out, t + 0.045 + i * 0.055, { type: 'bandpass', f: 1450 - i * 150, q: 0.9, dur: 0.08, peak: (0.28 - i * 0.038) * big * e });
+      for (let i = 0; i < 3; i++) {
+        this.noiseHit(out, t + 0.05 + i * 0.075, { type: 'bandpass', f: 1400 - i * 220, q: 0.9, dur: 0.09, peak: (0.26 - i * 0.06) * big * e });
       }
     } else {
-      this.noiseHit(out, t + 0.11, { type: 'lowpass', f: 1500, f2: 450, dur: 0.28, peak: 0.26 * big * e, attack: 0.015 });
-      this.noiseHit(out, t + 0.30 + Math.random() * 0.08, { type: 'lowpass', f: 920, f2: 280, dur: 0.48, peak: 0.22 * big * e, attack: 0.03 });
-      this.noiseHit(out, t + 0.68 + Math.random() * 0.18, { type: 'lowpass', f: 580, f2: 200, dur: 0.72, peak: 0.12 * big * e, attack: 0.05 });
+      this.noiseHit(out, t + 0.14, { type: 'lowpass', f: 1300, f2: 360, dur: 0.36, peak: 0.24 * big * e, attack: 0.02 });
+      this.noiseHit(out, t + 0.42, { type: 'lowpass', f: 700, f2: 220, dur: 0.55, peak: 0.15 * big * e, attack: 0.04 });
     }
   }
 
   /** The gun's own noises in the hands (magazine, slide, bolt, pump, the dry click…). */
   gunMech(kind: GunMech, pitch = 1): void {
-    const v = this.voice(null, kind === 'reloadRifle' ? 2.4 : 0.8);
+    const v = this.voice(null, kind === 'reloadRifle' ? 1.8 : 0.85, 1.5, true, this.worldMute ? 'ui' : 'weapons');
     if (!v) return;
     const [out, t] = v;
     const k = (f: number) => f * pitch;
-    if (kind === 'dry' && (this.sample(out, t, 'gunDry', { rate: pitch, vary: 0.04, gain: 0.75 }) || this.sample(out, t, 'dry', { rate: pitch, gain: 0.55 }))) return;
-    if (kind === 'pump' && this.sample(out, t, 'gunPump', { rate: pitch, vary: 0.04, gain: 0.78 })) return;
-    if (kind === 'bolt' && this.sample(out, t, 'gunBolt', { rate: pitch, vary: 0.04, gain: 0.78 })) return;
-    if (kind === 'magCheck' && this.sample(out, t, 'gunMagCheck', { rate: pitch, vary: 0.04, gain: 0.72 })) return;
-    if (kind === 'reloadRifle' && this.sample(out, t, 'gunReloadRifle', { rate: pitch, vary: 0.03, gain: 0.82 })) return;
-    if ((kind === 'rack' || kind === 'boltCatch' || kind === 'slideLock') && this.sample(out, t + 0.06, 'rattle', { rate: pitch * (kind === 'boltCatch' || kind === 'slideLock' ? 1.15 : 1), gain: 0.5 })) {
-      this.noiseHit(out, t, { type: 'bandpass', f: k(1500), q: 2, dur: 0.06, peak: 0.2 });
-      return;
+    if (kind === 'dry' && (this.sample(out, t, 'gunDry', { rate: pitch, vary: 0.04, gain: 0.78 }) || this.sample(out, t, 'dry', { rate: pitch, gain: 0.55 }))) return;
+    if (kind === 'pump' && this.sample(out, t, 'gunPump', { rate: pitch, vary: 0.04, gain: 0.8 })) return;
+    if (kind === 'bolt' && this.sample(out, t, 'gunBolt', { rate: pitch, vary: 0.04, gain: 0.8 })) return;
+    if (kind === 'magCheck' && this.sample(out, t, 'gunMagCheck', { rate: pitch, vary: 0.04, gain: 0.74 })) return;
+    if (kind === 'reloadRifle' && this.sample(out, t, 'gunReloadRifle', { rate: pitch, vary: 0.03, gain: 0.86 })) return;
+    if (kind === 'magOut' && this.sample(out, t, 'gunMagOut', { rate: pitch, vary: 0.04, gain: 0.82 })) return;
+    if (kind === 'magIn' && this.sample(out, t, 'gunMagIn', { rate: pitch, vary: 0.04, gain: 0.88 })) return;
+    if (kind === 'adsPistol' && this.sample(out, t, 'adsPistol', { rate: pitch, vary: 0.04, gain: 0.54 })) return;
+    if (kind === 'rack' || kind === 'boltCatch' || kind === 'slideLock') {
+      const boltRate = pitch * (kind === 'rack' ? 1.08 : 1.24);
+      if (this.sample(out, t, 'gunBolt', { rate: boltRate, vary: 0.04, gain: kind === 'slideLock' ? 0.52 : 0.64 })) return;
+      if (this.sample(out, t + 0.04, 'rattle', { rate: pitch * (kind === 'boltCatch' || kind === 'slideLock' ? 1.15 : 1), gain: 0.55 })) {
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1500), q: 2, dur: 0.06, peak: 0.22 });
+        return;
+      }
     }
     switch (kind) {
       case 'magCheck':
       case 'magOut':
-        this.noiseHit(out, t, { type: 'bandpass', f: k(1800), q: 3, dur: 0.03, peak: 0.25 });
-        this.noiseHit(out, t + 0.04, { type: 'bandpass', f: k(900), q: 1.5, dur: 0.12, peak: 0.12, attack: 0.03 });
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1800), q: 3, dur: 0.03, peak: 0.28 });
+        this.noiseHit(out, t + 0.04, { type: 'bandpass', f: k(900), q: 1.5, dur: 0.12, peak: 0.15, attack: 0.03 });
         break;
       case 'reloadRifle':
       case 'magIn':
-        this.noiseHit(out, t, { type: 'bandpass', f: k(1300), q: 2, dur: 0.05, peak: 0.2 });
-        this.noiseHit(out, t + 0.06, { type: 'bandpass', f: k(2600), q: 4, dur: 0.025, peak: 0.35 });
-        this.tone(out, t + 0.06, { f: k(1900), dur: 0.05, peak: 0.06 });
+        this.noiseHit(out, t, { type: 'bandpass', f: k(1300), q: 2, dur: 0.05, peak: 0.22 });
+        this.noiseHit(out, t + 0.06, { type: 'bandpass', f: k(2600), q: 4, dur: 0.025, peak: 0.36 });
+        this.tone(out, t + 0.06, { f: k(1900), dur: 0.05, peak: 0.07 });
         break;
       case 'rack':
       case 'pump':
@@ -969,15 +1068,16 @@ class Sound {
         break;
       case 'draw':
       case 'holster':
-        this.noiseHit(out, t, { type: 'bandpass', f: kind === 'draw' ? 700 : 500, q: 0.8, dur: 0.18, peak: 0.1, attack: 0.05 });
-        this.noiseHit(out, t + 0.16, { type: 'bandpass', f: 1600, q: 2, dur: 0.03, peak: 0.12 });
+      case 'adsPistol':
+        this.noiseHit(out, t, { type: 'bandpass', f: kind === 'draw' ? 700 : kind === 'adsPistol' ? 1800 : 500, q: 0.8, dur: 0.16, peak: 0.12, attack: 0.03 });
+        this.noiseHit(out, t + 0.12, { type: 'bandpass', f: 1600, q: 2, dur: 0.03, peak: 0.12 });
         break;
     }
   }
 
   /** A spent case on the floor, matched to surface (Pitch 0.90–1.12). */
   casing(pos: Pos, shell: boolean, surfaceOrSoft: StepSurface | boolean = 'asphalt'): void {
-    const v = this.voice(pos, 0.7, 1.8);
+    const v = this.voice(pos, 0.7, 1.8, false, 'weapons');
     if (!v) return;
     const [out, t] = v;
     const grp: SampleGroup = shell
@@ -1005,7 +1105,7 @@ class Sound {
 
   /** A magazine dropped on the floor. */
   magDrop(pos: Pos): void {
-    const v = this.voice(pos, 0.9, 1.5);
+    const v = this.voice(pos, 0.9, 1.5, false, 'weapons');
     if (!v) return;
     const [out, t] = v;
     // The light clatter played lower: a heavier, hollow magazine.
@@ -1016,7 +1116,7 @@ class Sound {
 
   /** A bullet hits: dust off concrete, a ricochet off metal, wood, glass breaking, a car's tin; a body. */
   bulletHit(kind: BulletHit, pos: Pos): void {
-    const v = this.voice(pos, 0.9, 2, true);
+    const v = this.voice(pos, 0.9, 2, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
     if ((kind === 'metal' || kind === 'car') && this.sample(out, t, 'bulletMetal', { rate: kind === 'car' ? 0.75 : 1, vary: 0.1, gain: 0.6 })) {
@@ -1065,7 +1165,7 @@ class Sound {
 
   /** An explosion: the blast, its rumble rolling away, debris falling. */
   explosion(pos: Pos): void {
-    const v = this.voice(pos, 4.5, 12, true);
+    const v = this.voice(pos, 4.5, 12, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
     if (this.sample(out, t, 'rpgExplosion', { vary: 0.05, gain: 1 }) || this.sample(out, t, 'explosion', { vary: 0.06, gain: 1 })) {
@@ -1079,7 +1179,7 @@ class Sound {
   }
 
   hit(material: HitMaterial, pos: Pos, heavy = 1): void {
-    const v = this.voice(pos, 0.9);
+    const v = this.voice(pos, 0.9, 1.5, false, material === 'glass' ? 'env' : 'weapons');
     if (!v) return;
     const [out, t] = v;
     const g = 0.5 + heavy * 0.5;
@@ -1119,7 +1219,7 @@ class Sound {
    * A door: wooden interior creak, heavy steel stairwell door, or glass door.
    */
   door(style: 'wood' | 'glass' | 'metal', open: boolean, pos: Pos, creaky = false, pitch = 1): void {
-    const v = this.voice(pos, creaky && open ? 1.4 : 1.1);
+    const v = this.voice(pos, creaky && open ? 1.4 : 1.1, 1.5, true, 'env');
     if (!v) return;
     const [out, t] = v;
     if (style === 'metal' && this.sample(out, t, 'doorMetal', { rate: pitch, vary: 0.05, gain: open ? 0.82 : 0.72 })) return;
@@ -1174,7 +1274,7 @@ class Sound {
     const far = kind === 'bang' || kind === 'crack';
     const group: Group = far ? 'zBang' : kind === 'step' ? 'zStep' : kind === 'swing' ? 'zLunge' : kind === 'hit' || kind === 'die' ? 'zHurt' : 'zVoice';
     if (!this.claim(group, kind === 'moan' || kind === 'alarm' ? 1.4 : kind === 'step' ? 0.25 : 0.6)) return;
-    const v = this.voice(pos, far ? 1.4 : 1.6, far ? 7 : kind === 'step' ? 1 : 2, kind === 'swing' || kind === 'hit' || kind === 'die');
+    const v = this.voice(pos, far ? 1.4 : 1.6, far ? 7 : kind === 'step' ? 1 : 2, kind === 'swing' || kind === 'hit' || kind === 'die', kind === 'step' ? 'footsteps' : 'env');
     if (!v) return;
     const [out, t] = v;
     const r = Math.random();
@@ -1264,7 +1364,7 @@ class Sound {
    */
   strike(kind: FleshBlow, pos: Pos, head: boolean, kill: boolean): void {
     if (!this.claim('strike', 0.4)) return;
-    const v = this.voice(pos, 0.6, 2, true);
+    const v = this.voice(pos, 0.6, 2, true, 'weapons');
     if (!v) return;
     const [out, t] = v;
     const k = kill ? 1.25 : 1;
@@ -1309,7 +1409,7 @@ class Sound {
    */
   attacked(kind: Attacked, many = 1): void {
     if (!this.claim('attacked', 0.4)) return;
-    const v = this.voice(null, 0.5, 1, true);
+    const v = this.voice(null, 0.5, 1, true, 'foley');
     if (!v) return;
     const [out, t] = v;
     const k = Math.min(1.4, 1 + (many - 1) * 0.15);
@@ -1325,7 +1425,7 @@ class Sound {
   /** The survivor hurt: a short pained grunt, one at a time (a bite, a fall). */
   ouch(hard: number): void {
     if (!this.claim('ouch', 0.5)) return;
-    const v = this.voice(null, 0.5, 1, true);
+    const v = this.voice(null, 0.5, 1, true, 'foley');
     if (!v) return;
     const [out, t] = v;
     const f = 150 * (0.92 + Math.random() * 0.16);
@@ -1337,7 +1437,7 @@ class Sound {
   /** A door that won't give: thumps against the boards, a rattle. */
   /** A zombie groans: a low, wavering moan through the nose; `alarm` — it has seen you (louder, rising). */
   groan(pos: Pos, alarm: boolean): void {
-    const v = this.voice(pos, alarm ? 1.6 : 1.3);
+    const v = this.voice(pos, alarm ? 1.6 : 1.3, 1.5, false, 'env');
     if (!v) return;
     const [out, t] = v;
     const f = 85 + Math.random() * 35;
@@ -1348,7 +1448,7 @@ class Sound {
   }
 
   doorStuck(pos: Pos): void {
-    const v = this.voice(pos, 0.7);
+    const v = this.voice(pos, 0.7, 1.5, false, 'env');
     if (!v) return;
     const [out, t] = v;
     for (let i = 0; i < 3; i++) {
@@ -1358,7 +1458,7 @@ class Sound {
   }
 
   containerOpen(kind: ContainerSound, pos: Pos): void {
-    const v = this.voice(pos, 0.6);
+    const v = this.voice(pos, 0.6, 1.5, false, 'foley');
     if (!v) return;
     const [out, t] = v;
     switch (kind) {
@@ -1407,7 +1507,7 @@ class Sound {
   }
 
   containerClose(kind: ContainerSound, pos: Pos): void {
-    const v = this.voice(pos, 0.6);
+    const v = this.voice(pos, 0.6, 1.5, false, 'foley');
     if (!v) return;
     const [out, t] = v;
     if (kind === 'bag') this.zip(out, t, 0.35, false);
@@ -1485,7 +1585,7 @@ class Sound {
     s.t -= dt;
     if (s.t > 0) return;
     s.t = 0.06 + Math.random() * 0.16;
-    const v = this.voice(s.pos, 0.2);
+    const v = this.voice(s.pos, 0.2, 1.5, false, 'foley');
     if (!v) return;
     const [out, t] = v;
     switch (s.kind) {
@@ -1527,31 +1627,94 @@ class Sound {
     if (!this.hardMute) void this.ac?.resume();
   }
 
+  /** Inject an external or mock AudioContext + Samples bank (used by automated audio tests). */
+  initWithContext(ac: AudioContext, customSamples?: Samples): void {
+    if (this.ac === ac) return;
+    this.buildGraph(ac, customSamples);
+  }
+
   private ensure(): void {
-    if (this.ac) return;
+    if (this.ac || typeof window === 'undefined') return;
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return;
-    const ac = new Ctor();
+    this.buildGraph(new Ctor());
+  }
+
+  private buildGraph(ac: AudioContext, customSamples?: Samples): void {
     this.ac = ac;
     this.master = ac.createGain();
     this.master.connect(ac.destination);
+
+    // Master mastering chain: soft glue compressor -> makeup gain -> brickwall limiter -> -1.0 dBFS ceiling shaper.
+    this.ceilingShaper = ac.createWaveShaper();
+    this.ceilingShaper.curve = MAXIMIZER_CURVE;
+    this.ceilingShaper.oversample = '2x';
+    this.ceilingShaper.connect(this.master);
+
+    this.brickwallLimiter = ac.createDynamicsCompressor();
+    this.brickwallLimiter.threshold.value = -1.5;
+    this.brickwallLimiter.knee.value = 0;
+    this.brickwallLimiter.ratio.value = 20;
+    this.brickwallLimiter.attack.value = 0.001;
+    this.brickwallLimiter.release.value = 0.045;
+    this.brickwallLimiter.connect(this.ceilingShaper);
+
+    this.makeupGain = ac.createGain();
+    this.makeupGain.gain.value = 1.4;
+    this.makeupGain.connect(this.brickwallLimiter);
+
+    this.glueComp = ac.createDynamicsCompressor();
+    this.glueComp.threshold.value = -16;
+    this.glueComp.knee.value = 12;
+    this.glueComp.ratio.value = 3;
+    this.glueComp.attack.value = 0.01;
+    this.glueComp.release.value = 0.12;
+    this.glueComp.connect(this.makeupGain);
+
     this.world = ac.createGain();
     this.muffle = ac.createBiquadFilter();
     this.muffle.type = 'lowpass';
     this.muffle.frequency.value = 20000;
-    this.world.connect(this.muffle).connect(this.master);
+    this.world.connect(this.muffle).connect(this.glueComp);
+
+    // Semantic mixer sub-buses feeding world mix so subtle details sit clearly alongside shots.
+    this.weaponsBus = ac.createGain();
+    this.weaponsBus.gain.value = 0.96;
+    this.weaponsBus.connect(this.world);
+
+    this.footstepsBus = ac.createGain();
+    this.footstepsBus.gain.value = 0.9;
+    this.footstepsBus.connect(this.world);
+
+    this.foleyBus = ac.createGain();
+    this.foleyBus.gain.value = 0.92;
+    this.foleyBus.connect(this.world);
+
+    this.envBus = ac.createGain();
+    this.envBus.gain.value = 0.82;
+    this.envBus.connect(this.world);
+
+    this.musicBus = ac.createGain();
+    this.musicBus.gain.value = 0.68;
+    this.musicBus.connect(this.world);
+
+    // UI bus stays audible while world is paused, still protected by the brickwall limiter.
     this.ui = ac.createGain();
-    this.ui.connect(this.master);
-    const len = ac.sampleRate;
-    this.noise = ac.createBuffer(1, len, ac.sampleRate);
+    this.ui.gain.value = 0.88;
+    this.ui.connect(this.brickwallLimiter);
+
+    const len = Math.max(1024, ac.sampleRate || 32000);
+    this.noise = ac.createBuffer(1, len, ac.sampleRate || 32000);
     const ch = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+
     // Concrete stairwell / room reverb: 0.85 s crisp early reflections + rapid decay.
-    const ir = ac.createBuffer(2, Math.floor(ac.sampleRate * 0.85), ac.sampleRate);
+    const irLen = Math.max(256, Math.floor((ac.sampleRate || 32000) * 0.85));
+    const ir = ac.createBuffer(2, irLen, ac.sampleRate || 32000);
     for (let c = 0; c < 2; c++) {
       const d = ir.getChannelData(c);
       for (let i = 0; i < d.length; i++) {
-        const tm = i / ac.sampleRate;
+        const tm = i / (ac.sampleRate || 32000);
         const early = tm < 0.07 ? 1.25 : 1;
         d[i] = (Math.random() * 2 - 1) * early * Math.pow(1 - i / d.length, 4.2);
       }
@@ -1560,9 +1723,10 @@ class Sound {
     conv.buffer = ir;
     this.send = ac.createGain();
     this.send.gain.value = 0.02;
-    this.world.connect(this.send).connect(conv).connect(this.master);
-    this.samples = new Samples(ac);
-    this.samples.load();
+    this.world.connect(this.send).connect(conv).connect(this.glueComp);
+
+    this.samples = customSamples ?? new Samples(ac);
+    if (!customSamples) this.samples.load();
     this.apply();
   }
 
@@ -1571,6 +1735,7 @@ class Sound {
     const ac = this.ac;
     if (!ac || ac.state !== 'running' || !this.world || !this.samples) return;
     const now = ac.currentTime;
+    const targetBus = this.foleyBus ?? this.world;
 
     const wantBreath = !dead && !this.worldMute && stamina < 0.2;
     const breathGain = wantBreath ? 0.14 + Math.min(1, (0.2 - stamina) / 0.2) * 0.34 : 0;
@@ -1581,7 +1746,7 @@ class Sound {
         if (this.breathVoice) {
           this.breathVoice.gain.gain.setTargetAtTime(0, now, 0.08);
           const old = this.breathVoice.src;
-          window.setTimeout(() => { try { old.stop(); } catch {} }, 350);
+          scheduleTimeout(() => { try { old.stop(); } catch {} }, 350);
           this.breathVoice = null;
         }
         const src = ac.createBufferSource();
@@ -1589,7 +1754,7 @@ class Sound {
         src.loop = true;
         const gain = ac.createGain();
         gain.gain.value = 0.0001;
-        src.connect(gain).connect(this.world);
+        src.connect(gain).connect(targetBus);
         src.start(now);
         this.breathVoice = { src, gain, masked: hasMask };
       }
@@ -1608,7 +1773,7 @@ class Sound {
         src.loop = true;
         const gain = ac.createGain();
         gain.gain.value = 0.0001;
-        src.connect(gain).connect(this.world);
+        src.connect(gain).connect(targetBus);
         src.start(now);
         this.heartVoice = { src, gain };
       }
@@ -1645,7 +1810,7 @@ class Sound {
       const lv = this.lootVoice;
       this.lootVoice = null;
       lv.gain.gain.setTargetAtTime(0, now, 0.06);
-      window.setTimeout(() => { try { lv.src.stop(); } catch {} }, 250);
+      scheduleTimeout(() => { try { lv.src.stop(); } catch {} }, 250);
     }
   }
 
@@ -1673,8 +1838,8 @@ class Sound {
     this.master.gain.setTargetAtTime(this.hardMute ? 0 : this.volume, t, 0.03);
     this.world.gain.setTargetAtTime(this.worldMute ? 0 : 1, t, 0.05);
     this.syncLootLoop();
-    if (this.hardMute) void ac.suspend();
-    else void ac.resume();
+    if (this.hardMute) void ac.suspend?.();
+    else void ac.resume?.();
   }
 
   /** Room in a group for one more sound lasting `life` s (see GROUPS); false = skip it. */
@@ -1694,24 +1859,60 @@ class Sound {
     return true;
   }
 
+  private resolveBus(bus: MixBus | undefined, pos: Pos | null): AudioNode | null {
+    switch (bus) {
+      case 'weapons': return this.weaponsBus ?? this.world;
+      case 'footsteps': return this.footstepsBus ?? this.world;
+      case 'foley': return this.foleyBus ?? this.world;
+      case 'env': return this.envBus ?? this.world;
+      case 'music': return this.musicBus ?? this.world;
+      case 'ui': return this.ui;
+      case 'world': return this.world;
+      default: return pos ? this.world : this.ui;
+    }
+  }
+
+  /** Dedicated non-evictable player footstep channel bypassing MAX_VOICES and wall occlusion. */
+  private playerStepVoice(): [Out, number] | null {
+    const ac = this.ac;
+    if (!ac || ac.state !== 'running' || this.hardMute || this.worldMute || !this.world) return null;
+    const target = this.footstepsBus ?? this.world;
+    const g = ac.createGain();
+    g.connect(target);
+    return [g, ac.currentTime + 0.004];
+  }
+
+  private pruneVoices(): number {
+    const now = this.ac?.currentTime ?? 0;
+    let w = 0;
+    for (let i = 0; i < this.voiceEnds.length; i++) {
+      if (this.voiceEnds[i] > now) this.voiceEnds[w++] = this.voiceEnds[i];
+    }
+    this.voiceEnds.length = w;
+    return w;
+  }
+
   /**
-   * A voice: its own gain into the world bus (through a panner if positioned) or the UI bus. Returns
-   * the node to play into and the start time, or null when muted / over the voice limit.
+   * A voice: its own gain into the semantic mixer bus (through an HRTF panner if positioned) or the UI bus.
+   * Returns the node to play into and the start time, or null when muted / over the voice limit.
    */
-  private voice(pos: Pos | null, life: number, ref = 1.5, priority = false): [Out, number] | null {
+  private voice(pos: Pos | null, life: number, ref = 1.5, priority = false, bus?: MixBus): [Out, number] | null {
     const ac = this.ac;
     if (!ac || ac.state !== 'running' || this.hardMute || !this.world || !this.ui) return null;
-    if (pos && this.worldMute) return null;
-    if (this.voices >= MAX_VOICES + (priority ? PRIORITY_VOICES : 0)) return null;
-    this.voices++;
-    window.setTimeout(() => this.voices--, (life + 0.6) * 1000);
+    const target = this.resolveBus(bus, pos);
+    if (!target) return null;
+    const isWorldRouted = pos !== null || (bus !== undefined && bus !== 'ui');
+    if (isWorldRouted && this.worldMute) return null;
+    const active = this.pruneVoices();
+    if (active >= MAX_VOICES + (priority ? PRIORITY_VOICES : 0)) return null;
+    this.voiceEnds.push(ac.currentTime + life + 0.15);
     const g = ac.createGain();
     if (pos) {
       const dist = Math.hypot(pos.x - this.lx, pos.y - this.ly, pos.z - this.lz);
       const diffFloor = dist > 1.6 && Math.abs(pos.y - this.ly) > 2.5;
       const occluded = !diffFloor && dist > 1.6 && !!this.occlusionCheck?.(this.lx, this.ly, this.lz, pos.x, pos.y, pos.z);
       const p = ac.createPanner();
-      p.panningModel = 'equalpower';
+      p.panningModel = 'HRTF';
       p.distanceModel = 'inverse';
       p.refDistance = ref;
       p.maxDistance = 60;
@@ -1727,11 +1928,11 @@ class Sound {
         lp.type = 'lowpass';
         lp.frequency.value = diffFloor ? 650 : 750;
         lp.Q.value = 0.7;
-        g.connect(lp).connect(p).connect(this.world);
+        g.connect(lp).connect(p).connect(target);
       } else {
-        g.connect(p).connect(this.world);
+        g.connect(p).connect(target);
       }
-    } else g.connect(this.ui);
+    } else g.connect(target);
     return [g, ac.currentTime + 0.005];
   }
 

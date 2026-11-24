@@ -322,6 +322,7 @@ export class WorldScene implements IScene {
   private turnInited = false;
   private readonly _surfOrig = new Vector3();
   private readonly _surfDown = new Vector3(0, -1, 0);
+  private lastValidSurface: StepSurface = 'asphalt';
   private layout!: WorldLayout;
   private zombies!: ZombieSim;
   /** Every zombie, living and dead: the procedural models, batched per type, up to the fog. */
@@ -1034,6 +1035,7 @@ export class WorldScene implements IScene {
     group.position.copy(this.camera.position).addScaledVector(this.lookDir, 0.5);
     this.scene.add(group);
     this.player.prewarmShadows();
+    this.player.warmSurfaceCache();
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
     const doorsDone = this.doors.prewarm();
@@ -1220,10 +1222,10 @@ export class WorldScene implements IScene {
     // Distance-based footsteps, crouch/stand, turn-in-place pivots, jump, and landing.
     const feet = { x: c.position.x, y: c.position.y + 0.05, z: c.position.z };
     if (c.crouchChanged) sfx.crouch(c.crouchChanged === 'down', feet);
-    if (c.stepped && !c.airborne) {
+    if (c.stepped) {
       const wet = this.atmo.puddleAt(feet.x, feet.z, c.position.y);
       if (wet) this.atmo.ripple(feet.x, c.position.y, feet.z);
-      sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet);
+      sfx.step(wet ? 'water' : this.surfaceAt(feet.x, feet.z, c.position.y), c.crouched ? 'crouch' : c.sprinting ? 'run' : 'walk', feet, 1, true);
     }
     this.turnCd = Math.max(0, this.turnCd - dt);
     if (!this.turnInited) {
@@ -1462,8 +1464,18 @@ export class WorldScene implements IScene {
     return (zone === 'suburb' && y > 0.05) ? Ground.Paved : Ground.Grass;
   }
 
-  /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass. */
+  /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass (with fallback to last valid surface). */
   private surfaceAt(x: number, z: number, y: number): StepSurface {
+    const raw = this.resolveSurfaceAt(x, z, y);
+    if (raw) {
+      this.lastValidSurface = raw;
+      return raw;
+    }
+    return this.lastValidSurface;
+  }
+
+  private resolveSurfaceAt(x: number, z: number, y: number): StepSurface | null {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(y)) return null;
     if (this.life.onShards(x, z, y)) return 'glass';
     const b = this.interiors.buildingAt(x, z);
     if (b) {
@@ -1474,6 +1486,9 @@ export class WorldScene implements IScene {
     if (y > 0.35) {
       const underfoot = this.player.surfaceAlong(this._surfOrig.set(x, y + 0.35, z), this._surfDown, 0.7);
       if (underfoot === 'metal' || underfoot === 'trim') return 'metal';
+      if (underfoot === 'wood' || underfoot === 'roof') return 'wood';
+      if (underfoot === 'glass' || underfoot === 'windowGlass') return 'glass';
+      if (!underfoot && this.lastValidSurface) return this.lastValidSurface;
     }
     const zone = this.chunks.zoneAt(x, z);
     if (this.indoors) return zone === 'town' ? 'tile' : 'wood';

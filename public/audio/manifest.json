@@ -29,6 +29,12 @@
   "gunReloadRifle": [
     "weapons/reload_rifle.wav"
   ],
+  "gunMagOut": [
+    "weapons/mag_out.wav"
+  ],
+  "gunMagIn": [
+    "weapons/mag_in.wav"
+  ],
   "gunPump": [
     "weapons/gun_pump.wav"
   ],

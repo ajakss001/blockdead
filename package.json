@@ -17,6 +17,7 @@
     "models": "node tools/optimize-models.mjs",
     "prep-models": "node tools/prep-models.mjs",
     "test:anim": "node tools/vite-run.mjs src/debug/animTest.ts",
+    "test:audio": "node tools/vite-run.mjs src/debug/audioTest.ts",
     "test:guns": "node tools/vite-run.mjs src/debug/gunTest.ts",
     "test:gear": "node tools/vite-run.mjs src/debug/gearTest.ts",
     "test:zombies": "node tools/vite-run.mjs src/debug/zombieTest.ts",

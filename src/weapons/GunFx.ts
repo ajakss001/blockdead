@@ -29,6 +29,7 @@ const MAGS = 24;
 const G = 9.8;
 
 interface Body {
+  active: boolean;
   pos: Vector3;
   vel: Vector3;
   q: Quaternion;
@@ -37,6 +38,24 @@ interface Body {
   rest: boolean;
   bounced: boolean;
   shell: boolean;
+}
+
+function makePool(n: number): Body[] {
+  const list: Body[] = [];
+  for (let i = 0; i < n; i++) {
+    list.push({
+      active: false,
+      pos: new Vector3(),
+      vel: new Vector3(),
+      q: new Quaternion(),
+      spin: new Vector3(),
+      floor: 0,
+      rest: true,
+      bounced: true,
+      shell: false,
+    });
+  }
+  return list;
 }
 
 const _m = new Matrix4();
@@ -76,8 +95,10 @@ export class GunFx {
   /** The flash's light in the world, 0 between shots (always in the scene: no shader rebuild). */
   readonly light = new PointLight(0xffc890, 0, 9, 2);
   private flashFrames = 0;
-  private readonly cases: Body[] = [];
-  private readonly mags: Body[] = [];
+  private readonly cases: Body[] = makePool(CASES);
+  private readonly mags: Body[] = makePool(MAGS);
+  private caseCursor = 0;
+  private magCursor = 0;
   private readonly caseMesh: InstancedMesh;
   private readonly shellMesh: InstancedMesh;
   private readonly magMesh: InstancedMesh;
@@ -126,25 +147,32 @@ export class GunFx {
 
   /** A case thrown out of the port (world), to the right and up, spinning. */
   eject(at: Vector3, right: Vector3, up: Vector3, shell: boolean): void {
-    const b: Body = {
-      pos: at.clone(),
-      vel: right.clone().multiplyScalar(1.6 + Math.random() * 0.8).addScaledVector(up, 1.2 + Math.random() * 0.8),
-      q: new Quaternion().setFromAxisAngle(_v.set(Math.random(), Math.random(), Math.random()).normalize(), Math.random() * 6),
-      spin: new Vector3((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30),
-      floor: this.groundY(at.x, at.y, at.z),
-      rest: false,
-      bounced: false,
-      shell,
-    };
-    this.cases.push(b);
-    if (this.cases.length > CASES) this.cases.shift();
+    const b = this.cases[this.caseCursor];
+    this.caseCursor = (this.caseCursor + 1) % CASES;
+    b.active = true;
+    b.pos.copy(at);
+    b.vel.copy(right).multiplyScalar(1.6 + Math.random() * 0.8).addScaledVector(up, 1.2 + Math.random() * 0.8);
+    b.q.setFromAxisAngle(_v.set(Math.random(), Math.random(), Math.random()).normalize(), Math.random() * 6);
+    b.spin.set((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30);
+    b.floor = this.groundY(at.x, at.y, at.z);
+    b.rest = false;
+    b.bounced = false;
+    b.shell = shell;
   }
 
   /** The empty magazine let go: it falls straight down out of the well. */
   dropMag(at: Vector3, q: Quaternion, vel: Vector3): void {
-    const b: Body = { pos: at.clone(), vel: vel.clone(), q: q.clone(), spin: new Vector3((Math.random() - 0.5) * 4, 0, (Math.random() - 0.5) * 4), floor: this.groundY(at.x, at.y, at.z), rest: false, bounced: false, shell: false };
-    this.mags.push(b);
-    if (this.mags.length > MAGS) this.mags.shift();
+    const b = this.mags[this.magCursor];
+    this.magCursor = (this.magCursor + 1) % MAGS;
+    b.active = true;
+    b.pos.copy(at);
+    b.vel.copy(vel);
+    b.q.copy(q);
+    b.spin.set((Math.random() - 0.5) * 4, 0, (Math.random() - 0.5) * 4);
+    b.floor = this.groundY(at.x, at.y, at.z);
+    b.rest = false;
+    b.bounced = false;
+    b.shell = false;
   }
 
   update(dt: number): void {
@@ -157,14 +185,14 @@ export class GunFx {
     if (dt <= 0) return;
     this.step(this.cases, dt, 0.005, () => {});
     this.step(this.mags, dt, 0.015, (b) => sfx.magDrop(b.pos));
-    this.write(this.caseMesh, this.cases.filter((c) => !c.shell));
-    this.write(this.shellMesh, this.cases.filter((c) => c.shell));
-    this.write(this.magMesh, this.mags);
+    this.writeCases();
+    this.writeMags();
   }
 
   private step(list: Body[], dt: number, lift: number, land: (b: Body) => void): void {
-    for (const b of list) {
-      if (b.rest) continue;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (!b.active || b.rest) continue;
       b.vel.y -= G * dt;
       b.pos.addScaledVector(b.vel, dt);
       _q.setFromAxisAngle(_v.copy(b.spin).normalize(), b.spin.length() * dt);
@@ -189,10 +217,30 @@ export class GunFx {
     }
   }
 
-  private write(mesh: InstancedMesh, list: Body[]): void {
-    mesh.count = list.length;
-    list.forEach((b, i) => mesh.setMatrixAt(i, _m.compose(b.pos, b.q, _s)));
-    mesh.instanceMatrix.needsUpdate = true;
+  private writeCases(): void {
+    let cIdx = 0;
+    let sIdx = 0;
+    for (let i = 0; i < this.cases.length; i++) {
+      const b = this.cases[i];
+      if (!b.active) continue;
+      if (b.shell) this.shellMesh.setMatrixAt(sIdx++, _m.compose(b.pos, b.q, _s));
+      else this.caseMesh.setMatrixAt(cIdx++, _m.compose(b.pos, b.q, _s));
+    }
+    this.caseMesh.count = cIdx;
+    this.caseMesh.instanceMatrix.needsUpdate = true;
+    this.shellMesh.count = sIdx;
+    this.shellMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private writeMags(): void {
+    let idx = 0;
+    for (let i = 0; i < this.mags.length; i++) {
+      const b = this.mags[i];
+      if (!b.active) continue;
+      this.magMesh.setMatrixAt(idx++, _m.compose(b.pos, b.q, _s));
+    }
+    this.magMesh.count = idx;
+    this.magMesh.instanceMatrix.needsUpdate = true;
   }
 
   dispose(): void {

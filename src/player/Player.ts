@@ -1,4 +1,4 @@
-import { Color, type Mesh, Object3D, type PerspectiveCamera, PointLight, Quaternion, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
+import { Box3, Color, type Mesh, Object3D, type PerspectiveCamera, PointLight, Quaternion, Raycaster, type Scene, SpotLight, Vector3 } from 'three';
 import { FLASHLIGHT } from '../items/config';
 import { beamMask } from '../items/flashlight';
 import { type HitMaterial, sfx, type SwingKind } from '../audio/Sound';
@@ -101,6 +101,10 @@ export class Player {
   onStrike: ((item: string) => boolean) | null = null;
   /** The blow lands on the world (not a zombie) at a point: a car there may start wailing. */
   onStrikeWorld: ((x: number, y: number, z: number, item: string) => void) | null = null;
+  private readonly worldMeshCache: { mesh: Mesh; box: Box3 }[] = [];
+  private readonly surfaceTargets: Mesh[] = [];
+  private worldMeshCacheCount = -1;
+  private worldMeshCacheAt = -1e9;
 
   /** Dead: the scene's death camera has the view; no arms, no body, no input. */
   private dead = false;
@@ -232,25 +236,75 @@ export class Player {
     this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item);
   }
 
+  /** Pre-build the spatial chunk/interior AABB cache during loading/prewarm so the first shot never stalls computing bounds. */
+  warmSurfaceCache(): void {
+    this.worldMeshCacheCount = -1;
+    this.refreshWorldMeshCache();
+  }
+
+  private refreshWorldMeshCache(): void {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const count = this.scene.children.length;
+    if (count === this.worldMeshCacheCount && now - this.worldMeshCacheAt < 500) return;
+    this.worldMeshCacheCount = count;
+    this.worldMeshCacheAt = now;
+    this.worldMeshCache.length = 0;
+    this.scene.traverse((obj) => {
+      const m = obj as Mesh;
+      if (!m.isMesh || !/^(chunk|interior)/.test(obj.name)) return;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      if (!m.geometry.boundingBox) return;
+      m.updateWorldMatrix(true, false);
+      const box = new Box3().copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
+      this.worldMeshCache.push({ mesh: m, box });
+    });
+  }
+
   /**
    * What the world is made of where a ray from `o` along `d` meets it (about `dist` away): the surface
    * of the triangle in the world meshes (chunks, interiors), decals skipped; null if none found.
    */
   surfaceAlong(o: Vector3, d: Vector3, dist: number): Surface | null {
+    this.refreshWorldMeshCache();
+    const t0 = Math.max(0, dist - 0.75);
+    const t1 = dist + 0.4;
+    const x0 = o.x + d.x * t0;
+    const y0 = o.y + d.y * t0;
+    const z0 = o.z + d.z * t0;
+    const x1 = o.x + d.x * t1;
+    const y1 = o.y + d.y * t1;
+    const z1 = o.z + d.z * t1;
+    const minX = (x0 < x1 ? x0 : x1) - 0.35;
+    const maxX = (x0 > x1 ? x0 : x1) + 0.35;
+    const minY = (y0 < y1 ? y0 : y1) - 0.35;
+    const maxY = (y0 > y1 ? y0 : y1) + 0.35;
+    const minZ = (z0 < z1 ? z0 : z1) - 0.35;
+    const maxZ = (z0 > z1 ? z0 : z1) + 0.35;
+
+    const targets = this.surfaceTargets;
+    targets.length = 0;
+    for (let i = 0; i < this.worldMeshCache.length; i++) {
+      const e = this.worldMeshCache[i];
+      if (!e.mesh.parent || !e.mesh.visible) continue;
+      const b = e.box;
+      if (b.max.x < minX || b.min.x > maxX || b.max.z < minZ || b.min.z > maxZ || b.max.y < minY || b.min.y > maxY) continue;
+      targets.push(e.mesh);
+    }
+    if (targets.length === 0) return null;
+
     _ray.set(o, d);
+    _ray.near = Math.max(0, dist - 0.8);
     _ray.far = dist + 0.4;
-    const targets: Mesh[] = [];
-    this.scene.traverse((obj) => {
-      if ((obj as Mesh).isMesh && /^(chunk|interior)/.test(obj.name)) targets.push(obj as Mesh);
-    });
     for (const hit of _ray.intersectObjects(targets, false)) {
       const layer = hit.face ? (hit.object as Mesh).geometry.getAttribute('aLayer')?.getX(hit.face.a) : undefined;
       if (layer === undefined) continue;
       const surface = SURFACE_LIST[Math.round(layer)];
       // Decals lie on top of the real surface.
       if (!surface || surface.startsWith('decal')) continue;
+      targets.length = 0;
       return surface;
     }
+    targets.length = 0;
     return null;
   }
 
