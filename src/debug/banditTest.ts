@@ -3,6 +3,7 @@ import { Quaternion, Scene, Vector3 } from 'three';
 import { StaticBatch } from '../render/StaticBatch';
 import { applyZonalArmor } from '../systems/Armor';
 import {
+  angleDiff,
   areFactionsHostile,
   BANDIT_BODY_ID,
   type Bandit,
@@ -104,6 +105,7 @@ export async function main(): Promise<number> {
       scene,
       world,
       containers,
+      zombies,
       bandits,
       spawn: (bandits as unknown as SpawnFn),
       lootedDrops,
@@ -295,6 +297,10 @@ export async function main(): Promise<number> {
     const h = createHarness();
     const bear = h.spawn.spawnBot(0, 0, 0, 'bear', 'street', 'rifle_ak', true);
     const usec = h.spawn.spawnBot(0, 0, 10, 'usec', 'street', 'pistol_g17', true);
+    bear.yaw = 0;
+    bear.patrolYaw = 0;
+    usec.yaw = Math.PI;
+    usec.patrolYaw = Math.PI;
     // Place observer player at 65m (outside 38m aggro sightRange, inside 96m despawn radius).
     for (let i = 0; i < 1200 && !bear.isDead && !usec.isDead; i++) {
       h.bandits.update(1 / 60, 0, 0, 65, false, false);
@@ -337,6 +343,8 @@ export async function main(): Promise<number> {
     const h = createHarness();
     h.world.addBox(-6, 3.8, 6, 4.2, 0, 3); // Wall at z=4 blocking initial LOS
     const rat = h.spawn.spawnBot(0, 0, 0, 'scavs', 'indoor', 'shotgun_pump', true, [], { role: 'ambusher' });
+    rat.yaw = 0;
+    rat.patrolYaw = 0;
     const startPos = rat.pos.clone();
     for (let i = 0; i < 40; i++) h.bandits.update(1 / 60, 0, 0, 8, false, false);
     assert(rat.crouching === true, 'Indoor ambusher must wait in crouched stance');
@@ -345,7 +353,7 @@ export async function main(): Promise<number> {
     assert(h.playerDmg === 0, 'Ambusher fired through wall');
 
     // Step player into the room with direct LOS
-    for (let i = 0; i < 90; i++) h.bandits.update(1 / 60, 0, 0, 3.0, false, false);
+    for (let i = 0; i < 110; i++) h.bandits.update(1 / 60, 0, 0, 3.0, false, false);
     const ratAfter: Bandit = h.bandits.list[0];
     assert(ratAfter.ambushTriggered && ratAfter.state === 'combat', 'Ambusher failed to engage when player entered LOS');
     assert(h.playerDmg > 0, 'Ambusher failed to deal damage once ambush triggered');
@@ -450,6 +458,8 @@ export async function main(): Promise<number> {
     const h = createHarness(doorsInWorld, world, scene);
 
     const bot = h.spawn.spawnBot(0, 0, -2.5, 'scavs', 'street', 'bat', false);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
     assert(h.bandits.hasLineOfSight(bot.pos.x, 1.5, bot.pos.z, 0, 1.5, 4.0) === true, 'Bot must see player through intact windowGlass');
 
     for (let i = 0; i < 420; i++) {
@@ -478,10 +488,12 @@ export async function main(): Promise<number> {
     assert(walkProbe.z <= -0.34, `Window glass failed to block walking (probe.z=${walkProbe.z.toFixed(3)})`);
 
     const bot = h.spawn.spawnBot(0, 0, -6.0, 'bear', 'street', 'rifle_ak', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
     bot.glassFlank = false;
     assert(h.bandits.hasLineOfSight(bot.pos.x, 1.5, bot.pos.z, 0, 1.5, 4.0) === true, 'LOS must pass through intact glass');
 
-    for (let i = 0; i < 120; i++) h.bandits.update(1 / 60, 0, 0, 4.0, false, false);
+    for (let i = 0; i < 150; i++) h.bandits.update(1 / 60, 0, 0, 4.0, false, false);
     assert(h.glassBreaks > 0, 'Armed bot failed to shatter window glass when shooting player behind it');
     assert(h.playerDmg > 0, 'Bot bullets through broken glass failed to hit player');
     assert(bot.pos.z < -1.0, `Armed bot rushed forehead-first into window glass (z=${bot.pos.z.toFixed(2)})`);
@@ -493,8 +505,13 @@ export async function main(): Promise<number> {
     const h = createHarness();
     h.world.addBox(-2.2, 0.65, 2.2, 0.95, 0, 3);
     const bot = h.spawn.spawnBot(0, 0, 0.28, 'bear', 'street', 'rifle_ak', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
     bot.state = 'combat';
     bot.reactT = 0;
+    bot.investigateX = 0;
+    bot.investigateZ = 5.0;
+    bot.investigateT = 10;
     // Inject stale direct waypoint pinning bot into wall at z=0.65 so anti-stuck must trigger after 0.8s
     bot.navPath = [{ x: 0, y: 0, z: 5.0 }];
     bot.navIdx = 0;
@@ -508,6 +525,124 @@ export async function main(): Promise<number> {
     h.bandits.dispose();
   }
 
-  console.log('[banditTest] ALL 14 SUITES PASSED (walls/doors, factions, bosses, 2-bone IK, A* door nav, glass reaction, anti-stuck).');
+  // 15) Turn-rate limit (no 1-frame spinbot) + no shooting when barrel is misaligned (> 12 deg).
+  {
+    const h = createHarness();
+    const scav = h.spawn.spawnBot(0, 0, 0, 'scavs', 'street', 'rifle_ak', true);
+    const bear = h.spawn.spawnBot(5, 0, 0, 'bear', 'street', 'rifle_ak', true);
+    const scavDeg = (scav.maxTurnRate * 180) / Math.PI;
+    const bearDeg = (bear.maxTurnRate * 180) / Math.PI;
+    assert(scavDeg >= 119.9 && scavDeg <= 160.1, `Scav turn rate out of [120,160] deg/s: ${scavDeg.toFixed(1)}`);
+    assert(bearDeg >= 179.9 && bearDeg <= 240.1, `BEAR turn rate out of [180,240] deg/s: ${bearDeg.toFixed(1)}`);
+    h.bandits.dispose();
+
+    const hTurn = createHarness();
+    const bot = hTurn.spawn.spawnBot(0, 0, 0, 'scavs', 'street', 'rifle_ak', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
+    bot.state = 'combat';
+    bot.reactT = 0;
+    bot.fireCd = 0;
+    bot.investigateX = 0;
+    bot.investigateZ = -10;
+    bot.investigateT = 10;
+
+    let checkedSideways = false;
+    for (let i = 0; i < 130; i++) {
+      const prevYaw = bot.yaw;
+      hTurn.bandits.update(1 / 60, 0, 0, -10, false, false);
+      const stepDelta = Math.abs(angleDiff(prevYaw, bot.yaw));
+      assert(stepDelta <= bot.maxTurnRate / 60 + 1e-4, `Spinbot jump detected: delta=${stepDelta.toFixed(4)} > cap=${(bot.maxTurnRate / 60).toFixed(4)}`);
+      const angErrDeg = (Math.abs(angleDiff(bot.yaw, Math.atan2(0 - bot.pos.x, -10 - bot.pos.z))) * 180) / Math.PI;
+      if (angErrDeg > 12.1) {
+        checkedSideways = true;
+        assert(hTurn.playerDmg === 0, `Bot fired sideways while angled ${angErrDeg.toFixed(1)} deg off target`);
+      }
+    }
+    assert(checkedSideways, 'Bot did not experience off-angle turning frames');
+    assert(hTurn.playerDmg > 0, 'Bot failed to fire after smoothly turning onto target');
+    hTurn.bandits.dispose();
+  }
+
+  // 16) Target stickiness (1.5-2.5s lock prevents oscillation) + immediate override on <4m close threat.
+  {
+    const h = createHarness();
+    const bot = h.spawn.spawnBot(0, 0, 0, 'bear', 'street', 'rifle_ak', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
+    const zmb = h.zombies.spawnAt(0.5, 11.5, 'idle');
+    h.bandits.update(1 / 60, 0, 0, 9.5, false, false);
+    assert(bot.lockedKind === 'player', `Expected initial lock on closer player, got ${bot.lockedKind}`);
+    assert(bot.targetLockT >= 1.4 && bot.targetLockT <= 2.55, `Expected targetLockT in [1.5,2.5], got ${bot.targetLockT.toFixed(2)}`);
+
+    // Even when zombie moves slightly closer (8.0m < 9.5m) for 50 ticks (< lock cooldown), bot stays locked on player
+    for (let i = 0; i < 50; i++) {
+      zmb.pos.set(0.5, 0, i % 2 === 0 ? 7.8 : 9.0);
+      h.bandits.update(1 / 60, 0, 0, 9.5, false, false);
+      assert(bot.lockedKind === 'player', `Bot oscillated off locked player onto ${bot.lockedKind} during lock window`);
+    }
+
+    // Move zombie inside < 4m danger zone in front of bot -> immediate target override
+    const fwdX = Math.sin(bot.yaw);
+    const fwdZ = Math.cos(bot.yaw);
+    zmb.pos.set(bot.pos.x + fwdX * 2.4, 0, bot.pos.z + fwdZ * 2.4);
+    h.bandits.update(1 / 60, 0, 0, 12.0, false, false);
+    const botAfterClose: Bandit = h.bandits.list[0];
+    assert(botAfterClose.lockedKind === 'zombie', `Bot failed to switch lock onto <4m close zombie (got ${botAfterClose.lockedKind})`);
+    h.bandits.dispose();
+  }
+
+  // 17) Realistic 116 deg frontal FOV (blind behind back when silent) + EFT human reaction time per faction.
+  {
+    const h = createHarness();
+    const scav = h.spawn.spawnBot(0, 0, 0, 'scavs', 'street', 'rifle_ak', true);
+    scav.yaw = 0;
+    scav.patrolYaw = 0;
+    for (let i = 0; i < 45; i++) h.bandits.update(1 / 60, 0, 0, -10, false, false);
+    assert(scav.state === 'patrol' && h.playerDmg === 0, 'Scav detected silent player 10m behind back');
+
+    // Step player into frontal FOV -> triggers combat with [0.45, 0.75]s scav reaction
+    h.bandits.update(1 / 60, 0, 0, 10, false, false);
+    const scavSpotted: Bandit = h.bandits.list[0];
+    assert(scavSpotted.state === 'combat', 'Scav failed to spot player inside frontal FOV');
+    assert(scavSpotted.reactT >= 0.42 && scavSpotted.reactT <= 0.76, `Scav reaction time out of [0.45,0.75]s: ${scavSpotted.reactT.toFixed(3)}s`);
+    for (let i = 0; i < 24; i++) h.bandits.update(1 / 60, 0, 0, 10, false, false);
+    assert(h.playerDmg === 0, 'Scav fired before finishing human reaction time');
+
+    const bear = h.spawn.spawnBot(15, 0, 0, 'bear', 'street', 'rifle_ak', true);
+    bear.yaw = 0;
+    bear.patrolYaw = 0;
+    h.bandits.update(1 / 60, 15, 0, 10, false, false);
+    assert(bear.state === 'combat', 'BEAR failed to spot player in front');
+    assert(bear.reactT >= 0.22 && bear.reactT <= 0.41, `BEAR reaction time out of [0.25,0.40]s: ${bear.reactT.toFixed(3)}s`);
+    h.bandits.dispose();
+  }
+
+  // 18) Aim tracking inertia (smooth lag on fast lateral strafe) + EFT accuracy warm-up progression.
+  {
+    const h = createHarness();
+    const bot = h.spawn.spawnBot(0, 0, 0, 'bear', 'street', 'rifle_ak', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
+    bot.fireCd = 0;
+    h.bandits.update(1 / 60, 0, 0, 12, false, false);
+    bot.reactT = 0;
+
+    // Sprint player sideways at 6 m/s -> aimPos trails behind instantaneous px cleanly
+    let px = 0;
+    for (let i = 0; i < 18; i++) {
+      px += 6 / 60;
+      h.bandits.update(1 / 60, px, 0, 12, false, false, false, 6, 0);
+    }
+    assert(Math.abs(bot.aimPos.x - px) > 0.15, `Aim snapped pixel-perfectly with zero inertia (lag=${Math.abs(bot.aimPos.x - px).toFixed(3)})`);
+
+    // Hold target stationary -> aim converges and bot fires >= 2 warm-up shots with accumulating aimWarmupT
+    for (let i = 0; i < 95; i++) h.bandits.update(1 / 60, px, 0, 12, false, false, false, 0, 0);
+    assert(Math.abs(bot.aimPos.x - px) < 0.08, `Aim failed to converge on stationary target (err=${Math.abs(bot.aimPos.x - px).toFixed(3)})`);
+    assert(bot.aimShots >= 2 && bot.aimWarmupT > 0.4, `Warm-up failed to progress (aimShots=${bot.aimShots}, warmupT=${bot.aimWarmupT.toFixed(2)})`);
+    h.bandits.dispose();
+  }
+
+  console.log('[banditTest] ALL 18 SUITES PASSED (walls/doors, factions, bosses, 2-bone IK, nav, glass, anti-stuck, turn/FOV/lock/warm-up).');
   return 0;
 }

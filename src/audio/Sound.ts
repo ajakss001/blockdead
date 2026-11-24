@@ -544,7 +544,7 @@ export class Sound {
     lp.frequency.value = 2800;
     lp.Q.value = 0.7;
     lp.connect(out);
-    const rate = Math.min(1.04, Math.max(0.86, 0.32 / Math.max(0.18, dur)));
+    const rate = Math.min(1.0, Math.max(0.86, 0.3 / Math.max(0.18, dur)));
     this.sample(lp, t, 'swing', {
       rate,
       vary: 0.04,
