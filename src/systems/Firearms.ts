@@ -9,6 +9,7 @@ import { GunFx } from '../weapons/GunFx';
 import { capacityOf, damageOf, falloff, GUNS, type GunId, isGun, noiseOf } from '../weapons/guns';
 import { type AmmoSource, type GunEvent, type GunInput, GunState } from '../weapons/gunState';
 import type { Inventory } from './Inventory';
+import { applyZonalArmor, type HitZone } from './Armor';
 import type { Bandit, BanditHit } from './Bandits';
 import type { HitResult, ZombieSim } from './zombies';
 
@@ -55,7 +56,7 @@ export interface FirearmsWorld {
   /** Hostile survivor bots. */
   bandits?: {
     hitTest(o: Vector3, d: Vector3, max: number, slack?: number): BanditHit | null;
-    hit(bot: Bandit, dmg: number, fromX: number, fromZ: number, head: boolean): boolean;
+    hit(bot: Bandit, dmg: number, fromX: number, fromZ: number, head: boolean, zone?: HitZone): boolean;
     blastDamage?(at: Vector3, radius: number, maxDmg: number): void;
   };
 }
@@ -536,13 +537,14 @@ export class Firearms {
   private hitBandit(id: GunId, mods: readonly never[], res: BanditHit, o: Vector3): void {
     const [lo, hi] = damageOf(id, mods);
     const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, res.dist) * (res.head ? 2 : 1);
-    const killed = this.w.bandits!.hit(res.bot, dmg, o.x, o.z, res.head);
+    const killed = this.w.bandits!.hit(res.bot, dmg, o.x, o.z, res.head, res.zone);
+    const armored = applyZonalArmor(1, res.zone, res.bot.worn, res.bot.wornDirt).armored;
     const isMulti = this.shotTotalPellets > 1;
     if (!isMulti || this.shotHitSounds < 2) {
       this.w.particles.burst(res.point, res.head ? 8 : 6, 0.7);
       this.cloth(res.point);
-      sfx.bulletHit(res.bot.worn.vest && !res.head ? 'metal' : 'flesh', res.point);
-      if (res.bot.worn.vest && !res.head) sfx.armorHit();
+      sfx.bulletHit(armored ? 'metal' : 'flesh', res.point);
+      if (armored) sfx.armorHit();
       this.shotHitSounds++;
     }
     this.hitMark = res.head ? 'head' : 'body';
@@ -614,7 +616,7 @@ export class Firearms {
       const wall = this.w.rayHit(o, d, bHit.dist);
       if (wall >= 0 && wall < bHit.dist - 0.1) return;
       const dmg = BASH.damage[0] + Math.random() * (BASH.damage[1] - BASH.damage[0]);
-      const killed = this.w.bandits!.hit(bHit.bot, dmg, o.x, o.z, bHit.head);
+      const killed = this.w.bandits!.hit(bHit.bot, dmg, o.x, o.z, bHit.head, bHit.zone);
       sfx.strike('blunt', bHit.point, bHit.head, killed);
       this.w.particles.burst(bHit.point, 6, 0.6);
       this.w.player.viewmodel.recoil();

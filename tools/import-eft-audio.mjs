@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const DOWNLOADS = 'C:\\Users\\pmoro\\Downloads';
 const MANIFEST_SRC = path.join(DOWNLOADS, 'dead_perimeter_audio_manifest.json');
+const PATCH_SRC = path.join(DOWNLOADS, 'dead_perimeter_patch_update.json');
 const OUT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/audio');
 const TARGET_SR = 32000;
 
@@ -73,8 +74,8 @@ const FILE_MAP = [
   { src: 'Person_running_stead_#3-1795368780413.wav', group: 'stepDirtRun', out: 'footsteps/dirt_run', mode: 'slice', cat: 'footstep' },
   { src: 'Person_walking_slowl_#1-1795368808400.wav', group: 'stepWoodWalk', out: 'footsteps/wood_walk', mode: 'slice', cat: 'footstep' },
   { src: 'Person_running_in_bo_#4-1795368835090.wav', group: 'stepWoodRun', out: 'footsteps/wood_run', mode: 'slice', cat: 'footstep' },
-  { src: 'Person_walking_up_co_#1-1795368872133.wav', group: 'stepConcreteWalk', out: 'footsteps/concrete_walk', mode: 'slice', cat: 'footstep' },
-  { src: 'Person_running_down__#1-1795368905343.wav', group: 'stepConcreteRun', out: 'footsteps/concrete_run', mode: 'slice', cat: 'footstep' },
+  { src: 'Dry_close-up_footste_#4-1795527615160.wav', group: 'stepConcreteWalk', out: 'footsteps/concrete_walk', mode: 'slice', cat: 'footstep' },
+  { src: 'Dry_close-up_running_#1-1795527653269.wav', group: 'stepConcreteRun', out: 'footsteps/concrete_run', mode: 'slice', cat: 'footstep' },
   { src: 'Muffled_heavy_footst_#2-1795368936822.wav', group: 'stepMuffled', out: 'footsteps/muffled', mode: 'slice', cat: 'footstep' },
   { src: 'Person_walking_up_an_#3-1795368969820.wav', group: 'stepMetalWalk', out: 'footsteps/metal_walk', mode: 'slice', cat: 'footstep' },
   { src: 'Person_running_fast__#2-1795368997591.wav', group: 'stepMetalRun', out: 'footsteps/metal_run', mode: 'slice', cat: 'footstep' },
@@ -107,6 +108,18 @@ const FILE_MAP = [
   { src: 'Slowly_opening_an_ol_#2-1795368545061.wav', group: 'doorWood', out: 'env/door_wood.wav', mode: 'oneshot', cat: 'env' },
   { src: 'Heavy_rusty_steel_en_#3-1795368584646.wav', group: 'doorMetal', out: 'env/door_metal.wav', mode: 'oneshot', cat: 'env' },
   { src: 'Hands_searching_thro_#1-1795368602212.wav', group: 'lootSearch', out: 'foley/loot_search.wav', mode: 'loop', cat: 'loop' },
+
+  // 5. Patch update: CRT TV static, container foley, inventory & equipment UX
+  { src: 'Old_vintage_CRT_tele_#1-1795527801915.wav', group: 'tvStatic', out: 'env/tv_static.wav', mode: 'loop', cat: 'loop' },
+  { src: 'Opening_a_heavy_wood_#1-1795527891524.wav', group: 'lootCrateWood', out: 'foley/loot_crate_wood.wav', mode: 'oneshot', cat: 'foley' },
+  { src: 'Pulling_open_an_old__#2-1795527919172.wav', group: 'lootDrawer', out: 'foley/loot_drawer.wav', mode: 'oneshot', cat: 'foley', cut: [3.15, 4.65], fadeOutSec: 0.02 },
+  { src: 'Opening_cardboard_bo_#2-1795527949150.wav', group: 'lootBoxCardboard', out: 'foley/loot_box_cardboard.wav', mode: 'oneshot', cat: 'foley', cut: [2.55, 4.60], fadeOutSec: 0.02 },
+  { src: 'Unzipping_a_heavy_ny_#1-1795527979476.wav', group: 'lootBagZip', out: 'foley/loot_bag_zip.wav', mode: 'oneshot', cat: 'foley' },
+  { src: 'Single_short_crisp_t_#1-1795527996093.wav', group: 'uiItemMove', out: 'ui/item_move.wav', mode: 'oneshot', cat: 'foley', cut: [2.75, 3.45], fadeOutSec: 0.015 },
+  { src: 'Equipping_a_heavy_as_#1-1795528042195.wav', group: 'uiEquipWeapon', out: 'ui/equip_weapon.wav', mode: 'oneshot', cat: 'foley' },
+  { src: 'Fastening_a_heavy_th_#1-1795528172102.wav', group: 'uiEquipVest', out: 'ui/equip_vest.wav', mode: 'oneshot', cat: 'foley' },
+  { src: 'Putting_on_a_heavy_m_#1-1795528208763.wav', group: 'uiEquipCloth', out: 'ui/equip_cloth.wav', mode: 'oneshot', cat: 'foley' },
+  { src: 'Putting_on_a_tactica_#3-1795528252854.wav', group: 'uiEquipHelmet', out: 'ui/equip_helmet.wav', mode: 'oneshot', cat: 'foley' },
 ];
 
 function readWavMonoFloat(filePath) {
@@ -475,12 +488,21 @@ function writeWavMono16(filePath, samples, sr) {
 
 function main() {
   const srcManifest = JSON.parse(fs.readFileSync(MANIFEST_SRC, 'utf8'));
-  const expectedFiles = Object.values(srcManifest.sounds).flat().map((x) => x.file);
+  const patchManifest = JSON.parse(fs.readFileSync(PATCH_SRC, 'utf8'));
+  const replacements = new Map(patchManifest.audio_updates.replace_old_files.map((r) => [r.old_file, r.new_file]));
+  const baseExpected = Object.values(srcManifest.sounds)
+    .flat()
+    .map((x) => replacements.get(x.file) ?? x.file);
+  const newExpected = patchManifest.audio_updates.new_sounds.map((x) => x.file);
+  const expectedFiles = [...baseExpected, ...newExpected];
   const mappedFiles = new Set(FILE_MAP.map((e) => e.src));
   for (const f of expectedFiles) {
     if (!mappedFiles.has(f)) throw new Error(`Manifest source file missing from FILE_MAP: ${f}`);
   }
-  if (mappedFiles.size !== 58) throw new Error(`Expected 58 mapped files, got ${mappedFiles.size}`);
+  const uniqueExpected = new Set(expectedFiles);
+  if (mappedFiles.size !== uniqueExpected.size) {
+    throw new Error(`Expected ${uniqueExpected.size} mapped files, got ${mappedFiles.size}`);
+  }
 
   if (fs.existsSync(OUT_ROOT)) fs.rmSync(OUT_ROOT, { recursive: true, force: true });
   fs.mkdirSync(OUT_ROOT, { recursive: true });

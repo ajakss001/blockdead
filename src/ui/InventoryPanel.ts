@@ -21,13 +21,17 @@ import type { Player } from '../player/Player';
 import type { ContainerRef, Containers, CorpseData, CorpseSlotKey, CorpseZone } from '../systems/Containers';
 import type { Survival } from '../systems/Survival';
 import type { Appearance } from '../player/appearance';
-import { CONTAINER_SOUND, sfx } from '../audio/Sound';
+import { CONTAINER_SOUND, type ItemSound, sfx } from '../audio/Sound';
 import { CharacterPreview } from './CharacterPreview';
 import { isCustomItemIcon, itemIcon } from './pixelart';
 import { capacityOf, GUNS, isGun, MOD_FITS, MOD_IDS, MODS, type ModId, type ModSlot } from '../weapons/guns';
 import { Inventory, QUICK_SLOTS } from '../systems/Inventory';
 
 const SLOT_NAMES: Record<ModSlot, string> = { muzzle: 'Ствол', mag: 'Магазин', rail: 'Планка' };
+
+function wearSound(slot: WearSlot): ItemSound {
+  return slot === 'head' ? 'helmet' : slot === 'vest' ? 'vest' : 'cloth';
+}
 
 export interface InventoryHost {
   inventory: Inventory;
@@ -1270,10 +1274,11 @@ export class InventoryPanel {
 
   private wear(place: Place): void {
     if (place.from !== 'bag') return;
+    const slot = ITEMS[place.id].wear!.slot;
     if (!this.host.inventory.wearByUid(place.uid)) this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
     else {
-      sfx.item('cloth');
-      this.selected = { from: 'slot', slot: ITEMS[place.id].wear!.slot };
+      sfx.item(wearSound(slot));
+      this.selected = { from: 'slot', slot };
     }
     this.host.syncBody();
     this.render();
@@ -1300,7 +1305,7 @@ export class InventoryPanel {
       this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'));
       this.selected = null;
     } else {
-      sfx.item(slot === 'hand' ? 'move' : 'cloth');
+      sfx.item(slot === 'hand' ? 'weapon' : wearSound(slot));
       const addedStack = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === id);
       const newUid = addedStack ? ensureStackUid(addedStack) : null;
       if (toBox && newUid) {

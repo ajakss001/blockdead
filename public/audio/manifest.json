@@ -241,5 +241,35 @@
   ],
   "lootSearch": [
     "foley/loot_search.wav"
+  ],
+  "tvStatic": [
+    "env/tv_static.wav"
+  ],
+  "lootCrateWood": [
+    "foley/loot_crate_wood.wav"
+  ],
+  "lootDrawer": [
+    "foley/loot_drawer.wav"
+  ],
+  "lootBoxCardboard": [
+    "foley/loot_box_cardboard.wav"
+  ],
+  "lootBagZip": [
+    "foley/loot_bag_zip.wav"
+  ],
+  "uiItemMove": [
+    "ui/item_move.wav"
+  ],
+  "uiEquipWeapon": [
+    "ui/equip_weapon.wav"
+  ],
+  "uiEquipVest": [
+    "ui/equip_vest.wav"
+  ],
+  "uiEquipCloth": [
+    "ui/equip_cloth.wav"
+  ],
+  "uiEquipHelmet": [
+    "ui/equip_helmet.wav"
   ]
 }

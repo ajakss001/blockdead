@@ -1,6 +1,6 @@
 import './domStub';
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
-import { type Gait, Sound, type StepSurface, sfx } from '../audio/Sound';
+import { type Gait, MISSING_WAV_EVENTS, Sound, type StepSurface, sfx } from '../audio/Sound';
 import { type SampleGroup, Samples } from '../audio/samples';
 import { InputManager } from '../input/InputManager';
 import { PlayerController } from '../player/PlayerController';
@@ -60,6 +60,7 @@ function createMockWebAudio() {
   const panners: CreatedPanner[] = [];
   const bufToGroup = new Map<object, SampleGroup>();
   let time = 1.0;
+  let oscillatorCount = 0;
 
   const baseNode = (ac: unknown) => ({
     context: ac,
@@ -168,6 +169,7 @@ function createMockWebAudio() {
       return node;
     },
     createOscillator() {
+      oscillatorCount++;
       return {
         ...baseNode(this),
         type: 'sine',
@@ -184,6 +186,7 @@ function createMockWebAudio() {
     played,
     panners,
     bufToGroup,
+    get oscillatorCount() { return oscillatorCount; },
     advance(dt: number) { time += dt; },
   };
 }
@@ -265,7 +268,22 @@ function auditAllAudioAssets(): Record<SampleGroup, string[]> {
   assert(fs.existsSync(manifestPath), `Missing manifest: ${manifestPath}`);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8') as string) as Record<SampleGroup, string[]>;
   const groups = Object.keys(manifest) as SampleGroup[];
-  assert(groups.length >= 60, `Expected >= 60 groups in manifest.json, got ${groups.length}`);
+  assert(groups.length >= 70, `Expected >= 70 groups in manifest.json, got ${groups.length}`);
+  const requiredPatchGroups: SampleGroup[] = [
+    'stepConcreteWalk',
+    'stepConcreteRun',
+    'tvStatic',
+    'lootCrateWood',
+    'lootDrawer',
+    'lootBoxCardboard',
+    'lootBagZip',
+    'uiItemMove',
+    'uiEquipWeapon',
+    'uiEquipVest',
+    'uiEquipCloth',
+    'uiEquipHelmet',
+  ];
+  for (const g of requiredPatchGroups) assert(groups.includes(g), `Missing required patch audio group: ${g}`);
 
   let clipCount = 0;
   for (const grp of groups) {
@@ -307,8 +325,8 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
     mock.bufToGroup.set(buf, grp);
     bank.seedForTest(grp, [buf]);
   }
-  // Seed legacy sounds referenced as fallbacks
-  for (const leg of ['rattle', 'magDrop', 'dry', 'swing', 'hitMetal', 'heavyHit', 'bulletMetal', 'explosion'] as SampleGroup[]) {
+  // Seed remaining active legacy sounds referenced by Sound.ts
+  for (const leg of ['magDrop', 'swing', 'hitMetal', 'heavyHit', 'bulletMetal', 'zAttack', 'zScream', 'zBreath', 'zDeath'] as SampleGroup[]) {
     const buf = mock.ac.createBuffer(1, 16000, 32000);
     mock.bufToGroup.set(buf, leg);
     bank.seedForTest(leg, [buf]);
@@ -325,12 +343,12 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
   assert((diag.mastering.limiterRatio ?? 0) >= 18, `Brickwall limiter ratio too low: ${diag.mastering.limiterRatio}`);
   assert(diag.mastering.shaperMaxAbs <= 0.892, `Ceiling shaper exceeds -1.0 dBFS: ${diag.mastering.shaperMaxAbs}`);
 
-  // Saturate MAX_VOICES (22) with spatial phoneRing sounds on an isolated Sound instance,
+  // Saturate MAX_VOICES (22) with spatial container open sounds on an isolated Sound instance,
   // then prove player footsteps NEVER get dropped even when voice cap is full.
   const sSat = new Sound();
   sSat.initWithContext(mock.ac, bank);
   sSat.setListener(0, 1.6, 0, 0, 0, -1);
-  for (let i = 0; i < 28; i++) sSat.phoneRing({ x: 8, y: 0, z: -3 });
+  for (let i = 0; i < 28; i++) sSat.containerOpen('crate', { x: 8, y: 0, z: -3 });
   assert(sSat.getDiagnostics().activeVoices >= 22, 'Expected MAX_VOICES saturation');
 
   const surfaces: StepSurface[] = ['asphalt', 'concrete', 'tile', 'wood', 'metal', 'glass', 'grass', 'water'];
@@ -405,6 +423,42 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
   expectPlayed(() => s.updateStamina(0.016, 0.17, 0.8, true, false), 'breathMask', 'Breath mask');
   expectPlayed(() => s.setLootLoop(true), 'lootSearch', 'Loot search loop');
   s.setLootLoop(false);
+
+  // Patch update: TV 3D loop, 4 container categories, 5 UI/equip sounds (0.95..1.05 pitch), wood creak cooldown
+  expectPlayed(() => s.loops([{ key: 1, kind: 'tv', x: 2, y: 1, z: 0 }]), 'tvStatic', 'CRT TV loop');
+  s.loops([]);
+  expectPlayed(() => s.containerOpen('crate', { x: 1, y: 0.8, z: 1 }), 'lootCrateWood', 'Loot wooden crate');
+  expectPlayed(() => s.containerOpen('drawer', { x: 1, y: 0.8, z: 1 }), 'lootDrawer', 'Loot drawer');
+  expectPlayed(() => s.containerOpen('box', { x: 1, y: 0.8, z: 1 }), 'lootBoxCardboard', 'Loot cardboard box');
+  expectPlayed(() => s.containerOpen('bag', { x: 1, y: 0.8, z: 1 }), 'lootBagZip', 'Loot bag zip');
+
+  for (const [uiKind, grp] of [
+    ['move', 'uiItemMove'],
+    ['weapon', 'uiEquipWeapon'],
+    ['vest', 'uiEquipVest'],
+    ['cloth', 'uiEquipCloth'],
+    ['helmet', 'uiEquipHelmet'],
+  ] as const) {
+    const startIdx = mock.played.length;
+    s.item(uiKind);
+    mock.advance(2.5);
+    const hit = mock.played.slice(startIdx).find((p) => p.group === grp);
+    assert(hit, `Inventory UI '${uiKind}' expected ${grp}`);
+    assert(hit.rate >= 0.949 && hit.rate <= 1.051, `Inventory UI '${uiKind}' pitch ${hit.rate} outside [0.95, 1.05]`);
+  }
+
+  // Verify wood creak happens rarely (~5%) and never breaks its 3.0s cooldown.
+  const creakStart = mock.played.length;
+  for (let i = 0; i < 400; i++) {
+    s.step('wood', 'walk', { x: 0, y: 0, z: 0 }, 1, true, (i % 2) as 0 | 1);
+    mock.advance(0.2);
+  }
+  const creaks = mock.played.slice(creakStart).filter((p) => p.group === 'woodCreak');
+  assert(creaks.length <= 38, `Wood creak triggered too often (${creaks.length}/400 > 5% budget)`);
+  for (let i = 1; i < creaks.length; i++) {
+    assert(creaks[i].startTime - creaks[i - 1].startTime >= 2.95, `Wood creak cooldown violated (${(creaks[i].startTime - creaks[i - 1].startTime).toFixed(2)}s)`);
+  }
+  assert(MISSING_WAV_EVENTS.length >= 10, 'Expected documented MISSING_WAV_EVENTS list');
 
   // Test Firearms reload & shotgun throttling with the real global sfx bound to mock context
   sfx.initWithContext(mock.ac, bank);
@@ -488,17 +542,20 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
     `Pistol reload missing sounds: [${pRes.played.join(', ')}]`,
   );
 
-  // 2) Rifle empty reload must play gunReloadRifle and NEVER gunBolt/rattle at the end
+  // 2) Rifle empty reload must play gunReloadRifle and NEVER gunBolt at the end
   const rRes = runGunTest('rifle_ak', 0, false, true, false);
   assert(rRes.played.includes('gunReloadRifle'), `Rifle reload missing gunReloadRifle: [${rRes.played.join(', ')}]`);
-  assert(!rRes.played.includes('gunBolt') && !rRes.played.includes('rattle'), `Rifle reload still played trailing bolt rack: [${rRes.played.join(', ')}]`);
+  assert(!rRes.played.includes('gunBolt'), `Rifle reload still played trailing bolt rack: [${rRes.played.join(', ')}]`);
 
   // 3) Shotgun 8-pellet blast against a wall must NOT run 8 surface raycasts
   const sRes = runGunTest('shotgun_pump', 6, true, false, true);
   assert(sRes.played.includes('shotShotgun'), `Shotgun shot sound did not play: [${sRes.played.join(', ')}]`);
   assert(sRes.surfaceLookups <= 2, `Shotgun performed ${sRes.surfaceLookups} surface raycasts (expected <= 2)`);
 
-  console.log('[audioTest] Part 2 PASS: All buses, HRTF spatialization, -1.0 dBFS limiter, priority footsteps, pistol/rifle reloads, and shotgun throttling verified.');
+  // 4) Zero Web Audio oscillators allocated by Sound engine
+  assert(mock.oscillatorCount === 0, `Sound engine created ${mock.oscillatorCount} legacy oscillators (expected 0)`);
+
+  console.log('[audioTest] Part 2 PASS: All buses, HRTF spatialization, -1.0 dBFS limiter, priority footsteps, 0 oscillators, patch WAV events & reloads verified.');
 }
 
 function simulateGait(gait: 'sprint' | 'walk' | 'crouch', secs = 5.0) {

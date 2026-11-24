@@ -56,6 +56,10 @@ export class Interiors {
     return this.loaded.size;
   }
 
+  isLoaded(buildingId: number): boolean {
+    return this.loaded.has(buildingId);
+  }
+
   addChunk(key: number, list: BuildingDesc[]): void {
     if (list.length === 0) return;
     this.byChunk.set(key, list.map((b) => b.id));

@@ -6,14 +6,10 @@
  */
 
 export type SampleGroup =
-  // Legacy recorded pack (public/sounds)
-  | 'explosion'
+  // Legacy recorded pack (public/sounds — only clips not superseded by WAV pack)
   | 'swing'
   | 'hitMetal'
   | 'heavyHit'
-  | 'dry'
-  | 'rattle'
-  | 'casing'
   | 'magDrop'
   | 'bulletMetal'
   | 'zAttack'
@@ -84,7 +80,19 @@ export type SampleGroup =
   | 'glassBreak'
   | 'glassSettle'
   | 'doorWood'
-  | 'doorMetal';
+  | 'doorMetal'
+  | 'tvStatic'
+  // Loot container opening/closing (public/audio/foley)
+  | 'lootCrateWood'
+  | 'lootDrawer'
+  | 'lootBoxCardboard'
+  | 'lootBagZip'
+  // Inventory & equipment UX (public/audio/ui)
+  | 'uiItemMove'
+  | 'uiEquipWeapon'
+  | 'uiEquipVest'
+  | 'uiEquipCloth'
+  | 'uiEquipHelmet';
 
 const SOUNDS_BASE = `${import.meta.env.BASE_URL}sounds/`;
 const AUDIO_BASE = `${import.meta.env.BASE_URL}audio/`;

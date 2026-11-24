@@ -87,16 +87,16 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     const sy = k === 0 ? 0 : y - 0.2;
     const floorS = k === 0 || office ? 'tile' : 'wood';
     const floorC = k === 0 ? 0x8a867c : office ? 0x7a7a74 : PAL.floor;
-    b.block(floorC, L.ix0, sy, L.iz0, L.ix1 - L.ix0, slabT, L.cz0 + NEAR - L.iz0, floorS);
-    b.block(floorC, L.cx1, sy, L.cz0 + NEAR, L.ix1 - L.cx1, slabT, L.iz1 - L.cz0 - NEAR, floorS);
+    b.block(floorC, L.ix0, sy, L.iz0, L.ix1 - L.ix0, slabT, L.cz0 + NEAR - L.iz0, floorS, k > 0);
+    b.block(floorC, L.cx1, sy, L.cz0 + NEAR, L.ix1 - L.cx1, slabT, L.iz1 - L.cz0 - NEAR, floorS, k > 0);
 
     // Stair core: flight A up the left side, landing at the back, flight B back down to the next floor.
     const zf0 = L.cz0 + NEAR;
     for (let i = 0; i < STEPS; i++) {
-      b.block(0x6a6862, L.cx0, y + i * rise, zf0 + i * step, FLIGHT_W, rise, step, 'concrete');
-      b.block(0x6a6862, L.cx1 - FLIGHT_W, y + FLOOR_H / 2 + i * rise, zf0 + RUN - (i + 1) * step, FLIGHT_W, rise, step, 'concrete');
+      b.block(0x6a6862, L.cx0, y + i * rise, zf0 + i * step, FLIGHT_W, rise, step, 'concrete', true);
+      b.block(0x6a6862, L.cx1 - FLIGHT_W, y + FLOOR_H / 2 + i * rise, zf0 + RUN - (i + 1) * step, FLIGHT_W, rise, step, 'concrete', true);
     }
-    b.block(0x6a6862, L.cx0, y + FLOOR_H / 2 - 0.2, zf0 + RUN, CORE_W, 0.2, L.cz1 - zf0 - RUN, 'concrete');
+    b.block(0x6a6862, L.cx0, y + FLOOR_H / 2 - 0.2, zf0 + RUN, CORE_W, 0.2, L.cz1 - zf0 - RUN, 'concrete', true);
     // Well divider / railing between the flights (blocks crossing), core side wall towards the units.
     b.blockY(0x3a3c3e, L.cx0 + FLIGHT_W, y, zf0, CORE_W - 2 * FLIGHT_W, FLOOR_H, RUN, 'metal');
     // Full-depth side wall: the landing opens only onto the corridor, never straight into a unit.

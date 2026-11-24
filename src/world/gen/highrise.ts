@@ -352,8 +352,8 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
 
   // Roof slab with the stair opening, and the head-house over the core.
   const roofY = H - 0.2;
-  b.block(0x6a6862, L.ix0, roofY, L.iz0, L.ix1 - L.ix0, 0.2, L.cz0 + NEAR - L.iz0, 'concrete');
-  b.block(0x6a6862, L.cx1, roofY, L.cz0 + NEAR, L.ix1 - L.cx1, 0.2, L.iz1 - L.cz0 - NEAR, 'concrete');
+  b.block(0x6a6862, L.ix0, roofY, L.iz0, L.ix1 - L.ix0, 0.2, L.cz0 + NEAR - L.iz0, 'concrete', true);
+  b.block(0x6a6862, L.cx1, roofY, L.cz0 + NEAR, L.ix1 - L.cx1, 0.2, L.iz1 - L.cz0 - NEAR, 'concrete', true);
   const hh = 2.6;
   b.blockY(0x77756e, L.cx1, H, L.cz0, 0.15, hh, L.cz1 - L.cz0, 'concrete');
   b.blockY(0x77756e, L.cx0, H, L.cz0 - 0.15, 0.6, hh, 0.15, 'concrete');
@@ -361,7 +361,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   // The facades stop at the parapet; close the head-house on the outer sides up to its roof.
   b.blockY(0x77756e, L.x0, top, L.cz0, WALL, H + hh - top, L.z1 - L.cz0, 'concrete');
   b.blockY(0x77756e, L.x0, top, L.z1 - WALL, L.cx1 - L.x0 + 0.15, H + hh - top, WALL, 'concrete');
-  b.block(0x5a5852, L.cx0 - 0.1, H + hh, L.cz0 - 0.2, L.cx1 - L.cx0 + 0.35, 0.15, L.cz1 - L.cz0 + 0.25, 'concrete');
+  b.block(0x5a5852, L.cx0 - 0.1, H + hh, L.cz0 - 0.2, L.cx1 - L.cx0 + 0.35, 0.15, L.cz1 - L.cz0 + 0.25, 'concrete', true);
 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
   for (const { x, w: pw, broken } of panes) {

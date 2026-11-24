@@ -430,7 +430,7 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
 
   // Floor, ceiling.
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'wood');
-  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
+  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d, 'plaster', true);
 
   // Who lived here and how they left: still at home, fled in a hurry, or the house was ransacked.
   const roll = rand();
@@ -554,7 +554,7 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
   });
 
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
-  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d);
+  b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d, 'plaster', true);
   // Flat roof with a parapet lip.
   b.block(0x3a3a38, x0 - 0.1, h, z0 - 0.1, w + 0.2, 0.25, d + 0.2, 'roof');
   b.life(LIFE.perch, x0 + w / 2, h + 0.25, z1, 1, 0, w * 0.8, 0, spotHash(x0, z0, 93));

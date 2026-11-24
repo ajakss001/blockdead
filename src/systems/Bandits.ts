@@ -23,7 +23,7 @@ import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wor
 import { handFrame } from '../characters/hands';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig, RagdollPose, stand } from '../characters/rig';
-import { ensureStackUid, type ItemId, type ItemStack, WEAR_SLOTS } from '../data/items';
+import { ensureStackUid, type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot } from '../data/items';
 import { type Ragdoll, type StaticBox } from '../physics/ragdoll';
 import { BASE_LOOK, type Appearance, type Sex } from '../player/appearance';
 import { bodyFor, figureScale } from '../player/CharacterFigure';
@@ -34,6 +34,7 @@ import { buildHeldModel, HELD, type HeldId } from '../player/held';
 import { GunModel } from '../weapons/gunModel';
 import { GUNS, type GunId, MOD_FITS, type ModId } from '../weapons/guns';
 import { type BuildingDesc, FLOOR_H } from '../world/gen/highrise';
+import { applyZonalArmor, type HitZone } from './Armor';
 import type { CorpseData, CorpseSlotKey } from './Containers';
 import type { Worn } from './Inventory';
 import type { BanditTarget, ZombieSim } from './zombies';
@@ -60,8 +61,9 @@ export interface BanditWorld {
   removeRagdoll(rd: Ragdoll): void;
   zombies: ZombieSim;
   noise(x: number, y: number, z: number, r: number): void;
-  hurtPlayer(hp: number, fromX: number, fromZ: number, cause: string): void;
+  hurtPlayer(hp: number, fromX: number, fromZ: number, cause: string, zone?: HitZone): void;
   placeAt(x: number, z: number): EchoPlace;
+  isInteriorLoaded?(buildingId: number): boolean;
   onDropLoot?(bot: Bandit): void;
   onRemoveCorpse?(bot: Bandit): void;
 }
@@ -70,6 +72,7 @@ export interface BanditHit {
   bot: Bandit;
   dist: number;
   head: boolean;
+  zone: HitZone;
   point: Vector3;
 }
 
@@ -159,9 +162,11 @@ export interface Bandit extends BanditTarget {
   yaw: number;
   hp: number;
   maxHp: number;
+  isDead: boolean;
   state: 'patrol' | 'combat' | 'dead';
   look: Appearance;
   worn: Worn;
+  wornDirt: Partial<Record<WearSlot, number>>;
   tint: number;
   weapon: ItemId;
   mods: ModId[];
@@ -193,7 +198,7 @@ export interface Bandit extends BanditTarget {
   ragdoll: Ragdoll | null;
   ragdollPose: RagdollPose | null;
   lootDropped: boolean;
-  hit(dmg: number, fromX: number, fromZ: number, head?: boolean): boolean;
+  hit(dmg: number, fromX: number, fromZ: number, head?: boolean, zone?: HitZone): boolean;
 }
 
 function randomLook(): Appearance {
@@ -330,6 +335,15 @@ export class Bandits {
     this.maxActive = Math.max(1, n);
   }
 
+  /** Ensure newly spawned bots never collide with restored corpse container IDs. */
+  reserveIdsAbove(id: number): void {
+    if (id >= this.nextId) this.nextId = id + 1;
+  }
+
+  findByBodyId(containerId: number): Bandit | undefined {
+    return this.list.find((b) => BANDIT_BODY_ID + b.id === containerId);
+  }
+
   update(
     dt: number,
     px: number,
@@ -378,12 +392,12 @@ export class Bandits {
       const dz = pz - b.pos.z;
       const distSq = dx * dx + dz * dz;
 
-      if (b.state === 'dead') {
+      if (b.isDead && b.state === 'dead') {
         b.deadT += dt;
         if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) {
           this.applyRagdollPose(b);
         }
-        if (!b.lootDropped && (!b.ragdoll || b.ragdoll.asleep || b.deadT > 2.0)) {
+        if (b.isDead && !b.lootDropped && (!b.ragdoll || b.ragdoll.asleep || b.deadT > 2.0)) {
           b.lootDropped = true;
           this.w.onDropLoot?.(b);
         }
@@ -417,10 +431,19 @@ export class Bandits {
       const fogMul = 1 - 0.68 * fog;
       const sightRange = (b.spawnKind === 'sniper' ? 56 : 38) * fogMul;
       const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14 * (1 - 0.45 * fog));
-      const canSeePlayer = !playerDead && dist < sightRange && this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.35, pz);
+      const canSeePlayer =
+        !playerDead &&
+        dist < sightRange &&
+        (this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.56, pz) ||
+          this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.15, pz));
       if (canSeePlayer && b.state !== 'combat') {
         b.state = 'combat';
-        b.reactT = b.faction === 'pmc' ? 0.45 + Math.random() * 0.25 : 0.55 + Math.random() * 0.35;
+        b.reactT =
+          b.faction === 'snipers'
+            ? 0.22 + Math.random() * 0.14
+            : b.faction === 'pmc'
+              ? 0.26 + Math.random() * 0.16
+              : 0.34 + Math.random() * 0.2;
       }
 
       const prevX = b.pos.x;
@@ -480,7 +503,7 @@ export class Bandits {
             moveSpeed = 1.8;
           }
           if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
-            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true);
+            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true, inCar);
           }
         } else if (b.isGun) {
           if (shouldRetreat) {
@@ -513,7 +536,7 @@ export class Bandits {
           }
 
           if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 38) {
-            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true);
+            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true, inCar);
           }
         } else {
           if (b.hp < b.maxHp * 0.25 && dist < 6) {
@@ -522,7 +545,7 @@ export class Bandits {
           } else if (dist > 1.65) {
             this.stepBandit(b, nx, nz, 4.25 * dt);
             moveSpeed = 4.25;
-          } else if (b.meleeCd <= 0) {
+          } else if (canSeePlayer && b.meleeCd <= 0) {
             b.meleeCd = 1.05 + Math.random() * 0.25;
             b.swingT = 1;
             sfx.swing('heavy', 0.3, b.pos);
@@ -614,36 +637,49 @@ export class Bandits {
       const rad = 0.34 + slack;
       if ((hitX - cx) ** 2 + (hitZ - cz) ** 2 > rad * rad) continue;
       bestT = t;
+      const relY = hitY - b.pos.y;
+      const head = relY >= 1.44;
+      const zone: HitZone = head ? 'head' : relY >= 0.8 ? 'torso' : 'limbs';
       best = {
         bot: b,
         dist: t,
-        head: hitY >= b.pos.y + 1.44,
+        head,
+        zone,
         point: new Vector3(hitX, hitY, hitZ),
       };
     }
     return best;
   }
 
-  /** Apply damage to a bandit. Returns true if killed. */
-  hit(b: Bandit, dmg: number, fromX: number, fromZ: number, head = false): boolean {
-    if (b.state === 'dead') return false;
-    b.hp -= dmg;
+  /** Apply damage to a bandit with unified zonal armor mitigation. Returns true if killed. */
+  hit(b: Bandit, dmg: number, fromX: number, fromZ: number, head = false, zone?: HitZone): boolean {
+    if (b.isDead || b.state === 'dead') return false;
+    const hitZone: HitZone = zone ?? (head ? 'head' : 'torso');
+    const armor = applyZonalArmor(dmg, hitZone, b.worn, b.wornDirt);
+    if (armor.armored && armor.hitSlot) {
+      const nextDirt = Math.min(1, (b.wornDirt[armor.hitSlot] ?? 0) + 0.04);
+      b.wornDirt[armor.hitSlot] = nextDirt;
+      const st = b.corpse.slots[armor.hitSlot];
+      if (st) st.dirt = nextDirt;
+    }
+    b.hp -= armor.damage;
     b.state = 'combat';
     b.investigateX = fromX;
     b.investigateZ = fromZ;
     b.investigateT = 10;
     if (b.hp <= 0) {
       b.hp = 0;
+      b.isDead = true;
       b.state = 'dead';
       b.deadT = 0;
       this.becomeRagdoll(b, fromX, fromZ);
-      if (!b.ragdoll && !b.lootDropped) {
+      if (b.isDead && !b.ragdoll && !b.lootDropped) {
         b.lootDropped = true;
         this.w.onDropLoot?.(b);
       }
       return true;
     }
-    if (head) b.reactT = Math.max(b.reactT, 0.25);
+    if (head) b.reactT = Math.max(b.reactT, 0.2);
     return false;
   }
 
@@ -721,7 +757,7 @@ export class Bandits {
   }
 
   private trySpawnIndoor(px: number, pz: number, playerArmed: boolean): boolean {
-    const blds = this.w.buildingsNear(px, pz, 55);
+    const blds = this.w.buildingsNear(px, pz, 55).filter((b) => (this.w.isInteriorLoaded ? this.w.isInteriorLoaded(b.id) : true));
     if (blds.length === 0) return false;
     const bld = blds[Math.floor(Math.random() * blds.length)];
     const floor = Math.floor(Math.random() * Math.min(2, bld.floors));
@@ -778,8 +814,13 @@ export class Bandits {
       root.position.set(rx, sy, rz);
       this.w.scene.add(root);
 
-      const maxHp = faction === 'snipers' ? 130 : faction === 'pmc' ? 125 : 90;
+      const maxHp = faction === 'snipers' ? 260 : faction === 'pmc' ? 250 : 180;
       const builtLoot = buildBanditLootAndCorpse(faction, look, worn, tint, weapon, isGun, mods);
+      const wornDirt: Partial<Record<WearSlot, number>> = {};
+      for (const slot of WEAR_SLOTS) {
+        const st = builtLoot.corpse.slots[slot as CorpseSlotKey];
+        if (st?.dirt !== undefined) wornDirt[slot] = st.dirt;
+      }
       const bot: Bandit = {
         id: this.nextId++,
         faction,
@@ -789,9 +830,11 @@ export class Bandits {
         yaw: Math.random() * Math.PI * 2,
         hp: maxHp,
         maxHp,
+        isDead: false,
         state: 'patrol',
         look,
         worn,
+        wornDirt,
         tint,
         weapon,
         isGun,
@@ -802,7 +845,7 @@ export class Bandits {
         burstLeft: isGun ? 2 + Math.floor(Math.random() * 3) : 1,
         burstPause: 0,
         reloadT: 0,
-        reactT: 0.65,
+        reactT: 0.35,
         meleeCd: 0,
         aiming: 0,
         aimBlend: 0,
@@ -823,7 +866,7 @@ export class Bandits {
         ragdoll: null,
         ragdollPose: null,
         lootDropped: false,
-        hit: (dmg, fx, fz, head = false) => this.hit(bot, dmg, fx, fz, head),
+        hit: (dmg, fx, fz, head = false, zone?: HitZone) => this.hit(bot, dmg, fx, fz, head, zone),
       };
 
       this.buildVisual(bot);
@@ -1140,13 +1183,13 @@ export class Bandits {
     b.pos.y = this.w.groundY(b.pos.x, b.pos.z, b.pos.y);
   }
 
-  private hasLineOfSight(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): boolean {
+  hasLineOfSight(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): boolean {
     _v1.set(tx - ox, ty - oy, tz - oz);
     const len = _v1.length();
     if (len < 0.1) return true;
     _v1.divideScalar(len);
     const hit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len);
-    return hit < 0 || hit > len - 0.35;
+    return hit < 0 || hit >= len - 0.05;
   }
 
   private findNearestZombie(x: number, y: number, z: number, radius: number) {
@@ -1163,18 +1206,29 @@ export class Bandits {
     return best;
   }
 
-  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean): void {
+  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false): void {
     const gId = b.weapon as BanditGunId;
     const g = GUNS[gId];
-    const ox = b.pos.x + Math.sin(b.yaw) * 0.35;
+    // Originate from the bot center (inside its collider) so thin 0.12 m walls can never be bypassed by a forward muzzle offset.
+    const ox = b.pos.x;
     const oy = b.pos.y + 1.42;
-    const oz = b.pos.z + Math.cos(b.yaw) * 0.35;
+    const oz = b.pos.z;
+    if (!this.hasLineOfSight(ox, oy, oz, tx, ty, tz)) return;
 
     _to.set(tx - ox, ty - oy, tz - oz);
     const targetDist = _to.length() || 1;
     _to.divideScalar(targetDist);
 
-    const spread = gId === 'shotgun_pump' ? 0.16 : 0.125;
+    const spread =
+      b.faction === 'snipers'
+        ? 0.032
+        : b.faction === 'pmc'
+          ? gId === 'shotgun_pump'
+            ? 0.095
+            : 0.055
+          : gId === 'shotgun_pump'
+            ? 0.115
+            : 0.075;
     _to.x += (Math.random() - 0.5) * spread;
     _to.y += (Math.random() - 0.5) * spread * 0.65;
     _to.z += (Math.random() - 0.5) * spread;
@@ -1193,12 +1247,16 @@ export class Bandits {
       const ey = py - oy;
       const ez = pz - oz;
       const proj = ex * _to.x + ey * _to.y + ez * _to.z;
-      if (proj > 0 && proj < hitDist) {
+      if (proj > 0 && proj < maxTrace - 0.04) {
         const d2 = ex * ex + ey * ey + ez * ez - proj * proj;
         if (d2 < 0.36 * 0.36) {
           hitDist = proj;
+          const hitY = oy + _to.y * proj;
+          const playerFeetY = ty - (inCar ? 1.05 : 1.38);
+          const relY = hitY - playerFeetY;
+          const hitZone: HitZone = relY >= 1.44 ? 'head' : relY >= 0.78 ? 'torso' : 'limbs';
           const rawDmg = (g.damage[0] + g.damage[1]) * 0.24;
-          this.w.hurtPlayer(Math.max(6, Math.min(24, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита');
+          this.w.hurtPlayer(Math.max(6, Math.min(24, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
         }
       }
     } else {
@@ -1210,7 +1268,8 @@ export class Bandits {
       }
     }
 
-    this.spawnTracer(ox, oy, oz, _to.x, _to.y, _to.z, Math.min(hitDist, 32));
+    const muzzleOff = Math.min(0.32, hitDist * 0.4);
+    this.spawnTracer(ox + _to.x * muzzleOff, oy + _to.y * muzzleOff, oz + _to.z * muzzleOff, _to.x, _to.y, _to.z, Math.max(0.2, Math.min(hitDist - muzzleOff, 32)));
     b.recoilKick = 1;
     sfx.gunShot(GUN_SOUND[gId], b.pos, b.mods.includes('mod_suppressor'), this.w.placeAt(b.pos.x, b.pos.z));
 
@@ -1220,9 +1279,9 @@ export class Bandits {
       b.reloadT = 2.2;
     } else if (b.burstLeft <= 0) {
       b.burstLeft = 2 + Math.floor(Math.random() * 3);
-      b.burstPause = 1.0 + Math.random() * 0.7;
+      b.burstPause = 0.65 + Math.random() * 0.45;
     } else {
-      b.fireCd = Math.max(0.24, 60 / Math.min(260, g.rpm));
+      b.fireCd = Math.max(0.18, 60 / Math.min(280, g.rpm));
     }
   }
 

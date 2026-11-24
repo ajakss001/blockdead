@@ -56,6 +56,7 @@ import { type Appearance, DEFAULT_APPEARANCE, sanitizeAppearance } from '../play
 import { type CharacterChoice, CharacterEditor, choiceTint, choiceWorn } from '../ui/CharacterEditor';
 import { Player } from '../player/Player';
 import { Firearms } from '../systems/Firearms';
+import { applyZonalArmor } from '../systems/Armor';
 import { BANDIT_BODY_ID, Bandits } from '../systems/Bandits';
 import { GunHud } from '../ui/GunHud';
 import { isGun } from '../weapons/guns';
@@ -216,17 +217,6 @@ const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
 const entranceKey = (chunkKey: number) => -1 - chunkKey;
 /** Sidewalk of the road along z = 0 in the heart of downtown, looking down the street. */
-function bulletArmor(worn: Worn, dirt: Inventory['wornDirt']): number {
-  let reduction = 0;
-  if (worn.vest === 'vestSwat') reduction += 0.38 * (1 - (dirt.vest ?? 0) * 0.22);
-  else if (worn.vest === 'vestMilitary') reduction += 0.34 * (1 - (dirt.vest ?? 0) * 0.22);
-  else if (worn.vest) reduction += 0.12 * (1 - (dirt.vest ?? 0) * 0.22);
-  if (worn.head === 'helmetSwat' || worn.head === 'helmetMilitary') {
-    reduction += 0.04 * (1 - (dirt.head ?? 0) * 0.2);
-  }
-  return Math.min(0.4, Math.max(0, reduction));
-}
-
 const SPAWN = new Vector3(20, 0, 4.6);
 const SPAWN_YAW = -Math.PI / 2;
 const AUTOSAVE_INTERVAL = 20;
@@ -478,16 +468,18 @@ export class WorldScene implements IScene {
         this.hordes.hear(x, z, r);
         this.bandits.onNoise(x, z, r);
       },
-      hurtPlayer: (hp, fx, fz, cause) => {
-        const armor = bulletArmor(this.inventory.worn, this.inventory.wornDirt);
-        if (this.inventory.worn.vest) {
-          this.inventory.wornDirt.vest = Math.min(1, (this.inventory.wornDirt.vest ?? 0) + 0.03);
+      hurtPlayer: (hp, fx, fz, cause, zone = 'torso') => {
+        const armor = applyZonalArmor(hp, zone, this.inventory.worn, this.inventory.wornDirt);
+        if (armor.armored && armor.hitSlot) {
+          this.inventory.wornDirt[armor.hitSlot] = Math.min(1, (this.inventory.wornDirt[armor.hitSlot] ?? 0) + 0.03);
           sfx.armorHit();
         }
-        this.hurt(hp * (1 - armor), cause, true, new Vector3(fx, this.player.controller.position.y, fz));
+        this.hurt(armor.damage, cause, true, new Vector3(fx, this.player.controller.position.y, fz));
       },
       placeAt: () => this.echoPlace(),
+      isInteriorLoaded: (id) => this.interiors.isLoaded(id),
       onDropLoot: (bot) => {
+        if (!bot.isDead || bot.state !== 'dead') return;
         const rd = bot.ragdoll;
         const pelvis = rd ? rd.poses[PART.pelvis].p : bot.pos;
         const box = rd
@@ -647,6 +639,12 @@ export class WorldScene implements IScene {
       on: (x, z) => this.powered.has(blockKey(x, z)),
       start: (x, z) => this.powerLab(x, z),
     };
+    this.interaction.canLoot = (ref) => {
+      if (ref.type !== 'bodyBandit') return true;
+      const b = this.bandits.findByBodyId(ref.id);
+      return !b || (b.isDead && b.state === 'dead');
+    };
+    this.interaction.aimingAtLivingNpc = (o, d, reach) => !!this.bandits.hitTest(o, d, reach, 0.02);
     this.searchOutline.visible = false;
     this.searchOutline.frustumCulled = false;
     this.scene.add(this.searchOutline);
@@ -812,6 +810,13 @@ export class WorldScene implements IScene {
       this.ground.restore(save.ground);
       for (const b of this.bodies) this.containers.addLoose(b, []);
       this.containers.restoreCorpses(save.corpses);
+      let maxRestoredBotId = 0;
+      for (const ref of this.containers.looseRefs) {
+        if (ref.type === 'bodyBandit' && ref.id >= BANDIT_BODY_ID) {
+          maxRestoredBotId = Math.max(maxRestoredBotId, ref.id - BANDIT_BODY_ID);
+        }
+      }
+      if (maxRestoredBotId > 0) this.bandits.reserveIdsAbove(maxRestoredBotId);
       this.base.restore(save.base);
       for (const p of this.base.list) if (p.kind === 'stash') this.containers.addLoose(stashRef(p), []);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
@@ -1267,7 +1272,9 @@ export class WorldScene implements IScene {
       const p = c.position;
       this.indoors = this.shelters.covers(p.x, p.z, p.y);
       this.air = airTemperature(this.clock.hour, this.indoors);
-      sfx.setRoom(this.indoors ? 0.42 : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.1 : 0.02);
+      const b = this.indoors ? this.interiors.buildingAt(p.x, p.z) : null;
+      const wet = this.indoors ? (b && inStairCore(b, p.x, p.z) ? 0.2 : 0.16) : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.08 : 0.02;
+      sfx.setRoom(wet);
     }
     this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting) + this.base.warmth(c.position.x, c.position.y, c.position.z);
     // Clothes get dirty: faster running, crawling, rummaging through containers.
@@ -1687,7 +1694,7 @@ export class WorldScene implements IScene {
       if (wall >= 0 && wall < bHit.dist - 0.1) return false;
       const strength = this.mods().strength * this.skills.damage(item);
       const dmg = blowDamage(cfg.damage, strength, bHit.head, Math.random());
-      const killed = this.bandits.hit(bHit.bot, dmg, o.x, o.z, bHit.head);
+      const killed = this.bandits.hit(bHit.bot, dmg, o.x, o.z, bHit.head, bHit.zone);
       this.skills.add(weaponSkill(item), XP.hit + (killed ? XP.kill : 0));
       if (killed) this.skills.kills++;
       sfx.strike(STRIKE_SOUND[item] ?? 'blunt', bHit.point, bHit.head, killed);

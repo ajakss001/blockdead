@@ -594,7 +594,7 @@ export class Doors {
       Math.max(d.spot.hx, ex) + t,
       Math.max(d.spot.hz, ez) + t,
       d.spot.y,
-      d.spot.y + LEAF_H,
+      d.spot.y + (d.spot.height ?? LEAF_H),
     );
   }
 }

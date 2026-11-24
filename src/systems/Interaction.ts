@@ -121,6 +121,10 @@ export class Interaction {
   /** A kitchen tap in front (the scene finds it): is there one, does it run, drink from it. */
   /** Something in front that isn't a container (a tap, a bed, what the survivor built): its prompt (`act`: E does it). */
   spot: { here(): { text: string; act: boolean; run(): void } | null } | null = null;
+  /** Optional check forbidding looting living NPC bodies while keeping static containers lootable. */
+  canLoot: ((ref: ContainerRef) => boolean) | null = null;
+  /** Optional check hiding bodyBandit focus when aiming at a living bandit. */
+  aimingAtLivingNpc: ((o: Vector3, d: Vector3, reach: number) => boolean) | null = null;
   /** Experience for what was done here (the scene gives it to the skills). */
   onSkill: ((id: 'search' | 'carpentry', xp: number) => void) | null = null;
 
@@ -203,6 +207,7 @@ export class Interaction {
         if (s.act) s.run();
         else hud.toast(s.text, 1200);
       } else if (!ref) hud.toast(tr('Здесь нечего обыскивать', 'Nothing to search here'), 900);
+      else if (this.canLoot && !this.canLoot(ref)) hud.toast(tr('Нельзя обыскать живого', 'Cannot loot living NPC'), 900);
       else if (ref.type === 'generator') this.startGenerator(ref);
       else if (this.containers.isOpened(ref)) {
         sfx.containerOpen(CONTAINER_SOUND[ref.type] ?? 'shelf', spot(ref));
@@ -448,13 +453,18 @@ export class Interaction {
   /** Only what the crosshair is on: the ray from the eye hits its search zone within reach, nothing in front. */
   private target(): ContainerRef | null {
     const aim = this.aim;
+    let ref: ContainerRef | null;
     if (!aim) {
       const c = this.player.controller;
-      return this.containers.target(c.position.x, c.position.z, -Math.sin(c.yaw), -Math.cos(c.yaw), c.position.y);
+      ref = this.containers.target(c.position.x, c.position.z, -Math.sin(c.yaw), -Math.cos(c.yaw), c.position.y);
+    } else {
+      const o = aim.eye(_o);
+      const d = aim.dir(_d);
+      ref = this.containers.targetRay(o.x, o.y, o.z, d.x, d.y, d.z, REACH, (t) => !aim.blocked(o, d, t));
+      if (ref?.type === 'bodyBandit' && this.aimingAtLivingNpc?.(o, d, REACH)) return null;
     }
-    const o = aim.eye(_o);
-    const d = aim.dir(_d);
-    return this.containers.targetRay(o.x, o.y, o.z, d.x, d.y, d.z, REACH, (t) => !aim.blocked(o, d, t));
+    if (ref && this.canLoot && !this.canLoot(ref)) return null;
+    return ref;
   }
 
   /** The weapon lying under the crosshair within reach, nothing solid in between. */
@@ -475,12 +485,14 @@ export class Interaction {
       inv.handWear = 0;
       inv.version++;
       this.syncBody();
+      sfx.item('weapon');
     } else if (inv.add(item, 1) === 0) {
       this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'), 900);
       return;
+    } else {
+      sfx.item('pick');
     }
     this.ground!.take(w);
-    sfx.item('pick');
     this.ctx.hud.toast(`${tr('Подобрано', 'Picked up')}: ${ITEMS[item].name}`, 1200);
   }
 
@@ -522,6 +534,7 @@ export class Interaction {
       return;
     }
     inv.equip(best);
+    sfx.item('weapon');
     this.syncBody();
   }
 
@@ -540,6 +553,7 @@ export class Interaction {
       this.ctx.hud.toast(tr('Рюкзак переполнен', 'Backpack is full'), 900);
       return;
     }
+    sfx.item('weapon');
     this.syncBody();
   }
 
@@ -552,6 +566,7 @@ export class Interaction {
       return;
     }
     this.lastWeapon = held;
+    sfx.item('weapon');
     this.syncBody();
   }
 }
