@@ -477,6 +477,13 @@ export class WorldScene implements IScene {
         this.hurt(armor.damage, cause, true, new Vector3(fx, this.player.controller.position.y, fz));
       },
       placeAt: () => this.echoPlace(),
+      openDoorNear: (x, y, z, radius = 1.7) => {
+        const near = this.doors.closedNear(x, y, z, radius);
+        if (!near || !this.doors.toggle(near.ref)) return false;
+        const info = this.doors.info(near.ref);
+        if (info && info.style !== 'glass') sfx.door(info.style === 'lab' ? 'metal' : 'wood', true, info, info.creaky, info.pitch);
+        return true;
+      },
       isInteriorLoaded: (id) => this.interiors.isLoaded(id),
       onDropLoot: (bot) => {
         if (!bot.isDead || bot.state !== 'dead') return;
@@ -676,11 +683,19 @@ export class WorldScene implements IScene {
       ctx.quality.preset.foliage.cap,
       ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy()),
     );
-    // A blow to a wall: steel strikes sparks, the knife (and a fist) only a little dust; the weapon wears.
+    // A blow to a wall: steel strikes sparks, glass breaks with 3D shatter + shards, the knife (and a fist) only a little dust.
     this.player.onStrikeWorld = (x, y, z, item) => {
       this.atmo.strikeAt(x, y, z);
-      if (weaponOf(item)?.sparks) this.particles.sparks(x, y, z, 9);
-      else this.particles.burst(_wallHit.set(x, y, z), 4, 0.4);
+      const eye = this.camera.getWorldPosition(_so);
+      const dir = this.camera.getWorldDirection(_sd);
+      const hitSurf = this.player.surfaceAlong(eye, dir, 2.5);
+      if (hitSurf === 'windowGlass' || hitSurf === 'glass') {
+        this.breakGlassAt(_wallHit.set(x, y, z), dir);
+      } else if (weaponOf(item)?.sparks) {
+        this.particles.sparks(x, y, z, 9);
+      } else {
+        this.particles.burst(_wallHit.set(x, y, z), 4, 0.4);
+      }
       this.weaponBlow();
     };
     this.firearms = new Firearms({
@@ -704,6 +719,7 @@ export class WorldScene implements IScene {
       hurtSelf: (hp) => this.hurt(hp, tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'), true),
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
+      onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
       surfaceAt: () => this.surfaceAt(this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y),
@@ -1273,7 +1289,7 @@ export class WorldScene implements IScene {
       this.indoors = this.shelters.covers(p.x, p.z, p.y);
       this.air = airTemperature(this.clock.hour, this.indoors);
       const b = this.indoors ? this.interiors.buildingAt(p.x, p.z) : null;
-      const wet = this.indoors ? (b && inStairCore(b, p.x, p.z) ? 0.2 : 0.16) : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.08 : 0.02;
+      const wet = this.indoors ? (b && inStairCore(b, p.x, p.z) ? 0.12 : 0.09) : this.chunks.zoneAt(p.x, p.z) === 'downtown' ? 0.06 : 0.02;
       sfx.setRoom(wet);
     }
     this.felt = feltTemperature(this.air, wornStat(this.inventory.worn, 'warmth'), c.speed, c.sprinting) + this.base.warmth(c.position.x, c.position.y, c.position.z);
@@ -1717,6 +1733,23 @@ export class WorldScene implements IScene {
     this.particles.burst(res.point, res.head ? 14 : 10);
     this.weaponBlow();
     return true;
+  }
+
+  private breakGlassAt(at: Vector3, dir: Vector3): void {
+    const floorAt = (gx: number, gz: number) => this.interiors.surfaceY(gx, gz, at.y) ?? this.layout.walkHeightAt(gx, gz);
+    const floorY = floorAt(at.x, at.z);
+    sfx.glassBreak(at, { x: at.x, y: floorY + 0.05, z: at.z });
+    this.particles.burst(at, 10, 0.7);
+    const hLen = Math.hypot(dir.x, dir.z);
+    const hx = hLen > 1e-4 ? dir.x / hLen : 0;
+    const hz = hLen > 1e-4 ? dir.z / hLen : 1;
+    // Spawn broken glass decals + crunchy step trigger zones on BOTH sides of the window (indoor & outdoor).
+    for (const sign of [-1, 1] as const) {
+      const sx = at.x + hx * 1.1 * sign;
+      const sz = at.z + hz * 1.1 * sign;
+      const sy = floorAt(sx, sz);
+      this.life.addDynamicShards(sx, sy, sz, 2.2);
+    }
   }
 
   /** A blow of the weapon in hand landed: it wears, and at the end of its blows it breaks. */
@@ -2575,7 +2608,7 @@ export class WorldScene implements IScene {
     setSubCellSplit(splitQ === null ? preset.level === 'high' && this.ctx.device.type === 'desktop' : splitQ === '1');
     const isLow = preset.level === 'low';
     this.vehicles?.setAnisotropy(isLow ? 1 : Math.min(4, this.ctx.renderer.gl.capabilities.getMaxAnisotropy()));
-    this.bandits?.setMaxActive(isLow ? 2 : 4);
+    this.bandits?.setMaxActive(isLow ? 4 : 10);
     this.applySettings();
   }
 

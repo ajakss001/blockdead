@@ -379,7 +379,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 + 1.0, 1.6, rand, 1.2);
     } else {
       b.block(PAL.trim, x, 0.3, L.z0 - 0.06, pw, 0.15, 0.06, 'metal');
-      b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass');
+      b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass', true);
     }
   }
   if (entrance === 'doors') {

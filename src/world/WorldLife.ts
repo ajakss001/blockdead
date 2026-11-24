@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  CanvasTexture,
   ConeGeometry,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -22,6 +23,7 @@ import {
 } from 'three';
 import { AmbientAudio } from '../audio/AmbientAudio';
 import type { AnxietyAudio } from '../audio/AnxietyAudio';
+import { generateDecalCanvas } from '../render/look/decals';
 import { LIFE } from './gen/lifeKinds';
 
 /** Spot layout from the generators (Builder.life): kind, x, y, z, normal x, normal z, w, h, seed, tag. */
@@ -73,6 +75,11 @@ export class WorldLife {
   private readonly radios: number[] = [];
   /** Broken glass on the ground: x, z, radius. */
   private readonly shards: number[] = [];
+  /** Dynamically broken windows (multi-storey safe): { x, y, z, r }. */
+  private readonly dynamicShards: { x: number; y: number; z: number; r: number }[] = [];
+  private dynShardMesh: InstancedMesh | null = null;
+  private dynShardTex: CanvasTexture | null = null;
+  private dynShardMat: MeshStandardMaterial | null = null;
   /** Lit rooms of the loaded interiors: x, y (lamp), z, flicker mode, phase. */
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
@@ -168,8 +175,61 @@ export class WorldLife {
     return this.gust;
   }
 
+  /** Spawn visual glass shard decals and active footstep crunch zone on both sides of broken windows. */
+  addDynamicShards(x: number, y: number, z: number, radius = 2.2): void {
+    for (let i = 0; i < this.dynamicShards.length; i++) {
+      const s = this.dynamicShards[i];
+      if (Math.abs(s.y - y) < 0.7 && (s.x - x) ** 2 + (s.z - z) ** 2 < 1.2 * 1.2) return;
+    }
+    if (this.dynamicShards.length >= 64) this.dynamicShards.shift();
+    this.dynamicShards.push({ x, y, z, r: radius });
+    if (typeof document !== 'undefined') {
+      if (!this.dynShardMesh) {
+        try {
+          const canvas = generateDecalCanvas('shards', 128, 17);
+          const tex = new CanvasTexture(canvas);
+          const mat = new MeshStandardMaterial({
+            map: tex,
+            transparent: true,
+            depthWrite: false,
+            roughness: 0.25,
+            metalness: 0.2,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+          });
+          const quad = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+          const mesh = new InstancedMesh(quad, mat, 64);
+          mesh.name = 'life:dynShards';
+          mesh.frustumCulled = false;
+          mesh.renderOrder = 1;
+          mesh.count = 0;
+          this.scene.add(mesh);
+          this.dynShardTex = tex;
+          this.dynShardMat = mat;
+          this.dynShardMesh = mesh;
+        } catch {
+          // Node headless test DOM stub without 2D canvas context skips visual mesh cleanly.
+        }
+      }
+      if (this.dynShardMesh) {
+        for (let i = 0; i < this.dynamicShards.length; i++) {
+          const s = this.dynamicShards[i];
+          const diam = s.r * 1.1;
+          _m.compose(_p.set(s.x, s.y + 0.025, s.z), _q.setFromAxisAngle(_y, ((s.x * 1.3 + s.z * 0.7) % 6.28)), _s.set(diam, 1, diam));
+          this.dynShardMesh.setMatrixAt(i, _m);
+        }
+        this.dynShardMesh.count = this.dynamicShards.length;
+        this.dynShardMesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+  }
+
   /** Standing on broken glass. */
   onShards(x: number, z: number, y: number): boolean {
+    for (let i = 0; i < this.dynamicShards.length; i++) {
+      const s = this.dynamicShards[i];
+      if (Math.abs(y - s.y) < 0.85 && (x - s.x) ** 2 + (z - s.z) ** 2 <= s.r * s.r) return true;
+    }
     if (y > 0.5) return false;
     if (this.dirty) this.rebuild();
     for (let i = 0; i < this.shards.length; i += 3) {
@@ -554,6 +614,12 @@ export class WorldLife {
     for (const l of this.fireLightList) l.removeFromParent();
     this.spinMesh?.removeFromParent();
     this.beamMesh?.removeFromParent();
+    if (this.dynShardMesh) {
+      this.scene.remove(this.dynShardMesh);
+      this.dynShardMesh.geometry.dispose();
+    }
+    this.dynShardMat?.dispose();
+    this.dynShardTex?.dispose();
   }
 }
 

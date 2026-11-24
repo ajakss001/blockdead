@@ -1,7 +1,9 @@
 /**
- * Hostile living survivor bots (bandits): full Mixamo skeletal rig with AnimationMixer gaits,
- * worn gear meshes, held 3D weapons, physical Ragdoll on death, and AI that prioritizes nearby
- * zombies first and the player second. Light-to-medium aim difficulty.
+ * Living tactical survivor AI (EFT-inspired):
+ * - Mixamo skeletons with crouch blending and analytical 2-bone IK two-handed weapon stances
+ * - Faction war matrix: Scavs vs BEAR vs USEC vs Black Raiders vs Bosses & Guards (+ vs Zombies/Player)
+ * - Tactical combat: cover search, crouch-peek bursts, flanking, reloading/healing behind cover, door opening
+ * - Indoor ambushers ("rats") waiting silently in dark rooms/stairwells and 3 unique Bosses with escort squads
  */
 
 import {
@@ -21,6 +23,7 @@ import { sfx, type EchoPlace, type GunSound } from '../audio/Sound';
 import { type BodyId, bodyAsset, bodyNow, type ClipId, loadBody } from '../characters/assets';
 import { coverBody, gearGeometry, gearKind, gearTexture, hideBits, loadGear, wornGear } from '../characters/gear';
 import { handFrame } from '../characters/hands';
+import { slerpBoneWorld, solveTwoBoneIK } from '../characters/ik';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig, RagdollPose, stand } from '../characters/rig';
 import { ensureStackUid, type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot } from '../data/items';
@@ -37,10 +40,20 @@ import { type BuildingDesc, FLOOR_H } from '../world/gen/highrise';
 import { applyZonalArmor, type HitZone } from './Armor';
 import type { CorpseData, CorpseSlotKey } from './Containers';
 import type { Worn } from './Inventory';
-import type { BanditTarget, ZombieSim } from './zombies';
+import type { BanditTarget, Zombie, ZombieSim } from './zombies';
 
-export type FactionId = 'scavs' | 'pmc' | 'snipers';
-export type SpawnKind = 'street' | 'indoor' | 'sniper';
+export type FactionId = 'scavs' | 'bear' | 'usec' | 'black' | 'boss' | 'pmc' | 'snipers';
+export type SpawnKind = 'street' | 'indoor' | 'sniper' | 'boss';
+export type BotRole = 'regular' | 'ambusher' | 'boss' | 'guard';
+
+/**
+ * Faction hostility matrix (EFT rules, no cultists):
+ * - Same faction never friendly-fires (Black Raiders stay cohesive with their own squad, Boss + Guards share 'boss').
+ * - Any two distinct factions are mutually hostile and actively fight each other across the map.
+ */
+export function areFactionsHostile(a: FactionId, b: FactionId): boolean {
+  return a !== b;
+}
 
 export interface BanditLootItem {
   id: ItemId;
@@ -63,6 +76,7 @@ export interface BanditWorld {
   noise(x: number, y: number, z: number, r: number): void;
   hurtPlayer(hp: number, fromX: number, fromZ: number, cause: string, zone?: HitZone): void;
   placeAt(x: number, z: number): EchoPlace;
+  openDoorNear?(x: number, y: number, z: number, radius?: number): boolean;
   isInteriorLoaded?(buildingId: number): boolean;
   onDropLoot?(bot: Bandit): void;
   onRemoveCorpse?(bot: Bandit): void;
@@ -91,18 +105,29 @@ const GUN_SOUND: Record<BanditGunId, GunSound> = {
 };
 
 const FACTION_OUTFITS: Record<FactionId, readonly Worn[]> = {
-  // Regular survivor bandits: no body armor, no ballistic helmets, simple firearms/melee
   scavs: [
     { outfit: null, head: null, face: null, mask: null, torso: 'hoodie', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: 'backpackSchool', bag: null },
     { outfit: null, head: null, face: null, mask: 'shemagh', torso: 'workJacket', vest: null, hands: 'workGloves', legs: 'cargoPants', feet: 'sneakers', back: null, bag: null },
     { outfit: 'outfitMechanic', head: null, face: null, mask: null, torso: null, vest: null, hands: null, legs: null, feet: 'boots', back: 'backpackSchool', bag: null },
     { outfit: null, head: null, face: null, mask: 'maskHalf', torso: 'leatherJacket', vest: null, hands: null, legs: 'jeans', feet: 'boots', back: null, bag: null },
   ],
-  // Elite tactical bandits: full body armor, helmets, tactical vests/rigs, military/SWAT gear
+  bear: [
+    { outfit: 'outfitMilitary', head: 'helmetMilitary', face: null, mask: 'balaclava', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+    { outfit: 'outfitMilitary', head: 'helmetMilitary', face: 'gogglesTactical', mask: 'shemagh', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackHiking', bag: null },
+  ],
+  usec: [
+    { outfit: 'outfitSwat', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+    { outfit: 'outfitSwat', head: 'helmetSwat', face: null, mask: 'shemagh', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackHiking', bag: null },
+  ],
+  black: [
+    { outfit: 'outfitSwat', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+  ],
+  boss: [
+    { outfit: 'outfitMilitary', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+  ],
   pmc: [
     { outfit: 'outfitMilitary', head: 'helmetMilitary', face: null, mask: 'balaclava', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
     { outfit: 'outfitSwat', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
-    { outfit: 'outfitMilitary', head: 'helmetMilitary', face: 'gogglesTactical', mask: 'shemagh', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackHiking', bag: null },
   ],
   snipers: [
     { outfit: 'outfitMilitary', head: 'helmetMilitary', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
@@ -111,29 +136,87 @@ const FACTION_OUTFITS: Record<FactionId, readonly Worn[]> = {
 
 const FACTION_TINTS: Record<FactionId, readonly number[]> = {
   scavs: [0x6e4f3a, 0x3f4e5e, 0x585346, 0x4b3b36, 0x3b4a3c, 0x62503c],
+  bear: [0x3c4a32, 0x454e38, 0x323b2c],
+  usec: [0x3a424c, 0x464e56, 0x2c343d],
+  black: [0x14161a],
+  boss: [0x582422, 0x1e2228],
   pmc: [0x3b4432, 0x2c302e, 0x454a3a, 0x25282c],
   snipers: [0x3c4836, 0x2f362c],
 };
 
-const MAX_ACTIVE = 4;
-const SPAWN_MIN = 34;
-const SPAWN_MAX = 64;
-const DESPAWN_DIST = 92;
+interface BossPreset {
+  id: string;
+  name: string;
+  hp: number;
+  weapon: BanditGunId;
+  mods: ModId[];
+  worn: Worn;
+  tint: number;
+}
+
+const BOSS_PRESETS: readonly BossPreset[] = [
+  {
+    id: 'komendant',
+    name: 'Комендант Мороз',
+    hp: 520,
+    weapon: 'rifle_ak',
+    mods: ['mod_suppressor', 'mod_ext_mag_ak', 'mod_flashlight'],
+    worn: { outfit: 'outfitMilitary', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+    tint: 0x582422,
+  },
+  {
+    id: 'shturmovik',
+    name: 'Штурмовик Гром',
+    hp: 460,
+    weapon: 'shotgun_pump',
+    mods: ['mod_flashlight'],
+    worn: { outfit: 'outfitSwat', head: 'helmetSwat', face: 'gogglesTactical', mask: 'balaclava', torso: null, vest: 'vestSwat', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackMilitary', bag: null },
+    tint: 0x1c222a,
+  },
+  {
+    id: 'eger',
+    name: 'Егерь Ворон',
+    hp: 430,
+    weapon: 'rifle_hunting',
+    mods: ['mod_suppressor', 'mod_flashlight'],
+    worn: { outfit: 'outfitMilitary', head: 'helmetMilitary', face: null, mask: 'shemagh', torso: null, vest: 'vestMilitary', hands: 'tacticalGloves', legs: null, feet: 'combatBoots', back: 'backpackHiking', bag: null },
+    tint: 0x2a3b26,
+  },
+];
+
+const MAX_ACTIVE = 10;
+const SPAWN_MIN = 32;
+const SPAWN_MAX = 66;
+const DESPAWN_DIST = 96;
 const CORPSE_LIFE = 95;
 
 const _v1 = new Vector3();
 const _v2 = new Vector3();
+const _v3 = new Vector3();
 const _to = new Vector3();
+const _fwd = new Vector3();
+const _right = new Vector3();
+const _upVec = new Vector3();
+const _pShR = new Vector3();
+const _gripR = new Vector3();
+const _gripL = new Vector3();
+const _wristR = new Vector3();
+const _wristL = new Vector3();
+const _poleR = new Vector3();
+const _poleL = new Vector3();
+const _gunPos = new Vector3();
 const _m = new Matrix4();
 const _m2 = new Matrix4();
 const _one = new Vector3(1, 1, 1);
 const _up = new Vector3(0, 1, 0);
-const _barrel = new Vector3(0, 0, -1);
 const _q = new Quaternion();
 const _q2 = new Quaternion();
 const _q3 = new Quaternion();
 const _q4 = new Quaternion();
-const _q5 = new Quaternion();
+const _qGunW = new Quaternion();
+const _qWristR = new Quaternion();
+const _qWristL = new Quaternion();
+const _qFlipY = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI);
 
 interface Tracer {
   mesh: Mesh;
@@ -144,8 +227,8 @@ interface BanditRigVisual {
   body: BodyId;
   scale: number;
   rig: CharacterRig;
-  gaits: { idle: AnimationAction; walk: AnimationAction; run: AnimationAction };
-  weights: { idle: number; walk: number; run: number };
+  gaits: { idle: AnimationAction; walk: AnimationAction; run: AnimationAction; crouch: AnimationAction };
+  weights: { idle: number; walk: number; run: number; crouch: number };
   gear: Map<string, SkinnedMesh>;
   hide: { value: number };
   heldObj: Group | null;
@@ -153,10 +236,21 @@ interface BanditRigVisual {
   geos: BufferGeometry[];
 }
 
+export interface SpawnBotOptions {
+  role?: BotRole;
+  squadId?: number;
+  bossId?: number | null;
+  bossPreset?: BossPreset;
+}
+
 export interface Bandit extends BanditTarget {
   id: number;
   faction: FactionId;
   spawnKind: SpawnKind;
+  role: BotRole;
+  squadId: number;
+  bossId: number | null;
+  bossPresetId?: string;
   pos: Vector3;
   vel: Vector3;
   yaw: number;
@@ -184,6 +278,18 @@ export interface Bandit extends BanditTarget {
   aimPitch: number;
   recoilKick: number;
   swingT: number;
+  crouching: boolean;
+  crouchBlend: number;
+  healT: number;
+  medkits: number;
+  doorCd: number;
+  coverX: number;
+  coverZ: number;
+  coverT: number;
+  flankSign: -1 | 1;
+  flankT: number;
+  lastHitT: number;
+  ambushTriggered: boolean;
   patrolYaw: number;
   patrolT: number;
   investigateX: number;
@@ -201,27 +307,46 @@ export interface Bandit extends BanditTarget {
   hit(dmg: number, fromX: number, fromZ: number, head?: boolean, zone?: HitZone): boolean;
 }
 
-function randomLook(): Appearance {
-  const sex: Sex = Math.random() < 0.78 ? 'male' : 'female';
+function factionTitle(faction: FactionId, role: BotRole, preset?: BossPreset): string {
+  if (preset) return preset.name;
+  if (role === 'guard') return 'Охранник босса';
+  switch (faction) {
+    case 'bear': return 'Оперативник BEAR';
+    case 'usec': return 'Боец USEC';
+    case 'black': return 'Чёрный рейдер';
+    case 'boss': return 'Свита босса';
+    case 'snipers': return 'Снайпер';
+    case 'pmc': return 'ЧВК-боец';
+    default: return 'Дикий';
+  }
+}
+
+function randomLook(customName?: string): Appearance {
+  const sex: Sex = customName ? 'male' : Math.random() < 0.8 ? 'male' : 'female';
   const base = BASE_LOOK[sex];
   return {
     ...base,
-    name: sex === 'male' ? 'Бандит' : 'Бандитка',
+    name: customName ?? (sex === 'male' ? 'Боец' : 'Мародёрка'),
     height: base.height + Math.round((Math.random() - 0.5) * 8),
   };
 }
 
-function rollEliteMods(weapon: GunId): ModId[] {
+function rollMods(weapon: GunId, faction: FactionId, role: BotRole): ModId[] {
   const mods: ModId[] = [];
-  if (MOD_FITS.mod_suppressor.includes(weapon) && Math.random() < 0.7) mods.push('mod_suppressor');
-  if (MOD_FITS.mod_ext_mag_ak.includes(weapon) && Math.random() < 0.55) mods.push('mod_ext_mag_ak');
-  else if (MOD_FITS.mod_ext_mag_m4.includes(weapon) && Math.random() < 0.55) mods.push('mod_ext_mag_m4');
-  if (MOD_FITS.mod_flashlight.includes(weapon) && Math.random() < 0.5) mods.push('mod_flashlight');
+  const elite = faction === 'black' || faction === 'boss' || role === 'guard';
+  const supChance = faction === 'black' ? 0.92 : elite ? 0.72 : faction === 'bear' || faction === 'usec' || faction === 'pmc' ? 0.45 : 0;
+  const magChance = faction === 'black' || role === 'boss' ? 0.85 : faction !== 'scavs' ? 0.5 : 0;
+  if (MOD_FITS.mod_suppressor.includes(weapon) && Math.random() < supChance) mods.push('mod_suppressor');
+  if (MOD_FITS.mod_ext_mag_ak.includes(weapon) && Math.random() < magChance) mods.push('mod_ext_mag_ak');
+  else if (MOD_FITS.mod_ext_mag_m4.includes(weapon) && Math.random() < magChance) mods.push('mod_ext_mag_m4');
+  else if (MOD_FITS.mod_ext_mag_g17.includes(weapon) && Math.random() < magChance) mods.push('mod_ext_mag_g17');
+  if (MOD_FITS.mod_flashlight.includes(weapon) && Math.random() < (elite ? 0.75 : 0.4)) mods.push('mod_flashlight');
   return mods;
 }
 
 function buildBanditLootAndCorpse(
   faction: FactionId,
+  role: BotRole,
   look: Appearance,
   worn: Worn,
   tint: number,
@@ -234,7 +359,7 @@ function buildBanditLootAndCorpse(
   const weaponStack: ItemStack = {
     id: weapon,
     count: 1,
-    dirt: 0.1 + Math.random() * 0.25,
+    dirt: faction === 'black' || role === 'boss' ? 0.05 : 0.1 + Math.random() * 0.22,
     ...(mods.length ? { mods: [...mods] } : {}),
   };
   ensureStackUid(weaponStack);
@@ -246,7 +371,7 @@ function buildBanditLootAndCorpse(
     const st: ItemStack = {
       id,
       count: 1,
-      dirt: 0.08 + Math.random() * 0.24,
+      dirt: faction === 'black' ? 0.05 : 0.08 + Math.random() * 0.22,
       ...(slot === 'torso' ? { tint } : {}),
     };
     ensureStackUid(st);
@@ -264,7 +389,6 @@ function buildBanditLootAndCorpse(
   };
 
   if (tier === 'regular') {
-    // Regular survivor bandits: simple gun with <= 10 rounds, no armor, minimal pocket meds/rations.
     if (isGun) {
       const g = GUNS[weapon as BanditGunId];
       pushStack(pockets, g.caliber, 4 + Math.floor(Math.random() * 7));
@@ -277,27 +401,48 @@ function buildBanditLootAndCorpse(
       pushStack(pockets, 'crackers', 1);
     }
   } else {
-    // Elite armored bandits: 40+ quality rounds, spare mags in rig, medicine & rations.
     const g = GUNS[weapon as BanditGunId];
-    const totalAmmo = 40 + Math.floor(Math.random() * 26); // 40..65 rounds
+    const extraMul = role === 'boss' ? 2 : faction === 'black' ? 1.5 : 1;
+    const totalAmmo = Math.round((40 + Math.floor(Math.random() * 26)) * extraMul);
     const rigTarget = worn.vest ? rig : pockets;
     pushStack(rigTarget, g.caliber, totalAmmo);
     if (g.mag) {
-      const magCount = 1 + (Math.random() < 0.55 ? 1 : 0);
+      const magCount = role === 'boss' ? 3 : faction === 'black' ? 2 : 1 + (Math.random() < 0.55 ? 1 : 0);
       for (let i = 0; i < magCount; i++) pushStack(rigTarget, g.mag, 1);
     }
-    pushStack(rigTarget, 'bandage', 2);
-    pushStack(pockets, 'painkillers', 1 + (Math.random() < 0.45 ? 1 : 0));
-    if (Math.random() < 0.45) pushStack(pockets, 'antibiotics', 1);
+    pushStack(rigTarget, 'bandage', role === 'boss' ? 3 : 2);
+    pushStack(pockets, 'painkillers', role === 'boss' ? 2 : 1 + (Math.random() < 0.45 ? 1 : 0));
+    if (role === 'boss' || faction === 'black' || Math.random() < 0.45) pushStack(pockets, 'antibiotics', 1);
     if (worn.back) {
-      pushStack(backpack, 'ration', 1);
-      pushStack(backpack, 'water', 1);
+      pushStack(backpack, 'ration', role === 'boss' ? 2 : 1);
+      pushStack(backpack, 'water', role === 'boss' ? 2 : 1);
+      if (role === 'boss') {
+        pushStack(backpack, 'batteries', 2);
+        pushStack(backpack, 'mod_suppressor', 1);
+      }
     }
   }
 
+  const tierLabel =
+    role === 'boss'
+      ? `Босс · ${look.name}`
+      : role === 'guard'
+        ? 'Охранник босса'
+        : faction === 'black'
+          ? 'Чёрный рейдер'
+          : faction === 'bear'
+            ? 'ЧВК BEAR'
+            : faction === 'usec'
+              ? 'ЧВК USEC'
+              : faction === 'snipers'
+                ? 'Снайпер'
+                : tier === 'elite'
+                  ? 'Элитный боец'
+                  : 'Дикий';
+
   const corpse: CorpseData = {
     name: look.name,
-    tierLabel: faction === 'snipers' ? 'Снайпер' : tier === 'elite' ? 'Элитный боец' : 'Выживший-бандит',
+    tierLabel,
     tier,
     slots,
     pockets,
@@ -308,7 +453,6 @@ function buildBanditLootAndCorpse(
     searchedBackpack: !worn.back,
   };
 
-  // Flat fallback mirror kept in sync for tests / serializers.
   const loot: BanditLootItem[] = [];
   for (const s of Object.values(slots)) if (s) loot.push({ id: s.id, count: s.count, condition: s.dirt });
   for (const s of [...pockets, ...rig, ...backpack]) loot.push({ id: s.id, count: s.count });
@@ -318,15 +462,16 @@ function buildBanditLootAndCorpse(
 export class Bandits {
   readonly list: Bandit[] = [];
   private nextId = 1;
+  private nextSquadId = 1;
   private spawnCd = 4;
   private maxActive = MAX_ACTIVE;
   private disposed = false;
   private readonly tracers: Tracer[] = [];
+  private readonly coverBoxCache: StaticBox[] = [];
   private readonly tracerGeo = new BoxGeometry(0.025, 0.025, 1);
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
   constructor(private readonly w: BanditWorld) {
-    // Preload base male/female rigs; faction costume rigs load on demand when a bandit spawns with them.
     void loadBody('male');
     void loadBody('female');
   }
@@ -335,7 +480,6 @@ export class Bandits {
     this.maxActive = Math.max(1, n);
   }
 
-  /** Ensure newly spawned bots never collide with restored corpse container IDs. */
   reserveIdsAbove(id: number): void {
     if (id >= this.nextId) this.nextId = id + 1;
   }
@@ -363,62 +507,70 @@ export class Bandits {
     let aliveStreet = 0;
     let aliveIndoor = 0;
     let aliveSniper = 0;
+    let aliveBoss = 0;
+    let totalAlive = 0;
     for (const b of this.list) {
       if (b.state === 'dead') continue;
+      totalAlive++;
       if (b.spawnKind === 'street') aliveStreet++;
       else if (b.spawnKind === 'indoor') aliveIndoor++;
+      else if (b.spawnKind === 'boss') aliveBoss++;
       else aliveSniper++;
     }
-    const baseStreet = this.maxActive <= 2 ? 1 : 2;
-    const streetCap = baseStreet + (playerArmed && this.maxActive > 2 ? 1 : 0);
-    const indoorCap = this.maxActive <= 2 ? 1 : 2;
-    const sniperChance = playerArmed ? 0.28 : 0.08;
-    if (this.spawnCd <= 0) {
-      if (aliveIndoor < indoorCap && this.trySpawnIndoor(px, pz, playerArmed)) {
-        // Spawned indoor rat
-      } else if (aliveSniper < 1 && Math.random() < sniperChance && this.trySpawnSniper(px, pz)) {
+
+    if (this.spawnCd <= 0 && totalAlive < this.maxActive) {
+      const room = this.maxActive - totalAlive;
+      const indoorCap = this.maxActive <= 4 ? 1 : 2;
+      if (aliveBoss === 0 && room >= 3 && Math.random() < (playerArmed ? 0.35 : 0.14) && this.trySpawnBossGroup(px, pz, room)) {
+        // Boss + guards spawned
+      } else if (aliveIndoor < indoorCap && this.trySpawnIndoor(px, pz, playerArmed)) {
+        // Indoor rat / patrol
+      } else if (aliveSniper < 1 && this.maxActive >= 6 && Math.random() < (playerArmed ? 0.25 : 0.08) && this.trySpawnSniper(px, pz)) {
         // Rooftop sniper
-      } else if (aliveStreet < streetCap) {
-        this.trySpawnAround(px, pz, playerArmed);
+      } else if (aliveStreet < Math.max(2, this.maxActive - 3)) {
+        this.trySpawnSquad(px, pz, playerArmed, room);
       }
       this.spawnCd = playerArmed
-        ? (this.maxActive <= 2 ? 9 : 6) + Math.random() * 4.5
-        : (this.maxActive <= 2 ? 14 : 11) + Math.random() * 6;
+        ? (this.maxActive <= 4 ? 8 : 5.5) + Math.random() * 4
+        : (this.maxActive <= 4 ? 12 : 9) + Math.random() * 5;
     }
+
+    const fogMul = 1 - 0.68 * fog;
 
     for (let i = this.list.length - 1; i >= 0; i--) {
       const b = this.list[i];
-      const dx = px - b.pos.x;
-      const dz = pz - b.pos.z;
-      const distSq = dx * dx + dz * dz;
+      const dxPlayer = px - b.pos.x;
+      const dzPlayer = pz - b.pos.z;
+      const distPlayerSq = dxPlayer * dxPlayer + dzPlayer * dzPlayer;
 
       if (b.isDead && b.state === 'dead') {
         b.deadT += dt;
-        if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) {
-          this.applyRagdollPose(b);
-        }
+        if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) this.applyRagdollPose(b);
         if (b.isDead && !b.lootDropped && (!b.ragdoll || b.ragdoll.asleep || b.deadT > 2.0)) {
           b.lootDropped = true;
           this.w.onDropLoot?.(b);
         }
-        if (b.deadT > CORPSE_LIFE || distSq > DESPAWN_DIST * DESPAWN_DIST) {
-          this.removeAt(i);
-        }
+        if (b.deadT > CORPSE_LIFE || distPlayerSq > DESPAWN_DIST * DESPAWN_DIST) this.removeAt(i);
         continue;
       }
 
-      if (distSq > DESPAWN_DIST * DESPAWN_DIST) {
+      if (distPlayerSq > DESPAWN_DIST * DESPAWN_DIST) {
         this.removeAt(i);
         continue;
       }
 
-      const dist = Math.sqrt(distSq);
+      const distPlayer = Math.sqrt(distPlayerSq);
       b.fireCd = Math.max(0, b.fireCd - dt);
       b.meleeCd = Math.max(0, b.meleeCd - dt);
       b.burstPause = Math.max(0, b.burstPause - dt);
       b.aiming = Math.max(0, b.aiming - dt * 1.4);
       b.recoilKick *= Math.exp(-dt * 14);
       b.swingT = Math.max(0, b.swingT - dt * 3.6);
+      b.doorCd = Math.max(0, b.doorCd - dt);
+      b.coverT = Math.max(0, b.coverT - dt);
+      b.flankT = Math.max(0, b.flankT - dt);
+      b.lastHitT += dt;
+
       if (b.reloadT > 0) {
         b.reloadT -= dt;
         if (b.reloadT <= 0) {
@@ -426,24 +578,47 @@ export class Bandits {
           b.burstLeft = b.isGun ? 2 + Math.floor(Math.random() * 3) : 1;
         }
       }
+      if (b.healT > 0) {
+        b.healT -= dt;
+        if (b.healT <= 0) {
+          b.hp = Math.min(b.maxHp, b.hp + Math.round(b.maxHp * 0.35));
+          b.medkits = Math.max(0, b.medkits - 1);
+        }
+      }
 
-      // Priority 1: nearest visible zombie within sight (reduced in fog).
-      const fogMul = 1 - 0.68 * fog;
-      const sightRange = (b.spawnKind === 'sniper' ? 56 : 38) * fogMul;
-      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 14 * (1 - 0.45 * fog));
+      // Boss relationship for guards
+      const boss = b.role === 'guard' && b.bossId !== null ? this.list.find((o) => o.id === b.bossId) : undefined;
+      const bossDeadEnraged = b.role === 'guard' && (!boss || boss.isDead || boss.state === 'dead');
+      const bossDamaged = Boolean(boss && !boss.isDead && (boss.hp < boss.maxHp * 0.78 || boss.lastHitT < 4));
+
+      // Threat prioritization: zombies (closest), hostile faction bots, player
+      const sightRange = (b.spawnKind === 'sniper' ? 56 : b.role === 'ambusher' && !b.ambushTriggered ? 16 : 38) * fogMul;
+      const nearZombie = this.findNearestZombie(b.pos.x, b.pos.y, b.pos.z, 13 * (1 - 0.45 * fog));
+      const nearHostileBot = this.findNearestHostileBot(b, sightRange * 0.92);
       const canSeePlayer =
         !playerDead &&
-        dist < sightRange &&
+        distPlayer < sightRange &&
         (this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.56, pz) ||
           this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.15, pz));
-      if (canSeePlayer && b.state !== 'combat') {
+
+      const botTargetDist = nearHostileBot ? Math.hypot(nearHostileBot.pos.x - b.pos.x, nearHostileBot.pos.z - b.pos.z) : Infinity;
+      const choosePlayer = canSeePlayer && (!nearHostileBot || distPlayer < botTargetDist * 0.92);
+      const chooseBot = !choosePlayer && nearHostileBot !== null;
+
+      if (b.role === 'ambusher' && !b.ambushTriggered) {
+        if (choosePlayer || chooseBot || nearZombie || b.lastHitT < 2 || distPlayer < 5.0) {
+          b.ambushTriggered = true;
+          b.state = 'combat';
+          b.reactT = 0.14;
+        }
+      } else if ((choosePlayer || chooseBot) && b.state !== 'combat') {
         b.state = 'combat';
         b.reactT =
-          b.faction === 'snipers'
-            ? 0.22 + Math.random() * 0.14
-            : b.faction === 'pmc'
-              ? 0.26 + Math.random() * 0.16
-              : 0.34 + Math.random() * 0.2;
+          b.faction === 'snipers' || b.faction === 'black' || b.role === 'boss'
+            ? 0.16 + Math.random() * 0.12
+            : b.faction === 'bear' || b.faction === 'usec' || b.faction === 'pmc'
+              ? 0.24 + Math.random() * 0.14
+              : 0.32 + Math.random() * 0.18;
       }
 
       const prevX = b.pos.x;
@@ -451,146 +626,97 @@ export class Bandits {
       let moveSpeed = 0;
 
       if (nearZombie) {
-        // Fight zombies first
+        b.crouching = false;
+        this.engageZombie(b, nearZombie, dt, (s) => (moveSpeed = s));
+      } else if (b.state === 'combat' && (chooseBot || !playerDead)) {
+        const targetIsPlayer = choosePlayer || (!chooseBot && !playerDead);
+        const tx = chooseBot ? nearHostileBot!.pos.x : px;
+        const ty = chooseBot ? nearHostileBot!.pos.y + 1.38 : py + (inCar ? 1.05 : 1.38);
+        const tz = chooseBot ? nearHostileBot!.pos.z : pz;
+        const hasTargetLOS = chooseBot ? true : canSeePlayer;
+
+        moveSpeed = this.runTacticalCombat(
+          b,
+          tx,
+          ty,
+          tz,
+          hasTargetLOS,
+          targetIsPlayer,
+          chooseBot ? nearHostileBot : null,
+          inCar && targetIsPlayer,
+          playerReloading && targetIsPlayer,
+          playerVx,
+          playerVz,
+          boss,
+          bossDamaged,
+          bossDeadEnraged,
+          dt,
+        );
+
+        if (b.reactT <= 0 && !b.isGun && !hasTargetLOS && b.investigateT <= 0) b.state = 'patrol';
+        if (!hasTargetLOS && b.investigateT <= 0 && b.lastHitT > 6) b.state = 'patrol';
+      } else if (b.role === 'ambusher' && !b.ambushTriggered) {
+        // Patient room/stairwell ambusher: silently holds doorway angle crouched.
+        b.crouching = true;
         b.aiming = 1;
-        const zdx = nearZombie.pos.x - b.pos.x;
-        const zdz = nearZombie.pos.z - b.pos.z;
-        const zd = Math.hypot(zdx, zdz) || 1;
-        b.yaw = Math.atan2(zdx, zdz);
-        if (b.isGun) {
-          b.aimPitch = Math.max(-0.45, Math.min(0.45, (nearZombie.pos.y - b.pos.y) / zd));
-          if (zd < 5.5) {
-            this.stepBandit(b, -zdx / zd, -zdz / zd, 2.5 * dt);
-            moveSpeed = 2.5;
-          } else if (zd > 11) {
-            this.stepBandit(b, zdx / zd, zdz / zd, 3.0 * dt);
-            moveSpeed = 3.0;
-          }
-          if (b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0) {
-            this.shootAt(b, nearZombie.pos.x, nearZombie.pos.y + 1.25, nearZombie.pos.z, false);
-          }
-        } else {
-          if (zd > 1.75) {
-            this.stepBandit(b, zdx / zd, zdz / zd, 3.8 * dt);
-            moveSpeed = 3.8;
-          } else if (b.meleeCd <= 0) {
-            b.meleeCd = 0.95;
-            b.swingT = 1;
-            this.w.zombies.hit(nearZombie, 26, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
-            sfx.swing('heavy', 0.25, b.pos);
-          }
-        }
-      } else if (b.state === 'combat' && !playerDead) {
-        // Priority 2: Tarkov-like tactical AI vs player
-        b.aiming = 1;
-        b.yaw = Math.atan2(dx, dz);
-        b.aimPitch = Math.max(-0.55, Math.min(0.55, (py - b.pos.y) / (dist || 1)));
-        b.investigateX = px;
-        b.investigateZ = pz;
-        b.investigateT = 9;
-
-        const nx = dx / (dist || 1);
-        const nz = dz / (dist || 1);
-        const playerFleeing = dist > 9 && (playerVx * nx + playerVz * nz) > 2.0;
-        const shouldRetreat = b.hp < b.maxHp * 0.36 || (b.isGun && b.reloadT > 0);
-
-        if (b.reactT > 0) {
-          b.reactT -= dt;
-        } else if (b.spawnKind === 'sniper') {
-          // Rooftop snipers hold high ground and fire carefully
-          if (shouldRetreat && dist < 24) {
-            this.stepBandit(b, -nx, -nz, 1.8 * dt);
-            moveSpeed = 1.8;
-          }
-          if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
-            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true, inCar);
-          }
-        } else if (b.isGun) {
-          if (shouldRetreat) {
-            // Tactical retreat while reloading or badly hurt
-            this.stepBandit(b, -nx, -nz, 3.0 * dt);
-            moveSpeed = 3.0;
-          } else if (playerReloading && dist < 26 && !inCar) {
-            // Push aggressively when the player is reloading!
-            this.stepBandit(b, nx, nz, 3.85 * dt);
-            moveSpeed = 3.85;
-          } else if (playerFleeing && dist < 34) {
-            // Chase fleeing player
-            this.stepBandit(b, nx, nz, 4.1 * dt);
-            moveSpeed = 4.1;
-          } else {
-            const desiredMin = inCar ? 11 : 10;
-            const desiredMax = 24;
-            if (!canSeePlayer || dist > desiredMax) {
-              const spd = dist > 20 ? 3.8 : 2.9;
-              this.stepBandit(b, nx, nz, spd * dt);
-              moveSpeed = spd;
-            } else if (dist < desiredMin) {
-              this.stepBandit(b, -nx, -nz, 2.1 * dt);
-              moveSpeed = 2.1;
-            } else {
-              const strafe = Math.sin(b.id * 1.7 + this.w.zombies.list.length * 0.01);
-              this.stepBandit(b, -nz * strafe, nx * strafe, 1.4 * dt);
-              moveSpeed = 1.4;
-            }
-          }
-
-          if (canSeePlayer && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 38) {
-            this.shootAt(b, px, py + (inCar ? 1.05 : 1.38), pz, true, inCar);
-          }
-        } else {
-          if (b.hp < b.maxHp * 0.25 && dist < 6) {
-            this.stepBandit(b, -nx, -nz, 3.6 * dt);
-            moveSpeed = 3.6;
-          } else if (dist > 1.65) {
-            this.stepBandit(b, nx, nz, 4.25 * dt);
-            moveSpeed = 4.25;
-          } else if (canSeePlayer && b.meleeCd <= 0) {
-            b.meleeCd = 1.05 + Math.random() * 0.25;
-            b.swingT = 1;
-            sfx.swing('heavy', 0.3, b.pos);
-            if (!inCar) {
-              this.w.hurtPlayer(12 + Math.random() * 7, b.pos.x, b.pos.z, 'Нападение бандита');
-            }
-          }
-        }
-        if (!canSeePlayer && b.investigateT <= 0) b.state = 'patrol';
+        b.yaw = b.patrolYaw;
+        b.aimPitch = 0;
       } else {
-        // Patrol or investigate last noise
-        if (b.investigateT > 0) {
+        b.crouching = false;
+        if (b.role === 'guard' && boss && !boss.isDead) {
+          const bdx = boss.pos.x - b.pos.x;
+          const bdz = boss.pos.z - b.pos.z;
+          const bd = Math.hypot(bdx, bdz);
+          if (bd > 5.8) {
+            b.yaw = Math.atan2(bdx, bdz);
+            this.moveOrOpenDoor(b, bdx / bd, bdz / bd, 2.5, dt);
+            moveSpeed = 2.5;
+          } else {
+            b.patrolT -= dt;
+            if (b.patrolT <= 0) {
+              b.patrolYaw += (Math.random() - 0.5) * 1.8;
+              b.patrolT = 2 + Math.random() * 2.5;
+            }
+            b.yaw = b.patrolYaw;
+          }
+        } else if (b.investigateT > 0) {
           b.investigateT -= dt;
           const idx = b.investigateX - b.pos.x;
           const idz = b.investigateZ - b.pos.z;
           const idist = Math.hypot(idx, idz);
-          if (idist > 2.2) {
+          if (idist > 2.0) {
             b.yaw = Math.atan2(idx, idz);
-            this.stepBandit(b, idx / idist, idz / idist, 2.3 * dt);
-            moveSpeed = 2.3;
+            this.moveOrOpenDoor(b, idx / idist, idz / idist, 2.4, dt);
+            moveSpeed = 2.4;
           }
         } else {
           b.patrolT -= dt;
           if (b.patrolT <= 0) {
-            b.patrolYaw += (Math.random() - 0.5) * 2.4;
+            b.patrolYaw += (Math.random() - 0.5) * 2.2;
             b.patrolT = 2.5 + Math.random() * 4;
           }
           b.yaw = b.patrolYaw;
-          this.stepBandit(b, Math.sin(b.yaw), Math.cos(b.yaw), 1.55 * dt);
+          const movedPatrol = this.moveOrOpenDoor(b, Math.sin(b.yaw), Math.cos(b.yaw), 1.55, dt);
+          if (!movedPatrol && b.patrolT > 0.4) {
+            b.patrolYaw += Math.PI * (0.55 + Math.random() * 0.4);
+          }
           moveSpeed = 1.55;
         }
       }
 
-      if (b.investigateT > 0 && !canSeePlayer) b.investigateT -= dt;
+      if (b.investigateT > 0 && !choosePlayer && !chooseBot) b.investigateT -= dt;
 
       if (dt > 1e-4) {
         const moved = Math.hypot(b.pos.x - prevX, b.pos.z - prevZ);
         b.vel.set((b.pos.x - prevX) / dt, 0, (b.pos.z - prevZ) / dt);
-        if (moved > 0.002) {
+        const quietRat = b.role === 'ambusher' && !b.ambushTriggered;
+        if (!quietRat && moved > 0.002) {
           b.stepDist += moved;
           const stride = moveSpeed > 3.2 ? 2.2 : 1.75;
           if (b.stepDist >= stride) {
             b.stepDist %= stride;
             const surf = Math.abs(b.pos.y) > 0.4 ? 'concrete' : 'asphalt';
-            sfx.step(surf, moveSpeed > 3.2 ? 'run' : 'walk', b.pos, 0.78);
+            sfx.step(surf, b.crouching ? 'crouch' : moveSpeed > 3.2 ? 'run' : 'walk', b.pos, b.crouching ? 0.35 : 0.78);
           }
         }
       }
@@ -601,11 +727,259 @@ export class Bandits {
     }
   }
 
-  /** Attract nearby bandits to gunfire or explosions. */
+  private engageZombie(b: Bandit, nearZombie: Zombie, dt: number, setSpd: (s: number) => void): void {
+    b.aiming = 1;
+    const zdx = nearZombie.pos.x - b.pos.x;
+    const zdz = nearZombie.pos.z - b.pos.z;
+    const zd = Math.hypot(zdx, zdz) || 1;
+    b.yaw = Math.atan2(zdx, zdz);
+    if (b.isGun) {
+      b.aimPitch = Math.max(-0.45, Math.min(0.45, (nearZombie.pos.y - b.pos.y) / zd));
+      if (zd < 5.5) {
+        this.moveOrOpenDoor(b, -zdx / zd, -zdz / zd, 2.5, dt);
+        setSpd(2.5);
+      } else if (zd > 11) {
+        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, 3.0, dt);
+        setSpd(3.0);
+      }
+      if (b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0) {
+        this.shootAt(b, nearZombie.pos.x, nearZombie.pos.y + 1.25, nearZombie.pos.z, false);
+      }
+    } else {
+      if (zd > 1.75) {
+        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, 3.8, dt);
+        setSpd(3.8);
+      } else if (b.meleeCd <= 0) {
+        b.meleeCd = 0.95;
+        b.swingT = 1;
+        this.w.zombies.hit(nearZombie, 26, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
+        sfx.swing('heavy', 0.25, b.pos);
+      }
+    }
+  }
+
+  private runTacticalCombat(
+    b: Bandit,
+    tx: number,
+    ty: number,
+    tz: number,
+    hasLOS: boolean,
+    targetIsPlayer: boolean,
+    targetBot: Bandit | null,
+    inCar: boolean,
+    targetReloading: boolean,
+    targetVx: number,
+    targetVz: number,
+    boss: Bandit | undefined,
+    bossDamaged: boolean,
+    bossDeadEnraged: boolean,
+    dt: number,
+  ): number {
+    const dx = tx - b.pos.x;
+    const dz = tz - b.pos.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const nx = dx / dist;
+    const nz = dz / dist;
+
+    b.aiming = 1;
+    b.yaw = Math.atan2(dx, dz);
+    b.aimPitch = Math.max(-0.55, Math.min(0.55, (ty - 1.38 - b.pos.y) / dist));
+    b.investigateX = tx;
+    b.investigateZ = tz;
+    b.investigateT = 10;
+
+    if (b.reactT > 0) {
+      b.reactT -= dt;
+      return 0;
+    }
+
+    if (b.spawnKind === 'sniper') {
+      b.crouching = b.reloadT > 0 || b.burstPause > 0.15;
+      if (b.hp < b.maxHp * 0.35 && dist < 24) {
+        this.moveOrOpenDoor(b, -nx, -nz, 1.8, dt);
+        return 1.8;
+      }
+      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      }
+      return 0;
+    }
+
+    if (!b.isGun) {
+      b.crouching = false;
+      if (b.hp < b.maxHp * 0.25 && dist < 6) {
+        this.moveOrOpenDoor(b, -nx, -nz, 3.6, dt);
+        return 3.6;
+      }
+      if (dist > 1.65) {
+        this.moveOrOpenDoor(b, nx, nz, 4.25, dt);
+        return 4.25;
+      }
+      if (hasLOS && b.meleeCd <= 0) {
+        b.meleeCd = 1.05 + Math.random() * 0.25;
+        b.swingT = 1;
+        sfx.swing('heavy', 0.3, b.pos);
+        if (targetBot) targetBot.hit(18, b.pos.x, b.pos.z, false, 'torso');
+        else if (targetIsPlayer && !inCar) this.w.hurtPlayer(12 + Math.random() * 7, b.pos.x, b.pos.z, 'Нападение бандита');
+      }
+      return 0;
+    }
+
+    // Need heal or reload -> find nearby cover, crouch, and recover
+    const needHeal = b.hp < b.maxHp * 0.42 && b.medkits > 0 && b.healT <= 0;
+    const needCover = needHeal || b.healT > 0 || b.reloadT > 0 || (b.lastHitT < 1.3 && dist > 6);
+    if (needHeal && b.healT <= 0) b.healT = 2.5;
+
+    let moveSpeed = 0;
+    if (needCover && !bossDeadEnraged) {
+      if (b.coverT <= 0) {
+        const c = this.findCoverNear(b, tx, ty, tz);
+        if (c) {
+          b.coverX = c.x;
+          b.coverZ = c.z;
+          b.coverT = 3.2;
+        }
+      }
+      if (b.coverT > 0) {
+        const cdx = b.coverX - b.pos.x;
+        const cdz = b.coverZ - b.pos.z;
+        const cDist = Math.hypot(cdx, cdz);
+        if (cDist > 0.65) {
+          b.crouching = false;
+          this.moveOrOpenDoor(b, cdx / cDist, cdz / cDist, 3.5, dt);
+          moveSpeed = 3.5;
+        } else {
+          b.crouching = true;
+        }
+      } else {
+        b.crouching = b.reloadT > 0 || b.healT > 0;
+        this.moveOrOpenDoor(b, -nx, -nz, 3.0, dt);
+        moveSpeed = 3.0;
+      }
+      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 24) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      }
+      return moveSpeed;
+    }
+
+    // Ambusher prefers crouching at doorway unless flanked/pushed closely
+    if (b.role === 'ambusher' && hasLOS && dist > 4.5 && b.lastHitT > 2) {
+      b.crouching = true;
+      if (b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 28) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      }
+      return 0;
+    }
+
+    b.crouching = b.burstPause > 0.25 && hasLOS;
+    const targetFleeing = dist > 9 && targetVx * nx + targetVz * nz > 2.0;
+
+    if (bossDeadEnraged || (targetReloading && dist < 26 && !inCar) || targetFleeing) {
+      // Aggressive push (guard avenging dead boss, or pushing reloading/fleeing target)
+      const rushSpd = bossDeadEnraged ? 4.35 : 3.95;
+      if (dist > 4.5 || !hasLOS) {
+        const lat = bossDeadEnraged ? 0.32 * b.flankSign : 0;
+        const rx = nx - nz * lat;
+        const rz = nz + nx * lat;
+        const rl = Math.hypot(rx, rz) || 1;
+        this.moveOrOpenDoor(b, rx / rl, rz / rl, rushSpd, dt);
+        moveSpeed = rushSpd;
+      }
+    } else if (boss && !boss.isDead && !bossDamaged && Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z) > 7.5) {
+      // Guard stays in perimeter around living boss
+      const bdx = boss.pos.x - b.pos.x;
+      const bdz = boss.pos.z - b.pos.z;
+      const bd = Math.hypot(bdx, bdz) || 1;
+      this.moveOrOpenDoor(b, bdx / bd, bdz / bd, 3.2, dt);
+      moveSpeed = 3.2;
+    } else if (!hasLOS || dist > (b.faction === 'black' || b.role === 'boss' ? 22 : 18)) {
+      // Advance or flank around blocking wall/corner (+ try opening doors on the way)
+      if (b.flankT <= 0 && !hasLOS) {
+        b.flankT = 2.0;
+        b.flankSign = Math.random() < 0.5 ? -1 : 1;
+      }
+      const flankAmt = bossDamaged ? 0.65 : !hasLOS ? 0.55 : 0.28;
+      const mx = nx - nz * flankAmt * b.flankSign;
+      const mz = nz + nx * flankAmt * b.flankSign;
+      const ml = Math.hypot(mx, mz) || 1;
+      const spd = dist > 18 ? 3.7 : 2.95;
+      this.moveOrOpenDoor(b, mx / ml, mz / ml, spd, dt);
+      moveSpeed = spd;
+    } else if (dist < 7.5) {
+      this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
+      moveSpeed = 2.2;
+    } else if (b.burstPause > 0 || bossDamaged || b.faction === 'black' || b.faction === 'bear' || b.faction === 'usec') {
+      // Tactical sidestep / peek-strafe between bursts
+      const strafeSpd = bossDamaged ? 2.4 : 1.65;
+      this.moveOrOpenDoor(b, -nz * b.flankSign, nx * b.flankSign, strafeSpd, dt);
+      moveSpeed = strafeSpd;
+    }
+
+    if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
+      this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+    }
+    return moveSpeed;
+  }
+
+  /** Find nearest cover point (behind a wall/car >=0.85m tall) that breaks LOS to threat. */
+  private findCoverNear(b: Bandit, tx: number, ty: number, tz: number): { x: number; z: number } | null {
+    const boxes = this.coverBoxCache;
+    boxes.length = 0;
+    this.w.boxesNear(b.pos.x, b.pos.z, 9.5, boxes);
+    let best: { x: number; z: number } | null = null;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < boxes.length; i++) {
+      const box = boxes[i];
+      if (box.maxY - box.minY < 0.85 || box.minY > b.pos.y + 1.2 || box.maxY < b.pos.y + 0.9) continue;
+      const w = box.maxX - box.minX;
+      const d = box.maxZ - box.minZ;
+      if (w < 0.45 && d < 0.45) continue;
+
+      const cx = (box.minX + box.maxX) * 0.5;
+      const cz = (box.minZ + box.maxZ) * 0.5;
+      const awayX = cx - tx;
+      const awayZ = cz - tz;
+      const len = Math.hypot(awayX, awayZ) || 1;
+      const spotX = cx + (awayX / len) * (Math.max(w, d) * 0.5 + 0.65);
+      const spotZ = cz + (awayZ / len) * (Math.max(w, d) * 0.5 + 0.65);
+
+      const moveDist = Math.hypot(spotX - b.pos.x, spotZ - b.pos.z);
+      if (moveDist > 9.5 || moveDist < 0.5) continue;
+      if (Math.abs(this.w.groundY(spotX, spotZ, b.pos.y) - b.pos.y) > 0.65) continue;
+      if (this.hasLineOfSight(spotX, b.pos.y + 1.35, spotZ, tx, ty, tz)) continue;
+
+      if (moveDist < bestScore) {
+        bestScore = moveDist;
+        best = { x: spotX, z: spotZ };
+      }
+    }
+    return best;
+  }
+
+  /** Step horizontally and automatically open any closed door blocking the bot's path. */
+  private moveOrOpenDoor(b: Bandit, nx: number, nz: number, speed: number, dt: number): boolean {
+    const step = speed * dt;
+    const beforeX = b.pos.x;
+    const beforeZ = b.pos.z;
+    this.stepBandit(b, nx, nz, step);
+    const moved = Math.hypot(b.pos.x - beforeX, b.pos.z - beforeZ);
+    if (moved < step * 0.32 && b.doorCd <= 0 && this.w.openDoorNear) {
+      if (this.w.openDoorNear(b.pos.x, b.pos.y, b.pos.z, 1.7)) {
+        b.doorCd = 0.85;
+        this.stepBandit(b, nx, nz, step * 0.8);
+        return true;
+      }
+    }
+    return moved >= step * 0.2;
+  }
+
+  /** Attracted to noise (player or faction gunfire): alerts nearby bots to investigate. */
   onNoise(x: number, z: number, r: number): void {
     const r2 = r * r;
     for (const b of this.list) {
       if (b.state === 'dead') continue;
+      if (b.role === 'ambusher' && !b.ambushTriggered) continue;
       const dx = x - b.pos.x;
       const dz = z - b.pos.z;
       if (dx * dx + dz * dz <= r2) {
@@ -616,12 +990,11 @@ export class Bandits {
     }
   }
 
-  /** Ray test against living bandits (player bullets, melee, bash, rockets). */
-  hitTest(o: Vector3, d: Vector3, maxDist: number, slack = 0.04): BanditHit | null {
+  hitTest(o: Vector3, d: Vector3, maxDist: number, slack = 0.04, ignore?: Bandit): BanditHit | null {
     let best: BanditHit | null = null;
     let bestT = maxDist;
     for (const b of this.list) {
-      if (b.state === 'dead') continue;
+      if (b.state === 'dead' || b === ignore) continue;
       const cx = b.pos.x;
       const cz = b.pos.z;
       const ox = o.x - cx;
@@ -633,13 +1006,16 @@ export class Bandits {
       const hitX = o.x + d.x * t;
       const hitY = o.y + d.y * t;
       const hitZ = o.z + d.z * t;
-      if (hitY < b.pos.y || hitY > b.pos.y + 1.8) continue;
+      const topH = b.crouching ? 1.3 : 1.8;
+      if (hitY < b.pos.y || hitY > b.pos.y + topH) continue;
       const rad = 0.34 + slack;
       if ((hitX - cx) ** 2 + (hitZ - cz) ** 2 > rad * rad) continue;
       bestT = t;
       const relY = hitY - b.pos.y;
-      const head = relY >= 1.44;
-      const zone: HitZone = head ? 'head' : relY >= 0.8 ? 'torso' : 'limbs';
+      const headThreshold = b.crouching ? 0.98 : 1.44;
+      const torsoThreshold = b.crouching ? 0.52 : 0.8;
+      const head = relY >= headThreshold;
+      const zone: HitZone = head ? 'head' : relY >= torsoThreshold ? 'torso' : 'limbs';
       best = {
         bot: b,
         dist: t,
@@ -651,7 +1027,6 @@ export class Bandits {
     return best;
   }
 
-  /** Apply damage to a bandit with unified zonal armor mitigation. Returns true if killed. */
   hit(b: Bandit, dmg: number, fromX: number, fromZ: number, head = false, zone?: HitZone): boolean {
     if (b.isDead || b.state === 'dead') return false;
     const hitZone: HitZone = zone ?? (head ? 'head' : 'torso');
@@ -663,10 +1038,24 @@ export class Bandits {
       if (st) st.dirt = nextDirt;
     }
     b.hp -= armor.damage;
+    b.lastHitT = 0;
+    b.flankSign = Math.random() < 0.5 ? -1 : 1;
     b.state = 'combat';
+    b.ambushTriggered = true;
     b.investigateX = fromX;
     b.investigateZ = fromZ;
     b.investigateT = 10;
+
+    // Alert living squadmates within 18m
+    for (const mate of this.list) {
+      if (mate !== b && mate.state !== 'dead' && mate.squadId === b.squadId && mate.pos.distanceTo(b.pos) < 18) {
+        mate.state = 'combat';
+        mate.investigateX = fromX;
+        mate.investigateZ = fromZ;
+        mate.investigateT = 10;
+      }
+    }
+
     if (b.hp <= 0) {
       b.hp = 0;
       b.isDead = true;
@@ -683,7 +1072,6 @@ export class Bandits {
     return false;
   }
 
-  /** Explosion damage from RPG rockets. */
   blastDamage(at: Vector3, radius: number, maxDmg: number): void {
     for (const b of this.list) {
       if (b.state === 'dead') continue;
@@ -699,7 +1087,6 @@ export class Bandits {
     }
   }
 
-  /** Rammed by a driving car. */
   ramByCar(cx: number, cz: number, carVx: number, carVz: number, radius = 1.45): void {
     const speed = Math.hypot(carVx, carVz);
     if (speed < 2.4) return;
@@ -727,31 +1114,72 @@ export class Bandits {
     this.tracerMat.dispose();
   }
 
-  private trySpawnAround(px: number, pz: number, playerArmed: boolean): void {
+  private pickStreetWeapon(faction: FactionId): { weapon: ItemId; isGun: boolean; mods: ModId[] } {
     const simpleGuns: readonly BanditGunId[] = ['pistol_g17', 'pistol_m1911', 'shotgun_pump'];
-    const eliteChance = playerArmed ? 0.62 : 0.12;
+    if (faction === 'scavs') {
+      const isGun = Math.random() < 0.72;
+      const weapon: ItemId = isGun ? simpleGuns[Math.floor(Math.random() * simpleGuns.length)] : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
+      return { weapon, isGun, mods: [] };
+    }
+    const pool: readonly BanditGunId[] =
+      faction === 'bear'
+        ? ['rifle_ak', 'shotgun_pump']
+        : faction === 'usec'
+          ? ['rifle_m4a1', 'shotgun_pump']
+          : faction === 'black'
+            ? ['rifle_ak', 'rifle_m4a1']
+            : ['rifle_m4a1', 'rifle_ak'];
+    const weapon = pool[Math.floor(Math.random() * pool.length)];
+    return { weapon, isGun: true, mods: rollMods(weapon, faction, 'regular') };
+  }
+
+  private trySpawnSquad(px: number, pz: number, playerArmed: boolean, room: number): void {
+    const roll = Math.random();
+    const faction: FactionId =
+      playerArmed
+        ? roll < 0.25
+          ? 'black'
+          : roll < 0.53
+            ? 'bear'
+            : roll < 0.80
+              ? 'usec'
+              : 'scavs'
+        : roll < 0.12
+          ? 'black'
+          : roll < 0.30
+            ? 'bear'
+            : roll < 0.48
+              ? 'usec'
+              : 'scavs';
+
+    const wantSize = faction === 'scavs' ? (Math.random() < 0.55 ? 2 : 1) : faction === 'black' ? 2 : Math.random() < 0.55 ? 3 : 2;
+    const count = Math.max(1, Math.min(room, wantSize));
+    const squadId = this.nextSquadId++;
+
     for (let attempt = 0; attempt < 8; attempt++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = SPAWN_MIN + Math.random() * (SPAWN_MAX - SPAWN_MIN);
-      const sx = px + Math.cos(ang) * dist;
-      const sz = pz + Math.sin(ang) * dist;
-      const sy = this.w.groundY(sx, sz);
+      const ax = px + Math.cos(ang) * dist;
+      const az = pz + Math.sin(ang) * dist;
+      const sy = this.w.groundY(ax, az);
       if (sy < -5) continue;
-      _v1.set(sx, sy, sz);
+      _v1.set(ax, sy, az);
       this.w.resolveCircle(_v1, 0.45);
-      const rx = _v1.x;
-      const rz = _v1.z;
-      if (Math.hypot(rx - px, rz - pz) < SPAWN_MIN * 0.85) continue;
+      if (Math.hypot(_v1.x - px, _v1.z - pz) < SPAWN_MIN * 0.85) continue;
 
-      const faction: FactionId = Math.random() < eliteChance ? 'pmc' : 'scavs';
-      const isGun = faction === 'pmc' ? true : Math.random() < 0.72;
-      const weapon: ItemId = isGun
-        ? faction === 'pmc'
-          ? (Math.random() < 0.5 ? 'rifle_m4a1' : 'rifle_ak')
-          : simpleGuns[Math.floor(Math.random() * simpleGuns.length)]
-        : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
-      const mods: ModId[] = isGun && faction === 'pmc' ? rollEliteMods(weapon as GunId) : [];
-      this.spawnBot(rx, sy, rz, faction, 'street', weapon, isGun, mods);
+      const baseX = _v1.x;
+      const baseZ = _v1.z;
+      for (let m = 0; m < count; m++) {
+        const offAng = (m / Math.max(1, count)) * Math.PI * 2 + Math.random() * 0.4;
+        const offR = m === 0 ? 0 : 2.2 + Math.random() * 1.4;
+        const mx = baseX + Math.cos(offAng) * offR;
+        const mz = baseZ + Math.sin(offAng) * offR;
+        const my = this.w.groundY(mx, mz, sy);
+        _v2.set(mx, my, mz);
+        this.w.resolveCircle(_v2, 0.45);
+        const gear = this.pickStreetWeapon(faction);
+        this.spawnBot(_v2.x, my, _v2.z, faction, 'street', gear.weapon, gear.isGun, gear.mods, { role: 'regular', squadId });
+      }
       return;
     }
   }
@@ -761,22 +1189,101 @@ export class Bandits {
     if (blds.length === 0) return false;
     const bld = blds[Math.floor(Math.random() * blds.length)];
     const floor = Math.floor(Math.random() * Math.min(2, bld.floors));
-    const sx = bld.cx + (Math.random() - 0.5) * Math.max(2, bld.w - 3.5);
-    const sz = bld.cz + (Math.random() - 0.5) * Math.max(2, bld.d - 3.5);
+    const cornerSignX = Math.random() < 0.5 ? -1 : 1;
+    const cornerSignZ = Math.random() < 0.5 ? -1 : 1;
+    const isAmbusher = Math.random() < 0.62;
+    const sx = bld.cx + (isAmbusher ? cornerSignX * Math.max(1.2, bld.w * 0.36) : (Math.random() - 0.5) * Math.max(2, bld.w - 3.5));
+    const sz = bld.cz + (isAmbusher ? cornerSignZ * Math.max(1.2, bld.d * 0.34) : (Math.random() - 0.5) * Math.max(2, bld.d - 3.5));
     if (Math.hypot(sx - px, sz - pz) < 16) return false;
     const sy = this.w.groundY(sx, sz, floor * FLOOR_H + 0.5);
     _v1.set(sx, sy, sz);
     this.w.resolveCircle(_v1, 0.45);
-    const eliteChance = playerArmed ? 0.58 : 0.1;
-    const faction: FactionId = Math.random() < eliteChance ? 'pmc' : 'scavs';
-    const isGun = faction === 'pmc' ? true : Math.random() < 0.65;
-    const weapon: ItemId = isGun
-      ? faction === 'pmc'
-        ? (Math.random() < 0.5 ? 'rifle_m4a1' : 'rifle_ak')
-        : (Math.random() < 0.5 ? 'pistol_g17' : 'shotgun_pump')
-      : BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)];
-    const mods: ModId[] = isGun && faction === 'pmc' ? rollEliteMods(weapon as GunId) : [];
-    this.spawnBot(_v1.x, sy, _v1.z, faction, 'indoor', weapon, isGun, mods);
+
+    const faction: FactionId = playerArmed
+      ? Math.random() < 0.4
+        ? Math.random() < 0.5
+          ? 'bear'
+          : 'usec'
+        : 'scavs'
+      : Math.random() < 0.15
+        ? 'bear'
+        : 'scavs';
+    const isGun = isAmbusher ? true : faction !== 'scavs' ? true : Math.random() < 0.72;
+    const gear = isGun
+      ? faction === 'bear'
+        ? { weapon: 'rifle_ak' as ItemId, mods: rollMods('rifle_ak', faction, 'regular') }
+        : faction === 'usec'
+          ? { weapon: 'rifle_m4a1' as ItemId, mods: rollMods('rifle_m4a1', faction, 'regular') }
+          : { weapon: (Math.random() < 0.55 ? 'shotgun_pump' : 'pistol_g17') as ItemId, mods: [] as ModId[] }
+      : { weapon: BANDIT_MELEE[Math.floor(Math.random() * BANDIT_MELEE.length)] as ItemId, mods: [] as ModId[] };
+
+    const bot = this.spawnBot(_v1.x, sy, _v1.z, faction, 'indoor', gear.weapon, isGun, gear.mods, {
+      role: isAmbusher ? 'ambusher' : 'regular',
+      squadId: this.nextSquadId++,
+    });
+    // Ambusher faces toward room center / corridor entry
+    if (isAmbusher) bot.patrolYaw = Math.atan2(bld.cx - bot.pos.x, bld.cz - bot.pos.z);
+    return true;
+  }
+
+  private trySpawnBossGroup(px: number, pz: number, room: number): boolean {
+    const blds = this.w.buildingsNear(px, pz, 64).filter((b) => b.floors >= 2);
+    let anchorX = 0;
+    let anchorY = 0;
+    let anchorZ = 0;
+    let found = false;
+
+    if (blds.length > 0) {
+      const bld = blds[Math.floor(Math.random() * blds.length)];
+      const floor = this.w.isInteriorLoaded?.(bld.id) ? Math.floor(Math.random() * Math.min(2, bld.floors)) : 0;
+      const sx = bld.cx + (Math.random() - 0.5) * Math.max(2, bld.w * 0.4);
+      const sz = bld.cz + (Math.random() - 0.5) * Math.max(2, bld.d * 0.4);
+      if (Math.hypot(sx - px, sz - pz) >= 24) {
+        anchorY = this.w.groundY(sx, sz, floor * FLOOR_H + 0.5);
+        _v1.set(sx, anchorY, sz);
+        this.w.resolveCircle(_v1, 0.45);
+        anchorX = _v1.x;
+        anchorZ = _v1.z;
+        found = true;
+      }
+    }
+    if (!found) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 38 + Math.random() * 20;
+      const sx = px + Math.cos(ang) * dist;
+      const sz = pz + Math.sin(ang) * dist;
+      const sy = this.w.groundY(sx, sz);
+      if (sy < -5) return false;
+      _v1.set(sx, sy, sz);
+      this.w.resolveCircle(_v1, 0.45);
+      anchorX = _v1.x;
+      anchorY = sy;
+      anchorZ = _v1.z;
+    }
+
+    const preset = BOSS_PRESETS[Math.floor(Math.random() * BOSS_PRESETS.length)];
+    const squadId = this.nextSquadId++;
+    const boss = this.spawnBot(anchorX, anchorY, anchorZ, 'boss', 'boss', preset.weapon, true, preset.mods, {
+      role: 'boss',
+      squadId,
+      bossPreset: preset,
+    });
+
+    const guardCount = Math.max(2, Math.min(room - 1, 2 + Math.floor(Math.random() * 2)));
+    for (let g = 0; g < guardCount; g++) {
+      const ang = (g / guardCount) * Math.PI * 2;
+      const gx = anchorX + Math.cos(ang) * 2.8;
+      const gz = anchorZ + Math.sin(ang) * 2.8;
+      const gy = this.w.groundY(gx, gz, anchorY);
+      _v2.set(gx, gy, gz);
+      this.w.resolveCircle(_v2, 0.45);
+      const gw: BanditGunId = g % 2 === 0 ? 'rifle_ak' : 'rifle_m4a1';
+      this.spawnBot(_v2.x, gy, _v2.z, 'boss', 'boss', gw, true, rollMods(gw, 'boss', 'guard'), {
+        role: 'guard',
+        squadId,
+        bossId: boss.id,
+      });
+    }
     return true;
   }
 
@@ -789,7 +1296,7 @@ export class Bandits {
     const edgeZ = bld.cz + (Math.random() < 0.5 ? -1 : 1) * Math.max(1, bld.d * 0.35);
     const sy = this.w.groundY(edgeX, edgeZ, roofY + 0.5);
     if (sy < FLOOR_H * 1.5) return false;
-    this.spawnBot(edgeX, sy, edgeZ, 'snipers', 'sniper', 'rifle_hunting', true, rollEliteMods('rifle_hunting'));
+    this.spawnBot(edgeX, sy, edgeZ, 'snipers', 'sniper', 'rifle_hunting', true, rollMods('rifle_hunting', 'snipers', 'regular'));
     return true;
   }
 
@@ -802,75 +1309,108 @@ export class Bandits {
     weapon: ItemId,
     isGun: boolean,
     mods: ModId[] = [],
-  ): void {
-      const magCap = isGun ? GUNS[weapon as BanditGunId].capacity : 1;
-      const look = randomLook();
-      const outfits = FACTION_OUTFITS[faction];
-      const worn = outfits[Math.floor(Math.random() * outfits.length)];
-      const tints = FACTION_TINTS[faction];
-      const tint = tints[Math.floor(Math.random() * tints.length)];
+    opts: SpawnBotOptions = {},
+  ): Bandit {
+    const role: BotRole = opts.role ?? 'regular';
+    const squadId = opts.squadId ?? this.nextSquadId++;
+    const bossId = opts.bossId ?? null;
+    const preset = opts.bossPreset;
+    const magCap = isGun ? GUNS[weapon as BanditGunId].capacity : 1;
+    const look = randomLook(preset?.name ?? factionTitle(faction, role));
+    const outfits = FACTION_OUTFITS[faction] ?? FACTION_OUTFITS.pmc;
+    const worn = preset ? preset.worn : outfits[Math.floor(Math.random() * outfits.length)];
+    const tints = FACTION_TINTS[faction] ?? FACTION_TINTS.pmc;
+    const tint = preset ? preset.tint : tints[Math.floor(Math.random() * tints.length)];
 
-      const root = new Group();
-      root.position.set(rx, sy, rz);
-      this.w.scene.add(root);
+    const root = new Group();
+    root.position.set(rx, sy, rz);
+    this.w.scene.add(root);
 
-      const maxHp = faction === 'snipers' ? 260 : faction === 'pmc' ? 250 : 180;
-      const builtLoot = buildBanditLootAndCorpse(faction, look, worn, tint, weapon, isGun, mods);
-      const wornDirt: Partial<Record<WearSlot, number>> = {};
-      for (const slot of WEAR_SLOTS) {
-        const st = builtLoot.corpse.slots[slot as CorpseSlotKey];
-        if (st?.dirt !== undefined) wornDirt[slot] = st.dirt;
-      }
-      const bot: Bandit = {
-        id: this.nextId++,
-        faction,
-        spawnKind,
-        pos: new Vector3(rx, sy, rz),
-        vel: new Vector3(),
-        yaw: Math.random() * Math.PI * 2,
-        hp: maxHp,
-        maxHp,
-        isDead: false,
-        state: 'patrol',
-        look,
-        worn,
-        wornDirt,
-        tint,
-        weapon,
-        isGun,
-        mods,
-        ammoInMag: magCap,
-        magCap,
-        fireCd: 0.4,
-        burstLeft: isGun ? 2 + Math.floor(Math.random() * 3) : 1,
-        burstPause: 0,
-        reloadT: 0,
-        reactT: 0.35,
-        meleeCd: 0,
-        aiming: 0,
-        aimBlend: 0,
-        aimPitch: 0,
-        recoilKick: 0,
-        swingT: 0,
-        patrolYaw: Math.random() * Math.PI * 2,
-        patrolT: 2 + Math.random() * 3,
-        investigateX: rx,
-        investigateZ: rz,
-        investigateT: 0,
-        stepDist: 0,
-        deadT: 0,
-        loot: builtLoot.loot,
-        corpse: builtLoot.corpse,
-        root,
-        visual: null,
-        ragdoll: null,
-        ragdollPose: null,
-        lootDropped: false,
-        hit: (dmg, fx, fz, head = false, zone?: HitZone) => this.hit(bot, dmg, fx, fz, head, zone),
-      };
+    const maxHp = preset
+      ? preset.hp
+      : role === 'guard'
+        ? 270
+        : faction === 'black'
+          ? 290
+          : faction === 'snipers'
+            ? 260
+            : faction === 'bear' || faction === 'usec' || faction === 'pmc'
+              ? 250
+              : 180;
+    const builtLoot = buildBanditLootAndCorpse(faction, role, look, worn, tint, weapon, isGun, mods);
+    const wornDirt: Partial<Record<WearSlot, number>> = {};
+    for (const slot of WEAR_SLOTS) {
+      const st = builtLoot.corpse.slots[slot as CorpseSlotKey];
+      if (st?.dirt !== undefined) wornDirt[slot] = st.dirt;
+    }
 
-      this.buildVisual(bot);
-      this.list.push(bot);
+    const bot: Bandit = {
+      id: this.nextId++,
+      faction,
+      spawnKind,
+      role,
+      squadId,
+      bossId,
+      ...(preset ? { bossPresetId: preset.id } : {}),
+      pos: new Vector3(rx, sy, rz),
+      vel: new Vector3(),
+      yaw: Math.random() * Math.PI * 2,
+      hp: maxHp,
+      maxHp,
+      isDead: false,
+      state: 'patrol',
+      look,
+      worn,
+      wornDirt,
+      tint,
+      weapon,
+      isGun,
+      mods,
+      ammoInMag: magCap,
+      magCap,
+      fireCd: 0.4,
+      burstLeft: isGun ? 2 + Math.floor(Math.random() * 3) : 1,
+      burstPause: 0,
+      reloadT: 0,
+      reactT: 0.35,
+      meleeCd: 0,
+      aiming: role === 'ambusher' ? 1 : 0,
+      aimBlend: role === 'ambusher' ? 1 : 0,
+      aimPitch: 0,
+      recoilKick: 0,
+      swingT: 0,
+      crouching: role === 'ambusher',
+      crouchBlend: role === 'ambusher' ? 1 : 0,
+      healT: 0,
+      medkits: faction === 'scavs' ? 0 : role === 'boss' ? 3 : 1,
+      doorCd: 0,
+      coverX: rx,
+      coverZ: rz,
+      coverT: 0,
+      flankSign: Math.random() < 0.5 ? -1 : 1,
+      flankT: 0,
+      lastHitT: 9,
+      ambushTriggered: false,
+      patrolYaw: Math.random() * Math.PI * 2,
+      patrolT: 2 + Math.random() * 3,
+      investigateX: rx,
+      investigateZ: rz,
+      investigateT: 0,
+      stepDist: 0,
+      deadT: 0,
+      loot: builtLoot.loot,
+      corpse: builtLoot.corpse,
+      root,
+      visual: null,
+      ragdoll: null,
+      ragdollPose: null,
+      lootDropped: false,
+      hit: (dmg, fx, fz, head = false, zone?: HitZone) => this.hit(bot, dmg, fx, fz, head, zone),
+    };
+
+    this.buildVisual(bot);
+    this.list.push(bot);
+    return bot;
   }
 
   private buildVisual(b: Bandit): void {
@@ -898,13 +1438,16 @@ export class Bandits {
       idle: rig.action('idle'),
       walk: rig.action(walkClip),
       run: rig.action('running'),
+      crouch: rig.action('crouched_walking'),
     };
     gaits.idle.play();
     gaits.walk.play();
     gaits.run.play();
+    gaits.crouch.play();
     gaits.idle.setEffectiveWeight(1);
     gaits.walk.setEffectiveWeight(0);
     gaits.run.setEffectiveWeight(0);
+    gaits.crouch.setEffectiveWeight(0);
 
     const geos: BufferGeometry[] = [];
     let heldObj: Group | null = null;
@@ -948,7 +1491,7 @@ export class Bandits {
       scale,
       rig,
       gaits,
-      weights: { idle: 1, walk: 0, run: 0 },
+      weights: { idle: 1, walk: 0, run: 0, crouch: 0 },
       gear: new Map(),
       hide,
       heldObj,
@@ -962,6 +1505,17 @@ export class Bandits {
   private dressVisual(b: Bandit, v: BanditRigVisual): void {
     const want = wornGear(b.worn);
     let missing = false;
+    const factionTone =
+      b.faction === 'black'
+        ? 0x262930
+        : b.faction === 'boss' && b.role === 'boss'
+          ? 0xa86460
+          : b.faction === 'bear'
+            ? 0xced6c0
+            : b.faction === 'usec'
+              ? 0xc4ccd4
+              : 0xffffff;
+
     for (const g of want) {
       if (gearKind(g) === 'box' || v.gear.has(g)) continue;
       const geo = gearGeometry(v.body, g, 1);
@@ -973,6 +1527,9 @@ export class Bandits {
         map: gearTexture(g, true),
         doubleSide: gearKind(g) === 'mask',
       });
+      if (factionTone !== 0xffffff && 'color' in mat && mat.color) {
+        mat.color.setHex(factionTone);
+      }
       const m = new SkinnedMesh(geo, mat);
       m.bind(v.rig.mesh.skeleton, v.rig.mesh.bindMatrix);
       m.frustumCulled = false;
@@ -1003,106 +1560,184 @@ export class Bandits {
   private animateRig(b: Bandit, dt: number, speed: number): void {
     const v = b.visual;
     if (!v) return;
-    const targetIdle = speed < 0.25 ? 1 : 0;
-    const targetRun = speed > 3.2 ? 1 : 0;
-    const targetWalk = speed >= 0.25 && speed <= 3.2 ? 1 : 0;
+
+    b.crouchBlend += ((b.crouching ? 1 : 0) - b.crouchBlend) * (1 - Math.exp(-dt * 9));
+    const standW = Math.max(0, 1 - b.crouchBlend);
+    const targetIdle = (speed < 0.25 ? 1 : 0) * standW;
+    const targetRun = (speed > 3.2 ? 1 : 0) * standW;
+    const targetWalk = (speed >= 0.25 && speed <= 3.2 ? 1 : 0) * standW;
+    const targetCrouch = b.crouchBlend;
 
     const k = 1 - Math.exp(-dt * 9);
     v.weights.idle += (targetIdle - v.weights.idle) * k;
     v.weights.walk += (targetWalk - v.weights.walk) * k;
     v.weights.run += (targetRun - v.weights.run) * k;
+    v.weights.crouch += (targetCrouch - v.weights.crouch) * k;
 
     v.gaits.idle.setEffectiveWeight(v.weights.idle);
     v.gaits.walk.setEffectiveWeight(v.weights.walk);
     v.gaits.run.setEffectiveWeight(v.weights.run);
+    v.gaits.crouch.setEffectiveWeight(v.weights.crouch);
     v.gaits.walk.setEffectiveTimeScale(speed > 0.25 ? Math.max(0.75, speed / 1.8) : 1);
     v.gaits.run.setEffectiveTimeScale(speed > 3.2 ? Math.max(0.85, speed / 4.2) : 1);
+    v.gaits.crouch.setEffectiveTimeScale(speed > 0.2 ? Math.max(0.7, speed / 1.2) : 0);
 
     v.rig.mixer.update(dt);
 
-    // Smoothly blend aiming stance (0 = relaxed/patrol, 1 = aiming/fighting).
-    const wantAim = b.aiming > 0.05 ? 1 : 0;
-    b.aimBlend += (wantAim - b.aimBlend) * (1 - Math.exp(-dt * 8));
+    // Blend aim weight smoothly (gun bots hold at least 0.72 low-ready so arms NEVER droop in zombie pose).
+    const wantAim = b.aiming > 0.05 ? 1 : b.isGun ? 0.72 : 0;
+    b.aimBlend += (wantAim - b.aimBlend) * (1 - Math.exp(-dt * 9));
 
-    // Pose right & left hand grip.
+    // Pose right & left finger curls.
     const hr = handFrame(v.rig.rig, 'R');
+    const hl = handFrame(v.rig.rig, 'L');
     if (hr) {
-      const gripName = b.isGun ? gripHands(b.weapon as GunId, true, false).R : gripHands(b.weapon as HeldId, false, false).R;
-      for (const [idx, q] of hr.poses[gripName]) v.rig.bones[idx].quaternion.copy(q);
+      const gp = b.isGun ? gripHands(b.weapon as GunId, true, true) : gripHands(b.weapon as HeldId, false, false);
+      for (const [idx, q] of hr.poses[gp.R]) v.rig.bones[idx].quaternion.copy(q);
+      if (hl && b.isGun) for (const [idx, q] of hl.poses[gp.L]) v.rig.bones[idx].quaternion.copy(q);
     }
 
-    // Reset held item to hand rest pose before applying aiming rotation.
     const rest = v.heldObj?.userData.rest as { p: Vector3; q: Quaternion; grip: Vector3 } | undefined;
     if (v.heldObj && rest) {
       v.heldObj.position.copy(rest.p);
       v.heldObj.quaternion.copy(rest.q);
     }
 
-    if (b.aimBlend > 0.02) {
+    if (b.isGun && b.aimBlend > 0.02) {
+      this.applyTwoHandedGunIK(b, v, hr, hl);
+    } else if (!b.isGun && b.aimBlend > 0.02) {
+      // Melee attack/ready stance
       v.rig.root.updateMatrixWorld(true);
       const rootQ = v.rig.root.getWorldQuaternion(_q3);
-      const pitch = b.aimPitch + b.recoilKick * 0.22;
-
-      if (b.isGun) {
-        const isLong = GUNS[b.weapon as GunId].cls === 'long';
-        if (isLong) {
-          // Two-handed rifle/shotgun stance: right arm holds grip near shoulder, left arm supports handguard.
-          this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.28, -0.18 + pitch * 0.6, 0.94, rootQ, b.aimBlend);
-          this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.34, 0.24 + pitch, 0.91, rootQ, b.aimBlend);
-          this.pointBone(v.rig, 'LeftArm', 'LeftForeArm', 0.24, -0.16 + pitch * 0.6, 0.95, rootQ, b.aimBlend);
-          this.pointBone(v.rig, 'LeftForeArm', 'LeftHand', -0.22, 0.22 + pitch, 0.95, rootQ, b.aimBlend);
-        } else {
-          // Pistol stance: right arm extended forward at chest/eye level.
-          this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.06, -0.05 + pitch * 0.7, 0.99, rootQ, b.aimBlend);
-          this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.08, 0.12 + pitch, 0.99, rootQ, b.aimBlend);
-        }
-
-        // Aim the gun barrel straight toward the target.
-        if (v.gunModel) {
-          v.rig.root.updateMatrixWorld(true);
-          const item = v.gunModel.root;
-          const nowDir = _v1.copy(_barrel).applyQuaternion(item.getWorldQuaternion(_q)).normalize();
-          const wantDir = _v2.set(0, Math.sin(pitch) + 0.03, Math.cos(pitch)).applyQuaternion(rootQ).normalize();
-          const worldTurn = _q2.setFromUnitVectors(nowDir, wantDir);
-          const parentW = item.parent!.getWorldQuaternion(_q4);
-          const localTurn = _q.copy(parentW).invert().multiply(worldTurn).multiply(parentW);
-          _q4.identity().slerp(localTurn, b.aimBlend);
-          item.quaternion.premultiply(_q4);
-          if (rest) item.position.sub(rest.grip).applyQuaternion(_q4).add(rest.grip);
-        }
-      } else {
-        // Melee combat stance + swing animation.
-        const swingPhase = b.swingT > 0 ? Math.sin(b.swingT * Math.PI) : 0;
-        const swingPitch = -0.35 + swingPhase * 1.15;
-        this.pointBone(v.rig, 'RightArm', 'RightForeArm', -0.15, 0.1 + swingPitch * 0.5, 0.96, rootQ, b.aimBlend);
-        this.pointBone(v.rig, 'RightForeArm', 'RightHand', 0.12, 0.35 + swingPitch, 0.92, rootQ, b.aimBlend);
-      }
+      const swingPhase = b.swingT > 0 ? Math.sin(b.swingT * Math.PI) : 0;
+      const shoulder = v.rig.bone('RightArm').getWorldPosition(_pShR);
+      const fwd = _fwd.set(0, 0, 1).applyQuaternion(rootQ);
+      const right = _right.set(-1, 0, 0).applyQuaternion(rootQ);
+      const target = _gripR.copy(shoulder).addScaledVector(fwd, (0.36 + swingPhase * 0.22) * v.scale).addScaledVector(right, 0.08 * v.scale).addScaledVector(_up, (0.04 - swingPhase * 0.28) * v.scale);
+      const pole = _poleR.copy(right).multiplyScalar(0.6).addScaledVector(_up, -0.75);
+      solveTwoBoneIK(v.rig, 'RightArm', 'RightForeArm', 'RightHand', target, pole, b.aimBlend);
     }
   }
 
-  private pointBone(
-    r: CharacterRig,
-    boneName: string,
-    childName: string,
-    lx: number,
-    ly: number,
-    lz: number,
-    rootQ: Quaternion,
-    blend: number,
+  /** Bladed torso twist (~17°), shoulder-mounted rifle/pistol target, and analytical 2-bone IK for both arms. */
+  private applyTwoHandedGunIK(
+    b: Bandit,
+    v: BanditRigVisual,
+    hr: ReturnType<typeof handFrame>,
+    hl: ReturnType<typeof handFrame>,
   ): void {
-    const bone = r.bone(boneName);
-    const child = r.bone(childName);
-    const pA = bone.getWorldPosition(_v1);
-    const pB = child.getWorldPosition(_v2);
-    const curDir = pB.sub(pA).normalize();
-    if (curDir.lengthSq() < 1e-6) return;
-    const wantDir = _to.set(lx, ly, lz).normalize().applyQuaternion(rootQ);
-    const turn = _q2.setFromUnitVectors(curDir, wantDir);
-    _q4.identity().slerp(turn, blend);
-    const w = bone.getWorldQuaternion(_q);
-    const pw = bone.parent!.getWorldQuaternion(_q5);
-    bone.quaternion.copy(pw.invert().multiply(_q4).multiply(w));
+    const r = v.rig;
+    const gid = b.weapon as GunId;
+    const d = gunRigData(gid);
+    const isLong = GUNS[gid].cls === 'long';
+    const sc = v.scale;
+    const blend = Math.min(1, b.aimBlend);
+    const activeAim = b.aiming > 0.05 ? 1 : 0;
+    const combatPitch = (b.aimPitch + b.recoilKick * 0.16) * activeAim + -0.38 * (1 - activeAim);
+
+    // 1. Torso bladed combat twist (~17 deg around +Y, counter-twisted on Neck/Head to keep eyes locked on target).
+    const twistRad = 0.30 * blend;
+    r.bone('Spine').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.34));
+    r.bone('Spine1').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.36));
+    r.bone('Spine2').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.30));
+    r.bone('Neck').quaternion.multiply(_q.setFromAxisAngle(_up, -twistRad * 0.55));
+    r.bone('Head').quaternion.multiply(_q.setFromAxisAngle(_up, -twistRad * 0.45));
     r.root.updateMatrixWorld(true);
+
+    const rootQ = r.root.getWorldQuaternion(_q3);
+    const charRight = _v1.set(-1, 0, 0).applyQuaternion(rootQ).normalize();
+    const aimQ = _q4.setFromAxisAngle(charRight, combatPitch).multiply(rootQ).normalize();
+
+    const aimFwd = _fwd.set(0, 0, 1).applyQuaternion(aimQ).normalize();
+    const aimRight = _right.set(-1, 0, 0).applyQuaternion(aimQ).normalize();
+    const aimUp = _upVec.crossVectors(aimRight, aimFwd).normalize();
+
+    // 2. Shoulder-pocket / chest weapon target anchored to RightArm shoulder
+    const shoulderR = r.bone('RightArm').getWorldPosition(_pShR);
+    const fwdDist = (isLong ? 0.27 : 0.36) * sc;
+    const inwardDist = (isLong ? 0.075 : 0.115) * sc;
+    const dropDist = (isLong ? 0.065 : 0.04) * sc + (1 - activeAim) * 0.10 * sc;
+
+    _gripR
+      .copy(shoulderR)
+      .addScaledVector(aimFwd, fwdDist)
+      .addScaledVector(aimRight, -inwardDist)
+      .addScaledVector(aimUp, -dropDist);
+
+    // GunModel barrel (-Zgun) aligned along aimFwd (+Zcharacter) requires aimQ * rotY(PI).
+    _qGunW.copy(aimQ).multiply(_qFlipY);
+    _v2.copy(d.main.at).applyQuaternion(_qGunW);
+    _gunPos.copy(_gripR).sub(_v2);
+
+    // Support hand target: forend/handguard for long guns, support cup on grip for pistols.
+    if (isLong) {
+      _v2.copy(d.off.at).applyQuaternion(_qGunW);
+      _gripL.copy(_gunPos).add(_v2);
+    } else {
+      _gripL
+        .copy(_gripR)
+        .addScaledVector(aimFwd, 0.028 * sc)
+        .addScaledVector(aimRight, -0.015 * sc)
+        .addScaledVector(aimUp, -0.02 * sc);
+    }
+
+    // Convert palm grip centers -> wrist joint world targets using HandFrame.grip offset
+    _wristR.copy(_gripR);
+    _wristL.copy(_gripL);
+    if (hr) {
+      _qWristR.copy(_qGunW).multiply(d.main.q).multiply(_q.copy(hr.q).invert());
+      _wristR.sub(_v2.copy(hr.grip).multiplyScalar(sc).applyQuaternion(_qWristR));
+    } else {
+      _qWristR.copy(_qGunW);
+    }
+    if (hl) {
+      _qWristL.copy(_qGunW).multiply(d.off.q).multiply(_q.copy(hl.q).invert());
+      _wristL.sub(_v2.copy(hl.grip).multiplyScalar(sc).applyQuaternion(_qWristL));
+    } else {
+      _qWristL.copy(_qGunW);
+    }
+
+    // 3. Solve analytical 2-bone IK for both arms with natural downward/outward elbow poles
+    _poleR.copy(aimRight).multiplyScalar(0.65).addScaledVector(aimUp, -0.78).addScaledVector(aimFwd, -0.22);
+    _poleL.copy(aimRight).multiplyScalar(-0.55).addScaledVector(aimUp, -0.82).addScaledVector(aimFwd, -0.15);
+
+    solveTwoBoneIK(r, 'RightArm', 'RightForeArm', 'RightHand', _wristR, _poleR, blend);
+    solveTwoBoneIK(r, 'LeftArm', 'LeftForeArm', 'LeftHand', _wristL, _poleL, blend);
+
+    // 4. Align wrists onto grip axes
+    if (hr) slerpBoneWorld(r.bone('RightHand'), r, _qWristR, blend);
+    if (hl) slerpBoneWorld(r.bone('LeftHand'), r, _qWristL, blend);
+
+    // 5. Anchor gun mesh squarely inside RightHand world transform with recoil kickback
+    if (v.gunModel) {
+      r.root.updateMatrixWorld(true);
+      const handBone = r.socket('hand');
+      const item = v.gunModel.root;
+      _m.copy(handBone.matrixWorld).invert();
+      _m2.compose(_gunPos, _qGunW, _one);
+      _m.multiply(_m2);
+      _m.decompose(_v3, _q2, _v2);
+      item.position.lerp(_v3, blend);
+      item.quaternion.slerp(_q2, blend);
+      item.scale.copy(_v2);
+    }
+  }
+
+  private findNearestHostileBot(b: Bandit, radius: number): Bandit | null {
+    let best: Bandit | null = null;
+    let bestD2 = radius * radius;
+    for (const o of this.list) {
+      if (o === b || o.state === 'dead' || o.isDead) continue;
+      if (!areFactionsHostile(b.faction, o.faction)) continue;
+      if (Math.abs(o.pos.y - b.pos.y) > 4.0) continue;
+      const d2 = (o.pos.x - b.pos.x) ** 2 + (o.pos.z - b.pos.z) ** 2;
+      if (d2 >= bestD2) continue;
+      if (this.hasLineOfSight(b.pos.x, b.pos.y + 1.48, b.pos.z, o.pos.x, o.pos.y + (o.crouching ? 0.95 : 1.38), o.pos.z)) {
+        bestD2 = d2;
+        best = o;
+      }
+    }
+    return best;
   }
 
   private becomeRagdoll(b: Bandit, fromX: number, fromZ: number): void {
@@ -1113,14 +1748,11 @@ export class Bandits {
       return;
     }
 
-    // Remove the held weapon mesh on death so there isn't an unpickable decoy next to the corpse;
-    // the exact weapon is inside the bandit's lootable corpse inventory (`bot.loot`).
     if (v.heldObj) {
       v.heldObj.removeFromParent();
       v.heldObj = null;
     }
 
-    // Transfer rig from b.root to world space (RagdollPose drives bones in world space).
     const rig = v.rig;
     b.root.updateMatrixWorld(true);
     const world = rig.bones.map((bone) => bone.matrixWorld.clone());
@@ -1206,12 +1838,11 @@ export class Bandits {
     return best;
   }
 
-  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false): void {
+  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false, targetBot: Bandit | null = null): void {
     const gId = b.weapon as BanditGunId;
     const g = GUNS[gId];
-    // Originate from the bot center (inside its collider) so thin 0.12 m walls can never be bypassed by a forward muzzle offset.
     const ox = b.pos.x;
-    const oy = b.pos.y + 1.42;
+    const oy = b.pos.y + (b.crouching ? 1.02 : 1.42);
     const oz = b.pos.z;
     if (!this.hasLineOfSight(ox, oy, oz, tx, ty, tz)) return;
 
@@ -1219,27 +1850,40 @@ export class Bandits {
     const targetDist = _to.length() || 1;
     _to.divideScalar(targetDist);
 
+    const isEliteAim = b.faction === 'snipers' || b.faction === 'black' || b.role === 'boss' || b.role === 'ambusher';
+    const isTactical = b.faction === 'bear' || b.faction === 'usec' || b.faction === 'pmc' || b.role === 'guard';
     const spread =
       b.faction === 'snipers'
-        ? 0.032
-        : b.faction === 'pmc'
+        ? 0.028
+        : isEliteAim
           ? gId === 'shotgun_pump'
-            ? 0.095
-            : 0.055
-          : gId === 'shotgun_pump'
-            ? 0.115
-            : 0.075;
+            ? 0.075
+            : 0.038
+          : isTactical
+            ? gId === 'shotgun_pump'
+              ? 0.095
+              : 0.055
+            : gId === 'shotgun_pump'
+              ? 0.115
+              : 0.078;
     _to.x += (Math.random() - 0.5) * spread;
     _to.y += (Math.random() - 0.5) * spread * 0.65;
     _to.z += (Math.random() - 0.5) * spread;
     _to.normalize();
 
-    const maxRange = 46;
+    const maxRange = 48;
     const wall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange);
     const maxTrace = wall >= 0 ? wall : maxRange;
 
     let hitDist = maxTrace;
-    if (targetIsPlayer) {
+    if (targetBot && !targetBot.isDead) {
+      const hitRes = this.hitTest(_v2.set(ox, oy, oz), _to, maxTrace, 0.05, b);
+      if (hitRes && areFactionsHostile(b.faction, hitRes.bot.faction)) {
+        hitDist = hitRes.dist;
+        const dmg = (g.damage[0] + g.damage[1]) * 0.42;
+        this.hit(hitRes.bot, dmg, ox, oz, hitRes.head, hitRes.zone);
+      }
+    } else if (targetIsPlayer) {
       const px = tx;
       const py = ty - 0.15;
       const pz = tz;
@@ -1255,8 +1899,8 @@ export class Bandits {
           const playerFeetY = ty - (inCar ? 1.05 : 1.38);
           const relY = hitY - playerFeetY;
           const hitZone: HitZone = relY >= 1.44 ? 'head' : relY >= 0.78 ? 'torso' : 'limbs';
-          const rawDmg = (g.damage[0] + g.damage[1]) * 0.24;
-          this.w.hurtPlayer(Math.max(6, Math.min(24, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
+          const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24);
+          this.w.hurtPlayer(Math.max(6, Math.min(26, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
         }
       }
     } else {
@@ -1271,7 +1915,9 @@ export class Bandits {
     const muzzleOff = Math.min(0.32, hitDist * 0.4);
     this.spawnTracer(ox + _to.x * muzzleOff, oy + _to.y * muzzleOff, oz + _to.z * muzzleOff, _to.x, _to.y, _to.z, Math.max(0.2, Math.min(hitDist - muzzleOff, 32)));
     b.recoilKick = 1;
-    sfx.gunShot(GUN_SOUND[gId], b.pos, b.mods.includes('mod_suppressor'), this.w.placeAt(b.pos.x, b.pos.z));
+    const suppressed = b.mods.includes('mod_suppressor');
+    sfx.gunShot(GUN_SOUND[gId], b.pos, suppressed, this.w.placeAt(b.pos.x, b.pos.z));
+    this.w.noise(b.pos.x, b.pos.y, b.pos.z, suppressed ? 18 : g.noise * 0.85);
 
     b.ammoInMag--;
     b.burstLeft--;
@@ -1279,9 +1925,9 @@ export class Bandits {
       b.reloadT = 2.2;
     } else if (b.burstLeft <= 0) {
       b.burstLeft = 2 + Math.floor(Math.random() * 3);
-      b.burstPause = 0.65 + Math.random() * 0.45;
+      b.burstPause = b.faction === 'black' || b.role === 'boss' ? 0.45 + Math.random() * 0.35 : 0.65 + Math.random() * 0.45;
     } else {
-      b.fireCd = Math.max(0.18, 60 / Math.min(280, g.rpm));
+      b.fireCd = Math.max(0.16, 60 / Math.min(300, g.rpm));
     }
   }
 

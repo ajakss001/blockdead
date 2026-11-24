@@ -15,6 +15,8 @@ import { type BuildingDesc, FLOOR_H, highriseSurfaceY, local as highriseLocal } 
 import { CollisionWorld } from '../world/CollisionWorld';
 import { Doors } from '../world/Doors';
 import { BAND, CHUNK, ROAD_HALF, WorldLayout } from '../world/gen/layout';
+import type { AnxietyAudio } from '../audio/AnxietyAudio';
+import { WorldLife } from '../world/WorldLife';
 
 type FsMod = {
   existsSync(p: string): boolean;
@@ -64,6 +66,7 @@ function createMockWebAudio() {
   const bufToGroup = new Map<object, SampleGroup>();
   let time = 1.0;
   let oscillatorCount = 0;
+  let stopCount = 0;
 
   const baseNode = (ac: unknown) => ({
     context: ac,
@@ -172,7 +175,7 @@ function createMockWebAudio() {
             if (grp) played.push({ group: grp, rate: node.playbackRate.value, startTime: when, gain: gainNode?.gain?.value ?? 1 });
           }
         },
-        stop() {},
+        stop() { stopCount++; },
       };
       return node;
     },
@@ -195,6 +198,7 @@ function createMockWebAudio() {
     panners,
     bufToGroup,
     get oscillatorCount() { return oscillatorCount; },
+    get stopCount() { return stopCount; },
     advance(dt: number) { time += dt; },
   };
 }
@@ -317,6 +321,12 @@ function auditAllAudioAssets(): Record<SampleGroup, string[]> {
       }
       if (grp === 'gunMagOut' || grp === 'gunMagIn') {
         assert(m.peak >= 0.6, `${grp} clip weak: peak=${m.peak.toFixed(3)}`);
+      }
+      if (grp === 'lootBagZip') {
+        assert(m.dur <= 0.72, `loot_bag_zip.wav tail too long (${m.dur.toFixed(3)}s > 0.72s)`);
+      }
+      if (grp === 'uiItemMove' || grp === 'uiEquipWeapon' || grp === 'uiEquipVest' || grp === 'uiEquipCloth' || grp === 'uiEquipHelmet') {
+        assert(m.dur <= 0.90, `UI audio clip tail too long (${m.dur.toFixed(3)}s > 0.90s): ${rel}`);
       }
       clipCount++;
     }
@@ -464,6 +474,30 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
     assert(hit.rate >= 0.949 && hit.rate <= 1.051, `Inventory UI '${uiKind}' pitch ${hit.rate} outside [0.95, 1.05]`);
   }
   (s as unknown as { worldMute: boolean }).worldMute = false;
+
+  // Lowered UI bus gain + monophonic interruption of rapid UI clicks
+  const uiGain = (s as unknown as { ui: { gain: { value: number } } }).ui.gain.value;
+  assert(uiGain > 0 && uiGain <= 0.6, `Expected lowered UI bus gain <= 0.6, got ${uiGain}`);
+  const stopsBefore = mock.stopCount;
+  s.item('move');
+  s.item('weapon');
+  assert(mock.stopCount > stopsBefore, 'UI channel failed to interrupt previous active UI voice');
+  mock.advance(1.5);
+
+  // Blade swing pitch must stay <= 1.05 (no high-frequency knife screech)
+  const swStart = mock.played.length;
+  s.swing('blade', 0.16, { x: 1, y: 1, z: -1 });
+  const swHit = mock.played.slice(swStart).find((p) => p.group === 'swing');
+  assert(swHit && swHit.rate <= 1.05, `Knife swing rate too high (${swHit?.rate}) — screech regression`);
+
+  // Window glass shatter schedules immediate shatter + delayed +0.3s floor settle
+  const gbStart = mock.played.length;
+  s.glassBreak({ x: 3, y: 1.5, z: -2 }, { x: 3, y: 0, z: -2 });
+  const gbSlice = mock.played.slice(gbStart);
+  const gbHit = gbSlice.find((p) => p.group === 'glassBreak');
+  const gsHit = gbSlice.find((p) => p.group === 'glassSettle');
+  assert(gbHit && gsHit, 'glassBreak must schedule both glassBreak and glassSettle');
+  assert(Math.abs((gsHit.startTime - gbHit.startTime) - 0.3) < 0.05, `Expected +0.3s glassSettle delay, got ${gsHit.startTime - gbHit.startTime}`);
 
   // Verify wood creak happens very rarely (~0.5%) and respects 10-15s cooldown.
   const creakStart = mock.played.length;
@@ -684,6 +718,15 @@ function testCollisionsAndHighriseBounds(): void {
   assert(highriseSurfaceY(desc, 0, L.iz0 + 1.0, upperY) === upperY, 'Valid interior floor missing');
   const feMidX = (L.x0 + L.x1) / 2;
   assert(highriseSurfaceY(desc, feMidX - 2.4, L.z1 + 0.5, upperY) !== null, 'Fire escape walkable landing missing');
+
+  // 4. Dynamic broken-window shards trigger cleanly per floor within 2.2m radius.
+  const life = new WorldLife(new Scene(), {} as unknown as AnxietyAudio, () => 0);
+  life.addDynamicShards(10, 3.2, -4, 2.2);
+  assert(life.onShards(11.2, -3.5, 3.2) === true, 'Dynamic broken-window shards missed on upper floor');
+  assert(life.onShards(11.2, -3.5, 0) === false, 'Dynamic shards bled onto wrong ground storey');
+  assert(life.onShards(16, -4, 3.2) === false, 'Dynamic shards triggered outside 2.2m radius');
+  life.dispose();
+
   doors.remove(1);
   console.log('[audioTest] Part 4 PASS: Wall/door >=0.25m colliders, swept anti-tunneling, and zero phantom mid-air surfaces.');
 }

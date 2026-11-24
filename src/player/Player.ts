@@ -229,7 +229,9 @@ export class Player {
     if (dist < 0) return;
     const surface = this.surfaceAlong(o, d, dist);
     const material: HitMaterial = (surface && MATERIAL[surface]) ?? 'concrete';
-    sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
+    if (!(material === 'glass' && this.onStrikeWorld)) {
+      sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
+    }
     this.viewmodel.recoil();
     // A little in front of the surface: sparks fly off it, not inside it.
     const at = dist - 0.04;

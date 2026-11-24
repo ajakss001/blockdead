@@ -251,6 +251,7 @@ export class Sound {
   private heartVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private lootVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private worldLootVoice: { src: AudioBufferSourceNode; gain: GainNode; panner: PannerNode } | null = null;
+  private activeUiVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private wantLootLoop = false;
 
   attach(events: EventBus<GameEvents>, loop: GameLoop): void {
@@ -536,12 +537,18 @@ export class Sound {
   swing(kind: SwingKind, dur: number, pos: Pos): void {
     if (kind === 'fist') return;
     const v = this.voice(pos, 0.5, 1.5, true, 'weapons');
-    if (!v) return;
+    if (!v || !this.ac) return;
     const [out, t] = v;
-    this.sample(out, t, 'swing', {
-      rate: Math.min(1.3, Math.max(0.75, 0.32 / Math.max(0.1, dur))) * (kind === 'blade' ? 1.2 : 1),
-      vary: 0.08,
-      gain: kind === 'blade' ? 0.35 : 0.5,
+    const lp = this.ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2800;
+    lp.Q.value = 0.7;
+    lp.connect(out);
+    const rate = Math.min(1.04, Math.max(0.86, 0.32 / Math.max(0.18, dur)));
+    this.sample(lp, t, 'swing', {
+      rate,
+      vary: 0.04,
+      gain: kind === 'blade' ? 0.34 : 0.48,
     });
   }
 
@@ -635,17 +642,29 @@ export class Sound {
     this.sample(out, t, 'rpgExplosion', { vary: 0.05, gain: 1 });
   }
 
+  glassBreak(hitPos: Pos, floorPos: Pos): void {
+    const vHit = this.voice(hitPos, 1.6, 1.8, true, 'env');
+    if (vHit) {
+      const [outHit, tHit] = vHit;
+      this.sample(outHit, tHit, 'glassBreak', { vary: 0.06, gain: 0.88 });
+    }
+    const vFloor = this.voice(floorPos, 1.1, 1.5, false, 'env');
+    if (vFloor) {
+      const [outFloor, tFloor] = vFloor;
+      this.sample(outFloor, tFloor + 0.3, 'glassSettle', { vary: 0.08, gain: 0.72 });
+    }
+  }
+
   hit(material: HitMaterial, pos: Pos, heavy = 1): void {
     if (material !== 'metal' && material !== 'glass') return;
-    const v = this.voice(pos, 0.9, 1.5, false, material === 'glass' ? 'env' : 'weapons');
+    if (material === 'glass') {
+      this.glassBreak(pos, { x: pos.x, y: Math.max(0, pos.y - 1.1), z: pos.z });
+      return;
+    }
+    const v = this.voice(pos, 0.9, 1.5, false, 'weapons');
     if (!v) return;
     const [out, t] = v;
-    const g = 0.5 + heavy * 0.5;
-    if (material === 'metal') {
-      this.sample(out, t, 'hitMetal', { rate: 1.15 - heavy * 0.15, vary: 0.08, gain: 0.35 + 0.35 * heavy });
-    } else if (this.sample(out, t, 'glassBreak', { vary: 0.06, gain: 0.85 * g })) {
-      this.sample(out, t + 0.3, 'glassSettle', { vary: 0.08, gain: 0.68 * g });
-    }
+    this.sample(out, t, 'hitMetal', { rate: 1.15 - heavy * 0.15, vary: 0.08, gain: 0.35 + 0.35 * heavy });
   }
 
   door(style: 'wood' | 'glass' | 'metal', open: boolean, pos: Pos, _creaky = false, pitch = 1): void {
@@ -792,39 +811,62 @@ export class Sound {
     }, 220);
   }
 
+  private playUiSample(out: Out, t: number, g: SampleGroup, o: { rate?: number; vary?: number; gain?: number } = {}): boolean {
+    const ac = this.ac;
+    const buf = this.samples?.pick(g);
+    if (!buf || !ac) return false;
+    const prev = this.activeUiVoice;
+    if (prev) {
+      try {
+        prev.gain.gain.setTargetAtTime(0, ac.currentTime, 0.01);
+        prev.src.stop(ac.currentTime + 0.03);
+      } catch {}
+      this.activeUiVoice = null;
+    }
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = (o.rate ?? 1) * (1 + (Math.random() * 2 - 1) * (o.vary ?? 0.04));
+    const gn = ac.createGain();
+    gn.gain.value = o.gain ?? 0.55;
+    src.connect(gn).connect(out);
+    src.start(t);
+    this.activeUiVoice = { src, gain: gn };
+    return true;
+  }
+
   item(kind: ItemSound): void {
-    const v = this.voice(null, 1.2, 1.5, true, 'ui');
+    const v = this.voice(null, 0.9, 1.5, true, 'ui');
     if (!v) return;
     const [out, t] = v;
     switch (kind) {
       case 'move':
       case 'pick':
       case 'drop':
-        this.sample(out, t, 'uiItemMove', { vary: 0.05, gain: 0.72 });
+        this.playUiSample(out, t, 'uiItemMove', { vary: 0.04, gain: 0.56 });
         break;
       case 'drag':
-        this.sample(out, t, 'uiItemMove', { vary: 0.05, gain: 0.42 });
+        this.playUiSample(out, t, 'uiItemMove', { vary: 0.04, gain: 0.36 });
         break;
       case 'click':
-        this.sample(out, t, 'uiItemMove', { vary: 0.05, gain: 0.55 });
+        this.playUiSample(out, t, 'uiItemMove', { vary: 0.04, gain: 0.45 });
         break;
       case 'weapon':
-        this.sample(out, t, 'uiEquipWeapon', { vary: 0.05, gain: 0.8 });
+        this.playUiSample(out, t, 'uiEquipWeapon', { vary: 0.04, gain: 0.62 });
         break;
       case 'vest':
-        this.sample(out, t, 'uiEquipVest', { vary: 0.05, gain: 0.82 });
+        this.playUiSample(out, t, 'uiEquipVest', { vary: 0.04, gain: 0.62 });
         break;
       case 'cloth':
-        this.sample(out, t, 'uiEquipCloth', { vary: 0.05, gain: 0.78 });
+        this.playUiSample(out, t, 'uiEquipCloth', { vary: 0.04, gain: 0.58 });
         break;
       case 'helmet':
-        this.sample(out, t, 'uiEquipHelmet', { vary: 0.05, gain: 0.82 });
+        this.playUiSample(out, t, 'uiEquipHelmet', { vary: 0.04, gain: 0.62 });
         break;
       case 'invOpen':
-        this.sample(out, t, 'lootBagZip', { rate: 1.0, vary: 0.05, gain: 0.64 });
+        this.playUiSample(out, t, 'lootBagZip', { rate: 1.0, vary: 0.04, gain: 0.54 });
         break;
       case 'invClose':
-        this.sample(out, t, 'lootBagZip', { rate: 1.08, vary: 0.05, gain: 0.54 });
+        this.playUiSample(out, t, 'lootBagZip', { rate: 1.06, vary: 0.04, gain: 0.44 });
         break;
       case 'bandage':
       case 'eat':
@@ -913,7 +955,7 @@ export class Sound {
     this.musicBus.connect(this.world);
 
     this.ui = ac.createGain();
-    this.ui.gain.value = 0.88;
+    this.ui.gain.value = 0.54;
     this.ui.connect(this.brickwallLimiter);
 
     const len = Math.max(1024, ac.sampleRate || 32000);

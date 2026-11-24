@@ -45,6 +45,8 @@ export interface FirearmsWorld {
   igniteCars(x: number, y: number, z: number, r: number): void;
   /** A bullet on a car: its alarm may go off. */
   carHit(x: number, y: number, z: number): void;
+  /** Glass pane struck by bullet or melee: plays 3D shatter + settle and spawns floor shard zones. */
+  onBreakGlass?(at: Vector3, dir: Vector3): void;
   /** The class's handling of firearms (1 none, 1.3 military, 1.5 SWAT). */
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
@@ -593,7 +595,12 @@ export class Firearms {
     }
     const kind: BulletHit = (s && BULLET[s]) ?? 'concrete';
     const at = _p.copy(o).addScaledVector(d, dist - 0.03);
-    if (!isMulti || this.shotHitSounds < 2) {
+    if (kind === 'glass' && this.w.onBreakGlass) {
+      if (!isMulti || this.shotHitSounds < 2) {
+        this.w.onBreakGlass(at, d);
+        this.shotHitSounds++;
+      }
+    } else if (!isMulti || this.shotHitSounds < 2) {
       sfx.bulletHit(kind, at);
       this.shotHitSounds++;
     }
