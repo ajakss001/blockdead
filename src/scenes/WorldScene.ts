@@ -793,6 +793,7 @@ export class WorldScene implements IScene {
       this.containers.restore(save.containers);
       this.ground.restore(save.ground);
       for (const b of this.bodies) this.containers.addLoose(b, []);
+      this.containers.restoreCorpses(save.corpses);
       this.base.restore(save.base);
       for (const p of this.base.list) if (p.kind === 'stash') this.containers.addLoose(stashRef(p), []);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
@@ -1519,6 +1520,10 @@ export class WorldScene implements IScene {
       story: this.story.serialize(),
       cars: this.vehicles.serialize(),
       playerArmed: this.playerArmed || undefined,
+      corpses: (() => {
+        const c = this.containers.serializeCorpses();
+        return c.length ? c : undefined;
+      })(),
     });
   }
 

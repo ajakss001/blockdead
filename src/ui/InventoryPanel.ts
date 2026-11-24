@@ -1,5 +1,6 @@
 import { onLangChange, registerDataLocalizer, tr } from '../core/i18n';
 import {
+  type BagSection,
   dirtLabel,
   ensureStackUid,
   type ItemDef,
@@ -70,7 +71,7 @@ type Place =
   | { from: 'corpseSlot'; slot: CorpseSlotKey; id: ItemId }
   | { from: 'corpseZone'; cz: CorpseZone; uid: string; id: ItemId }
   | { from: 'slot'; slot: Slot };
-type DropTarget = 'bag' | 'box' | `slot:${Slot}` | `quick:${number}`;
+type DropTarget = 'bag' | `bag:${BagSection}` | 'box' | `slot:${Slot}` | `quick:${number}`;
 
 const DOLL_LEFT: readonly Slot[] = ['head', 'mask', 'vest', 'hand', 'bag'];
 const DOLL_RIGHT: readonly WearSlot[] = ['outfit', 'face', 'torso', 'hands', 'legs', 'feet'];
@@ -412,21 +413,41 @@ export class InventoryPanel {
     return row;
   }
 
-  /** Center column: РАЗГРУЗКА (vest), КАРМАНЫ (pockets), РЮКЗАК (backpack), and БЫСТРЫЙ ДОСТУП (1–4). */
-  private gearColumn(): HTMLElement {
-    const inv = this.host.inventory;
-    const col = el('div', 'inv__col inv__col-gear');
-
-    // Partition carried stacks cleanly once (rig -> pockets -> backpack) respecting 1×2 magazine footprint.
+  /** Partition carried stacks into rig, pockets, and backpack (honoring manual `bagZone` first). */
+  private partitionCarried(inv: Inventory): {
+    rigStacks: ItemStack[];
+    pocketStacks: ItemStack[];
+    packStacks: ItemStack[];
+    rigUsed: number;
+    pocketUsed: number;
+    packUsed: number;
+  } {
     const rigStacks: ItemStack[] = [];
     const pocketStacks: ItemStack[] = [];
     const packStacks: ItemStack[] = [];
     let rigUsed = 0;
     let pocketUsed = 0;
     let packUsed = 0;
+    const deferred: ItemStack[] = [];
 
     for (const s of inv.stacks) {
       ensureStackUid(s);
+      const [, ch] = itemGridSize(s.id);
+      if (s.bagZone === 'rig' && inv.worn.vest && rigUsed + ch <= RIG_SLOTS) {
+        rigStacks.push(s);
+        rigUsed += ch;
+      } else if (s.bagZone === 'pockets' && ch === 1 && pocketUsed + 1 <= POCKET_SLOTS) {
+        pocketStacks.push(s);
+        pocketUsed += 1;
+      } else if (s.bagZone === 'pack') {
+        packStacks.push(s);
+        packUsed += ch;
+      } else {
+        deferred.push(s);
+      }
+    }
+
+    for (const s of deferred) {
       const def = ITEMS[s.id];
       const [, ch] = itemGridSize(s.id);
       if (inv.worn.vest && (MAG_ITEMS.has(s.id) || def.kind === 'ammo') && rigUsed + ch <= RIG_SLOTS) {
@@ -441,15 +462,24 @@ export class InventoryPanel {
       }
     }
 
+    return { rigStacks, pocketStacks, packStacks, rigUsed, pocketUsed, packUsed };
+  }
+
+  /** Center column: РАЗГРУЗКА (vest), КАРМАНЫ (pockets), РЮКЗАК (backpack), and БЫСТРЫЙ ДОСТУП (1–4). */
+  private gearColumn(): HTMLElement {
+    const inv = this.host.inventory;
+    const col = el('div', 'inv__col inv__col-gear');
+    const { rigStacks, pocketStacks, packStacks, rigUsed, pocketUsed, packUsed } = this.partitionCarried(inv);
+
     // 1. РАЗГРУЗКА (Tactical Rig) — 4×2 grid supporting 1×2 vertical magazines
     const rigSec = el('section', 'inv__section');
     const rigHead = el('div', 'inv__sec-head', tr('РАЗГРУЗКА', 'TACTICAL RIG'));
     const rigBody = el('div', 'inv__sec-split');
-    rigBody.dataset.drop = 'bag';
+    rigBody.dataset.drop = 'bag:rig';
     const vestSlot = this.slotCell('vest', inv.worn.vest ? ITEMS[inv.worn.vest].name : tr('Разгрузка', 'Rig'), inv.worn.vest);
     vestSlot.classList.add('cell--featured');
     const rigGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
-    rigGrid.dataset.drop = 'bag';
+    rigGrid.dataset.drop = 'bag:rig';
     for (const s of rigStacks) {
       rigGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'rig' }, s.id, s.count));
     }
@@ -461,9 +491,10 @@ export class InventoryPanel {
 
     // 2. КАРМАНЫ (Pockets) — 4×1 (only 1×1 items)
     const pocketsSec = el('section', 'inv__section');
+    pocketsSec.dataset.drop = 'bag:pockets';
     pocketsSec.append(el('div', 'inv__sec-head', tr('КАРМАНЫ', 'POCKETS')));
     const pocketsGrid = el('div', 'inv__mini-grid inv__mini-grid--4');
-    pocketsGrid.dataset.drop = 'bag';
+    pocketsGrid.dataset.drop = 'bag:pockets';
     for (const s of pocketStacks) {
       pocketsGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'pockets' }, s.id, s.count));
     }
@@ -474,11 +505,11 @@ export class InventoryPanel {
     const packSec = el('section', 'inv__section inv__section--grow');
     const packHead = el('div', 'inv__sec-head', tr('РЮКЗАК', 'BACKPACK'));
     const packBody = el('div', 'inv__sec-split inv__sec-split--grow');
-    packBody.dataset.drop = 'bag';
+    packBody.dataset.drop = 'bag:pack';
     const backSlot = this.slotCell('back', inv.worn.back ? ITEMS[inv.worn.back].name : tr('Рюкзак', 'Backpack'), inv.worn.back);
     backSlot.classList.add('cell--featured');
     const packGrid = el('div', 'inv__grid');
-    packGrid.dataset.drop = 'bag';
+    packGrid.dataset.drop = 'bag:pack';
     for (const s of packStacks) {
       packGrid.append(this.itemCell({ from: 'bag', uid: ensureStackUid(s), id: s.id, zone: 'pack' }, s.id, s.count));
     }
@@ -1126,17 +1157,95 @@ export class InventoryPanel {
       else this.wear(place);
       return;
     }
-    if (place.from === 'slot') return this.unslot(place.slot, to === 'box');
+    const toBagZone: BagSection | null = to.startsWith('bag:') ? (to.slice(4) as BagSection) : null;
+    const isBagTarget = to === 'bag' || toBagZone !== null;
+
+    if (toBagZone && place.from === 'bag') {
+      this.moveToBagZone(place.uid, toBagZone);
+      return;
+    }
+    if (toBagZone && !this.canPlaceInBagZone(id, toBagZone)) {
+      this.render();
+      return;
+    }
+    if (place.from === 'slot') {
+      this.unslot(place.slot, to === 'box');
+      if (toBagZone && this.selected?.from === 'bag') this.moveToBagZone(this.selected.uid, toBagZone);
+      return;
+    }
     if (place.from === 'bag' && to === 'box') {
       const count = this.host.inventory.stackByUid(place.uid)?.count ?? 1;
       return this.store(place, count);
     }
-    if (place.from === 'box' && to === 'bag') return void this.take(place.uid, this.boxStack(place.uid)?.count ?? 1);
-    if (place.from === 'corpseSlot' && to === 'bag') return void this.takeFromCorpseSlot(place.slot);
-    if (place.from === 'corpseZone' && to === 'bag') {
-      return void this.takeFromCorpseZone(place.cz, place.uid, this.corpseZoneCount(place.cz, place.uid));
+    if (place.from === 'box' && isBagTarget) {
+      if (this.take(place.uid, this.boxStack(place.uid)?.count ?? 1) && toBagZone && this.selected?.from === 'bag') {
+        this.moveToBagZone(this.selected.uid, toBagZone);
+      }
+      return;
+    }
+    if (place.from === 'corpseSlot' && isBagTarget) {
+      if (this.takeFromCorpseSlot(place.slot) && toBagZone && this.selected?.from === 'bag') {
+        this.moveToBagZone(this.selected.uid, toBagZone);
+      }
+      return;
+    }
+    if (place.from === 'corpseZone' && isBagTarget) {
+      if (
+        this.takeFromCorpseZone(place.cz, place.uid, this.corpseZoneCount(place.cz, place.uid)) &&
+        toBagZone &&
+        this.selected?.from === 'bag'
+      ) {
+        this.moveToBagZone(this.selected.uid, toBagZone);
+      }
+      return;
     }
     this.render();
+  }
+
+  private canPlaceInBagZone(id: ItemId, targetZone: BagSection, movingUid?: string): boolean {
+    const inv = this.host.inventory;
+    const [, ch] = itemGridSize(id);
+    if (targetZone === 'pack') return true;
+    const part = this.partitionCarried(inv);
+    if (targetZone === 'rig') {
+      if (!inv.worn.vest) {
+        this.ctx.hud.toast(tr('Наденьте разгрузку', 'Equip a tactical rig first'), 1100);
+        return false;
+      }
+      if (movingUid && part.rigStacks.some((s) => ensureStackUid(s) === movingUid)) return true;
+      if (part.rigUsed + ch > RIG_SLOTS) {
+        this.ctx.hud.toast(tr('Разгрузка заполнена', 'Tactical rig is full'), 1100);
+        return false;
+      }
+      return true;
+    }
+    // pockets
+    if (ch > 1) {
+      this.ctx.hud.toast(tr('Не помещается в карман (1×2)', 'Does not fit in pocket (1×2)'), 1100);
+      return false;
+    }
+    if (movingUid && part.pocketStacks.some((s) => ensureStackUid(s) === movingUid)) return true;
+    if (part.pocketUsed + 1 > POCKET_SLOTS) {
+      this.ctx.hud.toast(tr('Карманы заполнены', 'Pockets are full'), 1100);
+      return false;
+    }
+    return true;
+  }
+
+  private moveToBagZone(uid: string, targetZone: BagSection): boolean {
+    const inv = this.host.inventory;
+    const stack = inv.stackByUid(uid);
+    if (!stack) return false;
+    if (!this.canPlaceInBagZone(stack.id, targetZone, uid)) {
+      this.render();
+      return false;
+    }
+    stack.bagZone = targetZone;
+    inv.version++;
+    sfx.item('move');
+    this.selected = { from: 'bag', uid, id: stack.id, zone: targetZone };
+    this.render();
+    return true;
   }
 
   // ─── Actions ──────────────────────────────────────────────────────────────────

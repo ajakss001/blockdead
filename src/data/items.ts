@@ -395,6 +395,8 @@ export function wornStat(worn: Readonly<Record<WearSlot, ItemId | null>>, key: k
   return sum;
 }
 
+export type BagSection = 'rig' | 'pockets' | 'pack';
+
 export interface ItemStack {
   /** Runtime unique stack instance id (for per-cell selection, drag, and drop). */
   uid?: string;
@@ -406,6 +408,8 @@ export interface ItemStack {
   tint?: number;
   /** Firearms only: attached weapon mods carried on this gun item. */
   mods?: ModId[];
+  /** Optional player-chosen section inside inventory (rig / pockets / backpack). */
+  bagZone?: BagSection;
 }
 
 let nextStackSeq = 1;

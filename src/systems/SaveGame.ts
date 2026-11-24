@@ -3,7 +3,7 @@ import type { MapSave } from './MapMemory';
 import type { Placed } from './Base';
 import { type GearId, type ItemId, type ItemStack, migrateItems } from '../data/items';
 import type { ModelKind } from '../zombies/stats';
-import type { ContainerRef } from './Containers';
+import type { ContainerRef, CorpseData } from './Containers';
 import type { Appearance } from '../player/appearance';
 import type { InventoryData } from './Inventory';
 import type { IPlatform } from '../platform/IPlatform';
@@ -58,6 +58,8 @@ export interface SaveV1 {
   cars?: CarSave[];
   /** True once the survivor has held any firearm (boosts armored/elite bandit spawns). */
   playerArmed?: boolean;
+  /** Lootable bandit corpses with structured equipment slots and search state. */
+  corpses?: [ContainerRef, CorpseData][];
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

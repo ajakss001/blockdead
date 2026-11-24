@@ -307,4 +307,26 @@ export class Containers {
       this.opened.set(id, items.map(([item, count, dirt, tint]) => ({ id: item, count, ...(dirt !== undefined ? { dirt } : {}), ...(tint !== undefined ? { tint } : {}) })));
     }
   }
+
+  /** Persists lootable bandit corpses (their position box, equipped slots, mods, and search state). */
+  serializeCorpses(): [ContainerRef, CorpseData][] {
+    const out: [ContainerRef, CorpseData][] = [];
+    for (const ref of this.loose) {
+      const c = this.corpses.get(ref.id);
+      if (!c) continue;
+      out.push([
+        { ...ref, ...(ref.box ? { box: [...ref.box] as SearchBox } : {}) },
+        JSON.parse(JSON.stringify(c)) as CorpseData,
+      ]);
+    }
+    return out;
+  }
+
+  restoreCorpses(data?: [ContainerRef, CorpseData][]): void {
+    if (!data?.length) return;
+    for (const [ref, corpse] of data) {
+      if (!ref || !corpse) continue;
+      this.addLoose(ref, [], JSON.parse(JSON.stringify(corpse)) as CorpseData);
+    }
+  }
 }

@@ -1,4 +1,4 @@
-import { BACKPACK_CAPACITY, ensureStackUid, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
+import { BACKPACK_CAPACITY, type BagSection, ensureStackUid, type ItemId, ITEMS, type ItemStack, onePiece, WEAR_SLOTS, type WearSlot } from '../data/items';
 import { GUNS, type GunId, isGun, MOD_FITS, MOD_IDS, MODS, type ModId } from '../weapons/guns';
 import { type GunInst, newInst } from '../weapons/gunState';
 
@@ -10,6 +10,8 @@ export type Worn = Record<WearSlot, ItemId | null>;
 export interface InventoryData {
   /** [id, count, dirt?, tint?] — dirt and tint only on clothing. */
   stacks: [ItemId, number, number?, number?][];
+  /** Optional per-stack manual section override ('rig' | 'pockets' | 'pack'). */
+  stackZones?: (BagSection | null)[];
   hand: ItemId | null;
   /** Wear of the weapon in hand, 0..1. */
   handWear?: number;
@@ -369,6 +371,7 @@ export class Inventory {
   serialize(): InventoryData {
     return {
       stacks: this.stacks.map((s) => (s.tint !== undefined ? [s.id, s.count, s.dirt ?? 0, s.tint] : s.dirt !== undefined ? [s.id, s.count, s.dirt] : [s.id, s.count])),
+      stackZones: this.stacks.map((s) => s.bagZone ?? null),
       hand: this.hand,
       handWear: this.handWear,
       worn: { ...this.worn },
@@ -381,9 +384,14 @@ export class Inventory {
 
   restore(data: InventoryData): void {
     this.stacks.length = 0;
-    for (const [id, count, dirt, tint] of data.stacks) {
+    for (let i = 0; i < data.stacks.length; i++) {
+      const [id, count, dirt, tint] = data.stacks[i];
       if (!ITEMS[id]) continue;
-      const s: ItemStack = onePiece(ITEMS[id]) ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}) } : { id, count };
+      const zone = data.stackZones?.[i];
+      const bagZone: BagSection | undefined = zone === 'rig' || zone === 'pockets' || zone === 'pack' ? zone : undefined;
+      const s: ItemStack = onePiece(ITEMS[id])
+        ? { id, count, dirt: dirt ?? 0, ...(tint !== undefined ? { tint } : {}), ...(bagZone ? { bagZone } : {}) }
+        : { id, count, ...(bagZone ? { bagZone } : {}) };
       ensureStackUid(s);
       this.stacks.push(s);
     }
