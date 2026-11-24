@@ -163,9 +163,34 @@ export class PlayerController {
     this.velocity.z += (wishZ - this.velocity.z) * k;
 
     this.prevPosition.copy(this.position);
-    this.position.x += this.velocity.x * dt;
-    this.position.z += this.velocity.z * dt;
-    world.resolveCircle(this.position, PLAYER_RADIUS, height);
+    const moveX = this.velocity.x * dt;
+    const moveZ = this.velocity.z * dt;
+    const dist = Math.hypot(moveX, moveZ);
+    const steps = Math.max(1, Math.ceil(dist / 0.1));
+    const stepX = moveX / steps;
+    const stepZ = moveZ / steps;
+    const stepDist = dist / steps;
+    const dirX = stepDist > 1e-5 ? stepX / stepDist : 0;
+    const dirZ = stepDist > 1e-5 ? stepZ / stepDist : 0;
+    for (let s = 0; s < steps; s++) {
+      let scale = 1;
+      if (stepDist > 1e-5 && typeof world.rayHit === 'function') {
+        const chestY = this.position.y + Math.min(1.35, height - 0.05);
+        const waistY = this.position.y + 0.55;
+        const h1 = world.rayHit(this.position.x, waistY, this.position.z, dirX, 0, dirZ, stepDist + PLAYER_RADIUS);
+        const h2 = world.rayHit(this.position.x, chestY, this.position.z, dirX, 0, dirZ, stepDist + PLAYER_RADIUS);
+        let minHit = Infinity;
+        if (h1 >= 0 && h1 < minHit) minHit = h1;
+        if (h2 >= 0 && h2 < minHit) minHit = h2;
+        if (minHit < stepDist) {
+          const allowed = Math.max(0, minHit - 0.02);
+          scale = allowed / stepDist;
+        }
+      }
+      this.position.x += stepX * scale;
+      this.position.z += stepZ * scale;
+      world.resolveCircle(this.position, PLAYER_RADIUS, height);
+    }
     const jump = input.consumePressed('jump');
     // Jump at a ledge in front (or still rising from a jump): climb onto it.
     if (jump || (this.airborne && this.vy > 0 && my > 0.3)) {

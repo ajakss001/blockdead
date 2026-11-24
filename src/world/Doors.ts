@@ -584,15 +584,22 @@ export class Doors {
   private collide(d: DoorState, closed: boolean): void {
     this.world.removeOwner(d.owner);
     if (!closed) return;
-    const ex = d.spot.hx + Math.cos(d.spot.yaw) * d.width;
-    const ez = d.spot.hz - Math.sin(d.spot.yaw) * d.width;
-    const t = 0.08;
+    const lx = Math.cos(d.spot.yaw);
+    const lz = -Math.sin(d.spot.yaw);
+    const nx = Math.sin(d.spot.yaw);
+    const nz = Math.cos(d.spot.yaw);
+    const ex = d.spot.hx + lx * d.width;
+    const ez = d.spot.hz + lz * d.width;
+    const halfT = 0.13;
+    const endPad = 0.02;
+    const padX = Math.abs(nx) * halfT + Math.abs(lx) * endPad;
+    const padZ = Math.abs(nz) * halfT + Math.abs(lz) * endPad;
     this.world.addOwned(
       d.owner,
-      Math.min(d.spot.hx, ex) - t,
-      Math.min(d.spot.hz, ez) - t,
-      Math.max(d.spot.hx, ex) + t,
-      Math.max(d.spot.hz, ez) + t,
+      Math.min(d.spot.hx, ex) - padX,
+      Math.min(d.spot.hz, ez) - padZ,
+      Math.max(d.spot.hx, ex) + padX,
+      Math.max(d.spot.hz, ez) + padZ,
       d.spot.y,
       d.spot.y + (d.spot.height ?? LEAF_H),
     );

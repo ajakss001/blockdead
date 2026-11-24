@@ -185,7 +185,7 @@ export function insideFootprint(b: BuildingDesc, x: number, z: number, margin = 
  * Height of the surface the player stands on: the highest floor, landing or flight point that is
  * at most a step above their feet. Storeys are FLOOR_H apart; the roof is level `floors`.
  */
-export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: number): number {
+export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: number): number | null {
   const [x, z] = toLocal(b, wx, wz);
   const L = local(b);
   const reach = y + 0.55;
@@ -200,7 +200,7 @@ export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: num
   // Exterior fire escape along the back wall (L.z1 .. L.z1 + 1.4).
   const feX0 = (L.x0 + L.x1) / 2 - 3.0;
   const feX1 = feX0 + 6.0;
-  if (b.floors >= 2 && x >= feX0 - 0.1 && x <= feX1 + 0.1 && z >= L.z1 - 0.15 && z <= L.z1 + 1.5) {
+  if (b.floors >= 2 && x >= feX0 - 0.05 && x <= feX1 + 0.05 && z >= L.z1 - 0.15 && z <= L.z1 + 1.42) {
     const landW = 1.3;
     const run = feX1 - feX0 - 2 * landW;
     for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
@@ -222,10 +222,15 @@ export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: num
         else consider(y0 + ((feX1 - landW - x) / run) * FLOOR_H);
       }
     }
-    return best > -Infinity ? best : 0;
+    return best > -Infinity ? best : null;
   }
+  // Outside the building footprint (and off the fire escape): never return phantom elevated floors.
+  if (x < L.x0 || x > L.x1 || z < L.z0 || z > L.z1) return null;
+  const inInterior = x >= L.ix0 - 0.05 && x <= L.ix1 + 0.05 && z >= L.iz0 - 0.05 && z <= L.iz1 + 0.05;
   for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
     const yk = k * FLOOR_H;
+    // Upper floor slabs end strictly inside the facade walls so nothing protrudes past the exterior face.
+    if (k >= 1 && k < b.floors && !inInterior) continue;
     if (!inCore) {
       consider(yk);
       continue;
@@ -244,7 +249,7 @@ export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: num
       consider(yk + FLOOR_H / 2 + ((zf0 + RUN - z) / RUN) * (FLOOR_H / 2));
     }
   }
-  return best > -Infinity ? best : lowest === Infinity ? 0 : lowest;
+  return best > -Infinity ? best : lowest === Infinity ? null : lowest;
 }
 
 const _m = new Matrix4();

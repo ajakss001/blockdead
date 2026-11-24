@@ -1,7 +1,9 @@
 import type { Vector3 } from 'three';
 
 const CELL = 4;
-const MAX_ITERATIONS = 3;
+const MAX_ITERATIONS = 5;
+/** Enforce at least 0.25 m collider thickness on full-height walls/partitions/doors to prevent tunneling. */
+const MIN_WALL_THICKNESS = 0.25;
 
 /** Unbounded vertical extent: street-level props and outer walls block at every height. */
 export const ANY_Y_MIN = -1e4;
@@ -55,7 +57,24 @@ export class CollisionWorld implements ColliderSink {
   }
 
   addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
-    this.insert({ minX, minZ, maxX, maxZ, minY, maxY, owner: this.owner, obb: null });
+    let x0 = minX;
+    let z0 = minZ;
+    let x1 = maxX;
+    let z1 = maxZ;
+    if (maxY - minY >= 1.5) {
+      const sx = x1 - x0;
+      const sz = z1 - z0;
+      if (sx < MIN_WALL_THICKNESS && sz >= 0.4) {
+        const cx = (x0 + x1) * 0.5;
+        x0 = cx - MIN_WALL_THICKNESS * 0.5;
+        x1 = cx + MIN_WALL_THICKNESS * 0.5;
+      } else if (sz < MIN_WALL_THICKNESS && sx >= 0.4) {
+        const cz = (z0 + z1) * 0.5;
+        z0 = cz - MIN_WALL_THICKNESS * 0.5;
+        z1 = cz + MIN_WALL_THICKNESS * 0.5;
+      }
+    }
+    this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, obb: null });
   }
 
   addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
@@ -196,7 +215,7 @@ export class CollisionWorld implements ColliderSink {
 
   /** Distance along a ray to the first box it enters (2D DDA across grid cells + exact slab test), or −1 within maxDist. */
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): number {
-    const tClip = 0.05;
+    const tClip = 0.02;
     if (maxDist < tClip || !Number.isFinite(ox + oy + oz + dx + dy + dz + maxDist)) return -1;
 
     const stamp = this.nextStamp();

@@ -1324,6 +1324,8 @@ export class WorldScene implements IScene {
       this.player.render(alpha, gameDt);
       this.vehicles.render(frameDt, this.camera, this.ctx.input);
     }
+    const inVehicle = !this.dead && Boolean(this.vehicles.activeCar);
+    document.body.classList.toggle('in-vehicle', inVehicle);
     this.carHud.update();
     this.firearms.render(gameDt);
     {
@@ -1338,7 +1340,7 @@ export class WorldScene implements IScene {
         hurtAngle = Math.atan2(Math.sin(hurtAngle), Math.cos(hurtAngle));
       }
       this.gunHud.update(gameDt, {
-        gun: this.dead ? null : fa.hud(),
+        gun: this.dead || inVehicle ? null : fa.hud(),
         fov: this.camera.fov,
         sinceUse: fa.sinceUse,
         hitMark: fa.hitMark,
@@ -1349,6 +1351,7 @@ export class WorldScene implements IScene {
         quick: this.inventory.quick,
         hand: this.inventory.hand,
         touch: this.ctx.input.mode === 'touch',
+        inVehicle,
       });
     }
     if (this.death) this.renderDeath(gameDt);
@@ -2523,6 +2526,7 @@ export class WorldScene implements IScene {
   }
 
   dispose(): void {
+    document.body.classList.remove('in-vehicle');
     sfx.setOcclusionCheck(null);
     sfx.setLootLoop(false);
     this.editor.dispose();

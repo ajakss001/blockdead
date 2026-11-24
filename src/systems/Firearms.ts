@@ -140,8 +140,10 @@ export class Firearms {
   private climb = 0;
   /** Seconds since the last shot (the HUD fades out 3 s after). */
   sinceUse = 99;
-  /** Seconds left for temporary ammo-status readout beside the silhouette (check mag / reload / shot). */
+  /** Seconds left for Tarkov-style mag-check overlay below crosshair. */
   magCheckT = 0;
+  /** Anti-spam cooldown (seconds) for manual mag check (Alt+T / touch). */
+  private magCheckCooldown = 0;
   /** The noise of the last shot (the HUD's wave), m, and how long ago. */
   lastNoise = 0;
   /** A hit to show: 'body' | 'head', fresh. */
@@ -187,6 +189,7 @@ export class Firearms {
     const hand = inv.hand;
     this.sinceUse += dt;
     this.magCheckT = Math.max(0, this.magCheckT - dt);
+    this.magCheckCooldown = Math.max(0, this.magCheckCooldown - dt);
     this.hitMarkT += dt;
     for (let i = this.pendingCasings.length - 1; i >= 0; i--) {
       this.pendingCasings[i].t -= dt;
@@ -233,12 +236,13 @@ export class Firearms {
     const reachOut = g.cls === 'pistol' ? 0.62 : g.cls === 'launcher' ? 0.55 : 0.85;
     vm.gunView.wall = Math.max(0, Math.min(1, (reachOut + 0.15 - this.wallDist) / 0.45));
     vm.gunView.wallDist = this.wallDist;
-    // R: a tap reloads, held inspects. T / Alt+T checks magazine status cleanly.
+    // R: a tap reloads, held inspects. Alt+T / touch mag-check checks magazine status with 1.5s cooldown.
     let reload = false;
     let inspect = input.consumePressed('inspect');
     const checkAmmo = input.consumePressed('checkAmmo');
-    if (checkAmmo && !player.busy && !vm.switching) {
+    if (checkAmmo && this.magCheckCooldown <= 0 && !player.busy && !vm.switching) {
       this.magCheckT = 2.8;
+      this.magCheckCooldown = 1.5;
       inspect = true;
       sfx.gunMech('magCheck', id === 'rifle_ak' ? 0.94 : id.startsWith('pistol') ? 1.08 : 1);
     }
@@ -367,7 +371,6 @@ export class Firearms {
     switch (e.kind) {
       case 'shot': {
         this.sinceUse = 0;
-        this.magCheckT = Math.max(this.magCheckT, 1.8);
         const handling = this.w.handling();
         const suppressed = mods.includes('mod_suppressor');
         // Recoil: the gun in the hands, the view (climbing in a burst), the camera's jolt.
@@ -425,7 +428,6 @@ export class Firearms {
         break;
       case 'magIn':
         if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magIn');
-        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rack':
         // Rifles play trimmed mag-out + mag-in only on reload (no trailing bolt-rack); unjam still racks.
@@ -438,20 +440,16 @@ export class Firearms {
         break;
       case 'shellIn':
         mech('shell');
-        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'rocketIn':
         mech('rocket');
-        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'mode':
         mech('mode');
-        this.magCheckT = Math.max(this.magCheckT, 2.0);
         break;
       case 'unjammed':
         this.ejectCase(id);
         this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: !!g.pellets });
-        this.magCheckT = Math.max(this.magCheckT, 2.2);
         break;
       case 'bash':
         this.bash(id);

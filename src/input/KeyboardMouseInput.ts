@@ -16,7 +16,6 @@ const KEY_ACTIONS: Readonly<Record<string, Action>> = {
   KeyH: 'item2',
   KeyR: 'reload',
   KeyV: 'inspect',
-  KeyT: 'checkAmmo',
   KeyB: 'fireMode',
   KeyQ: 'bash',
   Space: 'jump',
@@ -75,6 +74,11 @@ export class KeyboardMouseInput {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (!this.locked && !this.keysWithoutLock) return;
+    if (e.altKey && e.code === 'KeyT') {
+      e.preventDefault();
+      if (!e.repeat) this.input.press('checkAmmo');
+      return;
+    }
     const action = KEY_ACTIONS[e.code];
     const isMove = FORWARD.includes(e.code) || BACK.includes(e.code) || LEFT.includes(e.code) || RIGHT.includes(e.code);
     if (!action && !isMove) return;
@@ -87,6 +91,9 @@ export class KeyboardMouseInput {
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
+    if (e.code === 'KeyT' || e.code === 'AltLeft' || e.code === 'AltRight') {
+      this.input.release('checkAmmo');
+    }
     const action = KEY_ACTIONS[e.code];
     if (action) this.input.release(action);
     this.updateMove();

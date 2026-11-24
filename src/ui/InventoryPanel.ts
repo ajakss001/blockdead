@@ -33,6 +33,30 @@ function wearSound(slot: WearSlot): ItemSound {
   return slot === 'head' ? 'helmet' : slot === 'vest' ? 'vest' : 'cloth';
 }
 
+function itemTransferSound(id: ItemId): ItemSound {
+  const def = ITEMS[id];
+  if (def.equip) return 'weapon';
+  if (def.wear) return wearSound(def.wear.slot);
+  return 'move';
+}
+
+const SOUND_PRIORITY: Record<ItemSound, number> = {
+  drag: 0,
+  click: 0,
+  move: 1,
+  pick: 1,
+  drop: 1,
+  cloth: 2,
+  helmet: 3,
+  vest: 4,
+  weapon: 5,
+  invOpen: 0,
+  invClose: 0,
+  bandage: 0,
+  eat: 0,
+  drink: 0,
+};
+
 export interface InventoryHost {
   inventory: Inventory;
   survival: Survival;
@@ -1002,6 +1026,7 @@ export class InventoryPanel {
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         inv.setQuick(i, inv.quick[i] === id ? null : id);
+        sfx.item(itemTransferSound(id));
         this.render();
       });
       row.append(b);
@@ -1082,9 +1107,13 @@ export class InventoryPanel {
       d.ghost.remove();
       const target = this.dropAt(e.clientX, e.clientY);
       if (target) {
-        sfx.item('drop');
         this.move(d.place, target.target);
       } else this.render();
+      return;
+    }
+    if (e.ctrlKey) {
+      this.lastTap.key = '';
+      this.primary(d.place);
       return;
     }
     const key = placeKey(d.place);
@@ -1184,13 +1213,13 @@ export class InventoryPanel {
     }
     if (place.from === 'box' && isBagTarget) {
       if (this.take(place.uid, this.boxStack(place.uid)?.count ?? 1) && toBagZone && this.selected?.from === 'bag') {
-        this.moveToBagZone(this.selected.uid, toBagZone);
+        this.moveToBagZone(this.selected.uid, toBagZone, true);
       }
       return;
     }
     if (place.from === 'corpseSlot' && isBagTarget) {
       if (this.takeFromCorpseSlot(place.slot) && toBagZone && this.selected?.from === 'bag') {
-        this.moveToBagZone(this.selected.uid, toBagZone);
+        this.moveToBagZone(this.selected.uid, toBagZone, true);
       }
       return;
     }
@@ -1200,7 +1229,7 @@ export class InventoryPanel {
         toBagZone &&
         this.selected?.from === 'bag'
       ) {
-        this.moveToBagZone(this.selected.uid, toBagZone);
+        this.moveToBagZone(this.selected.uid, toBagZone, true);
       }
       return;
     }
@@ -1237,7 +1266,7 @@ export class InventoryPanel {
     return true;
   }
 
-  private moveToBagZone(uid: string, targetZone: BagSection): boolean {
+  private moveToBagZone(uid: string, targetZone: BagSection, silent = false): boolean {
     const inv = this.host.inventory;
     const stack = inv.stackByUid(uid);
     if (!stack) return false;
@@ -1247,7 +1276,7 @@ export class InventoryPanel {
     }
     stack.bagZone = targetZone;
     inv.version++;
-    sfx.item('move');
+    if (!silent) sfx.item(itemTransferSound(stack.id));
     this.selected = { from: 'bag', uid, id: stack.id, zone: targetZone };
     this.render();
     return true;
@@ -1342,7 +1371,6 @@ export class InventoryPanel {
     if (got > 0) {
       const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === id);
       addedStackUid = added ? ensureStackUid(added) : null;
-      sfx.item('pick');
     }
     if (got < count) this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
     if (got > 0 && then === 'wear' && addedStackUid) {
@@ -1353,6 +1381,7 @@ export class InventoryPanel {
       this.equip({ from: 'bag', uid: addedStackUid, id, zone: 'pack' });
       return true;
     }
+    if (got > 0) sfx.item(itemTransferSound(id));
     this.selected = got > 0 && addedStackUid ? { from: 'bag', uid: addedStackUid, id, zone: 'pack' } : this.selected;
     this.render();
     return got > 0;
@@ -1380,7 +1409,6 @@ export class InventoryPanel {
     }
     const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === taken.id);
     const newUid = added ? ensureStackUid(added) : null;
-    sfx.item('pick');
     if (autoAction && newUid) {
       if (ITEMS[taken.id].wear) {
         this.wear({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
@@ -1391,6 +1419,7 @@ export class InventoryPanel {
         return true;
       }
     }
+    sfx.item(itemTransferSound(taken.id));
     this.selected = newUid ? { from: 'bag', uid: newUid, id: taken.id, zone: 'pack' } : null;
     this.render();
     return true;
@@ -1423,7 +1452,6 @@ export class InventoryPanel {
     }
     const added = inv.stacks.find((s) => !beforeUids.has(ensureStackUid(s))) ?? inv.stacks.find((s) => s.id === taken.id);
     const newUid = added ? ensureStackUid(added) : null;
-    sfx.item('pick');
     if (got < count) this.ctx.hud.toast(tr('Слишком тяжело', 'Too heavy'));
     if (then === 'wear' && newUid) {
       this.wear({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
@@ -1433,6 +1461,7 @@ export class InventoryPanel {
       this.equip({ from: 'bag', uid: newUid, id: taken.id, zone: 'pack' });
       return true;
     }
+    sfx.item(itemTransferSound(taken.id));
     this.selected = newUid ? { from: 'bag', uid: newUid, id: taken.id, zone: 'pack' } : this.selected;
     this.render();
     return true;
@@ -1443,13 +1472,22 @@ export class InventoryPanel {
     if (!ref) return;
     const corpse = this.host.containers.corpseOf(ref);
     let full = false;
+    let movedCount = 0;
+    let bestSound: ItemSound = 'move';
+    const noteSound = (id: ItemId) => {
+      movedCount++;
+      const next = itemTransferSound(id);
+      if (SOUND_PRIORITY[next] > SOUND_PRIORITY[bestSound]) bestSound = next;
+    };
     if (corpse) {
       for (const slot of Object.keys(corpse.slots) as CorpseSlotKey[]) {
         const st = corpse.slots[slot];
         if (!st) continue;
         const got = this.host.inventory.add(st.id, st.count, st.dirt ?? 0, st.tint, st.mods);
-        if (got > 0) this.host.containers.takeCorpseSlot(ref, slot);
-        else full = true;
+        if (got > 0) {
+          this.host.containers.takeCorpseSlot(ref, slot);
+          noteSound(st.id);
+        } else full = true;
       }
       for (const cz of ['rig', 'pockets', 'backpack'] as const) {
         if (!isCorpseZoneSearched(corpse, cz)) continue;
@@ -1457,6 +1495,7 @@ export class InventoryPanel {
           const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint, s.mods);
           if (got > 0) {
             this.host.containers.takeCorpseItem(ref, cz, ensureStackUid(s), got);
+            noteSound(s.id);
           }
           if (got < s.count) full = true;
         }
@@ -1464,12 +1503,15 @@ export class InventoryPanel {
     } else {
       for (const s of [...this.host.containers.contents(ref)]) {
         const got = this.host.inventory.add(s.id, s.count, s.dirt ?? 0, s.tint, s.mods);
-        if (got > 0) this.host.containers.takeByUid(ref, ensureStackUid(s), got);
+        if (got > 0) {
+          this.host.containers.takeByUid(ref, ensureStackUid(s), got);
+          noteSound(s.id);
+        }
         if (got < s.count) full = true;
       }
     }
     if (full) this.ctx.hud.toast(tr('Не всё влезло', 'Not everything fit'));
-    sfx.item('pick');
+    if (movedCount > 0) sfx.item(bestSound);
     this.selected = null;
     this.render();
   }
@@ -1497,8 +1539,8 @@ export class InventoryPanel {
       } else {
         this.host.containers.put(ref, id, removed, dirt, tint);
       }
+      sfx.item(itemTransferSound(id));
     }
-    sfx.item('move');
     this.selected = null;
     this.render();
   }
@@ -1506,7 +1548,10 @@ export class InventoryPanel {
   private drop(place: Place): void {
     if (place.from !== 'bag') return;
     const s = this.host.inventory.stackByUid(place.uid);
-    if (s) this.host.inventory.removeByUid(place.uid, s.count);
+    if (s) {
+      const id = s.id;
+      if (this.host.inventory.removeByUid(place.uid, s.count) > 0) sfx.item(itemTransferSound(id));
+    }
     this.selected = null;
     this.render();
   }

@@ -26,6 +26,8 @@ const TOUCH_ICONS: Partial<Record<Action, string>> = {
   use: touchIcon('use'),
   reload: touchIcon('reload'),
   aim: touchIcon('aim'),
+  checkAmmo:
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l1.4 11.8c.2 2.1.7 3.8 1.4 5.2l-5.6 1.3c-1.1-1.7-1.8-3.8-2-6.2L8 3Z"/><path d="M8.6 7.5h8.1M9.2 12h8" opacity=".6"/></svg>',
 };
 
 /**
@@ -101,6 +103,7 @@ export class TouchInput {
       (this.useButton = this.button(['Обыск', 'Use'], 'use', 'tap', 'touch__btn--use')),
       this.button(['Перезар.', 'Reload'], 'reload', 'tap', 'touch__btn--gun touch__btn--reload'),
       this.button(['Прицел', 'Aim'], 'aim', 'latch', 'touch__btn--gun touch__btn--aim'),
+      this.button(['Магазин', 'Check mag'], 'checkAmmo', 'tap', 'touch__btn--gun touch__btn--magcheck'),
     );
     this.root.append(this.stick, topBar, buttons);
     parent.append(this.root);

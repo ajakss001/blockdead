@@ -346,9 +346,9 @@ export class Sound {
   }
 
   private maybeWoodCreak(out: Out, t: number, sharp: boolean, baseGain: number): void {
-    if (t < this.nextWoodCreakAt || Math.random() >= 0.05) return;
+    if (t < this.nextWoodCreakAt || Math.random() >= 0.005) return;
     if (this.sample(out, t + 0.02 + Math.random() * 0.02, sharp ? 'woodCreakSharp' : 'woodCreak', { vary: 0.08, gain: baseGain * 0.65 })) {
-      this.nextWoodCreakAt = t + 3.0 + Math.random() * 1.0;
+      this.nextWoodCreakAt = t + 10.0 + Math.random() * 5.0;
     }
   }
 
@@ -584,8 +584,10 @@ export class Sound {
       this.sample(out, t, 'gunBolt', { rate: boltRate, vary: 0.04, gain: kind === 'slideLock' ? 0.52 : 0.64 });
     } else if (kind === 'draw' || kind === 'holster') {
       this.sample(out, t, 'uiEquipWeapon', { rate: kind === 'draw' ? pitch : pitch * 0.94, vary: 0.05, gain: 0.62 });
-    } else if (kind === 'mode' || kind === 'shell') {
-      this.sample(out, t, 'uiItemMove', { rate: kind === 'mode' ? 1.15 * pitch : pitch, vary: 0.05, gain: 0.55 });
+    } else if (kind === 'mode') {
+      this.sample(out, t, 'uiItemMove', { rate: 1.18 * pitch, vary: 0.04, gain: 1.05 });
+    } else if (kind === 'shell') {
+      this.sample(out, t, 'uiItemMove', { rate: pitch, vary: 0.05, gain: 0.55 });
     }
   }
 
@@ -791,7 +793,7 @@ export class Sound {
   }
 
   item(kind: ItemSound): void {
-    const v = this.voice(null, 1.2);
+    const v = this.voice(null, 1.2, 1.5, true, 'ui');
     if (!v) return;
     const [out, t] = v;
     switch (kind) {

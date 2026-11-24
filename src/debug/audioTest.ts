@@ -11,7 +11,9 @@ import { Inventory } from '../systems/Inventory';
 import { type ZombieWorld, ZombieSim } from '../systems/zombies';
 import { giveLoadout } from '../weapons/give';
 import type { GunId } from '../weapons/guns';
-import type { CollisionWorld } from '../world/CollisionWorld';
+import { type BuildingDesc, FLOOR_H, highriseSurfaceY, local as highriseLocal } from '../world/gen/highrise';
+import { CollisionWorld } from '../world/CollisionWorld';
+import { Doors } from '../world/Doors';
 import { BAND, CHUNK, ROAD_HALF, WorldLayout } from '../world/gen/layout';
 
 type FsMod = {
@@ -31,6 +33,7 @@ interface PlayedSample {
   group: SampleGroup;
   rate: number;
   startTime: number;
+  gain: number;
 }
 
 interface CreatedPanner {
@@ -153,15 +156,20 @@ function createMockWebAudio() {
       };
     },
     createBufferSource() {
+      let gainNode: { gain?: { value: number } } | null = null;
       const node = {
         ...baseNode(this),
+        connect(dest: unknown) {
+          gainNode = dest as { gain?: { value: number } };
+          return dest;
+        },
         buffer: null as AudioBuffer | null,
         loop: false,
         playbackRate: makeParam(1),
         start(when = 0) {
           if (node.buffer) {
             const grp = bufToGroup.get(node.buffer);
-            if (grp) played.push({ group: grp, rate: node.playbackRate.value, startTime: when });
+            if (grp) played.push({ group: grp, rate: node.playbackRate.value, startTime: when, gain: gainNode?.gain?.value ?? 1 });
           }
         },
         stop() {},
@@ -432,6 +440,15 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
   expectPlayed(() => s.containerOpen('box', { x: 1, y: 0.8, z: 1 }), 'lootBoxCardboard', 'Loot cardboard box');
   expectPlayed(() => s.containerOpen('bag', { x: 1, y: 0.8, z: 1 }), 'lootBagZip', 'Loot bag zip');
 
+  // Fire-mode selector switch must be clearly audible (gain >= 0.95)
+  const modeStart = mock.played.length;
+  s.gunMech('mode');
+  mock.advance(2.5);
+  const modeHit = mock.played.slice(modeStart).find((p) => p.group === 'uiItemMove');
+  assert(modeHit && modeHit.gain >= 0.95, `Fire mode switch gain too low (${modeHit?.gain})`);
+
+  // Inventory/equip UI sounds must still fire reliably even while world audio is muted (inventory/corpse UI open)
+  (s as unknown as { worldMute: boolean }).worldMute = true;
   for (const [uiKind, grp] of [
     ['move', 'uiItemMove'],
     ['weapon', 'uiEquipWeapon'],
@@ -443,20 +460,21 @@ function testSoundEngineAndAllEvents(manifest: Record<SampleGroup, string[]>): v
     s.item(uiKind);
     mock.advance(2.5);
     const hit = mock.played.slice(startIdx).find((p) => p.group === grp);
-    assert(hit, `Inventory UI '${uiKind}' expected ${grp}`);
+    assert(hit, `Inventory UI '${uiKind}' expected ${grp} even with worldMute=true`);
     assert(hit.rate >= 0.949 && hit.rate <= 1.051, `Inventory UI '${uiKind}' pitch ${hit.rate} outside [0.95, 1.05]`);
   }
+  (s as unknown as { worldMute: boolean }).worldMute = false;
 
-  // Verify wood creak happens rarely (~5%) and never breaks its 3.0s cooldown.
+  // Verify wood creak happens very rarely (~0.5%) and respects 10-15s cooldown.
   const creakStart = mock.played.length;
-  for (let i = 0; i < 400; i++) {
+  for (let i = 0; i < 2000; i++) {
     s.step('wood', 'walk', { x: 0, y: 0, z: 0 }, 1, true, (i % 2) as 0 | 1);
     mock.advance(0.2);
   }
   const creaks = mock.played.slice(creakStart).filter((p) => p.group === 'woodCreak');
-  assert(creaks.length <= 38, `Wood creak triggered too often (${creaks.length}/400 > 5% budget)`);
+  assert(creaks.length <= 24, `Wood creak triggered too often (${creaks.length}/2000 > 0.5% budget)`);
   for (let i = 1; i < creaks.length; i++) {
-    assert(creaks[i].startTime - creaks[i - 1].startTime >= 2.95, `Wood creak cooldown violated (${(creaks[i].startTime - creaks[i - 1].startTime).toFixed(2)}s)`);
+    assert(creaks[i].startTime - creaks[i - 1].startTime >= 9.95, `Wood creak cooldown violated (${(creaks[i].startTime - creaks[i - 1].startTime).toFixed(2)}s)`);
   }
   assert(MISSING_WAV_EVENTS.length >= 10, 'Expected documented MISSING_WAV_EVENTS list');
 
@@ -624,10 +642,57 @@ function testFootstepRhythmAndSurfaces(): void {
   console.log(`[audioTest] Part 3 PASS: Sprint ${sp.count} steps (maxGap=${sp.maxGap.toFixed(3)}s), Walk ${wk.count} steps (maxGap=${wk.maxGap.toFixed(3)}s), Crouch ${cr.count} steps — 1:1 phase-locked with bob.`);
 }
 
+function testCollisionsAndHighriseBounds(): void {
+  // 1. Thin partition (0.12 m) expands to >= 0.25 m, blocks bullets & high-speed sprinting without tunneling.
+  const cw = new CollisionWorld();
+  cw.addBox(-5, -0.06, 5, 0.06, 0, 2.8);
+  const hitWall = cw.rayHit(0, 1.4, -2, 0, 0, 1, 10);
+  assert(hitWall >= 0 && hitWall < 2.0, `Expected rayHit on expanded partition wall, got ${hitWall}`);
+  let boxMaxZ = -Infinity;
+  cw.boxesNear(0, 0, 1, (b) => {
+    boxMaxZ = Math.max(boxMaxZ, b.maxZ - b.minZ);
+  });
+  assert(boxMaxZ >= 0.249, `Partition wall thickness must be >= 0.25m, got ${boxMaxZ}`);
+
+  const mover = new PlayerController(new Vector3(0, 0, -0.6), Math.PI);
+  const runForward = {
+    moveX: 0,
+    moveY: 1,
+    consumePressed: () => false,
+    isHeld: (a: string) => a === 'sprint',
+  } as unknown as InputManager;
+  for (let i = 0; i < 90; i++) mover.fixedUpdate(1 / 60, runForward, cw, () => 0);
+  assert(mover.position.z < -0.1, `Player tunneled through thin wall (z=${mover.position.z})`);
+
+  // 2. Closed door blocks both player movement and bullets (>= 0.25 m), while opening lets them pass.
+  const doorScene = new Scene();
+  const doors = new Doors(doorScene, cw);
+  doors.add(1, [{ hx: -0.5, hz: 3.0, y: 0, yaw: 0, swing: 1, barricaded: false, open: false }]);
+  const doorHit = cw.rayHit(0, 1.2, 2.0, 0, 0, 1, 5);
+  assert(doorHit >= 0 && doorHit < 1.0, `Expected rayHit on closed door, got ${doorHit}`);
+  assert(doors.toggle({ building: 1, index: 0 }), 'Expected closed door toggle');
+  const openHit = cw.rayHit(0, 1.2, 2.0, 0, 0, 1, 5);
+  assert(openHit < 0, `Expected open door to allow bullets through, got ${openHit}`);
+
+  // 3. Upper floors never create phantom mid-air ground outside building facade (only interior + fire escape).
+  const desc: BuildingDesc = { id: 42, cx: 0, cz: 0, w: 16, d: 14, floors: 4, facade: 'facadeConcrete', flip: false, kind: 'apartments', seed: 7 };
+  const L = highriseLocal(desc);
+  const upperY = 2 * FLOOR_H;
+  assert(highriseSurfaceY(desc, L.x1 + 0.8, 0, upperY) === null, 'Phantom air surface outside east facade');
+  assert(highriseSurfaceY(desc, L.x0 - 0.8, 0, upperY) === null, 'Phantom air surface outside west facade');
+  assert(highriseSurfaceY(desc, 0, L.z0 - 0.8, upperY) === null, 'Phantom air surface outside front facade');
+  assert(highriseSurfaceY(desc, 0, L.iz0 + 1.0, upperY) === upperY, 'Valid interior floor missing');
+  const feMidX = (L.x0 + L.x1) / 2;
+  assert(highriseSurfaceY(desc, feMidX - 2.4, L.z1 + 0.5, upperY) !== null, 'Fire escape walkable landing missing');
+  doors.remove(1);
+  console.log('[audioTest] Part 4 PASS: Wall/door >=0.25m colliders, swept anti-tunneling, and zero phantom mid-air surfaces.');
+}
+
 export async function main(): Promise<number> {
   const manifest = auditAllAudioAssets();
   testSoundEngineAndAllEvents(manifest);
   testFootstepRhythmAndSurfaces();
+  testCollisionsAndHighriseBounds();
   console.log('[audioTest] ALL AUDIO AUDITS & EVENT TESTS PASSED.');
   return 0;
 }

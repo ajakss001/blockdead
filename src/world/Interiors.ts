@@ -129,13 +129,16 @@ export class Interiors {
     if (!list) return null;
     for (let i = 0; i < list.length; i++) {
       const d = list[i];
-      if (insideFootprint(d, x, z)) return highriseSurfaceY(d, x, z, y);
+      if (insideFootprint(d, x, z)) {
+        const sy = highriseSurfaceY(d, x, z, y);
+        if (sy !== null) return sy;
+      }
     }
     for (let i = 0; i < list.length; i++) {
       const d = list[i];
       if (insideFootprint(d, x, z, 1.8)) {
         const sy = highriseSurfaceY(d, x, z, y);
-        if (sy > 0.05) return sy;
+        if (sy !== null && sy > 0.05) return sy;
       }
     }
     return null;

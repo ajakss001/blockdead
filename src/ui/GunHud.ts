@@ -31,16 +31,33 @@ export interface GunHudFrame {
   quick: readonly (ItemId | null)[];
   hand: ItemId | null;
   touch: boolean;
+  inVehicle?: boolean;
 }
 
 const WHITE = 'rgba(214,212,202,';
 
-function magCheckLabel(mag: number, cap: number): string {
-  if (mag <= 0) return tr('Пусто', 'Empty');
-  const k = mag / Math.max(1, cap);
-  if (k >= 0.85) return tr('Полон', 'Full');
-  if (k >= 0.45) return tr('Половина', 'Half');
-  return tr('Мало', 'Low');
+function magCheckStatus(magTotal: number, capacity: number): string {
+  if (magTotal <= 0) return tr('Пуст', 'Empty');
+  const cap = Math.max(1, capacity);
+  if (magTotal >= cap) return tr('Полон', 'Full');
+  const ratio = magTotal / cap;
+  if (ratio >= 0.75) return tr('Почти полон', 'Almost full');
+  if (ratio >= 0.4) return tr('Около половины', 'About half');
+  if (ratio >= 0.15) return tr('Меньше половины', 'Less than half');
+  return tr('Почти пуст', 'Almost empty');
+}
+
+function magCheckMode(gun: GunHudState): string {
+  const g = GUNS[gun.id];
+  const raw = gun.mode.toUpperCase();
+  if (raw.includes('АВТО') || raw.includes('AUTO')) return tr('АВТО', 'AUTO');
+  if (raw.includes('ОДИН') || raw.includes('SEMI')) return tr('ОДИН.', 'SEMI');
+  if (raw.includes('ПОМП') || raw.includes('PUMP')) return tr('ПОМПА', 'PUMP');
+  if (raw.includes('ЗАТВОР') || raw.includes('БОЛТ') || raw.includes('BOLT')) return tr('БОЛТ', 'BOLT');
+  if (g.action === 'pump') return tr('ПОМПА', 'PUMP');
+  if (g.action === 'bolt') return tr('БОЛТ', 'BOLT');
+  if (g.action === 'auto') return tr('ОДИН.', 'SEMI');
+  return raw;
 }
 
 export class GunHud {
@@ -52,11 +69,14 @@ export class GunHud {
   private readonly count = document.createElement('div');
   private readonly mode = document.createElement('div');
   private readonly reload = document.createElement('div');
+  private readonly magPopup = document.createElement('div');
+  private readonly magStatus = document.createElement('span');
+  private readonly magMode = document.createElement('div');
   private readonly textWrap = document.createElement('div');
   private readonly slots = document.createElement('div');
   private readonly slotEls: HTMLButtonElement[] = [];
   private readonly dot: HTMLElement | null;
-  private key = '';
+  private magKey = '';
   private slotKey = '';
   private noiseAge = 9;
   private lastNoise = 0;
@@ -79,6 +99,19 @@ export class GunHud {
     this.textWrap.className = 'gunhud__text';
     this.textWrap.append(this.count, this.mode);
     this.panel.append(this.textWrap, this.icon);
+
+    this.magPopup.className = 'gunhud__magcheck';
+    const magRow = document.createElement('div');
+    magRow.className = 'gunhud__magcheck-row';
+    const magIcon = document.createElement('span');
+    magIcon.className = 'gunhud__magcheck-icon';
+    magIcon.innerHTML =
+      '<svg viewBox="0 0 18 22" width="14" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M5 2h8l1.2 11.2c.2 2.2.8 4.1 1.6 5.6l-5.2 1.2c-1-1.8-1.6-3.9-1.8-6.4L5 2Z"/><path d="M5.5 6.5h7.8M6 10.5h7.8" opacity=".55"/></svg>';
+    this.magStatus.className = 'gunhud__magcheck-status';
+    magRow.append(magIcon, this.magStatus);
+    this.magMode.className = 'gunhud__magcheck-mode';
+    this.magPopup.append(magRow, this.magMode);
+
     this.slots.className = 'quickslots';
     for (let i = 0; i < 4; i++) {
       const b = document.createElement('button');
@@ -92,7 +125,7 @@ export class GunHud {
       this.slotEls.push(b);
       this.slots.append(b);
     }
-    parent.append(this.canvas, this.panel, this.reload, this.slots);
+    parent.append(this.canvas, this.panel, this.reload, this.magPopup, this.slots);
     this.dot = parent.querySelector('.crosshair');
   }
 
@@ -104,6 +137,20 @@ export class GunHud {
 
   update(dt: number, f: GunHudFrame): void {
     this.noiseAge += dt;
+    if (f.inVehicle) {
+      if (this.dot) this.dot.style.visibility = 'hidden';
+      this.panel.hidden = true;
+      this.reload.hidden = true;
+      this.magPopup.classList.remove('is-visible');
+      this.slots.hidden = true;
+      this.updateTouch(f);
+      const c = this.canvas;
+      const g = this.g;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, c.width, c.height);
+      return;
+    }
+    this.slots.hidden = false;
     const gun = f.gun;
     this.updatePanel(f);
     this.updateSlots(f);
@@ -114,28 +161,29 @@ export class GunHud {
 
   private updatePanel(f: GunHudFrame): void {
     const gun = f.gun;
-    this.panel.hidden = !gun;
+    // Permanent bottom-right weapon/ammo HUD stays hidden; only tactical mag-check & reload/jam warnings appear.
+    this.panel.hidden = true;
+    this.textWrap.classList.remove('is-visible');
     if (!gun) {
       this.reload.hidden = true;
-      this.textWrap.classList.remove('is-visible');
+      this.magPopup.classList.remove('is-visible');
       return;
     }
-    const low = gun.mag <= Math.max(1, Math.floor(gun.capacity * 0.25));
-    const magCheck = gun.magCheckLeft > 0 || gun.reloading || gun.jammed;
-    const label = magCheckLabel(gun.mag, gun.capacity);
-    const key = `${gun.id}|${gun.mag}|${gun.capacity}|${gun.mode}|${low}|${gun.jammed}|${magCheck}|${f.touch}|${getLang()}`;
-    if (key !== this.key) {
-      this.key = key;
-      this.icon.src = itemIcon(gun.id as ItemId);
-      this.icon.className = isCustomItemIcon(gun.id as ItemId) ? 'gunhud__icon is-hd' : 'gunhud__icon';
-      this.count.textContent = gun.jammed ? tr('ЗАКЛИНИЛО', 'JAMMED') : `${gun.mag} / ${gun.capacity} · ${label}`;
-      this.count.style.color = gun.jammed || gun.mag === 0 || low ? '#e27468' : '';
-      const modeText = GUNS[gun.id].modes.length > 1 ? gun.mode : '';
-      this.mode.textContent = modeText;
-      this.mode.hidden = !modeText;
+    const showMag = !f.inVehicle && gun.magCheckLeft > 0;
+    if (showMag) {
+      const status = gun.jammed ? tr('Заклинило', 'Jammed') : magCheckStatus(gun.mag, gun.capacity);
+      const modeText = magCheckMode(gun);
+      const key = `${gun.id}|${status}|${modeText}|${gun.jammed ? 1 : 0}|${getLang()}`;
+      if (key !== this.magKey) {
+        this.magKey = key;
+        this.magStatus.textContent = status;
+        this.magStatus.style.color = gun.jammed || gun.mag <= 0 ? '#f0867a' : '';
+        this.magMode.textContent = modeText;
+        this.magMode.hidden = !modeText;
+      }
     }
-    this.panel.style.opacity = '1';
-    this.textWrap.classList.toggle('is-visible', magCheck);
+    this.magPopup.classList.toggle('is-visible', showMag);
+
     const wantReload = gun.mag === 0 && !gun.reloading && gun.reserve > 0;
     this.reload.hidden = !wantReload && !gun.jammed;
     this.reload.textContent = gun.jammed
@@ -297,6 +345,7 @@ export class GunHud {
     this.canvas.remove();
     this.panel.remove();
     this.reload.remove();
+    this.magPopup.remove();
     this.slots.remove();
   }
 }

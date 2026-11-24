@@ -1448,6 +1448,7 @@ body.cb-ui-active .story-tracker,
 body.cb-ui-active .story-briefing,
 body.cb-ui-active .gunhud,
 body.cb-ui-active .gunhud__canvas,
+body.cb-ui-active .gunhud__magcheck,
 body.cb-ui-active .quickslots,
 body.cb-ui-active .car-dash,
 body.cb-ui-active .touch {
@@ -2055,12 +2056,23 @@ body.main-menu-open .story-briefing,
 body.main-menu-open .gunhud,
 body.main-menu-open .gunhud__canvas,
 body.main-menu-open .gunhud__reload,
+body.main-menu-open .gunhud__magcheck,
 body.main-menu-open .quickslots,
 body.main-menu-open .car-dash,
 body.main-menu-open .touch,
 body.main-menu-open .soft-hint,
 body.main-menu-open .debug,
 body.main-menu-open .sleep {
+  display: none !important;
+}
+
+/* Hide reticle, crosshair, and weapon overlays completely while inside a vehicle */
+body.in-vehicle .crosshair,
+body.in-vehicle .gunhud__canvas,
+body.in-vehicle .gunhud,
+body.in-vehicle .gunhud__reload,
+body.in-vehicle .gunhud__magcheck,
+body.in-vehicle .prompt {
   display: none !important;
 }
 
@@ -3058,51 +3070,195 @@ body.main-menu-open .sleep {
   image-rendering: auto;
 }
 
-/* Minimalist Tarkov Firearms HUD (bottom-right): pure translucent white silhouette, no frame */
+/* Minimalist Tarkov Mag Check popup (Alt+T / touch button) */
 .gunhud {
-  right: calc(env(safe-area-inset-right, 0px) + 18px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
-  min-width: 0;
-  padding: 0;
-  gap: 10px;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  color: rgba(244, 240, 232, 0.92);
-  font: 600 12px/1.2 ui-monospace, Consolas, monospace;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.65);
+  display: none !important;
 }
-.gunhud__icon {
-  width: 92px;
-  height: 44px;
-  object-fit: contain;
-  opacity: 0.64;
-  filter: brightness(0) invert(1) drop-shadow(0 2px 5px rgba(0, 0, 0, 0.85));
+#ui > .gunhud__magcheck {
+  pointer-events: none;
 }
-.gunhud__icon.is-hd {
-  image-rendering: auto;
-}
-.gunhud__text {
+.gunhud__magcheck {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 44px);
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.25s ease;
+  transition: opacity 0.28s ease;
+  pointer-events: none;
 }
-.gunhud__text.is-visible {
+.gunhud__magcheck.is-visible {
   opacity: 1;
 }
-.gunhud__name {
-  display: none;
+.gunhud__magcheck-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(246, 244, 240, 0.96);
+  filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.92));
 }
-.gunhud__count {
-  font-size: 13px;
-  letter-spacing: 0.6px;
+.gunhud__magcheck-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(244, 240, 234, 0.88);
+}
+.gunhud__magcheck-status {
+  font: 600 13px/1.2 system-ui, 'Segoe UI', sans-serif;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 10px rgba(0, 0, 0, 0.72);
   white-space: nowrap;
 }
-.gunhud__mode {
-  font-size: 10px;
-  letter-spacing: 0.8px;
-  opacity: 0.75;
-  min-height: 0;
+.gunhud__magcheck-mode {
+  font: 600 10px/1.1 ui-monospace, Consolas, monospace;
+  letter-spacing: 0.1em;
+  color: rgba(226, 222, 216, 0.78);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.92);
+}
+
+/* Compact touch mag-check button (touch screens only, while holding a weapon) */
+.touch__btn--magcheck {
+  width: 42px;
+  height: 42px;
+  right: calc(env(safe-area-inset-right, 0px) + 130px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 132px);
+  background: rgba(16, 17, 19, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* Minimalist bottom bar on PC (thin semi-transparent strip, no heavy borders) */
+.quickslots {
+  left: calc(env(safe-area-inset-left, 0px) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  gap: 2px;
+  padding: 2px 3px;
+  background: rgba(10, 11, 13, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+.quickslot {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: rgba(220, 216, 210, 0.65);
+}
+.quickslot.on {
+  border-color: rgba(194, 40, 34, 0.72);
+  background: rgba(168, 30, 24, 0.28);
+  color: #fff2ef;
+}
+.quickslot img {
+  width: 19px;
+  height: 19px;
+}
+.quickslot__n {
+  font-size: 7px;
+  left: 2px;
+  top: 1px;
+  opacity: 0.62;
+}
+.stamina {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  width: 140px;
+  height: 3px;
+  background: rgba(10, 11, 13, 0.38);
+}
+.car-dash {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  min-width: 420px;
+  padding: 5px 9px;
+  gap: 4px;
+  background: rgba(10, 11, 13, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(4px);
+}
+.car-dash__top {
+  padding-bottom: 3px;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Mobile / Phone responsive compact bottom UI bar */
+@media (max-width: 900px), (pointer: coarse), (max-height: 500px) {
+  .quickslots--touch {
+    top: calc(env(safe-area-inset-top, 0px) + 4px);
+    bottom: auto;
+    padding: 1px 3px;
+    gap: 2px;
+  }
+  .quickslot {
+    width: 21px;
+    height: 21px;
+  }
+  .quickslot img {
+    width: 16px;
+    height: 16px;
+  }
+  .quickslot__n {
+    font-size: 6px;
+  }
+  .stamina {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
+    width: 108px;
+    height: 3px;
+  }
+  .gunhud__magcheck {
+    top: calc(50% + 36px);
+  }
+  .gunhud__magcheck-status {
+    font-size: 12px;
+  }
+  .gunhud__magcheck-mode {
+    font-size: 9px;
+  }
+  .car-dash {
+    min-width: 0;
+    width: min(94vw, 390px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+    padding: 4px 7px;
+    gap: 3px;
+    font-size: 10px;
+  }
+  .car-dash__title {
+    font-size: 10px;
+  }
+  .car-dash__btn {
+    padding: 2px 5px;
+    font-size: 9px;
+  }
+  .car-dash__main {
+    gap: 6px;
+  }
+  .car-dash__speed {
+    padding: 2px 6px;
+  }
+  .car-dash__gear {
+    font-size: 11px;
+  }
+  .car-dash__kmh {
+    font-size: 16px;
+  }
+  .car-dash__unit {
+    font-size: 8px;
+  }
+  .car-dash__fuel {
+    min-width: 78px;
+  }
+  .car-dash__fuel-head {
+    font-size: 9px;
+  }
+  .car-dash__fuel-track {
+    height: 5px;
+  }
+  .car-dash__lamp {
+    padding: 2px 5px;
+    font-size: 9px;
+  }
 }
 
 /* 1x2 Vertical Magazines, Corpse Looting Pane & New Character Modal */
@@ -3189,4 +3345,119 @@ body.main-menu-open .sleep {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Character Editor: Dead Perimeter dark obsidian & crimson theme */
+.editor {
+  background: radial-gradient(circle at 22% 85%, rgba(128, 18, 16, 0.16), transparent 52%), #08090b;
+  color: #dedad4;
+}
+.editor__title {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #d94a42;
+}
+.editor__figure-wrap {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: radial-gradient(ellipse at 50% 92%, rgba(168, 30, 24, 0.18), rgba(12, 13, 16, 0.72) 58%);
+}
+.editor__drag {
+  color: rgba(210, 204, 198, 0.45);
+}
+.editor__name {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(14, 15, 18, 0.9);
+  color: #edeae4;
+}
+.editor__name:focus {
+  outline: none;
+  border-color: #c22822;
+}
+.editor__tab,
+.editor__chip,
+.editor__class,
+.editor__trait {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(16, 17, 20, 0.76);
+  color: #d0cac2;
+}
+.editor__tab { color: #a49e98; }
+.editor__tab:hover,
+.editor__chip:hover,
+.editor__class:hover,
+.editor__trait:hover:not(.off) {
+  border-color: rgba(217, 74, 66, 0.48);
+  color: #f4f0ea;
+}
+.editor__tab.on,
+.editor__chip.on,
+.editor__class.on,
+.editor__trait.on {
+  border-color: #c22822;
+  background: rgba(168, 30, 24, 0.36);
+  color: #fff2ef;
+}
+.editor__label,
+.editor__class-about,
+.editor__note,
+.editor__trait-about {
+  color: #948e88;
+}
+.editor__class-name,
+.editor__points {
+  color: #eeeae4;
+}
+.editor__class-skills,
+.editor__legacy {
+  color: #a8a29c;
+}
+.editor__range {
+  accent-color: #c22822;
+}
+.editor__pros,
+.editor__trait--good .editor__trait-name {
+  color: #8ec086;
+}
+.editor__cons,
+.editor__points--short,
+.editor__trait--bad .editor__trait-name {
+  color: #e25b54;
+}
+.editor__btn {
+  border-color: #c22822;
+  background: rgba(168, 30, 24, 0.42);
+  color: #fff2ef;
+}
+.editor__btn:hover {
+  border-color: #d94a42;
+  background: rgba(194, 40, 34, 0.58);
+}
+.editor__btn--quiet {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(16, 17, 20, 0.68);
+  color: #b4aea8;
+}
+.editor__btn--quiet:hover {
+  border-color: rgba(217, 74, 66, 0.45);
+  background: rgba(28, 16, 18, 0.72);
+  color: #f0ece6;
+}
+.editor__btn--off {
+  opacity: 0.58;
+  border-color: rgba(217, 74, 66, 0.6);
+}
+.lang-toggle {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(14, 15, 18, 0.85);
+}
+.lang-toggle__btn {
+  color: #96908a;
+}
+.lang-toggle__btn + .lang-toggle__btn {
+  border-left-color: rgba(255, 255, 255, 0.1);
+}
+.lang-toggle__btn.on {
+  background: rgba(168, 30, 24, 0.42);
+  color: #fff2ef;
+  box-shadow: inset 0 0 0 1px #c22822;
 }
