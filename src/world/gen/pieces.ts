@@ -246,7 +246,7 @@ export class Builder {
     this.s.set(sx, sy, sz);
     this.batch.add(this.box, color, this.m.compose(this.p, this.q.identity(), this.s), surface);
     // Over the block's own height: low ones (crates, sandbags, tables) can be jumped onto.
-    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz, y, y + sy);
+    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz, y, y + sy, surface === 'windowGlass' || surface === 'glass');
   }
 
   /** Arbitrary template with a local transform (in the current frame). */

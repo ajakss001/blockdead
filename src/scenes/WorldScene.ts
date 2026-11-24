@@ -457,9 +457,11 @@ export class WorldScene implements IScene {
       scene: this.scene,
       groundY: (x, z, y = 0) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
-      rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
+      rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
       boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
       buildingsNear: (x, z, r) => this.interiors.buildingsNear(x, z, r),
+      doorsNear: (x, y, z, r) => this.doors.doorsNear(x, y, z, r),
+      onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
       addRagdoll: (rd) => this.ragdolls.add(rd),
       removeRagdoll: (rd) => this.ragdolls.remove(rd),
       zombies: this.zombies,
@@ -1736,6 +1738,7 @@ export class WorldScene implements IScene {
   }
 
   private breakGlassAt(at: Vector3, dir: Vector3): void {
+    this.world.breakGlassAt(at.x, at.y, at.z, 0.65);
     const floorAt = (gx: number, gz: number) => this.interiors.surfaceY(gx, gz, at.y) ?? this.layout.walkHeightAt(gx, gz);
     const floorY = floorAt(at.x, at.z);
     sfx.glassBreak(at, { x: at.x, y: floorY + 0.05, z: at.z });

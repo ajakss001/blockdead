@@ -54,14 +54,19 @@ export async function main(): Promise<number> {
     const ragdolls: unknown[] = [];
     const lootedDrops: number[] = [];
     let playerDmg = 0;
+    let glassBreaks = 0;
 
     const bWorld: BanditWorld = {
       scene,
       groundY: (_x, _z, y = 0) => Math.max(0, Math.floor((y + 0.1) / FLOOR_H) * FLOOR_H),
       resolveCircle: (pos, r) => world.resolveCircle(pos, r),
-      rayHit: (ox, oy, oz, dx, dy, dz, max) => world.rayHit(ox, oy, oz, dx, dy, dz, max),
+      rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
       boxesNear: (x, z, r, out) => world.boxesNear(x, z, r, (b) => out.push(b)),
       buildingsNear: () => [],
+      doorsNear: doors ? (x, y, z, r) => doors.doorsNear(x, y, z, r) : undefined,
+      onBreakGlass: (at) => {
+        if (world.breakGlassAt(at.x, at.y, at.z, 0.7)) glassBreaks++;
+      },
       addRagdoll: (rd) => ragdolls.push(rd),
       removeRagdoll: () => {},
       zombies,
@@ -103,6 +108,7 @@ export async function main(): Promise<number> {
       spawn: (bandits as unknown as SpawnFn),
       lootedDrops,
       get playerDmg() { return playerDmg; },
+      get glassBreaks() { return glassBreaks; },
       resetPlayerDmg() { playerDmg = 0; },
     };
   };
@@ -186,6 +192,7 @@ export async function main(): Promise<number> {
     h.world.addBox(0.5, -0.1, 5, 0.1, 0, 3);
     h.world.addBox(-1.2, -4, -0.55, 0, 0, 3);
     h.world.addBox(0.55, -4, 1.2, 0, 0, 3);
+    h.world.addBox(-1.2, -4.1, 1.2, -3.9, 0, 3); // Seal back of corridor so closed-door check stays in front of door
     const doors = new Doors(h.scene, h.world);
     doors.add(1, [{ hx: -0.5, hz: 0, y: 0, yaw: 0, swing: 1, barricaded: false, width: 1.0, height: 2.1, open: false }]);
     h.spawn.spawnBot(0, 0, -2.5, 'scavs', 'street', 'pistol_g17', true);
@@ -426,6 +433,81 @@ export async function main(): Promise<number> {
     h.bandits.dispose();
   }
 
-  console.log('[banditTest] ALL 11 SUITES PASSED (walls/doors, no live loot, 2x HP, zonal armor, factions, doors, ambushers, bosses, 2-bone IK).');
+  // 12) A* navigation through side door around wall + intact window glass (no head-on window grinding).
+  {
+    const world = new CollisionWorld();
+    const scene = new Scene();
+    // Room x in [-3, 3], z in [0, 6]; front window glass [-1.2, 1.2] at z=0, closed side door at x=3, z=[2, 3].
+    world.addBox(-3.1, -0.1, -1.2, 0.1, 0, 3);
+    world.addBox(-1.2, -0.1, 1.2, 0.1, 0, 2.5, true); // intact windowGlass
+    world.addBox(1.2, -0.1, 3.1, 0.1, 0, 3);
+    world.addBox(-3.1, 0, -2.9, 6, 0, 3); // left wall
+    world.addBox(-3.1, 5.9, 3.1, 6.1, 0, 3); // back wall
+    world.addBox(2.9, 0, 3.1, 2.0, 0, 3); // right wall segment 1
+    world.addBox(2.9, 3.0, 3.1, 6.0, 0, 3); // right wall segment 2 leaving [2.0, 3.0] doorway
+    const doorsInWorld = new Doors(scene, world);
+    doorsInWorld.add(1, [{ hx: 3.0, hz: 2.0, y: 0, yaw: -Math.PI / 2, swing: 1, barricaded: false, width: 1.0, height: 2.1, open: false }]);
+    const h = createHarness(doorsInWorld, world, scene);
+
+    const bot = h.spawn.spawnBot(0, 0, -2.5, 'scavs', 'street', 'bat', false);
+    assert(h.bandits.hasLineOfSight(bot.pos.x, 1.5, bot.pos.z, 0, 1.5, 4.0) === true, 'Bot must see player through intact windowGlass');
+
+    for (let i = 0; i < 420; i++) {
+      doorsInWorld.update(1 / 60);
+      h.bandits.update(1 / 60, 0, 0, 4.0, false, false);
+    }
+    assert(
+      doorsInWorld.describe({ building: 1, index: 0 }) === 'open',
+      `A* bot failed to route to and open side door around glass (pos=${bot.pos.x.toFixed(2)},${bot.pos.z.toFixed(2)})`,
+    );
+    assert(bot.pos.z > 0.5, `Bot stuck outside wall/window instead of entering room via side door (pos=${bot.pos.x.toFixed(2)},${bot.pos.z.toFixed(2)})`);
+    assert(h.glassBreaks === 0, 'Melee bot broke window instead of navigating through door');
+    h.bandits.dispose();
+  }
+
+  // 13) Window glass: transparent for LOS, solid for movement, armed bot holds standoff & shoots through breaking glass.
+  {
+    const h = createHarness();
+    h.world.addBox(-12, -0.1, -1.5, 0.1, 0, 3);
+    h.world.addBox(-1.5, -0.1, 1.5, 0.1, 0, 2.5, true); // intact windowGlass
+    h.world.addBox(1.5, -0.1, 12, 0.1, 0, 3);
+
+    // Walk check: glass collider must stop player/bot capsule movement
+    const walkProbe = new Vector3(0, 0, -0.1);
+    h.world.resolveCircle(walkProbe, 0.34);
+    assert(walkProbe.z <= -0.34, `Window glass failed to block walking (probe.z=${walkProbe.z.toFixed(3)})`);
+
+    const bot = h.spawn.spawnBot(0, 0, -6.0, 'bear', 'street', 'rifle_ak', true);
+    bot.glassFlank = false;
+    assert(h.bandits.hasLineOfSight(bot.pos.x, 1.5, bot.pos.z, 0, 1.5, 4.0) === true, 'LOS must pass through intact glass');
+
+    for (let i = 0; i < 120; i++) h.bandits.update(1 / 60, 0, 0, 4.0, false, false);
+    assert(h.glassBreaks > 0, 'Armed bot failed to shatter window glass when shooting player behind it');
+    assert(h.playerDmg > 0, 'Bot bullets through broken glass failed to hit player');
+    assert(bot.pos.z < -1.0, `Armed bot rushed forehead-first into window glass (z=${bot.pos.z.toFixed(2)})`);
+    h.bandits.dispose();
+  }
+
+  // 14) Anti-stuck watchdog (0.8s / < 0.2m): marks blocked direction and reroutes around wide obstacle.
+  {
+    const h = createHarness();
+    h.world.addBox(-2.2, 0.65, 2.2, 0.95, 0, 3);
+    const bot = h.spawn.spawnBot(0, 0, 0.28, 'bear', 'street', 'rifle_ak', true);
+    bot.state = 'combat';
+    bot.reactT = 0;
+    // Inject stale direct waypoint pinning bot into wall at z=0.65 so anti-stuck must trigger after 0.8s
+    bot.navPath = [{ x: 0, y: 0, z: 5.0 }];
+    bot.navIdx = 0;
+    bot.navTimer = 5.0;
+    bot.navGoalX = 0;
+    bot.navGoalZ = 5.0;
+
+    for (let i = 0; i < 130; i++) h.bandits.update(1 / 60, 0, 0, 5.0, false, false);
+    assert(bot.blockedSpots.length >= 1, 'Anti-stuck watchdog failed to flag blocked spot after 0.8s < 0.2m stall');
+    assert(Math.abs(bot.pos.x) > 1.2 || bot.pos.z > 1.2, `Bot remained stuck after anti-stuck replan (${bot.pos.x.toFixed(2)},${bot.pos.z.toFixed(2)})`);
+    h.bandits.dispose();
+  }
+
+  console.log('[banditTest] ALL 14 SUITES PASSED (walls/doors, factions, bosses, 2-bone IK, A* door nav, glass reaction, anti-stuck).');
   return 0;
 }

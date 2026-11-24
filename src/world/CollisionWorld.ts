@@ -17,7 +17,7 @@ export const COLLIDER_STRIDE = 8;
 
 /** Anything that can receive static boxes: the live CollisionWorld or the worker's collector. */
 export interface ColliderSink {
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY?: number, maxY?: number): void;
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY?: number, maxY?: number, glass?: boolean): void;
   /** Box rotated about Y (cars): half sizes along its own X (length) and Z (width). Same yaw as three's rotation.y. */
   addOrientedBox(cx: number, cz: number, halfX: number, halfZ: number, yaw: number, minY?: number, maxY?: number): void;
 }
@@ -31,6 +31,10 @@ interface Box {
   minY: number;
   maxY: number;
   owner: number;
+  /** Transparent window glass: blocks movement, transparent to LOS and breakable by bullets. */
+  glass: boolean;
+  /** Door collider owned by Doors system (passable in bot A* if unlocked/unbarricaded). */
+  door: boolean;
   /** Oriented boxes only: center, half extents and rotation. */
   obb: { cx: number; cz: number; hx: number; hz: number; c: number; s: number } | null;
 }
@@ -56,7 +60,7 @@ export class CollisionWorld implements ColliderSink {
     return this.liveCount;
   }
 
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, door = false): void {
     let x0 = minX;
     let z0 = minZ;
     let x1 = maxX;
@@ -74,7 +78,7 @@ export class CollisionWorld implements ColliderSink {
         z1 = cz + MIN_WALL_THICKNESS * 0.5;
       }
     }
-    this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, obb: null });
+    this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, glass, door, obb: null });
   }
 
   addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
@@ -89,7 +93,7 @@ export class CollisionWorld implements ColliderSink {
     }
     const ex = hx * Math.abs(c) + hz * Math.abs(s);
     const ez = hx * Math.abs(s) + hz * Math.abs(c);
-    this.insert({ minX: cx - ex, minZ: cz - ez, maxX: cx + ex, maxZ: cz + ez, minY, maxY, owner: this.owner, obb: { cx, cz, hx, hz, c, s } });
+    this.insert({ minX: cx - ex, minZ: cz - ez, maxX: cx + ex, maxZ: cz + ez, minY, maxY, owner: this.owner, glass: false, door: false, obb: { cx, cz, hx, hz, c, s } });
   }
 
   private insert(box: Box): void {
@@ -132,39 +136,66 @@ export class CollisionWorld implements ColliderSink {
       const cz = packed[i + 1];
       const hx = packed[i + 2];
       const hz = packed[i + 3];
-      if (packed[i + 7] === 0) this.addBox(cx - hx, cz - hz, cx + hx, cz + hz, packed[i + 4], packed[i + 5]);
+      if (packed[i + 7] === 0) this.addBox(cx - hx, cz - hz, cx + hx, cz + hz, packed[i + 4], packed[i + 5], packed[i + 6] < 0);
       else this.addOrientedBox(cx, cz, hx, hz, Math.atan2(packed[i + 7], packed[i + 6]), packed[i + 4], packed[i + 5]);
     }
     this.owner = prev;
   }
 
   /** Add one box under a specific owner (doors). */
-  addOwned(owner: number, minX: number, minZ: number, maxX: number, maxZ: number, minY: number, maxY: number): void {
+  addOwned(owner: number, minX: number, minZ: number, maxX: number, maxZ: number, minY: number, maxY: number, door = false): void {
     const prev = this.owner;
     this.owner = owner;
-    this.addBox(minX, minZ, maxX, maxZ, minY, maxY);
+    this.addBox(minX, minZ, maxX, maxZ, minY, maxY, false, door);
     this.owner = prev;
+  }
+
+  private removeBoxById(id: number, cleanOwnerList = false): void {
+    const b = this.boxes[id];
+    if (!b) return;
+    this.forCells(b.minX, b.minZ, b.maxX, b.maxZ, (key) => {
+      const list = this.grid.get(key);
+      if (!list) return;
+      const i = list.indexOf(id);
+      if (i >= 0) list.splice(i, 1);
+      if (list.length === 0) this.grid.delete(key);
+    });
+    if (cleanOwnerList) {
+      const ownerIds = this.byOwner.get(b.owner);
+      if (ownerIds) {
+        const k = ownerIds.indexOf(id);
+        if (k >= 0) ownerIds.splice(k, 1);
+      }
+    }
+    this.boxes[id] = null;
+    this.freeIds.push(id);
+    this.liveCount--;
   }
 
   removeOwner(owner: number): void {
     const ids = this.byOwner.get(owner);
     if (!ids) return;
     for (let k = 0; k < ids.length; k++) {
-      const id = ids[k];
-      const b = this.boxes[id];
-      if (!b) continue;
-      this.forCells(b.minX, b.minZ, b.maxX, b.maxZ, (key) => {
-        const list = this.grid.get(key);
-        if (!list) return;
-        const i = list.indexOf(id);
-        if (i >= 0) list.splice(i, 1);
-        if (list.length === 0) this.grid.delete(key);
-      });
-      this.boxes[id] = null;
-      this.freeIds.push(id);
-      this.liveCount--;
+      this.removeBoxById(ids[k], false);
     }
     this.byOwner.delete(owner);
+  }
+
+  /** Remove any intact glass boxes overlapping `[x±r, y±r, z±r]` when shattered by a shot or blow. */
+  breakGlassAt(x: number, y: number, z: number, radius = 0.65): boolean {
+    this.query(x - radius, z - radius, x + radius, z + radius);
+    let broken = false;
+    for (let i = 0; i < this.candidates.length; i++) {
+      const id = this.candidates[i];
+      const b = this.boxes[id];
+      if (!b || !b.glass) continue;
+      if (b.maxX < x - radius || b.minX > x + radius) continue;
+      if (b.maxZ < z - radius || b.minZ > z + radius) continue;
+      if (b.maxY < y - radius || b.minY > y + radius) continue;
+      this.removeBoxById(id, true);
+      broken = true;
+    }
+    return broken;
   }
 
   /**
@@ -214,7 +245,7 @@ export class CollisionWorld implements ColliderSink {
   }
 
   /** Distance along a ray to the first box it enters (2D DDA across grid cells + exact slab test), or −1 within maxDist. */
-  rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): number {
+  rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number, ignoreGlass = false): number {
     const tClip = 0.02;
     if (maxDist < tClip || !Number.isFinite(ox + oy + oz + dx + dy + dz + maxDist)) return -1;
 
@@ -263,7 +294,7 @@ export class CollisionWorld implements ColliderSink {
           if (this.stamps[id] === stamp) continue;
           this.stamps[id] = stamp;
           const b = this.boxes[id];
-          if (!b) continue;
+          if (!b || (ignoreGlass && b.glass)) continue;
 
           // Y slab test first (fastest rejection for above/below floor boxes).
           let tMin = 0;
@@ -478,7 +509,7 @@ export class CollisionWorld implements ColliderSink {
   }
 
   /** Every box overlapping the square round (x, z) of half-size r: its bounds and, for a turned box, its frame. */
-  boxesNear(x: number, z: number, r: number, visit: (b: Readonly<Pick<Box, 'minX' | 'minZ' | 'maxX' | 'maxZ' | 'minY' | 'maxY' | 'obb'>>) => void): void {
+  boxesNear(x: number, z: number, r: number, visit: (b: Readonly<Pick<Box, 'minX' | 'minZ' | 'maxX' | 'maxZ' | 'minY' | 'maxY' | 'glass' | 'door' | 'obb'>>) => void): void {
     this.query(x - r, z - r, x + r, z + r);
     for (const id of [...this.candidates]) {
       const b = this.boxes[id];
@@ -519,8 +550,8 @@ export class CollisionWorld implements ColliderSink {
 /** Collects boxes into a flat array (worker side). */
 export class PackedColliders implements ColliderSink {
   readonly data: number[] = [];
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
-    this.data.push((minX + maxX) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2, minY, maxY, 1, 0);
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false): void {
+    this.data.push((minX + maxX) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2, minY, maxY, glass ? -1 : 1, 0);
   }
 
   addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {

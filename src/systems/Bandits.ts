@@ -27,7 +27,7 @@ import { slerpBoneWorld, solveTwoBoneIK } from '../characters/ik';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig, RagdollPose, stand } from '../characters/rig';
 import { ensureStackUid, type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot } from '../data/items';
-import { type Ragdoll, type StaticBox } from '../physics/ragdoll';
+import type { Ragdoll } from '../physics/ragdoll';
 import { BASE_LOOK, type Appearance, type Sex } from '../player/appearance';
 import { bodyFor, figureScale } from '../player/CharacterFigure';
 import { playerRagdoll } from '../player/deathBody';
@@ -36,8 +36,10 @@ import { gunRigData } from '../player/gunPose';
 import { buildHeldModel, HELD, type HeldId } from '../player/held';
 import { GunModel } from '../weapons/gunModel';
 import { GUNS, type GunId, MOD_FITS, type ModId } from '../weapons/guns';
+import type { DoorNavSpot } from '../world/Doors';
 import { type BuildingDesc, FLOOR_H } from '../world/gen/highrise';
 import { applyZonalArmor, type HitZone } from './Armor';
+import { type BlockedSpot, findBotPath, hasWalkableLine, type NavBox, type NavWaypoint } from './botNav';
 import type { CorpseData, CorpseSlotKey } from './Containers';
 import type { Worn } from './Inventory';
 import type { BanditTarget, Zombie, ZombieSim } from './zombies';
@@ -67,9 +69,11 @@ export interface BanditWorld {
   scene: Scene;
   groundY(x: number, z: number, y?: number): number;
   resolveCircle(pos: Vector3, r: number): void;
-  rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number): number;
-  boxesNear(x: number, z: number, r: number, out: StaticBox[]): void;
+  rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number, ignoreGlass?: boolean): number;
+  boxesNear(x: number, z: number, r: number, out: NavBox[]): void;
   buildingsNear(x: number, z: number, r: number): BuildingDesc[];
+  doorsNear?(x: number, y: number, z: number, r: number): DoorNavSpot[];
+  onBreakGlass?(at: Vector3, dir: Vector3): void;
   addRagdoll(rd: Ragdoll): void;
   removeRagdoll(rd: Ragdoll): void;
   zombies: ZombieSim;
@@ -290,6 +294,17 @@ export interface Bandit extends BanditTarget {
   flankT: number;
   lastHitT: number;
   ambushTriggered: boolean;
+  navPath: NavWaypoint[];
+  navIdx: number;
+  navTimer: number;
+  navGoalX: number;
+  navGoalY: number;
+  navGoalZ: number;
+  stuckTimer: number;
+  stuckAnchorX: number;
+  stuckAnchorZ: number;
+  blockedSpots: BlockedSpot[];
+  glassFlank: boolean;
   patrolYaw: number;
   patrolT: number;
   investigateX: number;
@@ -467,7 +482,7 @@ export class Bandits {
   private maxActive = MAX_ACTIVE;
   private disposed = false;
   private readonly tracers: Tracer[] = [];
-  private readonly coverBoxCache: StaticBox[] = [];
+  private readonly coverBoxCache: NavBox[] = [];
   private readonly tracerGeo = new BoxGeometry(0.025, 0.025, 1);
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
 
@@ -569,7 +584,12 @@ export class Bandits {
       b.doorCd = Math.max(0, b.doorCd - dt);
       b.coverT = Math.max(0, b.coverT - dt);
       b.flankT = Math.max(0, b.flankT - dt);
+      b.navTimer = Math.max(0, b.navTimer - dt);
       b.lastHitT += dt;
+      for (let k = b.blockedSpots.length - 1; k >= 0; k--) {
+        b.blockedSpots[k].ttl -= dt;
+        if (b.blockedSpots[k].ttl <= 0) b.blockedSpots.splice(k, 1);
+      }
 
       if (b.reloadT > 0) {
         b.reloadT -= dt;
@@ -657,6 +677,7 @@ export class Bandits {
         if (!hasTargetLOS && b.investigateT <= 0 && b.lastHitT > 6) b.state = 'patrol';
       } else if (b.role === 'ambusher' && !b.ambushTriggered) {
         // Patient room/stairwell ambusher: silently holds doorway angle crouched.
+        this.resetAntiStuck(b);
         b.crouching = true;
         b.aiming = 1;
         b.yaw = b.patrolYaw;
@@ -664,14 +685,11 @@ export class Bandits {
       } else {
         b.crouching = false;
         if (b.role === 'guard' && boss && !boss.isDead) {
-          const bdx = boss.pos.x - b.pos.x;
-          const bdz = boss.pos.z - b.pos.z;
-          const bd = Math.hypot(bdx, bdz);
+          const bd = Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z);
           if (bd > 5.8) {
-            b.yaw = Math.atan2(bdx, bdz);
-            this.moveOrOpenDoor(b, bdx / bd, bdz / bd, 2.5, dt);
-            moveSpeed = 2.5;
+            moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 2.5, dt, true);
           } else {
+            this.resetAntiStuck(b);
             b.patrolT -= dt;
             if (b.patrolT <= 0) {
               b.patrolYaw += (Math.random() - 0.5) * 1.8;
@@ -681,13 +699,12 @@ export class Bandits {
           }
         } else if (b.investigateT > 0) {
           b.investigateT -= dt;
-          const idx = b.investigateX - b.pos.x;
-          const idz = b.investigateZ - b.pos.z;
-          const idist = Math.hypot(idx, idz);
+          const idist = Math.hypot(b.investigateX - b.pos.x, b.investigateZ - b.pos.z);
           if (idist > 2.0) {
-            b.yaw = Math.atan2(idx, idz);
-            this.moveOrOpenDoor(b, idx / idist, idz / idist, 2.4, dt);
-            moveSpeed = 2.4;
+            const goalY = this.w.groundY(b.investigateX, b.investigateZ, b.pos.y);
+            moveSpeed = this.navigateToward(b, b.investigateX, goalY, b.investigateZ, 2.4, dt, true);
+          } else {
+            this.resetAntiStuck(b);
           }
         } else {
           b.patrolT -= dt;
@@ -696,11 +713,14 @@ export class Bandits {
             b.patrolT = 2.5 + Math.random() * 4;
           }
           b.yaw = b.patrolYaw;
-          const movedPatrol = this.moveOrOpenDoor(b, Math.sin(b.yaw), Math.cos(b.yaw), 1.55, dt);
+          const pdx = Math.sin(b.yaw);
+          const pdz = Math.cos(b.yaw);
+          const movedPatrol = this.moveOrOpenDoor(b, pdx, pdz, 1.55, dt);
+          this.trackAntiStuck(b, pdx, pdz, 1.55, dt);
           if (!movedPatrol && b.patrolT > 0.4) {
             b.patrolYaw += Math.PI * (0.55 + Math.random() * 0.4);
           }
-          moveSpeed = 1.55;
+          moveSpeed = movedPatrol ? 1.55 : 0;
         }
       }
 
@@ -790,15 +810,23 @@ export class Bandits {
 
     if (b.reactT > 0) {
       b.reactT -= dt;
+      this.resetAntiStuck(b);
       return 0;
     }
+
+    const goalFootY = targetBot ? targetBot.pos.y : ty - (inCar ? 1.05 : 1.38);
+    const glassHit = hasLOS ? this.glassBetween(b.pos.x, b.pos.y + 1.4, b.pos.z, tx, ty, tz) : null;
 
     if (b.spawnKind === 'sniper') {
       b.crouching = b.reloadT > 0 || b.burstPause > 0.15;
       if (b.hp < b.maxHp * 0.35 && dist < 24) {
-        this.moveOrOpenDoor(b, -nx, -nz, 1.8, dt);
-        return 1.8;
+        if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+          this.moveOrOpenDoor(b, -nx, -nz, 1.8, dt);
+          this.trackAntiStuck(b, -nx, -nz, 1.8, dt);
+          return 1.8;
+        }
       }
+      this.resetAntiStuck(b);
       if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
         this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
       }
@@ -808,14 +836,17 @@ export class Bandits {
     if (!b.isGun) {
       b.crouching = false;
       if (b.hp < b.maxHp * 0.25 && dist < 6) {
-        this.moveOrOpenDoor(b, -nx, -nz, 3.6, dt);
-        return 3.6;
+        if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+          this.moveOrOpenDoor(b, -nx, -nz, 3.6, dt);
+          this.trackAntiStuck(b, -nx, -nz, 3.6, dt);
+          return 3.6;
+        }
       }
-      if (dist > 1.65) {
-        this.moveOrOpenDoor(b, nx, nz, 4.25, dt);
-        return 4.25;
+      if (dist > 1.65 || !hasLOS || glassHit !== null) {
+        return this.navigateToward(b, tx, goalFootY, tz, 4.25, dt, false);
       }
-      if (hasLOS && b.meleeCd <= 0) {
+      this.resetAntiStuck(b);
+      if (b.meleeCd <= 0) {
         b.meleeCd = 1.05 + Math.random() * 0.25;
         b.swingT = 1;
         sfx.swing('heavy', 0.3, b.pos);
@@ -846,15 +877,21 @@ export class Bandits {
         const cDist = Math.hypot(cdx, cdz);
         if (cDist > 0.65) {
           b.crouching = false;
-          this.moveOrOpenDoor(b, cdx / cDist, cdz / cDist, 3.5, dt);
-          moveSpeed = 3.5;
+          const covY = this.w.groundY(b.coverX, b.coverZ, b.pos.y);
+          moveSpeed = this.navigateToward(b, b.coverX, covY, b.coverZ, 3.5, dt, false);
         } else {
           b.crouching = true;
+          this.resetAntiStuck(b);
         }
       } else {
         b.crouching = b.reloadT > 0 || b.healT > 0;
-        this.moveOrOpenDoor(b, -nx, -nz, 3.0, dt);
-        moveSpeed = 3.0;
+        if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+          this.moveOrOpenDoor(b, -nx, -nz, 3.0, dt);
+          this.trackAntiStuck(b, -nx, -nz, 3.0, dt);
+          moveSpeed = 3.0;
+        } else {
+          this.resetAntiStuck(b);
+        }
       }
       if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 24) {
         this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
@@ -863,11 +900,30 @@ export class Bandits {
     }
 
     // Ambusher prefers crouching at doorway unless flanked/pushed closely
-    if (b.role === 'ambusher' && hasLOS && dist > 4.5 && b.lastHitT > 2) {
+    if (b.role === 'ambusher' && hasLOS && glassHit === null && dist > 4.5 && b.lastHitT > 2) {
       b.crouching = true;
+      this.resetAntiStuck(b);
       if (b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 28) {
         this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
       }
+      return 0;
+    }
+
+    // Sees target through intact window glass: never run head-first into the pane; either shoot it or flank via door
+    if (glassHit !== null) {
+      b.crouching = b.burstPause > 0.25;
+      if (b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      }
+      if (b.glassFlank) {
+        return this.navigateToward(b, tx, goalFootY, tz, 3.1, dt, false);
+      }
+      if (glassHit.dist < 2.8 && hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+        this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
+        this.trackAntiStuck(b, -nx, -nz, 2.2, dt);
+        return 2.2;
+      }
+      this.resetAntiStuck(b);
       return 0;
     }
 
@@ -878,41 +934,35 @@ export class Bandits {
       // Aggressive push (guard avenging dead boss, or pushing reloading/fleeing target)
       const rushSpd = bossDeadEnraged ? 4.35 : 3.95;
       if (dist > 4.5 || !hasLOS) {
-        const lat = bossDeadEnraged ? 0.32 * b.flankSign : 0;
-        const rx = nx - nz * lat;
-        const rz = nz + nx * lat;
-        const rl = Math.hypot(rx, rz) || 1;
-        this.moveOrOpenDoor(b, rx / rl, rz / rl, rushSpd, dt);
-        moveSpeed = rushSpd;
+        moveSpeed = this.navigateToward(b, tx, goalFootY, tz, rushSpd, dt, false);
+      } else {
+        this.resetAntiStuck(b);
       }
     } else if (boss && !boss.isDead && !bossDamaged && Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z) > 7.5) {
       // Guard stays in perimeter around living boss
-      const bdx = boss.pos.x - b.pos.x;
-      const bdz = boss.pos.z - b.pos.z;
-      const bd = Math.hypot(bdx, bdz) || 1;
-      this.moveOrOpenDoor(b, bdx / bd, bdz / bd, 3.2, dt);
-      moveSpeed = 3.2;
+      moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 3.2, dt, false);
     } else if (!hasLOS || dist > (b.faction === 'black' || b.role === 'boss' ? 22 : 18)) {
-      // Advance or flank around blocking wall/corner (+ try opening doors on the way)
-      if (b.flankT <= 0 && !hasLOS) {
-        b.flankT = 2.0;
-        b.flankSign = Math.random() < 0.5 ? -1 : 1;
-      }
-      const flankAmt = bossDamaged ? 0.65 : !hasLOS ? 0.55 : 0.28;
-      const mx = nx - nz * flankAmt * b.flankSign;
-      const mz = nz + nx * flankAmt * b.flankSign;
-      const ml = Math.hypot(mx, mz) || 1;
+      // Pathfind around walls/windows through open or closed doors instead of grinding into obstacles
       const spd = dist > 18 ? 3.7 : 2.95;
-      this.moveOrOpenDoor(b, mx / ml, mz / ml, spd, dt);
-      moveSpeed = spd;
+      moveSpeed = this.navigateToward(b, tx, goalFootY, tz, spd, dt, false);
     } else if (dist < 7.5) {
-      this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
-      moveSpeed = 2.2;
+      if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+        this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
+        this.trackAntiStuck(b, -nx, -nz, 2.2, dt);
+        moveSpeed = 2.2;
+      } else {
+        this.resetAntiStuck(b);
+      }
     } else if (b.burstPause > 0 || bossDamaged || b.faction === 'black' || b.faction === 'bear' || b.faction === 'usec') {
       // Tactical sidestep / peek-strafe between bursts
       const strafeSpd = bossDamaged ? 2.4 : 1.65;
-      this.moveOrOpenDoor(b, -nz * b.flankSign, nx * b.flankSign, strafeSpd, dt);
+      const sx = -nz * b.flankSign;
+      const sz = nx * b.flankSign;
+      this.moveOrOpenDoor(b, sx, sz, strafeSpd, dt);
+      this.trackAntiStuck(b, sx, sz, strafeSpd, dt);
       moveSpeed = strafeSpd;
+    } else {
+      this.resetAntiStuck(b);
     }
 
     if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
@@ -921,7 +971,7 @@ export class Bandits {
     return moveSpeed;
   }
 
-  /** Find nearest cover point (behind a wall/car >=0.85m tall) that breaks LOS to threat. */
+  /** Find nearest solid cover point (behind a wall/car >=0.85m tall, ignoring glass) that breaks LOS to threat. */
   private findCoverNear(b: Bandit, tx: number, ty: number, tz: number): { x: number; z: number } | null {
     const boxes = this.coverBoxCache;
     boxes.length = 0;
@@ -931,7 +981,7 @@ export class Bandits {
 
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
-      if (box.maxY - box.minY < 0.85 || box.minY > b.pos.y + 1.2 || box.maxY < b.pos.y + 0.9) continue;
+      if (box.glass || box.maxY - box.minY < 0.85 || box.minY > b.pos.y + 1.2 || box.maxY < b.pos.y + 0.9) continue;
       const w = box.maxX - box.minX;
       const d = box.maxZ - box.minZ;
       if (w < 0.45 && d < 0.45) continue;
@@ -955,6 +1005,95 @@ export class Bandits {
       }
     }
     return best;
+  }
+
+  /** Returns intact window glass blocking the eye ray before any opaque wall, or null. */
+  private glassBetween(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): { dist: number; x: number; y: number; z: number } | null {
+    _v1.set(tx - ox, ty - oy, tz - oz);
+    const len = _v1.length();
+    if (len < 0.15) return null;
+    _v1.divideScalar(len);
+    const solidHit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len, false);
+    if (solidHit < 0 || solidHit >= len - 0.05) return null;
+    const opaqueHit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len, true);
+    if (opaqueHit >= 0 && opaqueHit <= solidHit + 0.04) return null;
+    return { dist: solidHit, x: ox + _v1.x * solidHit, y: oy + _v1.y * solidHit, z: oz + _v1.z * solidHit };
+  }
+
+  private resetAntiStuck(b: Bandit): void {
+    b.stuckTimer = 0;
+    b.stuckAnchorX = b.pos.x;
+    b.stuckAnchorZ = b.pos.z;
+  }
+
+  /** Detect stall (< 0.2m displacement over 0.8s while moving) and mark blocked direction so A* replans cleanly. */
+  private trackAntiStuck(b: Bandit, dirX: number, dirZ: number, speed: number, dt: number): boolean {
+    if (speed <= 0.4) {
+      this.resetAntiStuck(b);
+      return false;
+    }
+    b.stuckTimer += dt;
+    if (b.stuckTimer < 0.8) return false;
+
+    const disp = Math.hypot(b.pos.x - b.stuckAnchorX, b.pos.z - b.stuckAnchorZ);
+    b.stuckAnchorX = b.pos.x;
+    b.stuckAnchorZ = b.pos.z;
+    b.stuckTimer = 0;
+
+    if (disp >= 0.2) return false;
+
+    if (b.blockedSpots.length >= 6) b.blockedSpots.shift();
+    b.blockedSpots.push({ x: b.pos.x + dirX * 0.65, z: b.pos.z + dirZ * 0.65, ttl: 5.0 });
+    if (b.doorCd <= 0 && this.w.openDoorNear && this.w.openDoorNear(b.pos.x, b.pos.y, b.pos.z, 2.0)) {
+      b.doorCd = 0.85;
+    }
+    b.flankSign = (b.flankSign === 1 ? -1 : 1) as -1 | 1;
+    b.navPath.length = 0;
+    b.navIdx = 0;
+    b.navTimer = 0;
+    return true;
+  }
+
+  /** Follow A* waypoint path through doorways and stairs (replanning on obstacle/timer/stuck). */
+  private navigateToward(b: Bandit, tx: number, ty: number, tz: number, speed: number, dt: number, turnToPath: boolean): number {
+    const goalChanged = Math.hypot(tx - b.navGoalX, tz - b.navGoalZ) > 2.4 || Math.abs(ty - b.navGoalY) > 1.2;
+    if (b.navPath.length === 0 || b.navIdx >= b.navPath.length || b.navTimer <= 0 || goalChanged) {
+      b.navPath = findBotPath(this.w, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, { x: tx, y: ty, z: tz }, b.blockedSpots);
+      b.navIdx = 0;
+      b.navTimer = 0.55;
+      b.navGoalX = tx;
+      b.navGoalY = ty;
+      b.navGoalZ = tz;
+    }
+
+    while (
+      b.navIdx < b.navPath.length - 1 &&
+      Math.hypot(b.navPath[b.navIdx].x - b.pos.x, b.navPath[b.navIdx].z - b.pos.z) < 0.58 &&
+      Math.abs(b.navPath[b.navIdx].y - b.pos.y) <= 1.2
+    ) {
+      b.navIdx++;
+    }
+
+    const wp = b.navPath[Math.min(b.navIdx, b.navPath.length - 1)] ?? { x: tx, y: ty, z: tz };
+    const dx = wp.x - b.pos.x;
+    const dz = wp.z - b.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d <= 0.08) {
+      this.resetAntiStuck(b);
+      return 0;
+    }
+
+    const nx = dx / d;
+    const nz = dz / d;
+    if (turnToPath) b.yaw = Math.atan2(nx, nz);
+
+    if (wp.isDoor && d < 1.9 && b.doorCd <= 0 && this.w.openDoorNear) {
+      if (this.w.openDoorNear(b.pos.x, b.pos.y, b.pos.z, 1.9)) b.doorCd = 0.85;
+    }
+
+    this.moveOrOpenDoor(b, nx, nz, speed, dt);
+    this.trackAntiStuck(b, nx, nz, speed, dt);
+    return speed;
   }
 
   /** Step horizontally and automatically open any closed door blocking the bot's path. */
@@ -1391,6 +1530,17 @@ export class Bandits {
       flankT: 0,
       lastHitT: 9,
       ambushTriggered: false,
+      navPath: [],
+      navIdx: 0,
+      navTimer: 0,
+      navGoalX: rx,
+      navGoalY: sy,
+      navGoalZ: rz,
+      stuckTimer: 0,
+      stuckAnchorX: rx,
+      stuckAnchorZ: rz,
+      blockedSpots: [],
+      glassFlank: Math.random() < 0.35,
       patrolYaw: Math.random() * Math.PI * 2,
       patrolT: 2 + Math.random() * 3,
       investigateX: rx,
@@ -1766,7 +1916,7 @@ export class Bandits {
     this.w.scene.add(rig.root);
 
     const st = stand(v.body, 1);
-    const boxes: StaticBox[] = [];
+    const boxes: NavBox[] = [];
     this.w.boxesNear(b.pos.x, b.pos.z, 1.8, boxes);
     const killer = new Vector3(fromX, b.pos.y, fromZ);
     const rd = playerRagdoll(b.pos, b.yaw + Math.PI, v.scale, b.vel, killer, boxes, Math.random, st.shape);
@@ -1820,7 +1970,8 @@ export class Bandits {
     const len = _v1.length();
     if (len < 0.1) return true;
     _v1.divideScalar(len);
-    const hit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len);
+    // Window glass is transparent for sight; solid walls/ceilings/closed doors still block LOS.
+    const hit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len, true);
     return hit < 0 || hit >= len - 0.05;
   }
 
@@ -1872,15 +2023,20 @@ export class Bandits {
     _to.normalize();
 
     const maxRange = 48;
-    const wall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange);
-    const maxTrace = wall >= 0 ? wall : maxRange;
+    const solidWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, false);
+    const opaqueWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, true);
+    const shotGlass = solidWall >= 0 && (opaqueWall < 0 || solidWall < opaqueWall - 0.04);
+    const maxTrace = opaqueWall >= 0 ? opaqueWall : maxRange;
 
     let hitDist = maxTrace;
+    let entityHitDist = Infinity;
+
     if (targetBot && !targetBot.isDead) {
       const hitRes = this.hitTest(_v2.set(ox, oy, oz), _to, maxTrace, 0.05, b);
       if (hitRes && areFactionsHostile(b.faction, hitRes.bot.faction)) {
         hitDist = hitRes.dist;
-        const dmg = (g.damage[0] + g.damage[1]) * 0.42;
+        entityHitDist = hitRes.dist;
+        const dmg = (g.damage[0] + g.damage[1]) * 0.42 * (shotGlass && hitRes.dist > solidWall ? 0.85 : 1);
         this.hit(hitRes.bot, dmg, ox, oz, hitRes.head, hitRes.zone);
       }
     } else if (targetIsPlayer) {
@@ -1895,11 +2051,12 @@ export class Bandits {
         const d2 = ex * ex + ey * ey + ez * ez - proj * proj;
         if (d2 < 0.36 * 0.36) {
           hitDist = proj;
+          entityHitDist = proj;
           const hitY = oy + _to.y * proj;
           const playerFeetY = ty - (inCar ? 1.05 : 1.38);
           const relY = hitY - playerFeetY;
           const hitZone: HitZone = relY >= 1.44 ? 'head' : relY >= 0.78 ? 'torso' : 'limbs';
-          const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24);
+          const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24) * (shotGlass && proj > solidWall ? 0.85 : 1);
           this.w.hurtPlayer(Math.max(6, Math.min(26, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
         }
       }
@@ -1907,9 +2064,14 @@ export class Bandits {
       const zh = this.w.zombies.hitTest(_v2.set(ox, oy, oz), _to, maxTrace, 0.05);
       if (zh) {
         hitDist = zh.dist;
-        const dmg = g.damage[0] * 0.85;
+        entityHitDist = zh.dist;
+        const dmg = g.damage[0] * 0.85 * (shotGlass && zh.dist > solidWall ? 0.85 : 1);
         this.w.zombies.hit(zh.zombie, dmg, ox, oz, zh.head, zh.point);
       }
+    }
+
+    if (shotGlass && solidWall <= entityHitDist + 0.05) {
+      this.w.onBreakGlass?.(new Vector3(ox + _to.x * solidWall, oy + _to.y * solidWall, oz + _to.z * solidWall), _to.clone());
     }
 
     const muzzleOff = Math.min(0.32, hitDist * 0.4);

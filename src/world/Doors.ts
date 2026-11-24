@@ -63,6 +63,17 @@ export interface DoorRef {
   index: number;
 }
 
+/** Navigation descriptor for a doorway exposed to bot pathfinding. */
+export interface DoorNavSpot {
+  x: number;
+  y: number;
+  z: number;
+  open: boolean;
+  passable: boolean;
+  nx: number;
+  nz: number;
+}
+
 const _m = new Matrix4();
 const _q = new Quaternion();
 const _p = new Vector3();
@@ -343,6 +354,30 @@ export class Doors {
     return best;
   }
 
+  /** All loaded doors on roughly the same storey within `r` (used for A* doorway routing). */
+  doorsNear(x: number, y: number, z: number, r: number): DoorNavSpot[] {
+    const out: DoorNavSpot[] = [];
+    for (const doors of this.sets.values()) {
+      for (let i = 0; i < doors.length; i++) {
+        const d = doors[i];
+        if (Math.abs(d.spot.y - y) > 1.8) continue;
+        const mx = d.spot.hx + Math.cos(d.spot.yaw) * d.width * 0.5;
+        const mz = d.spot.hz - Math.sin(d.spot.yaw) * d.width * 0.5;
+        if (Math.hypot(mx - x, mz - z) > r) continue;
+        out.push({
+          x: mx,
+          y: d.spot.y,
+          z: mz,
+          open: d.open || d.broken,
+          passable: d.open || d.broken || (!d.spot.barricaded && !d.spot.lock && d.planks === 0),
+          nx: Math.sin(d.spot.yaw),
+          nz: Math.cos(d.spot.yaw),
+        });
+      }
+    }
+    return out;
+  }
+
   /** A zombie's blow. True when the door gives way: it swings open for good (both leaves of a pair). */
   damage(ref: DoorRef, amount: number): boolean {
     const doors = this.sets.get(ref.building);
@@ -602,6 +637,7 @@ export class Doors {
       Math.max(d.spot.hz, ez) + padZ,
       d.spot.y,
       d.spot.y + (d.spot.height ?? LEAF_H),
+      true,
     );
   }
 }
