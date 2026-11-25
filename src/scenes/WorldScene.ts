@@ -591,7 +591,7 @@ export class WorldScene implements IScene {
         isMechanic: () => this.classId === 'mechanic',
       },
     );
-    const bootAniso = ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy());
+    const bootAniso = ctx.quality.preset.level === 'low' ? 1 : Math.min(8, ctx.renderer.gl.capabilities.getMaxAnisotropy());
     this.vehicles.setAnisotropy(bootAniso);
     this.carHud = new CarHud(
       ctx,
@@ -683,7 +683,7 @@ export class WorldScene implements IScene {
         this.hordes.hear(x, z, r);
       },
       ctx.quality.preset.foliage.cap,
-      ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy()),
+      ctx.quality.preset.level === 'low' ? 1 : Math.min(8, ctx.renderer.gl.capabilities.getMaxAnisotropy()),
     );
     // A blow to a wall: steel strikes sparks, glass breaks with 3D shatter + shards, the knife (and a fist) only a little dust.
     this.player.onStrikeWorld = (x, y, z, item) => {
@@ -2610,7 +2610,7 @@ export class WorldScene implements IScene {
     const splitQ = new URLSearchParams(location.search).get('splitcells');
     setSubCellSplit(splitQ === null ? preset.level === 'high' && this.ctx.device.type === 'desktop' : splitQ === '1');
     const isLow = preset.level === 'low';
-    this.vehicles?.setAnisotropy(isLow ? 1 : Math.min(4, this.ctx.renderer.gl.capabilities.getMaxAnisotropy()));
+    this.vehicles?.setAnisotropy(isLow ? 1 : Math.min(8, this.ctx.renderer.gl.capabilities.getMaxAnisotropy()));
     this.bandits?.setMaxActive(isLow ? 4 : 10);
     this.applySettings();
   }

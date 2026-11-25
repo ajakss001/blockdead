@@ -7,32 +7,55 @@ import {
   type Material,
   MeshLambertMaterial,
   MeshStandardMaterial,
+  NoColorSpace,
   RepeatWrapping,
   SRGBColorSpace,
 } from 'three';
 import { onLangChange } from '../../core/i18n';
 import { generateDecalCanvas } from './decals';
 import { generateGrungeCanvas } from './grunge';
-import { type Bucket, MODEL_LAYER_BASE, SURFACE_LIST, SURFACES } from './surfaces';
+import { type Bucket, MODEL_LAYER_BASE, PBR_LAYERS, pbrMappingForSurface, SURFACE_LIST, SURFACES } from './surfaces';
 
 export type LightingModel = 'standard' | 'lambert';
 
 const SIZE = 128;
 
 /**
- * World materials: one texture array holds every surface's grunge texture, and each vertex carries
- * its layer and roughness/metalness. A whole chunk then draws with 1–3 calls instead of one per
- * surface — on phones the number of draw calls, not triangles, is what eats the frame.
+ * World materials: uSurfaces (decals, foliage, glass, facade window masks), modelAtlas (baked props),
+ * and seamless 1024x1024 PBR array textures (uPbrAlbedo + uPbrNrmRough) with world-space tiling
+ * and 8x anisotropic filtering.
  */
 let materials: (Record<Bucket, Material> & { castCut: Material }) | null = null;
 let texture: DataArrayTexture | null = null;
 /** Atlas of the third-party models (one layer each); a 1-texel placeholder until it loads. */
 const modelAtlas = { value: placeholderAtlas() };
+/** 1024x1024 seamless PBR albedo (SRGB) and packed tangent-space NormalGL.xyz + Roughness.a (linear). */
+const pbrAlbedo = { value: placeholderPbrArray(PBR_LAYERS.length, [200, 200, 200, 255], SRGBColorSpace) };
+const pbrNrmRough = { value: placeholderPbrArray(PBR_LAYERS.length, [128, 128, 255, 220], NoColorSpace) };
+const pbrReady = { value: 0 };
 
 function placeholderAtlas(): DataArrayTexture {
   const t = new DataArrayTexture(new Uint8Array([200, 200, 200, 255]), 1, 1, 1);
   t.needsUpdate = true;
   return t;
+}
+
+function placeholderPbrArray(layers: number, rgba: [number, number, number, number], colorSpace: typeof SRGBColorSpace | typeof NoColorSpace): DataArrayTexture {
+  const data = new Uint8Array(layers * 4);
+  for (let l = 0; l < layers; l++) {
+    data[l * 4] = rgba[0];
+    data[l * 4 + 1] = rgba[1];
+    data[l * 4 + 2] = rgba[2];
+    data[l * 4 + 3] = rgba[3];
+  }
+  const t = new DataArrayTexture(data, 1, 1, layers);
+  t.colorSpace = colorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+export function pbrTexturesReady(): boolean {
+  return pbrReady.value > 0.5;
 }
 
 /**
@@ -65,11 +88,104 @@ export async function loadModelAtlas(url: string, layerSize: number, anisotropy:
     tex.magFilter = LinearFilter;
     tex.minFilter = LinearMipmapLinearFilter;
     tex.generateMipmaps = true;
-    tex.anisotropy = Math.min(4, anisotropy);
+    tex.anisotropy = Math.min(8, anisotropy);
     tex.needsUpdate = true;
     modelAtlas.value = tex;
     return true;
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Loads seamless 1024x1024 PBR material sets (albedo + NormalGL + roughness) from `baseUrl`
+ * into two GPU DataArrayTextures with 8x anisotropic filtering.
+ */
+export async function loadPbrTextures(baseUrl: string, size: number, anisotropy: number): Promise<boolean> {
+  try {
+    if (typeof OffscreenCanvas === 'undefined') return false;
+    const fetchImg = async (url: string) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} loading ${url}`);
+      return createImageBitmap(await res.blob());
+    };
+    const loaded = await Promise.all(
+      PBR_LAYERS.map((name) =>
+        Promise.all([
+          fetchImg(`${baseUrl}${name}_albedo.jpg`),
+          fetchImg(`${baseUrl}${name}_normal.jpg`),
+          fetchImg(`${baseUrl}${name}_rough.jpg`),
+        ]),
+      ),
+    );
+
+    const layers = PBR_LAYERS.length;
+    const row = size * 4;
+    const albedoData = new Uint8Array(size * row * layers);
+    const nrmRoughData = new Uint8Array(size * row * layers);
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+
+    for (let l = 0; l < layers; l++) {
+      const [albBmp, nrmBmp, rghBmp] = loaded[l];
+      const base = l * size * row;
+
+      ctx.drawImage(albBmp, 0, 0, size, size);
+      albBmp.close();
+      const albPx = ctx.getImageData(0, 0, size, size).data;
+
+      ctx.drawImage(nrmBmp, 0, 0, size, size);
+      nrmBmp.close();
+      const nrmPx = ctx.getImageData(0, 0, size, size).data;
+
+      ctx.drawImage(rghBmp, 0, 0, size, size);
+      rghBmp.close();
+      const rghPx = ctx.getImageData(0, 0, size, size).data;
+
+      for (let y = 0; y < size; y++) {
+        const srcRow = y * row;
+        const dstRow = base + (size - 1 - y) * row;
+        for (let x = 0; x < size; x++) {
+          const si = srcRow + x * 4;
+          const di = dstRow + x * 4;
+          albedoData[di] = albPx[si];
+          albedoData[di + 1] = albPx[si + 1];
+          albedoData[di + 2] = albPx[si + 2];
+          albedoData[di + 3] = 255;
+
+          nrmRoughData[di] = nrmPx[si];
+          nrmRoughData[di + 1] = nrmPx[si + 1];
+          nrmRoughData[di + 2] = nrmPx[si + 2];
+          nrmRoughData[di + 3] = rghPx[si];
+        }
+      }
+    }
+
+    const aniso = Math.max(1, Math.min(8, anisotropy));
+    const albTex = new DataArrayTexture(albedoData, size, size, layers);
+    albTex.colorSpace = SRGBColorSpace;
+    albTex.wrapS = albTex.wrapT = RepeatWrapping;
+    albTex.magFilter = LinearFilter;
+    albTex.minFilter = LinearMipmapLinearFilter;
+    albTex.generateMipmaps = true;
+    albTex.anisotropy = aniso;
+    albTex.needsUpdate = true;
+
+    const nrTex = new DataArrayTexture(nrmRoughData, size, size, layers);
+    nrTex.colorSpace = NoColorSpace;
+    nrTex.wrapS = nrTex.wrapT = RepeatWrapping;
+    nrTex.magFilter = LinearFilter;
+    nrTex.minFilter = LinearMipmapLinearFilter;
+    nrTex.generateMipmaps = true;
+    nrTex.anisotropy = aniso;
+    nrTex.needsUpdate = true;
+
+    pbrAlbedo.value = albTex;
+    pbrNrmRough.value = nrTex;
+    pbrReady.value = 1;
+    return true;
+  } catch (err) {
+    console.warn('PBR world texture load failed, using procedural surface fallback:', err);
     return false;
   }
 }
@@ -133,7 +249,11 @@ export function worldMaterials(): Record<Bucket, Material> & { castCut: Material
   return materials;
 }
 
-/** Grunge textures of all surfaces as layers of one sampler2DArray (rows flipped to GL order). */
+export function surfaceTextureAnisotropy(): number {
+  return texture?.anisotropy ?? 1;
+}
+
+/** Grunge textures, decals, window cutouts and non-PBR layers as one sampler2DArray (rows flipped to GL order). */
 function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   const layers = SURFACE_LIST.length;
   const data = new Uint8Array(SIZE * SIZE * 4 * layers);
@@ -155,50 +275,8 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   tex.magFilter = LinearFilter;
   tex.minFilter = LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
-  tex.anisotropy = Math.min(4, anisotropy);
+  tex.anisotropy = Math.max(1, Math.min(8, anisotropy));
   tex.needsUpdate = true;
-  const customTextures: Partial<Record<(typeof SURFACE_LIST)[number], string>> = {
-    asphalt: 'asphalt.jpg',
-    plaster: 'plaster.jpg',
-    wood: 'wood.jpg',
-    concrete: 'concrete.jpg',
-  };
-  for (let layer = 0; layer < SURFACE_LIST.length; layer++) {
-    const file = customTextures[SURFACE_LIST[layer]];
-    if (!file) continue;
-    const targetLayer = layer;
-    void fetch(`${import.meta.env.BASE_URL}textures/${file}`)
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((blob) => (blob ? createImageBitmap(blob) : null))
-      .then((bmp) => {
-        if (!bmp) return;
-        const c = new OffscreenCanvas(SIZE, SIZE);
-        const ctx = c.getContext('2d')!;
-        ctx.drawImage(bmp, 0, 0, SIZE, SIZE);
-        const px = ctx.getImageData(0, 0, SIZE, SIZE).data;
-        let sum = 0;
-        const count = SIZE * SIZE;
-        for (let i = 0; i < px.length; i += 4) sum += (px[i] + px[i + 1] + px[i + 2]) / 3;
-        const mean = Math.max(40, sum / count);
-        const base = targetLayer * SIZE * row;
-        for (let y = 0; y < SIZE; y++) {
-          const srcOff = y * row;
-          const dstOff = base + (SIZE - 1 - y) * row;
-          for (let x = 0; x < SIZE; x++) {
-            const si = srcOff + x * 4;
-            const di = dstOff + x * 4;
-            const lum = (px[si] * 0.3 + px[si + 1] * 0.59 + px[si + 2] * 0.11) / mean;
-            const detail = Math.max(0.72, Math.min(1.25, 0.55 + 0.45 * lum));
-            data[di] = Math.max(0, Math.min(255, Math.round(data[di] * detail)));
-            data[di + 1] = Math.max(0, Math.min(255, Math.round(data[di + 1] * detail)));
-            data[di + 2] = Math.max(0, Math.min(255, Math.round(data[di + 2] * detail)));
-            data[di + 3] = 255;
-          }
-        }
-        tex.needsUpdate = true;
-      })
-      .catch(() => {});
-  }
   onLangChange(() => {
     SURFACE_LIST.forEach((surface, layer) => {
       const s = SURFACES[surface];
@@ -214,10 +292,33 @@ function buildSurfaceArray(anisotropy: number): DataArrayTexture {
   return tex;
 }
 
+function buildPbrDispatchGlsl(): string {
+  const branches: string[] = [];
+  SURFACE_LIST.forEach((surface, idx) => {
+    const map = pbrMappingForSurface(surface);
+    if (!map) return;
+    let maskCond = '';
+    if (map.facadeMask === 'apartment') {
+      maskCond = ' && !(cellUv.x > 0.125 && cellUv.x < 0.875 && cellUv.y > 0.203 && cellUv.y < 0.859)';
+    } else if (map.facadeMask === 'office') {
+      maskCond = ' && !(cellUv.x > 0.0468 && cellUv.x < 0.9532 && cellUv.y > 0.109 && cellUv.y < 0.922)';
+    }
+    const prefix = branches.length === 0 ? 'if' : 'else if';
+    branches.push(
+      `${prefix} (li == ${idx}${maskCond}) { pbrActive = 1.0; pbrLayer = ${map.layer}.0; pbrUv = vSurfUv * vec2(${map.uvScaleU.toFixed(4)}, ${map.uvScaleV.toFixed(4)}); pbrNScale = ${map.normalScale.toFixed(2)}; }`,
+    );
+  });
+  return branches.join('\n  ');
+}
+
 function patch(m: Material, tex: DataArrayTexture, standard: boolean, cutWindows: boolean, isGlass: boolean): void {
+  const pbrDispatch = buildPbrDispatchGlsl();
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uSurfaces = { value: tex };
     shader.uniforms.uModels = modelAtlas;
+    shader.uniforms.uPbrAlbedo = pbrAlbedo;
+    shader.uniforms.uPbrNrmRough = pbrNrmRough;
+    shader.uniforms.uPbrReady = pbrReady;
     if (!isGlass) Object.assign(shader.uniforms, snowUniform);
     if (cutWindows) Object.assign(shader.uniforms, cutUniforms);
     shader.vertexShader = shader.vertexShader
@@ -233,7 +334,9 @@ varying vec2 vPbr;
 ${!isGlass ? 'varying float vSnowBase;' : ''}
 ${cutWindows ? 'varying vec3 vCutPos;' : ''}`,
       )
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
 vSurfUv = aSurfUv;
 vLayer = aLayer;
 vPbr = aPbr;
@@ -241,47 +344,102 @@ ${!isGlass || cutWindows ? 'vec4 worldPos4 = modelMatrix * vec4(transformed, 1.0
 ${!isGlass ? `float snowUp = smoothstep(0.45, 0.78, normalize(mat3(modelMatrix) * objectNormal).y);
 float snowNoise = 0.76 + 0.24 * sin(worldPos4.x * 0.27 + worldPos4.z * 0.19) * cos(worldPos4.z * 0.23 - worldPos4.x * 0.11);
 vSnowBase = snowUp * snowNoise;` : ''}
-${cutWindows ? 'vCutPos = worldPos4.xyz;' : ''}`);
+${cutWindows ? 'vCutPos = worldPos4.xyz;' : ''}`,
+      );
+
     let frag = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
 uniform mediump sampler2DArray uSurfaces;
 uniform mediump sampler2DArray uModels;
+uniform mediump sampler2DArray uPbrAlbedo;
+uniform mediump sampler2DArray uPbrNrmRough;
+uniform float uPbrReady;
 varying vec2 vSurfUv;
 flat varying float vLayer;
 varying vec2 vPbr;
 ${!isGlass ? 'uniform float uSnow;\nvarying float vSnowBase;' : ''}
 ${cutWindows ? `varying vec3 vCutPos;
 uniform vec4 uCutXZ[${MAX_CUTOUTS}];
-uniform float uCutTop[${MAX_CUTOUTS}];` : ''}`,
+uniform float uCutTop[${MAX_CUTOUTS}];` : ''}
+mat3 pbrTangentFrame(vec3 eye_pos, vec3 surf_norm, vec2 uv) {
+  vec3 q0 = dFdx(eye_pos.xyz);
+  vec3 q1 = dFdy(eye_pos.xyz);
+  vec2 st0 = dFdx(uv.st);
+  vec2 st1 = dFdy(uv.st);
+  vec3 N = surf_norm;
+  vec3 q1perp = cross(q1, N);
+  vec3 q0perp = cross(N, q0);
+  vec3 T = q1perp * st0.x + q0perp * st1.x;
+  vec3 B = q1perp * st0.y + q0perp * st1.y;
+  float det = max(dot(T, T), dot(B, B));
+  float scale = (det == 0.0) ? 0.0 : inversesqrt(det);
+  return mat3(T * scale, B * scale, N);
+}`,
       )
       .replace(
         '#include <map_fragment>',
-        (cutWindows
-            ? `vec4 texel = vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));
-// Cut out windows only when the building's interior is loaded (uCutXZ), so distant buildings don't look hollow.
+        `vec4 texel = vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));
+${cutWindows ? `// Cut out windows only when the building's interior is loaded (uCutXZ), so distant buildings don't look hollow.
 if (texel.a < 0.6) {
   for (int i = 0; i < ${MAX_CUTOUTS}; i++) {
     vec4 b = uCutXZ[i];
     if (vCutPos.x > b.x && vCutPos.x < b.z && vCutPos.z > b.y && vCutPos.z < b.w && vCutPos.y < uCutTop[i]) discard;
   }
+}` : ''}
+float pbrActive = 0.0;
+float pbrLayer = 0.0;
+vec2 pbrUv = vSurfUv;
+float pbrNScale = 1.0;
+vec4 pbrNrmRough = vec4(0.5, 0.5, 1.0, 0.85);
+float snowCov = 0.0;
+if (vLayer < ${MODEL_LAYER_BASE - 0.5} && uPbrReady > 0.5 && texel.a > 0.65) {
+  int li = int(vLayer + 0.5);
+  vec2 cellUv = fract(vSurfUv * 2.0);
+  ${pbrDispatch}
 }
-diffuseColor.rgb *= texel.rgb;`
-            : `diffuseColor *= vLayer > ${MODEL_LAYER_BASE - 0.5} ? texture(uModels, vec3(vSurfUv, vLayer - ${MODEL_LAYER_BASE}.0)) : texture(uSurfaces, vec3(vSurfUv, vLayer));`) +
-          (!isGlass
-            ? `
-if (uSnow > 0.01 && vSnowBase > 0.001) {
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.89, 0.95), clamp(vSnowBase * uSnow, 0.0, 0.9));
-}`
-            : ''),
+if (pbrActive > 0.5) {
+  vec4 pbrAlb = texture(uPbrAlbedo, vec3(pbrUv, pbrLayer));
+  pbrNrmRough = texture(uPbrNrmRough, vec3(pbrUv, pbrLayer));
+  float vLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 vTint = diffuseColor.rgb / max(vLum, 0.001);
+  if (pbrLayer > 4.5 && vLum > 0.14) {
+    // Sidewalks, curbs and road dashes keep bright paint/concrete luminance with 1K asphalt/aggregate relief
+    float grit = clamp(dot(pbrAlb.rgb, vec3(0.299, 0.587, 0.114)) / 0.085, 0.68, 1.42);
+    diffuseColor.rgb *= grit;
+  } else {
+    float targetGain = mix(0.64, 1.18, smoothstep(0.03, 0.55, vLum));
+    diffuseColor.rgb = pbrAlb.rgb * mix(vec3(1.0), vTint * targetGain, 0.48);
+  }
+} else {
+  diffuseColor *= texel;
+}
+${!isGlass ? `if (uSnow > 0.01 && vSnowBase > 0.001) {
+  snowCov = clamp(vSnowBase * uSnow, 0.0, 0.9);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.89, 0.95), snowCov);
+}` : ''}`,
       );
+
     if (standard) {
       frag = frag
-        .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vPbr.x;')
-        .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vPbr.y;');
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `float roughnessFactor = pbrActive > 0.5 ? clamp(mix(vPbr.x, pbrNrmRough.a, 0.88), 0.08, 1.0) : vPbr.x;
+roughnessFactor = mix(roughnessFactor, 0.85, snowCov);`,
+        )
+        .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vPbr.y;')
+        .replace(
+          '#include <normal_fragment_maps>',
+          `#include <normal_fragment_maps>
+if (pbrActive > 0.5) {
+  vec3 mapN = pbrNrmRough.xyz * 2.0 - 1.0;
+  mapN.xy *= pbrNScale * (1.0 - snowCov * 0.85);
+  normal = normalize(pbrTangentFrame(-vViewPosition, normal, pbrUv) * mapN);
+}`,
+        );
     }
     shader.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `world-surfaces-${standard ? 'pbr' : 'lambert'}${cutWindows ? '-cut' : ''}${isGlass ? '-glass' : '-snow'}`;
+  m.customProgramCacheKey = () => `world-surfaces-pbr1k-${standard ? 'pbr' : 'lambert'}${cutWindows ? '-cut' : ''}${isGlass ? '-glass' : '-snow'}`;
 }

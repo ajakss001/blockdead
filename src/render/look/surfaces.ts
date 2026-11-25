@@ -64,10 +64,10 @@ export interface SurfaceSpec {
 
 export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   ground: { kind: 'ground', detail: 0xd6d6cc, noise: 0.55, roughness: 1, metalness: 0, tile: 4, castShadow: false },
-  asphalt: { kind: 'asphalt', detail: 0xd0d0cc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 3, castShadow: false },
-  plaster: { kind: 'plaster', detail: 0xd8d3c8, noise: 0.16, roughness: 0.9, metalness: 0.04, tile: 2, bump: 0.5, castShadow: true },
-  roof: { kind: 'wood', detail: 0xc8c4bc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 1.2, castShadow: true },
-  wood: { kind: 'wood', detail: 0xdad2c4, noise: 0.4, roughness: 0.88, metalness: 0, tile: 1, castShadow: true },
+  asphalt: { kind: 'asphalt', detail: 0xd0d0cc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 3.0, castShadow: false },
+  plaster: { kind: 'plaster', detail: 0xd8d3c8, noise: 0.16, roughness: 0.9, metalness: 0.04, tile: 2.4, bump: 0.5, castShadow: true },
+  roof: { kind: 'wood', detail: 0xc8c4bc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 1.8, castShadow: true },
+  wood: { kind: 'wood', detail: 0xdad2c4, noise: 0.4, roughness: 0.88, metalness: 0, tile: 1.8, castShadow: true },
   metal: { kind: 'metal', detail: 0xd4d0cc, noise: 0.3, roughness: 0.7, metalness: 0.35, tile: 1.5, castShadow: true },
   foliage: { kind: 'foliage', detail: 0xd0d8c8, noise: 0.6, roughness: 1, metalness: 0, tile: 2, castShadow: true },
   // Dirty glass keeps some gloss: the flashlight leaves a cold highlight in dark windows.
@@ -88,8 +88,8 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   facadeConcrete: { kind: 'facadeConcrete', detail: 0xc8c6c0, noise: 0.3, roughness: 0.9, metalness: 0.05, tile: 6, tileV: 6.4, castShadow: true },
   facadeBrick: { kind: 'facadeBrick', detail: 0xc0a898, noise: 0.3, roughness: 0.92, metalness: 0, tile: 6, tileV: 6.4, castShadow: true },
   facadeOffice: { kind: 'facadeOffice', detail: 0xb8c0c4, noise: 0.2, roughness: 0.5, metalness: 0.3, tile: 6, tileV: 6.4, castShadow: true },
-  concrete: { kind: 'concrete', detail: 0xc4c2bc, noise: 0.4, roughness: 0.95, metalness: 0, tile: 2.5, castShadow: true },
-  tile: { kind: 'tile', detail: 0xccc8bc, noise: 0.3, roughness: 0.7, metalness: 0, tile: 1.2, castShadow: false },
+  concrete: { kind: 'concrete', detail: 0xc4c2bc, noise: 0.4, roughness: 0.95, metalness: 0, tile: 2.6, castShadow: true },
+  tile: { kind: 'tile', detail: 0xccc8bc, noise: 0.3, roughness: 0.7, metalness: 0, tile: 1.6, castShadow: false },
   decalSoot: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'soot', castShadow: false },
   decalOil: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.3, metalness: 0.1, tile: 1, decal: 'oil', castShadow: false },
   decalSkid: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.9, metalness: 0, tile: 1, decal: 'skid', castShadow: false },
@@ -139,3 +139,33 @@ export const MODEL_LAYER_BASE = 64;
 
 /** Layer of the surface in the world texture array. */
 export const surfaceLayer = (surface: Surface): number => SURFACE_LIST.indexOf(surface);
+
+/** Seamless 1024x1024 PBR texture array layers loaded from public/textures/pbr/. */
+export const PBR_LAYERS = ['brick', 'plaster', 'wood', 'tile', 'concrete', 'asphalt'] as const;
+export type PbrLayerName = (typeof PBR_LAYERS)[number];
+
+export interface PbrSurfaceMapping {
+  layer: number;
+  name: PbrLayerName;
+  uvScaleU: number;
+  uvScaleV: number;
+  normalScale: number;
+  facadeMask: 'none' | 'apartment' | 'office';
+}
+
+const PBR_SURFACE_MAP: Partial<Record<Surface, PbrSurfaceMapping>> = {
+  plaster: { layer: 1, name: 'plaster', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  wood: { layer: 2, name: 'wood', uvScaleU: 1, uvScaleV: 1, normalScale: 0.95, facadeMask: 'none' },
+  roof: { layer: 2, name: 'wood', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  tile: { layer: 3, name: 'tile', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  concrete: { layer: 4, name: 'concrete', uvScaleU: 1, uvScaleV: 1, normalScale: 0.95, facadeMask: 'none' },
+  asphalt: { layer: 5, name: 'asphalt', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  facadeBrick: { layer: 0, name: 'brick', uvScaleU: 6.0 / 1.8, uvScaleV: 6.4 / 1.8, normalScale: 1.05, facadeMask: 'apartment' },
+  facadeConcrete: { layer: 4, name: 'concrete', uvScaleU: 6.0 / 2.6, uvScaleV: 6.4 / 2.6, normalScale: 0.95, facadeMask: 'apartment' },
+  facadeOffice: { layer: 4, name: 'concrete', uvScaleU: 6.0 / 2.6, uvScaleV: 6.4 / 2.6, normalScale: 0.85, facadeMask: 'office' },
+};
+
+/** Returns PBR material mapping and metric UV scale for a world surface, or null for non-PBR surfaces. */
+export function pbrMappingForSurface(surface: Surface): PbrSurfaceMapping | null {
+  return PBR_SURFACE_MAP[surface] ?? null;
+}

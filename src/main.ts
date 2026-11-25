@@ -19,7 +19,7 @@ import { pickInitialLevel } from './render/DeviceProfile';
 import { debugKnobs, QualityManager } from './render/QualityManager';
 import { Renderer } from './render/Renderer';
 import { setMaterialAnisotropy } from './render/look/materials';
-import { initWorldMaterials, loadModelAtlas } from './render/look/worldMaterials';
+import { initWorldMaterials, loadModelAtlas, loadPbrTextures } from './render/look/worldMaterials';
 import { loadCharacters, setCharacterAnisotropy } from './characters/assets';
 import { loadGearMeta, setGearAnisotropy, setGearSource } from './characters/gear';
 import { PostFX } from './render/PostFX';
@@ -100,13 +100,16 @@ async function boot(): Promise<void> {
 
   const input = new InputManager(pickInputMode(device), events);
   const maxAniso = renderer.gl.capabilities.getMaxAnisotropy();
-  const aniso = level === 'low' ? 1 : Math.min(4, maxAniso);
+  const aniso = level === 'low' ? 1 : Math.min(8, maxAniso);
   setMaterialAnisotropy(aniso);
   setCharacterAnisotropy(aniso);
   setGearAnisotropy(aniso);
   initWorldMaterials(QUALITY_PRESETS[level].lighting, aniso);
-  // Third-party vehicles and props (one atlas layer each), before the world streams in.
-  await loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, aniso);
+  // Third-party vehicles/props atlas and seamless 1K PBR materials, before the world streams in.
+  await Promise.all([
+    loadModelAtlas(`${import.meta.env.BASE_URL}models/atlas.jpg`, 256, aniso),
+    loadPbrTextures(`${import.meta.env.BASE_URL}textures/pbr/`, level === 'low' ? 512 : 1024, aniso),
+  ]);
   // The character models (player, zombies, bodies): everything that draws a person uses them synchronously.
   // Up close (the player, the menu, the inventory) 2048, the zombies 1024 (lodTexture); 512 on low.
   setGearSource(level === 'low' ? 512 : 2048);

@@ -13,7 +13,7 @@ const MUD = new Color(0x4a3e30);
 
 /** Call once with renderer.capabilities.getMaxAnisotropy() (character and item textures). */
 export function setMaterialAnisotropy(value: number): void {
-  anisotropy = Math.min(4, value);
+  anisotropy = Math.min(8, value);
 }
 
 function track<T extends Texture>(t: T): T {
