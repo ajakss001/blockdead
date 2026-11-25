@@ -84,6 +84,7 @@ import { ChunkManager } from '../world/ChunkManager';
 import { Doors } from '../world/Doors';
 import { Interiors } from '../world/Interiors';
 import { WorldLife } from '../world/WorldLife';
+import { SkyscraperShowcase } from '../world/SkyscraperShowcase';
 import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
 import { WorldLayout } from '../world/gen/layout';
@@ -298,6 +299,7 @@ export class WorldScene implements IScene {
   private dread!: AnxietyAudio;
   /** Lit windows, dying lamps, curtains, paper in the wind, alarms, radios. */
   private life!: WorldLife;
+  private showcase!: SkyscraperShowcase;
   /** Clouds and the occasional plane / helicopter overhead. */
   sky!: Sky;
   private indoors = false;
@@ -593,6 +595,7 @@ export class WorldScene implements IScene {
     );
     const bootAniso = ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy());
     this.vehicles.setAnisotropy(bootAniso);
+    this.showcase = new SkyscraperShowcase(this.scene, this.world, bootAniso);
     this.carHud = new CarHud(
       ctx,
       this.vehicles,
@@ -1394,6 +1397,7 @@ export class WorldScene implements IScene {
       this.lookDir.z,
     );
     this.doors.update(gameDt);
+    this.showcase.update(frameDt);
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
@@ -2584,6 +2588,7 @@ export class WorldScene implements IScene {
     this.ctx.debug.delete('survival');
     this.player.dispose();
     this.life.dispose();
+    this.showcase.dispose();
     this.chunks.dispose();
     for (const m of this.pinnedMaterials) m.dispose();
     for (const t of this.pinnedTextures) t.dispose();
