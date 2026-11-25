@@ -403,8 +403,8 @@ export class WorldScene implements IScene {
     const lowMem = ctx.device.memoryGb > 0 && ctx.device.memoryGb <= 4;
     const maxWorkers = ctx.device.type !== 'desktop' || lowMem ? 1 : 2;
     this.chunks = new ChunkManager(this.scene, this.world, layout, ctx.quality.preset.chunkRadius, maxWorkers);
-    // Standing surface: storeys, stairs and roofs inside high-rises; paving and terrain everywhere else.
-    const ground = (x: number, z: number, y: number) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
+    // Standing surface: storeys, stairs and roofs inside high-rises / showcase tower; paving and terrain everywhere else.
+    const ground = (x: number, z: number, y: number) => this.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z);
     this.player = new Player(ctx, this.camera, this.scene, this.world, SPAWN, SPAWN_YAW, ground);
     this.overlay = this.player.viewmodel;
 
@@ -413,10 +413,10 @@ export class WorldScene implements IScene {
     const zcount = zq !== null ? Math.max(0, Number(zq) || 0) : ctx.quality.preset.zombiesActive;
     this.zombies = new ZombieSim(
       {
-        groundY: (x, z, y) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
+        groundY: (x, z, y) => this.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
         resolveCircle: (p, r, h) => this.world.resolveCircle(p, r, h),
         rayHit: (ox, oy, oz, dx, dy, dz, max) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max),
-        indoors: (x, z) => this.interiors.surfaceY(x, z, 0) != null,
+        indoors: (x, z) => this.surfaceY(x, z, 0) != null,
         route: (from, to, out) => {
           const b = this.interiors.buildingAt(from.x, from.z) ?? this.interiors.buildingAt(to.x, to.z);
           return b ? routeHighrise(b, from, to, out) : false;
@@ -457,7 +457,7 @@ export class WorldScene implements IScene {
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
     this.bandits = new Bandits({
       scene: this.scene,
-      groundY: (x, z, y = 0) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
+      groundY: (x, z, y = 0) => this.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
       boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
@@ -595,7 +595,7 @@ export class WorldScene implements IScene {
     );
     const bootAniso = ctx.quality.preset.level === 'low' ? 1 : Math.min(4, ctx.renderer.gl.capabilities.getMaxAnisotropy());
     this.vehicles.setAnisotropy(bootAniso);
-    this.showcase = new SkyscraperShowcase(this.scene, this.world, bootAniso);
+    this.showcase = new SkyscraperShowcase(this.scene, this.world, bootAniso, true, this.containers, this.shelters);
     this.carHud = new CarHud(
       ctx,
       this.vehicles,
@@ -720,7 +720,7 @@ export class WorldScene implements IScene {
         this.bandits.onNoise(x, z, r);
       },
       bandits: this.bandits,
-      groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
+      groundY: (x, y, z) => this.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       hurtSelf: (hp) => this.hurt(hp, tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'), true),
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
@@ -1478,13 +1478,17 @@ export class WorldScene implements IScene {
     this.player.viewmodel.setDaylight(k);
   }
 
+  private surfaceY(x: number, z: number, y: number): number | null {
+    return this.interiors.surfaceY(x, z, y) ?? this.showcase?.surfaceY(x, z, y) ?? null;
+  }
+
   /**
    * What a patch of ground grows (Foliage): nothing under a roof or in a building, grass on open ground,
    * weeds in the cracks of paving, more along the curbs.
    */
   private groundKind(x: number, z: number): Ground {
     const y = this.layout.walkHeightAt(x, z);
-    if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z)) return Ground.None;
+    if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z) || this.showcase?.containsFootprint(x, z)) return Ground.None;
     // A POI's lot is paved (only weeds in the cracks); a square is all lawn.
     const site = this.layout.poi(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
     if (site) return site.kind === 'park' ? Ground.Grass : Ground.Paved;
@@ -1516,6 +1520,8 @@ export class WorldScene implements IScene {
       if (Math.round(y / FLOOR_H) <= 0) return 'tile';
       return b.kind === 'offices' ? 'tile' : 'wood';
     }
+    const showcaseSurf = this.showcase?.stepSurface(x, z, y);
+    if (showcaseSurf) return showcaseSurf;
     if (y > 0.35) {
       const underfoot = this.player.surfaceAlong(this._surfOrig.set(x, y + 0.35, z), this._surfDown, 0.7);
       if (underfoot === 'metal' || underfoot === 'trim') return 'metal';
@@ -1743,7 +1749,7 @@ export class WorldScene implements IScene {
 
   private breakGlassAt(at: Vector3, dir: Vector3): void {
     this.world.breakGlassAt(at.x, at.y, at.z, 0.65);
-    const floorAt = (gx: number, gz: number) => this.interiors.surfaceY(gx, gz, at.y) ?? this.layout.walkHeightAt(gx, gz);
+    const floorAt = (gx: number, gz: number) => this.surfaceY(gx, gz, at.y) ?? this.layout.walkHeightAt(gx, gz);
     const floorY = floorAt(at.x, at.z);
     sfx.glassBreak(at, { x: at.x, y: floorY + 0.05, z: at.z });
     this.particles.burst(at, 10, 0.7);
