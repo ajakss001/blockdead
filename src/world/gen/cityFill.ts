@@ -52,11 +52,9 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
 
   const span = down3(Z1 - 0.3) - up3(Z0 + 0.3);
   for (const south of [true, false]) {
-    const isShowcaseRow = i === 0 && j === 0 && south;
     let d: number;
     if (south) {
-      const pickedD = pick(rand, span >= 48 ? [18, 21, 24] : [18, 21]);
-      d = isShowcaseRow ? 21 : pickedD;
+      d = pick(rand, span >= 48 ? [18, 21, 24] : [18, 21]);
     } else {
       const maxD = span - (rows[0].z1 - rows[0].z0) - 6;
       const pool = [15, 18, 21, 24].filter((v) => v <= maxD);
@@ -66,8 +64,7 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
     const row: Row = { south, z0, z1: z0 + d };
     rows.push(row);
     const xa = up3(X0 + 0.3);
-    const pickedWW = pick(rand, [15, 18, 21, 24]);
-    const wW = isShowcaseRow ? 15 : pickedWW;
+    const wW = pick(rand, [15, 18, 21, 24]);
     const xb = xa + wW + SIDE_ALLEY;
     const wE = Math.min(24, down3(X1 - 0.3) - xb);
     const lots: [number, number][] = [
@@ -76,7 +73,6 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
     ];
     const built = [false, false];
     lots.forEach(([x0, w], k) => {
-      if (isShowcaseRow && k === 1) return;
       if (parkingLot === (south ? 0 : 2) + k) {
         surfaceParking(b, x0, row.z0, x0 + w, row.z1, south, rand);
         return;
@@ -99,10 +95,8 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
       buildHighriseShell(b, desc, rand);
       out.push(desc);
     });
-    if (!isShowcaseRow) {
-      sideAlley(b, xa + wW, xb, row, rand, built[1], escapes);
-      eastGap(b, xb + wE, X1, row, rand);
-    }
+    sideAlley(b, xa + wW, xb, row, rand, built[1], escapes);
+    eastGap(b, xb + wE, X1, row, rand);
   }
   backCourtyard(b, X0, X1, rows[0].z1, rows[1].z0, rand);
   for (const e of escapes) if (escapeClear(e, out)) fireEscape(b, e.axis, e.wall, e.outward, e.u0, e.storeys);
