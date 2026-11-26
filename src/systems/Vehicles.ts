@@ -1,14 +1,13 @@
 import {
   Box3,
   BoxGeometry,
-  CanvasTexture,
+  DoubleSide,
   Group,
   Mesh,
-  MeshBasicMaterial,
   MeshLambertMaterial,
+  MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
-  PlaneGeometry,
   PointLight,
   Scene,
   SpotLight,
@@ -152,41 +151,6 @@ const _smokePos = new Vector3();
 const _hitPos = new Vector3();
 const _probe = new Vector3();
 
-let _shadowGeo: PlaneGeometry | null = null;
-let _shadowMat: MeshBasicMaterial | null = null;
-
-function contactShadowGeo(): PlaneGeometry {
-  if (!_shadowGeo) {
-    _shadowGeo = new PlaneGeometry(1, 1);
-    _shadowGeo.rotateX(-Math.PI / 2);
-  }
-  return _shadowGeo;
-}
-
-function contactShadowMat(): MeshBasicMaterial {
-  if (!_shadowMat) {
-    const c = document.createElement('canvas');
-    c.width = 128;
-    c.height = 128;
-    const g = c.getContext('2d')!;
-    const grad = g.createRadialGradient(64, 64, 12, 64, 64, 62);
-    grad.addColorStop(0, 'rgba(0,0,0,0.78)');
-    grad.addColorStop(0.55, 'rgba(0,0,0,0.42)');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 128, 128);
-    const tex = new CanvasTexture(c);
-    _shadowMat = new MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-    });
-  }
-  return _shadowMat;
-}
-
 /**
  * Project Zomboid-style drivable vehicles (Sedan & 4x4 SUV).
  * Supports entering/exiting, ignition keys & hotwiring, fuel consumption, battery drain,
@@ -297,10 +261,25 @@ export class Vehicles {
             const m = obj as Mesh;
             m.castShadow = true;
             m.receiveShadow = true;
+            if (Array.isArray(m.material)) {
+              for (const mm of m.material) mm.side = DoubleSide;
+            } else if (m.material) {
+              m.material.side = DoubleSide;
+            }
           }
         });
         const holder = new Group();
         holder.add(root);
+        if (kind === 'sedan') {
+          const blocker = new Mesh(
+            new BoxGeometry(1.60, 0.88, 3.55),
+            new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 }),
+          );
+          blocker.position.set(0, 0.64, 0);
+          blocker.castShadow = false;
+          blocker.receiveShadow = false;
+          holder.add(blocker);
+        }
         this.templates.set(kind, holder);
         for (const car of this.cars) {
           if (car.kind === kind) this.attachVisual(car);
@@ -314,12 +293,6 @@ export class Vehicles {
       car.group.remove(car.group.children[0]);
     }
     car.rig = undefined;
-    const cspec = VEHICLE_SPECS[car.kind];
-    const shadow = new Mesh(contactShadowGeo(), contactShadowMat());
-    shadow.scale.set(cspec.halfW * 2.5, 1, cspec.halfL * 2.35);
-    shadow.position.y = 0.03;
-    shadow.renderOrder = 1;
-    car.group.add(shadow);
     const tpl = this.templates.get(car.kind);
     if (tpl) {
       const clone = tpl.clone(true);

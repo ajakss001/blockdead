@@ -506,7 +506,8 @@ export function park(S: Site, _rand: Rand): void {
   }
   const [tx, tz] = p.pt(5, 5);
   trashBins(b, tx, tz);
-  // Trees in each quarter, bushes between.
+  // Trees in each quarter (spaced >= 5.5 m apart so crowns never stack), bushes between.
+  const parkTrees: [number, number][] = [];
   for (const [qx, qz] of [
     [1, 1],
     [-1, 1],
@@ -517,6 +518,8 @@ export function park(S: Site, _rand: Rand): void {
       const lx = qx * (6 + spotHash(qx * 7 + k, qz, 50) * 16);
       const lz = qz * (6 + spotHash(qz * 5 + k, qx, 51) * 16);
       const [wx, wz] = p.pt(lx, lz);
+      if (parkTrees.some(([px, pz]) => Math.hypot(wx - px, wz - pz) < 5.5)) continue;
+      parkTrees.push([wx, wz]);
       const species = spotHash(wx, wz, 52) < 0.1 ? TREE.dead : Math.floor(spotHash(wx, wz, 53) * 3);
       plantTree(b, wx, 0.05, wz, 0.95 + spotHash(wx, wz, 54) * 0.45, spotHash(wz, wx, 55) * 6.28, species);
     }

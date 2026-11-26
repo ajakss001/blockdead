@@ -90,7 +90,14 @@ export class Foliage {
     const tex = new CanvasTexture(atlas());
     tex.colorSpace = SRGBColorSpace;
     tex.magFilter = NearestFilter;
-    const mat = new MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: DoubleSide });
+    const mat = new MeshLambertMaterial({
+      map: tex,
+      alphaTest: 0.5,
+      side: DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
       shader.vertexShader = shader.vertexShader
@@ -248,7 +255,7 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
     };
     // Flat on the ground (litter).
     const flat = (x: number, z: number, size: number) => {
-      const y = this.groundY(x, z) + 0.012;
+      const y = this.groundY(x, z) + 0.022;
       _q.setFromAxisAngle(_y, spotHash(x, z, 6) * 6.28).multiply(_q2.setFromEuler(_e.set(-Math.PI / 2, 0, 0)));
       // The quad's pivot is its bottom edge: shift it back so the patch is centred on (x, z).
       _p.set(0, -size * 0.5, 0).applyQuaternion(_q).add(_s.set(x, y, z));

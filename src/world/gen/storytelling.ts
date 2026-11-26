@@ -24,60 +24,68 @@ const _up = new Vector3(0, 1, 0);
 export function stripDecal(b: Builder, x: number, z: number, yaw: number, length: number, width: number, surface: 'decalSkid'): void {
   const g = new PlaneGeometry(length, width);
   g.rotateX(-Math.PI / 2);
-  b.geo(g, 0xffffff, _m.compose(_p.set(x, 0.035, z), _q.setFromAxisAngle(_up, yaw), _s.set(1, 1, 1)), surface);
+  b.geo(g, 0xffffff, _m.compose(_p.set(x, 0.045, z), _q.setFromAxisAngle(_up, yaw), _s.set(1, 1, 1)), surface);
   g.dispose();
 }
 
-function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25): void {
+function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25, kind?: string): void {
   b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
   if (smashed >= 0.7 && spotHash(x, z, 94) < 0.3) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
   buildCar(
     b.batch,
     b.colliders,
-    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0 },
+    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0, kind },
     b.containers,
   );
 }
 
 /**
- * Cars that queued to leave the city and were abandoned bumper to bumper, along a road segment.
- * `alongX`: the road runs along X. Lane offsets are ±1.8 m from the road center line. Returns the lane used.
+ * Abandoned vehicles blocking a road segment without robotic grid alignment: varied spacing, angled wrecks,
+ * occasional semi + cargo trailer pairs.
  */
 export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, from: number, to: number, rand: Rand): number {
   const lane = rand() < 0.5 ? -1.8 : 1.8;
   const heading = alongX ? (lane > 0 ? 0 : Math.PI) : lane > 0 ? Math.PI / 2 : -Math.PI / 2;
-  let t = from + 2.5 + rand() * 3;
+  let t = from + 3.5 + rand() * 5.0;
   let n = 0;
-  while (t < to - 2.5 && n < 5) {
-    const askew = rand() < 0.25 ? (rand() - 0.5) * 0.9 : (rand() - 0.5) * 0.12;
-    const x = alongX ? t : cx + lane + (rand() - 0.5) * 0.4;
-    const z = alongX ? cz + lane + (rand() - 0.5) * 0.4 : t;
-    car(b, x, z, heading + askew, rand);
-    // Leaking engine.
-    if (rand() < 0.2) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 1.2, rand);
-    t += 4.9 + rand() * 1.6;
+  while (t < to - 4.0 && n < 3) {
+    const dir = rand() < 0.5 ? 1 : -1;
+    const askew = rand() < 0.55 ? dir * (0.26 + rand() * 0.42) : (rand() - 0.5) * 0.16;
+    const x = alongX ? t : cx + lane + (rand() - 0.5) * 1.4;
+    const z = alongX ? cz + lane + (rand() - 0.5) * 1.4 : t;
+    if (rand() < 0.24 && t + 11.5 < to - 3.5) {
+      const yaw = heading + (rand() - 0.5) * 0.14;
+      car(b, x, z, yaw, rand, 0.2, 'semi');
+      const tx = x - Math.cos(yaw) * 9.8;
+      const tz = z + Math.sin(yaw) * 9.8;
+      car(b, tx, tz, yaw, rand, 0.1, 'trailer');
+      t += 16.5 + rand() * 3.0;
+      n += 2;
+      continue;
+    }
+    car(b, x, z, heading + askew, rand, rand() < 0.3 ? 0.7 : 0.2);
+    if (rand() < 0.25) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 1.2, rand);
+    t += 9.5 + rand() * 5.5;
     n++;
   }
   return lane;
 }
 
-/** Pile-up in an intersection: cars slewed across lanes, skid marks leading in, glass and oil. */
+/** Pile-up in an intersection: wrecked cars + emergency response (ambulance / fire truck), skid marks, oil. */
 export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void {
   const yaw0 = rand() * Math.PI * 2;
-  car(b, cx + (rand() - 0.5) * 2, cz + (rand() - 0.5) * 2, yaw0, rand, 0.7);
+  car(b, cx + (rand() - 0.5) * 2, cz + (rand() - 0.5) * 2, yaw0, rand, 0.85, 'wreck');
   // Second car T-boned into the first one's side.
   const a = yaw0 + Math.PI / 2 + (rand() - 0.5) * 0.5;
-  const x2 = cx + Math.cos(a) * 3.1;
-  const z2 = cz - Math.sin(a) * 3.1;
+  const x2 = cx + Math.cos(a) * 3.2;
+  const z2 = cz - Math.sin(a) * 3.2;
   car(b, x2, z2, a + Math.PI, rand, 0.7);
   stripDecal(b, x2 + Math.cos(a) * 7, z2 - Math.sin(a) * 7, a, 9, 2.4, 'decalSkid');
-  if (rand() < 0.6) {
-    const a3 = yaw0 + Math.PI + (rand() - 0.5) * 0.8;
-    car(b, cx + Math.cos(yaw0) * 4.6, cz - Math.sin(yaw0) * 4.6, a3, rand, 0.5);
-  }
+  const responder = rand() < 0.5 ? 'fireTruck' : 'ambulance';
+  const a3 = yaw0 + Math.PI + (rand() - 0.5) * 0.6;
+  car(b, cx + Math.cos(yaw0) * 4.2, cz - Math.sin(yaw0) * 4.2, a3, rand, 0.15, responder);
   groundDecal(b, 'decalShards', cx, 0, cz, 3.2, rand, 1.3);
   groundDecal(b, 'decalOil', cx + (rand() - 0.5) * 4, 0, cz + (rand() - 0.5) * 4, 2.2, rand, 1.4);
-  // One of them caught fire.
   groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 3, 0, cz + (rand() - 0.5) * 3, 3.4, rand, 1.2);
 }
 
@@ -92,7 +100,7 @@ export function carIntoPole(b: Builder, px: number, pz: number, toward: number, 
 }
 
 /**
- * Army checkpoint that did not hold: sandbag walls, striped barriers, supply crate, scorch marks.
+ * Army checkpoint that did not hold: barricades, military vehicles (Tigr / Kamaz 6x6 / Shilka), crates, fire barrel.
  */
 export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void {
   const A = new Place(b, cx, 0, cz, 0);
@@ -101,6 +109,12 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
   sandbags(A.at(-3.6, 2.0, 1), 0, 0, 2.0, rand);
   stripedBarrier(A, -0.2, 2.2, 2.0);
   stripedBarrier(A, 3.6, 2.2, 2.0);
+  const milRoll = spotHash(cx, cz, 87);
+  const milKind = milRoll < 0.34 ? 'apc' : milRoll < 0.68 ? 'truck' : 'tank';
+  car(b, cx + 2.6, cz - 3.8, (rand() - 0.5) * 0.3, rand, 0.1, milKind);
+  if (spotHash(cx, cz, 89) < 0.45) {
+    car(b, cx - 1.0, cz + 4.1, Math.PI + (rand() - 0.5) * 0.2, rand, 0.1, milKind === 'tank' ? 'truck' : 'apc');
+  }
   const cp = new Place(b, cx - 0.1, 0, cz - 2.3, 0);
   cp.resetBounds();
   cp.model('supplyCrate', rand, 0, 0, 0, 0, 1, 0.78, 0.15, true);

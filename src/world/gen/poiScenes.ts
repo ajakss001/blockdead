@@ -648,6 +648,7 @@ const TEMPLATES: Partial<Record<PoiKind, Record<string, Build>>> = {
       if (c.b.inClip(ax, az)) tent(c.b, ax, az, yawW(c, 0), c.rand, 0xb0aca0);
       const [bx, bz] = c.p.pt(-16, 21.5);
       if (c.b.inClip(bx, bz)) tent(c.b, bx, bz, yawW(c, 0), c.rand, 0xb0aca0);
+      c.S.car(8.5, 22.5, Math.PI * 0.15, c.rand, 'ambulance');
       for (let k = 0; k < 3; k++) barrel(c, 11 + k * 0.7, 23.6);
     },
   },

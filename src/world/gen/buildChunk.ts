@@ -148,30 +148,43 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
   const x = i * CHUNK;
   const z = j * CHUNK;
   const SIDEWALK_H = PAVE.sidewalk;
+  const obstacles: [number, number][] = [];
+  const placedTrees: [number, number][] = [];
   // Road along x = X (runs north-south), between this chunk's intersections.
   if (layout.roadX(i, j)) {
     const za = z + BAND;
     const len = CHUNK - 2 * BAND;
     b.block(PAL.asphalt, x - ROAD_HALF, 0, za, ROAD_HALF * 2, 0.02, len, 'asphalt');
-    for (let d = za + 1; d < za + len - 2; d += 3.2) b.block(PAL.dash, x - 0.07, 0, d, 0.14, 0.025, 1.6, 'asphalt');
+    for (let d = za + 1; d < za + len - 2; d += 3.2) b.block(PAL.dash, x - 0.07, 0.02, d, 0.14, 0.018, 1.6, 'asphalt');
     if (layout.urbanX(i, j)) {
       for (const side of [-1, 1]) {
         const sx = side < 0 ? x - BAND : x + ROAD_HALF;
         b.block(PAL.sidewalk, sx, 0, za, BAND - ROAD_HALF, SIDEWALK_H, len, 'asphalt');
         b.block(PAL.curb, side < 0 ? x - ROAD_HALF - 0.12 : x + ROAD_HALF, 0, za, 0.12, SIDEWALK_H + 0.03, len, 'asphalt');
       }
-      for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
-      for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + side * (ROAD_HALF + 1.0), z + CHUNK * t, SIDEWALK_H);
-      b.glb(pickRoadSign(rand()), x + ROAD_HALF + 1.0, SIDEWALK_H, z + BAND + 2.5, 0);
+      for (const t of [0.25, 0.75]) {
+        const lx = x + ROAD_HALF + 1.2;
+        const lz = z + CHUNK * t;
+        lampPost(b, lx, lz, -1, 0, SIDEWALK_H);
+        obstacles.push([lx, lz]);
+      }
+      const signX = x + ROAD_HALF + 1.0;
+      const signZ = z + BAND + 2.5;
+      b.glb(pickRoadSign(rand()), signX, SIDEWALK_H, signZ, 0);
+      obstacles.push([signX, signZ]);
       if (spotHash(i, j, 71) < 0.28) {
         const bsz = z + CHUNK * 0.52;
         const bsx = x + ROAD_HALF + 2.0;
         b.glb('Soviet_Bus_Stop_Shelt', bsx, SIDEWALK_H, bsz, -Math.PI / 2);
-        b.glb('Sign_Bus_Stop_1500', x + ROAD_HALF + 1.0, SIDEWALK_H, bsz - 3.0, 0);
+        b.glb('Sign_Bus_Stop_1500', x + ROAD_HALF + 1.0, SIDEWALK_H, bsz - 4.75, 0);
+        obstacles.push([bsx, bsz], [x + ROAD_HALF + 1.0, bsz - 4.75]);
         b.solid(bsx - 1.1, bsz - 2.1, bsx + 1.1, bsz + 2.1, SIDEWALK_H, SIDEWALK_H + 2.8);
+        if (spotHash(i, j, 78) < 0.55) {
+          buildCar(b.batch, b.colliders, { x: x + CURB_LANE, z: bsz + 0.6, yaw: Math.PI / 2 + (rand() - 0.5) * 0.15, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'bus' }, b.containers);
+        }
       }
       if (!layout.isDowntown(i, j) && spotHash(i, j, 72) < 0.22) {
-        b.glb('speed_bump_1000', x, 0.015, z + CHUNK * 0.5, 0);
+        b.glb('speed_bump_1000', x, 0.02, z + CHUNK * 0.5, 0);
       }
     }
     // Downtown: the queue that never got out; elsewhere cars sit where people left them.
@@ -191,16 +204,23 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
     const xa = x + BAND;
     const len = CHUNK - 2 * BAND;
     b.block(PAL.asphalt, xa, 0, z - ROAD_HALF, len, 0.02, ROAD_HALF * 2, 'asphalt');
-    for (let d = xa + 1; d < xa + len - 2; d += 3.2) b.block(PAL.dash, d, 0, z - 0.07, 1.6, 0.025, 0.14, 'asphalt');
+    for (let d = xa + 1; d < xa + len - 2; d += 3.2) b.block(PAL.dash, d, 0.02, z - 0.07, 1.6, 0.018, 0.14, 'asphalt');
     if (layout.urbanZ(i, j)) {
       for (const side of [-1, 1]) {
         const sz = side < 0 ? z - BAND : z + ROAD_HALF;
         b.block(PAL.sidewalk, xa, 0, sz, len, SIDEWALK_H, BAND - ROAD_HALF, 'asphalt');
         b.block(PAL.curb, xa, 0, side < 0 ? z - ROAD_HALF - 0.12 : z + ROAD_HALF, len, SIDEWALK_H + 0.03, 0.12, 'asphalt');
       }
-      for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
-      for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + CHUNK * t, z + side * (ROAD_HALF + 1.0), SIDEWALK_H);
-      b.glb(pickRoadSign(rand()), x + BAND + 2.5, SIDEWALK_H, z + ROAD_HALF + 1.0, Math.PI / 2);
+      for (const t of [0.25, 0.75]) {
+        const lx = x + CHUNK * t;
+        const lz = z + ROAD_HALF + 1.2;
+        lampPost(b, lx, lz, 0, -1, SIDEWALK_H);
+        obstacles.push([lx, lz]);
+      }
+      const signX = x + BAND + 2.5;
+      const signZ = z + ROAD_HALF + 1.0;
+      b.glb(pickRoadSign(rand()), signX, SIDEWALK_H, signZ, Math.PI / 2);
+      obstacles.push([signX, signZ]);
       if (spotHash(i, j, 73) < 0.16) {
         b.glb('Road_Debris_Cluster_2', x + CHUNK * 0.65, 0.01, z + (spotHash(i, j, 74) < 0.5 ? -2.2 : 2.2), spotHash(i, j, 75) * Math.PI * 2);
       }
@@ -234,28 +254,83 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         const tl2z = z - ROAD_HALF - 1.0;
         b.glb('traffic_light_2500', tl1x, SIDEWALK_H, tl1z, 0);
         b.glb('traffic_light_2500', tl2x, SIDEWALK_H, tl2z, Math.PI);
-        b.solid(tl1x - 0.16, tl1z - 0.16, tl1x + 0.16, tl1z + 0.16, SIDEWALK_H, SIDEWALK_H + 5.2);
-        b.solid(tl2x - 0.16, tl2z - 0.16, tl2x + 0.16, tl2z + 0.16, SIDEWALK_H, SIDEWALK_H + 5.2);
+        obstacles.push([tl1x, tl1z], [tl2x, tl2z]);
+        b.solid(tl1x - 0.16, tl1z - 0.16, tl1x + 0.16, tl1z + 0.16, SIDEWALK_H, SIDEWALK_H + 4.1);
+        b.solid(tl2x - 0.16, tl2z - 0.16, tl2x + 0.16, tl2z + 0.16, SIDEWALK_H, SIDEWALK_H + 4.1);
       }
       // The intersection remembers the day: a pile-up, or the checkpoint that did not hold.
       const core = Math.max(Math.abs(i), Math.abs(j)) <= DOWNTOWN_RADIUS + 1;
+      const ring = Math.max(Math.abs(i), Math.abs(j));
       const roll = rand();
-      // A big scene (cordon, police line, evacuation, crashed helicopter) on some; otherwise the small ones.
+      // A big scene (cordon, police line, evacuation, crashed helicopter) on some; otherwise guaranteed special/small scenes.
       const big = sceneAt(layout.seed, i, j, urban, core);
       if (big) chaosScene(b, big.kind, x, z, big.rand, bodies);
-      else if (roll < (core ? 0.4 : 0.2)) crashSite(b, x, z, rand);
-      else if (roll < (core ? 0.55 : 0.25)) checkpoint(b, x, z, rand);
+      else if (ring >= 3 && ring <= 5) {
+        checkpoint(b, x, z, rand);
+      } else if (ring <= 3 && ((i + j) & 3) === 0) {
+        buildCar(b.batch, b.colliders, { x: x - 2.2, z: z + 2.4, yaw: 0.4, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'police' }, b.containers);
+        buildCar(b.batch, b.colliders, { x: x + 2.8, z: z - 2.6, yaw: Math.PI * 0.65, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'swat' }, b.containers);
+        b.glb('checkpoint_barricade', x, 0, z + 5.2, 0);
+        b.solid(x - 1.7, z + 4.4, x + 1.7, z + 6.0, 0, 1.4);
+      } else if (ring <= 3 && ((i + j) & 3) === 2) {
+        buildCar(b.batch, b.colliders, { x: x + 2.6, z: z + 2.2, yaw: -0.45, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'ambulance' }, b.containers);
+        buildCar(b.batch, b.colliders, { x: x - 3.2, z: z - 2.4, yaw: 0.35, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'fireTruck' }, b.containers);
+      } else if (roll < (core ? 0.45 : 0.25)) crashSite(b, x, z, rand);
+      else if (roll < (core ? 0.65 : 0.35)) checkpoint(b, x, z, rand);
+    }
+  }
+  // Sparse street greenery placed AFTER obstacles & traffic lights so nothing grows through signs or lamps.
+  if (layout.roadX(i, j) && layout.urbanX(i, j)) {
+    const downtown = layout.isDowntown(i, j);
+    for (let k = 0; k < 2; k++) {
+      const side = ((i + j + k) & 1) === 0 ? 1 : -1;
+      const tx = x + side * (ROAD_HALF + 1.05);
+      const tz = z + CHUNK * (k === 0 ? 0.38 : 0.76);
+      tryStreetGreenery(b, tx, tz, SIDEWALK_H, downtown, obstacles, placedTrees, rand);
+    }
+  }
+  if (layout.roadZ(i, j) && layout.urbanZ(i, j)) {
+    const downtown = layout.isDowntown(i, j);
+    for (let k = 0; k < 2; k++) {
+      const side = ((i + j + k) & 1) === 1 ? 1 : -1;
+      const tx = x + CHUNK * (k === 0 ? 0.40 : 0.78);
+      const tz = z + side * (ROAD_HALF + 1.05);
+      tryStreetGreenery(b, tx, tz, SIDEWALK_H, downtown, obstacles, placedTrees, rand);
     }
   }
 }
 
-/** A street tree in an iron grate on the sidewalk (maple, oak or elm; now and then a dead one), half the slots. */
-function streetTree(b: Builder, x: number, z: number, y: number): void {
-  if (spotHash(x, z, 45) > 0.5) return;
-  b.block(0x2a2a28, x - 0.65, y, z - 0.65, 1.3, 0.012, 1.3, 'metal');
-  b.block(0x3a2e24, x - 0.5, y, z - 0.5, 1.0, 0.016, 1.0, 'ground');
-  const species = spotHash(x, z, 46) < 0.1 ? TREE.dead : Math.floor(spotHash(x, z, 47) * 3);
-  plantTree(b, x, y, z, 0.75 + spotHash(x, z, 48) * 0.3, spotHash(z, x, 49) * Math.PI * 2, species);
+/** Sparse street trees & bushes with >= 3.8 m clearance from signs/lamps/lights and >= 22 m spacing. */
+function tryStreetGreenery(
+  b: Builder,
+  x: number,
+  z: number,
+  y: number,
+  downtown: boolean,
+  obstacles: readonly [number, number][],
+  placedTrees: [number, number][],
+  rand: Rand,
+): void {
+  if (spotHash(x, z, 45) > (downtown ? 0.42 : 0.58)) return;
+  for (const [ox, oz] of obstacles) {
+    if (Math.hypot(x - ox, z - oz) < 3.8) return;
+  }
+  for (const [tx, tz] of placedTrees) {
+    if (Math.hypot(x - tx, z - tz) < 22.0) return;
+  }
+  const kindPick = spotHash(x, z, 46);
+  const yaw = spotHash(z, x, 49) * Math.PI * 2;
+  if (kindPick < 0.30) {
+    const sc = 0.75 + spotHash(x, z, 48) * 0.35;
+    b.life(LIFE.bush, x, y, z, Math.sin(yaw), Math.cos(yaw), sc, 0, spotHash(x, z, 41));
+    b.glb('Urban_Bush_2500', x, y - 0.04, z, yaw, { scale: sc });
+  } else {
+    const species = kindPick < 0.65 ? TREE.spruce : TREE.dead;
+    const sc = 0.72 + spotHash(x, z, 48) * 0.28;
+    plantTree(b, x, y, z, sc, yaw, species);
+    placedTrees.push([x, z]);
+  }
+  void rand;
 }
 
 /** Parked cars hug the curb: lane center this far from the road's center line. */

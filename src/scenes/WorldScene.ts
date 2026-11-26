@@ -399,6 +399,8 @@ export class WorldScene implements IScene {
     this.scene.add(this.ambient);
     const moon = new DirectionalLight(NIGHT.moon.color, NIGHT.moon.intensity);
     moon.position.set(-30, 40, -10);
+    moon.shadow.bias = -0.0005;
+    moon.shadow.normalBias = 0.035;
     this.scene.add(moon);
     this.moon = moon;
     this.sky = new Sky(this.scene, NIGHT.sky, moon.position);

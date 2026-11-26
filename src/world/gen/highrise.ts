@@ -264,7 +264,7 @@ export function groundDecal(b: Builder, surface: Surface, x: number, y: number, 
   const g = new PlaneGeometry(size * stretch, size);
   g.rotateX(-Math.PI / 2);
   g.rotateY(rand() * Math.PI * 2);
-  b.geo(g, 0xffffff, _m.compose(_p.set(x, y + 0.03, z), _q.identity(), _s.set(1, 1, 1)), surface);
+  b.geo(g, 0xffffff, _m.compose(_p.set(x, y + 0.045, z), _q.identity(), _s.set(1, 1, 1)), surface);
   g.dispose();
 }
 
@@ -321,34 +321,20 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     const gap1 = gap0 + feLandW;
     if (gap0 > L.x0 + 0.05) b.block(tint, L.x0, H, L.z1 - WALL, gap0 - L.x0, top - H, WALL, f, true);
     if (L.x1 > gap1 + 0.05) b.block(tint, gap1, H, L.z1 - WALL, L.x1 - gap1, top - H, WALL, f, true);
-    // Exterior working fire escape (ground to roof) along L.z1.
-    const feSteel = 0x34383d;
-    const feZ0 = L.z1;
+    // Exterior working fire escape (ground to roof) along L.z1 using fire_escape_smart_top.glb modules.
     const feD = 1.4;
-    const run = feX1 - feX0 - 2 * feLandW;
-    const steps = 10;
-    const stepW = run / steps;
-    const stepH = FLOOR_H / steps;
-    for (const px of [feX0 + 0.04, feX1 - 0.12]) {
-      for (const pz of [feZ0 + 0.04, feZ0 + feD - 0.12]) {
-        b.block(feSteel, px, 0, pz, 0.08, H + 1.0, 0.08, 'metal');
-      }
-    }
-    b.block(feSteel, feX0, 0.01, feZ0, feLandW, 0.04, feD, 'metal');
+    const feCx = (feX0 + feX1) * 0.5;
     for (let k = 0; k < desc.floors; k++) {
-      const y0 = k * FLOOR_H;
-      const even = k % 2 === 0;
-      for (let s = 0; s < steps; s++) {
-        const sx = even ? feX0 + feLandW + s * stepW : feX1 - feLandW - (s + 1) * stepW;
-        b.block(feSteel, sx, y0 + (s + 1) * stepH - 0.06, feZ0 + 0.12, stepW + 0.02, 0.06, feD - 0.24, 'metal');
-      }
-      const lx = even ? feX1 - feLandW : feX0;
-      const ly = (k + 1) * FLOOR_H;
-      b.block(feSteel, lx, ly - 0.08, feZ0, feLandW, 0.08, feD, 'metal');
-      // Outer safety rails on landing.
-      b.block(feSteel, lx, ly + 0.88, feZ0 + feD - 0.05, feLandW, 0.05, 0.05, 'metal');
-      b.block(feSteel, even ? feX1 - 0.05 : feX0, ly + 0.88, feZ0, 0.05, 0.05, feD, 'metal');
+      b.glb('fire_escape_smart_top', feCx, k * FLOOR_H, L.z1 + feD * 0.5, Math.PI, {
+        sx: (feX1 - feX0) / 3.179,
+        sy: 1,
+        sz: feD / 1.509,
+      });
     }
+    // Outer and end rail colliders above ground floor so the climber cannot walk off the edge.
+    b.solid(feX0, L.z1 + feD - 0.05, feX1, L.z1 + feD + 0.05, FLOOR_H, H + 0.9);
+    b.solid(feX0 - 0.05, L.z1, feX0 + 0.05, L.z1 + feD, FLOOR_H, H + 0.9);
+    b.solid(feX1 - 0.05, L.z1, feX1 + 0.05, L.z1 + feD, FLOOR_H, H + 0.9);
   } else {
     b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
   }

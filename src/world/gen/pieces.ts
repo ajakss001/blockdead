@@ -699,12 +699,11 @@ export function tree(b: Builder, x: number, y: number, z: number, scale: number,
   plantTree(b, x, y, z, s, r[0] * Math.PI * 2, species);
 }
 
-/** A tree spot of a given species (see lifeKinds TREE), its trunk collider, and its streamed GLB model. */
+/** A tree spot of a given species (see lifeKinds TREE), its trunk collider, and its streamed GLB model sunk into ground. */
 export function plantTree(b: Builder, x: number, y: number, z: number, s: number, yaw: number, species: number): void {
   const conifer = species === TREE.spruce || species === TREE.pine;
   b.life(LIFE.tree, x, y, z, Math.sin(yaw), Math.cos(yaw), (conifer ? 2.4 : 3) * s, s, spotHash(x, z, 31), species);
-  b.glb(conifer ? 'Spruce_Pine_Tree_7000' : 'Dead_Autumn_Tree_6000', x, y, z, yaw, { scale: conifer ? s * 0.82 : s * 0.88 });
-  b.batch.addShadow(new Matrix4().makeTranslation(x, y, z), (conifer ? 2.6 : 3.1) * s, (conifer ? 2.6 : 3.1) * s, 0.025);
+  b.glb(conifer ? 'Spruce_Pine_Tree_7000' : 'Dead_Autumn_Tree_6000', x, y - 0.18, z, yaw, { scale: conifer ? s * 0.82 : s * 0.88 });
   const t = (conifer ? 0.16 : 0.2) * s;
   b.colliders.addBox(x - t, z - t, x + t, z + t);
 }
@@ -755,14 +754,15 @@ export function hedge(b: Builder, ax: number, az: number, bx: number, bz: number
   }
 }
 
-/** Street lamp GLB; the arm points along +X/-X/+Z/-Z towards the road. */
-export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: number): void {
-  const yaw = armX === 0 && armZ === 0 ? 0 : Math.atan2(-armZ, armX);
-  b.glb('street_lamp_2000', x, 0, z, yaw);
-  b.colliders.addBox(x - 0.14, z - 0.14, x + 0.14, z + 0.14);
-  const ax = armX * 1.1;
-  const az = armZ * 1.1;
-  b.life(LIFE.perch, x + ax / 2, 4.14, z + az / 2, armX, armZ, 1.0, 0, spotHash(x, z, 91));
+/** Street lamp GLB; the arm points along (armX, armZ) strictly toward the road center, perch atop the crossbar. */
+export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: number, y = 0): void {
+  // Normalized GLB has pole at origin and arm extending toward local -X -> +PI rotates -X to (armX, armZ).
+  const yaw = armX === 0 && armZ === 0 ? 0 : Math.atan2(-armZ, armX) + Math.PI;
+  b.glb('street_lamp_2000', x, y, z, yaw);
+  b.colliders.addBox(x - 0.14, z - 0.14, x + 0.14, z + 0.14, y, y + 6.2);
+  const px = x + armX * 1.15;
+  const pz = z + armZ * 1.15;
+  b.life(LIFE.perch, px, y + 6.18, pz, armX, armZ, 1.35, 0, spotHash(x, z, 91));
 }
 
 export function mailbox(_b: Builder, _x: number, _z: number): void {}

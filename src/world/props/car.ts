@@ -18,7 +18,7 @@ import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
 import type { ContainerSpot } from '../gen/pieces';
 import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, modelLod1Indices } from '../models';
-import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
+import { CIVILIAN_FALLBACK_POOL, GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
 
 /** Third-party vehicle and prop models (set in the worker once loaded); null = procedural only. */
 let library: ModelLibrary | null = null;
@@ -131,7 +131,21 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
   const rand = mulberry32(o.seed ?? 1);
   const roll = o.flatTire ? -0.022 : 0;
   const pitch = o.flatTire ? -0.012 : 0;
-  const id = o.glbId ?? pickWorldVehicle(o.kind, rand(), o.smashed ?? 0);
+  let id = o.glbId ?? pickWorldVehicle(o.kind, rand(), o.smashed ?? 0);
+  if (!o.glbId && !o.kind) {
+    const tooClose = (cand: GlbModelId) =>
+      batch.glbs.some((g) => g.id === cand && (g.x - o.x) * (g.x - o.x) + (g.z - o.z) * (g.z - o.z) < 1600);
+    if (tooClose(id)) {
+      const start = Math.floor(rand() * CIVILIAN_FALLBACK_POOL.length);
+      for (let k = 0; k < CIVILIAN_FALLBACK_POOL.length; k++) {
+        const cand = CIVILIAN_FALLBACK_POOL[(start + k) % CIVILIAN_FALLBACK_POOL.length];
+        if (!tooClose(cand)) {
+          id = cand;
+          break;
+        }
+      }
+    }
+  }
   const spec = GLB_WORLD_SPECS[id];
   if (spec) {
     // World GLBs face -Z at yaw 0; rotating by (o.yaw - PI/2) points nose along +X at o.yaw = 0.
@@ -153,13 +167,6 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     const hoodH = Math.max(0.95, H * 0.62);
     world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
     world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, H + 0.12));
-
-    batch.addShadow(
-      new Matrix4().makeTranslation(o.x, 0.025, o.z).multiply(new Matrix4().makeRotationY(o.yaw)),
-      L * 1.12,
-      W * 1.18,
-      0.025,
-    );
 
     if (containers) {
       const pickup = id === 'emercom_pickup_17k';

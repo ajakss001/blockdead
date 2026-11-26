@@ -8,13 +8,18 @@ import { ESCAPE_ALTITUDE, HELI_SPOOL_TIME, Helicopter, PERIMETER_RADIUS } from '
 import { Inventory } from '../systems/Inventory';
 import { TRIPWIRE_FUSE_S, Tripwires } from '../systems/Tripwires';
 import { ZombieSim } from '../systems/zombies';
-import { CollisionWorld } from '../world/CollisionWorld';
+import { CollisionWorld, PackedColliders } from '../world/CollisionWorld';
 import { Doors } from '../world/Doors';
 import { GlbPropPool } from '../world/GlbPropPool';
 import { buildChunk } from '../world/gen/buildChunk';
+import { buildHighriseShell, FLOOR_H, highriseSurfaceY, local as highriseLocal, type BuildingDesc } from '../world/gen/highrise';
 import { WorldLayout } from '../world/gen/layout';
+import { Builder, lampPost } from '../world/gen/pieces';
+import { buildCar } from '../world/props/car';
+import { LIFE_STRIDE } from '../world/WorldLife';
 import { GLB_WORLD_SPECS, type GlbModelId } from '../world/worldModels';
 import { Particles } from '../render/Particles';
+import { StaticBatch } from '../render/StaticBatch';
 import type { InputManager } from '../input/InputManager';
 
 function makeMockInput(held: Record<string, boolean>, moveX = 0, moveY = 0): InputManager {
@@ -327,6 +332,112 @@ export async function main(): Promise<number> {
     const layout = new WorldLayout(1993);
     const chunk = buildChunk(layout, 0, 0);
     check(chunk.glbs.length > 0, `P5: downtown chunk (0,0) emits streamed GLB placements (${chunk.glbs.length} instances)`);
+
+    // Lamp post orientation toward road + perch height matching 6.2 m GLB arm
+    {
+      const b = new Builder(new StaticBatch(), new PackedColliders());
+      lampPost(b, 10, 20, -1, 0, 0.14);
+      lampPost(b, 30, 40, 0, -1, 0.14);
+      const l0 = b.batch.glbs[0];
+      const l1 = b.batch.glbs[1];
+      // Normalized street_lamp_2000 has arm along -X at yaw=0. For armX=-1, cos(yaw)=1; for armZ=-1, -sin(yaw) wait (-1,0,0) rotated by yaw has x=-cos(yaw), z=sin(yaw).
+      const dir0x = -Math.cos(l0.yaw);
+      const dir0z = Math.sin(l0.yaw);
+      const dir1x = -Math.cos(l1.yaw);
+      const dir1z = Math.sin(l1.yaw);
+      const perchY = b.ambient[2];
+      check(
+        dir0x < -0.95 && Math.abs(dir0z) < 0.05 && Math.abs(dir1x) < 0.05 && dir1z < -0.95 && perchY >= 6.1,
+        `P5: street_lamp_2000 arms point toward road & bird perch at y=${perchY.toFixed(2)} m`,
+      );
+    }
+
+    // 40m vehicle anti-repeat check
+    {
+      const batch = new StaticBatch();
+      const cw2 = new PackedColliders();
+      const spawned = new Set<GlbModelId>();
+      for (let k = 0; k < 6; k++) {
+        buildCar(batch, cw2, { x: k * 6, z: 0, yaw: 0, paint: 0x808080, seed: 42 });
+        spawned.add(batch.glbs[batch.glbs.length - 1].id);
+      }
+      check(spawned.size === 6, `P5: 40m anti-repeat prevents identical cars nearby (${spawned.size}/6 unique)`);
+    }
+
+    // Scan 11x11 map grid for bus stop sign clearance, grounded sparse trees, special vehicles & low luxury share
+    {
+      const counts = new Map<GlbModelId, number>();
+      let busSignsChecked = 0;
+      let busSignsOk = 0;
+      let treeGroundedOk = 0;
+      let treeGroundedTotal = 0;
+      let treeMinSep = 1e9;
+      for (let ci = -5; ci <= 5; ci++) {
+        for (let cj = -5; cj <= 5; cj++) {
+          const ch = buildChunk(layout, ci, cj);
+          const shelters = ch.glbs.filter((g) => g.id === 'Soviet_Bus_Stop_Shelt');
+          const busSigns = ch.glbs.filter((g) => g.id === 'Sign_Bus_Stop_1500');
+          for (const sg of busSigns) {
+            busSignsChecked++;
+            const nearSh = shelters.find((sh) => Math.hypot(sh.x - sg.x, sh.z - sg.z) < 12);
+            if (!nearSh || Math.hypot(nearSh.x - sg.x, nearSh.z - sg.z) >= 4.4) busSignsOk++;
+          }
+          const chTrees = ch.glbs.filter((g) => g.id === 'Dead_Autumn_Tree_6000' || g.id === 'Spruce_Pine_Tree_7000');
+          for (const t of chTrees) {
+            treeGroundedTotal++;
+            const gy = layout.heightAt(t.x, t.z);
+            if (t.y <= gy + 0.05) treeGroundedOk++; // Urban trees sit on sidewalk (0.14) - 0.18 = -0.04 <= gy+0.05
+          }
+          if (layout.isDowntown(ci, cj) && !layout.poi(ci, cj)) {
+            for (let a = 0; a < chTrees.length; a++) {
+              for (let b = a + 1; b < chTrees.length; b++) {
+                const d = Math.hypot(chTrees[a].x - chTrees[b].x, chTrees[a].z - chTrees[b].z);
+                if (d < treeMinSep) treeMinSep = d;
+              }
+            }
+          }
+          for (const g of ch.glbs) counts.set(g.id, (counts.get(g.id) ?? 0) + 1);
+        }
+      }
+      check(busSignsChecked > 0 && busSignsOk === busSignsChecked, `P5: bus stop signs clear shelter >= 2.0 m (${busSignsOk}/${busSignsChecked})`);
+      check(treeGroundedTotal > 0 && treeGroundedOk === treeGroundedTotal, `P5: trees grounded/sunk cleanly (${treeGroundedOk}/${treeGroundedTotal})`);
+      check(treeMinSep >= 18, `P5: street trees maintain >= 18 m min separation (min=${treeMinSep.toFixed(1)} m)`);
+
+      const requiredSpecial: GlbModelId[] = [
+        'Police_Sedan_DPS_22k',
+        'omon_swat_van_17k',
+        'gazelle_ambulance_17k',
+        'kamaz_fire_truck_20k',
+        'Kamaz_6x6_25k',
+        'gaz_tigr_4x4_17k',
+        'zsu_23_4_shilka_14k',
+        'paz_3205_bus_11000',
+      ];
+      const missingSpecial = requiredSpecial.filter((id) => (counts.get(id) ?? 0) === 0);
+      check(missingSpecial.length === 0, `P5: all special vehicle classes spawn across map (missing: ${missingSpecial.join(',') || 'none'})`);
+
+      let totalVeh = 0;
+      for (const [id, c] of counts) if (GLB_WORLD_SPECS[id].category === 'vehicle') totalVeh += c;
+      const lux = (counts.get('Luxury_SUV_Gelik_22k') ?? 0) + (counts.get('Sport_Sedan_22k') ?? 0);
+      const luxPct = (lux / Math.max(1, totalVeh)) * 100;
+      check(luxPct < 18, `P5: luxury Gelik+Sport_Sedan stay rare (${lux}/${totalVeh} = ${luxPct.toFixed(1)}%)`);
+    }
+
+    // Highrise GLB fire escape check
+    {
+      const b = new Builder(new StaticBatch(), new PackedColliders());
+      const desc: BuildingDesc = { id: 99, cx: 0, cz: 0, w: 18, d: 15, floors: 4, facade: 'facadeConcrete', flip: false, kind: 'apartments', seed: 11 };
+      buildHighriseShell(b, desc, () => 0.3);
+      const feCount = b.batch.glbs.filter((g) => g.id === 'fire_escape_smart_top').length;
+      const L = highriseLocal(desc);
+      const feMidX = (L.x0 + L.x1) * 0.5;
+      const topReach = highriseSurfaceY(desc, feMidX - 2.4, L.z1 + 0.5, desc.floors * FLOOR_H);
+      check(
+        feCount === desc.floors && topReach === desc.floors * FLOOR_H,
+        `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & reaches roof (${topReach} m)`,
+      );
+      void LIFE_STRIDE;
+    }
   }
 
   console.log(fails.length ? `\ntest:milestone FAILED (${fails.length})` : '\ntest:milestone passed');

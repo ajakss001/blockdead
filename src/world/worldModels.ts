@@ -65,12 +65,17 @@ export interface GlbPlacement {
   roll?: number;
 }
 
-const CIVILIAN_VEHICLES: readonly GlbModelId[] = [
-  'Sport_Sedan_22k',
-  'Luxury_SUV_Gelik_22k',
+export const CIVILIAN_FALLBACK_POOL: readonly GlbModelId[] = [
   'UAZ_Bukhanka_22k',
+  'burned_car_wreck',
   'emercom_pickup_17k',
   'paz_3205_bus_11000',
+  'Semi_Truck_Tractor_24',
+  'Police_Sedan_DPS_22k',
+  'gazelle_ambulance_17k',
+  'omon_swat_van_17k',
+  'Sport_Sedan_22k',
+  'Luxury_SUV_Gelik_22k',
 ];
 
 const ROAD_SIGNS: readonly GlbModelId[] = [
@@ -126,13 +131,14 @@ export function pickWorldVehicle(kind: string | undefined, r: number, smashed = 
     case 'fighter':
       return 'zsu_23_4_shilka_14k';
     default: {
-      if (smashed > 0.6 && r < 0.35) return 'burned_car_wreck';
-      if (r < 0.34) return 'Sport_Sedan_22k';
-      if (r < 0.58) return 'Luxury_SUV_Gelik_22k';
-      if (r < 0.78) return 'UAZ_Bukhanka_22k';
-      if (r < 0.90) return 'emercom_pickup_17k';
-      const idx = Math.min(CIVILIAN_VEHICLES.length - 1, Math.floor(r * CIVILIAN_VEHICLES.length));
-      return CIVILIAN_VEHICLES[idx];
+      if (smashed > 0.6 && r < 0.50) return 'burned_car_wreck';
+      if (r < 0.05) return 'Luxury_SUV_Gelik_22k';
+      if (r < 0.11) return 'Sport_Sedan_22k';
+      if (r < 0.43) return 'UAZ_Bukhanka_22k';
+      if (r < 0.65) return 'burned_car_wreck';
+      if (r < 0.83) return 'emercom_pickup_17k';
+      if (r < 0.93) return 'paz_3205_bus_11000';
+      return 'Semi_Truck_Tractor_24';
     }
   }
 }

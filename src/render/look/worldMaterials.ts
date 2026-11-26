@@ -235,6 +235,9 @@ export function initWorldMaterials(model: LightingModel, anisotropy: number): vo
       m.transparent = true;
       // Panes overlap each other and the interior; skipping depth writes avoids sorting holes.
       m.depthWrite = false;
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -2;
+      m.polygonOffsetUnits = -2;
       // Window panes are seen from the street and from the rooms.
       m.side = DoubleSide;
     }

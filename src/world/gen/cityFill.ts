@@ -180,12 +180,12 @@ function parkedCar(b: Builder, x: number, z: number, yaw: number, rand: Rand): v
  * no car within 7 m of `keepClear` (along the road).
  */
 export function curbParking(b: Builder, alongX: boolean, curb: number, side: number, from: number, to: number, rand: Rand, keepClear?: number): void {
-  for (let t = from + 3.2; t < to - 3.2; t += 6.5) {
-    if (rand() > 0.2) continue;
-    // Something else already happened here (a car wrapped round the lamp post).
+  for (let t = from + 3.5; t < to - 3.5; t += 11.5) {
+    if (rand() > 0.24) continue;
     if (keepClear !== undefined && Math.abs(t - keepClear) < 7) continue;
-    const yaw = alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2;
-    parkedCar(b, alongX ? t : curb, alongX ? curb : t, yaw, rand);
+    const baseYaw = alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2;
+    const tilt = rand() < 0.4 ? (rand() < 0.5 ? 1 : -1) * (0.2 + rand() * 0.28) : (rand() - 0.5) * 0.08;
+    parkedCar(b, alongX ? t : curb, alongX ? curb : t, baseYaw + tilt, rand);
   }
 }
 
@@ -198,7 +198,7 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
     const nose = edge === z0 ? -1 : 1;
     const rowZ = edge === z0 ? z0 + 0.3 : z1 - 0.3 - STALL_D;
     for (let x = x0 + 0.5; x + STALL_W <= x1 - 0.5; x += STALL_W) {
-      b.block(0xa8a490, x - 0.05, 0, rowZ, 0.1, PAVE.plaza + 0.02, STALL_D, 'asphalt');
+      b.block(0xa8a490, x - 0.05, 0, rowZ, 0.1, PAVE.plaza + 0.032, STALL_D, 'asphalt');
       if (rand() < 0.35) parkedCar(b, x + STALL_W / 2, rowZ + STALL_D / 2, nose < 0 ? Math.PI / 2 : -Math.PI / 2, rand);
     }
   }
@@ -222,7 +222,6 @@ function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
     sz: sz / 1.896,
   });
   b.solid(x, z, x + sx, z + sz, 0.12, 1.35);
-  b.batch.addShadow(_m.makeTranslation(cx, PAVE.plaza, cz), sx * 1.25, sz * 1.25, 0.025);
 }
 
 /** A pallet with crates on it (3D model, sometimes searchable). */
@@ -231,7 +230,6 @@ function crates(b: Builder, x: number, z: number, rand: Rand): void {
   if (cp.model(rand() < 0.5 ? 'palletCrates' : 'woodenCrate', rand, 0, 0, 0, 0, 1, 0.82, 0.08)) {
     b.solid(x, z, x + 1.0, z + 1.0, 0, 0.9);
   }
-  b.batch.addShadow(_m.makeTranslation(x + 0.5, PAVE.plaza, z + 0.5), 1.35, 1.35, 0.025);
   if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);
 }
 
@@ -292,7 +290,7 @@ interface EscapeSpec {
 }
 
 /** Gap between a fire escape and its wall. */
-const ESCAPE_GAP = 0.12;
+const ESCAPE_GAP = 0.02;
 
 /**
  * A fire escape only outside: its whole box (landings, flights, ladder) must not enter any building of the
@@ -309,7 +307,8 @@ export function fireEscape(b: Builder, axis: 'x' | 'z', wall: number, outward: 1
   const D = 1.25;
   const wx = axis === 'z' ? u0 + 1.5 : wall + outward * (ESCAPE_GAP + D * 0.5);
   const wz = axis === 'z' ? wall + outward * (ESCAPE_GAP + D * 0.5) : u0 + 1.5;
-  const yaw = axis === 'z' ? (outward > 0 ? 0 : Math.PI) : outward > 0 ? Math.PI / 2 : -Math.PI / 2;
+  // Local +Z of fire_escape_smart_top.glb holds its wall brackets; orient +Z flush against the wall.
+  const yaw = axis === 'z' ? (outward > 0 ? Math.PI : 0) : outward > 0 ? -Math.PI / 2 : Math.PI / 2;
   for (let k = 1; k <= storeys; k++) {
     const y = k * FLOOR_H - 0.05;
     b.glb('fire_escape_smart_top', wx, y, wz, yaw, {

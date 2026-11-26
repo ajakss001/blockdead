@@ -168,8 +168,8 @@ export class Player {
     // an unlit flashlight stops re-rendering its shadow map via shadow.autoUpdate.
     this.flashlight.castShadow = false;
     this.flashlight.shadow.autoUpdate = false;
-    this.flashlight.shadow.bias = -0.0006;
-    this.flashlight.shadow.normalBias = 0.03;
+    this.flashlight.shadow.bias = -0.0005;
+    this.flashlight.shadow.normalBias = 0.035;
     this.flashlight.shadow.camera.near = 0.28;
     this.flashlight.shadow.camera.far = f.distance;
     this.flashlight.shadow.camera.layers.enable(2);

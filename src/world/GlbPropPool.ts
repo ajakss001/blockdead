@@ -1,17 +1,19 @@
 import {
   Box3,
+  BoxGeometry,
+  CylinderGeometry,
+  DoubleSide,
   DynamicDrawUsage,
   Euler,
   InstancedMesh,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
   PointLight,
   Quaternion,
   type BufferGeometry,
   type Material,
   type Scene,
-  SphereGeometry,
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -62,16 +64,12 @@ export class GlbPropPool {
   private readonly chunks = new Map<number, GlbPlacement[]>();
   private readonly assets = new Map<GlbModelId, AssetEntry>();
   private readonly bushes: BushSphere[] = [];
-  private readonly trafficLights: { x: number; y: number; z: number }[] = [];
   private readonly lightTowers: { x: number; y: number; z: number }[] = [];
   private readonly burnBarrels: { x: number; y: number; z: number }[] = [];
   private readonly heliWrecks: { x: number; y: number; z: number }[] = [];
 
   private readonly barrelLights: PointLight[] = [];
   private readonly towerLights: PointLight[] = [];
-  private readonly trafficGlows: Mesh[] = [];
-  private readonly glowGeo = new SphereGeometry(0.18, 6, 4);
-  private readonly trafficMats: MeshBasicMaterial[];
 
   private dirty = false;
   private indexesDirty = false;
@@ -85,11 +83,6 @@ export class GlbPropPool {
     private readonly scene: Scene,
     private readonly particles?: Particles | null,
   ) {
-    this.trafficMats = [
-      new MeshBasicMaterial({ color: 0xff3b28 }),
-      new MeshBasicMaterial({ color: 0xffb828 }),
-      new MeshBasicMaterial({ color: 0x35e86a }),
-    ];
     for (let i = 0; i < 4; i++) {
       const l = new PointLight(0xff7728, 0, 12, 1.8);
       l.castShadow = false;
@@ -101,12 +94,6 @@ export class GlbPropPool {
       l.castShadow = false;
       this.scene.add(l);
       this.towerLights.push(l);
-    }
-    for (let i = 0; i < 4; i++) {
-      const m = new Mesh(this.glowGeo, this.trafficMats[0]);
-      m.visible = false;
-      this.scene.add(m);
-      this.trafficGlows.push(m);
     }
   }
 
@@ -190,12 +177,55 @@ export class GlbPropPool {
         root.updateMatrixWorld(true);
         const box = new Box3().setFromObject(root);
         const minYOffset = Number.isFinite(box.min.y) ? -box.min.y : 0;
-        const groundMat = new Matrix4().makeTranslation(0, minYOffset, 0);
+        const baseMat = new Matrix4().makeTranslation(0, minYOffset, 0);
+        let assetMat = baseMat;
+
+        let extraGeo: BufferGeometry | null = null;
+        let extraMat: Material | null = null;
+        let extraLocal: Matrix4 | null = null;
+
+        if (id === 'street_lamp_2000') {
+          // Shift pole center (+1.035 X in GLB) to local origin so the arm points along -X.
+          assetMat = new Matrix4().makeTranslation(-1.035, 0, 0).multiply(baseMat);
+        } else if (spec.category === 'sign') {
+          const s = 0.68 / spec.size[0];
+          const lift = Math.max(0, 2.72 - spec.size[1] * s);
+          assetMat = new Matrix4()
+            .makeTranslation(0, lift, 0)
+            .multiply(new Matrix4().makeScale(s, s, s))
+            .multiply(baseMat);
+          const poleH = lift + 0.18;
+          extraGeo = new CylinderGeometry(0.032, 0.032, poleH, 8);
+          extraMat = new MeshStandardMaterial({ color: 0x5c6066, roughness: 0.78, metalness: 0.35 });
+          extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
+        } else if (id === 'traffic_light_2500') {
+          const s = 0.56;
+          const lift = 0.95;
+          assetMat = new Matrix4()
+            .makeTranslation(0, lift, 0)
+            .multiply(new Matrix4().makeScale(s, s, s))
+            .multiply(baseMat);
+          const poleH = lift + 0.2;
+          extraGeo = new CylinderGeometry(0.06, 0.075, poleH, 8);
+          extraMat = new MeshStandardMaterial({ color: 0x4c5056, roughness: 0.75, metalness: 0.4 });
+          extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
+        } else if (id === 'Sport_Sedan_22k') {
+          extraGeo = new BoxGeometry(spec.size[0] * 0.76, spec.size[1] * 0.60, spec.size[2] * 0.78);
+          extraMat = new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 });
+          extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.44, 0);
+        }
 
         root.traverse((obj) => {
           const m = obj as Mesh;
           if (!m.isMesh || !m.geometry) return;
-          const local = groundMat.clone().multiply(m.matrixWorld);
+          if (spec.category === 'vehicle') {
+            if (Array.isArray(m.material)) {
+              for (const mm of m.material) mm.side = DoubleSide;
+            } else if (m.material) {
+              m.material.side = DoubleSide;
+            }
+          }
+          const local = assetMat.clone().multiply(m.matrixWorld);
           entry.parts.push({
             geo: m.geometry,
             mat: m.material,
@@ -206,6 +236,17 @@ export class GlbPropPool {
           entry.meshes.push(null);
           entry.capacities.push(0);
         });
+        if (extraGeo && extraMat && extraLocal) {
+          entry.parts.push({
+            geo: extraGeo,
+            mat: extraMat,
+            local: extraLocal,
+            castShadow: spec.castShadow,
+            receiveShadow: true,
+          });
+          entry.meshes.push(null);
+          entry.capacities.push(0);
+        }
         entry.status = 'ready';
         this.dirty = true;
       })
@@ -218,7 +259,6 @@ export class GlbPropPool {
   private rebuildSpatialLists(): void {
     this.indexesDirty = false;
     this.bushes.length = 0;
-    this.trafficLights.length = 0;
     this.lightTowers.length = 0;
     this.burnBarrels.length = 0;
     this.heliWrecks.length = 0;
@@ -232,9 +272,6 @@ export class GlbPropPool {
             this.bushes.push({ x: p.x, y: p.y + 0.72 * sc, z: p.z, r: 1.05 * sc });
             break;
           }
-          case 'traffic_light_2500':
-            this.trafficLights.push({ x: p.x, y: p.y, z: p.z });
-            break;
           case 'generator_light_tower':
             this.lightTowers.push({ x: p.x, y: p.y, z: p.z });
             break;
@@ -343,19 +380,6 @@ export class GlbPropPool {
     }
     for (; ti < this.towerLights.length; ti++) this.towerLights[ti].intensity = 0;
 
-    // 3. Traffic light cycling emissive beacon
-    const phase = Math.floor(this.time * 0.18) % 3;
-    let gi = 0;
-    for (let i = 0; i < this.trafficLights.length && gi < this.trafficGlows.length; i++) {
-      const tl = this.trafficLights[i];
-      if ((tl.x - camPos.x) ** 2 + (tl.z - camPos.z) ** 2 > 65 * 65) continue;
-      const g = this.trafficGlows[gi++];
-      g.visible = true;
-      g.position.set(tl.x, tl.y + 4.35 - phase * 0.28, tl.z);
-      g.material = this.trafficMats[phase];
-    }
-    for (; gi < this.trafficGlows.length; gi++) this.trafficGlows[gi].visible = false;
-
     if (this.fxTimer >= 0.16) {
       this.fxTimer = 0;
       if (!paused && this.particles) {
@@ -374,9 +398,6 @@ export class GlbPropPool {
     this.disposed = true;
     for (const l of this.barrelLights) l.removeFromParent();
     for (const l of this.towerLights) l.removeFromParent();
-    for (const g of this.trafficGlows) g.removeFromParent();
-    this.glowGeo.dispose();
-    for (const m of this.trafficMats) m.dispose();
     for (const entry of this.assets.values()) {
       for (const im of entry.meshes) {
         if (im) {
