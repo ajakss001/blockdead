@@ -136,7 +136,7 @@ export class Interiors {
     }
     for (let i = 0; i < list.length; i++) {
       const d = list[i];
-      if (insideFootprint(d, x, z, 1.8)) {
+      if (insideFootprint(d, x, z, 2.2)) {
         const sy = highriseSurfaceY(d, x, z, y);
         if (sy !== null && sy > 0.05) return sy;
       }

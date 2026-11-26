@@ -12,9 +12,20 @@ import { CollisionWorld, PackedColliders } from '../world/CollisionWorld';
 import { Doors } from '../world/Doors';
 import { GlbPropPool } from '../world/GlbPropPool';
 import { buildChunk } from '../world/gen/buildChunk';
-import { buildHighriseShell, FLOOR_H, highriseSurfaceY, local as highriseLocal, type BuildingDesc } from '../world/gen/highrise';
+import {
+  buildHighriseShell,
+  FE_DEPTH,
+  FE_HALF_W,
+  FE_LAND_W,
+  FE_ROOF_GAP,
+  FLOOR_H,
+  highriseSurfaceY,
+  local as highriseLocal,
+  type BuildingDesc,
+} from '../world/gen/highrise';
 import { WorldLayout } from '../world/gen/layout';
 import { Builder, lampPost } from '../world/gen/pieces';
+import { trafficJam } from '../world/gen/storytelling';
 import { buildCar } from '../world/props/car';
 import { LIFE_STRIDE } from '../world/WorldLife';
 import { GLB_WORLD_SPECS, type GlbModelId } from '../world/worldModels';
@@ -423,18 +434,102 @@ export async function main(): Promise<number> {
       check(luxPct < 18, `P5: luxury Gelik+Sport_Sedan stay rare (${lux}/${totalVeh} = ${luxPct.toFixed(1)}%)`);
     }
 
-    // Highrise GLB fire escape check
+    // Semi-truck + trailer fifth-wheel coupling (~6.75 m) and solid outer BoxCollider check
     {
-      const b = new Builder(new StaticBatch(), new PackedColliders());
+      const cw = new CollisionWorld();
+      const sb = new StaticBatch();
+      buildCar(sb, cw, { x: 0, z: 0, yaw: 0, paint: 0xffffff, seed: 5, kind: 'trailer' });
+      const wallProbe = new Vector3(4.5, 1.0, 0.2);
+      cw.resolveCircle(wallProbe, 0.3);
+      const roofSupport = cw.supportAt(0, 0, 0.24, 5.2, 4.95);
+      const jamBatch = new StaticBatch();
+      const jamCw = new CollisionWorld();
+      const jb = new Builder(jamBatch, jamCw);
+      let coupledOk = true;
+      let pairCount = 0;
+      for (let s = 1; s <= 40; s++) {
+        let seedState = s * 9973;
+        const rnd = () => ((seedState = (seedState * 16807) % 2147483647) / 2147483647);
+        jamBatch.glbs.length = 0;
+        trafficJam(jb, 0, 0, true, 6, 58, rnd);
+        for (let gi = 0; gi < jamBatch.glbs.length; gi++) {
+          if (jamBatch.glbs[gi].id === 'Semi_Truck_Tractor_24' && jamBatch.glbs[gi + 1]?.id === 'Semi_Trailer_Cargo_20') {
+            const tr = jamBatch.glbs[gi];
+            const tl = jamBatch.glbs[gi + 1];
+            const d = Math.hypot(tr.x - tl.x, tr.z - tl.z);
+            pairCount++;
+            if (Math.abs(d - 6.75) > 0.05) coupledOk = false;
+          }
+        }
+      }
+      check(
+        pairCount > 0 && coupledOk && Math.abs(wallProbe.z) >= 1.44 && Math.abs(roofSupport - 4.954) < 0.02,
+        `P5: semi-trailer couples at 6.75m & has solid BoxCollider roof (${roofSupport.toFixed(2)}m, pairs=${pairCount})`,
+      );
+    }
+
+    // Highrise GLB fire escape check: smooth continuous ramp, >= 2.2m headroom, and open roof exit
+    {
+      const cw = new CollisionWorld();
+      const packed = new PackedColliders();
+      const b = new Builder(new StaticBatch(), packed);
       const desc: BuildingDesc = { id: 99, cx: 0, cz: 0, w: 18, d: 15, floors: 4, facade: 'facadeConcrete', flip: false, kind: 'apartments', seed: 11 };
       buildHighriseShell(b, desc, () => 0.3);
+      cw.addPacked(1, new Float32Array(packed.data));
       const feCount = b.batch.glbs.filter((g) => g.id === 'fire_escape_smart_top').length;
       const L = highriseLocal(desc);
-      const feMidX = (L.x0 + L.x1) * 0.5;
-      const topReach = highriseSurfaceY(desc, feMidX - 2.4, L.z1 + 0.5, desc.floors * FLOOR_H);
+      const feX0 = (L.x0 + L.x1) * 0.5 - FE_HALF_W;
+      const feX1 = feX0 + FE_HALF_W * 2;
+      const zInner = L.z1 + FE_DEPTH * 0.25;
+      const zOuter = L.z1 + FE_DEPTH * 0.72;
+      let curY = 0;
+      let headroomOk = true;
+      let continuousClimb = true;
+      for (let f = 0; f < desc.floors; f++) {
+        // Walk from entry feX0 to arrival feX1 along smooth outer ramp
+        for (let x = feX0 + 0.5; x <= feX1 - 0.5; x += 0.25) {
+          const ny = highriseSurfaceY(desc, x, zOuter, curY);
+          const p = new Vector3(x, curY, zOuter);
+          cw.resolveCircle(p, 0.3);
+          const ceil = cw.ceilingAt(x, zOuter, 0.25, curY + 0.4);
+          if (ceil < curY + 2.2) headroomOk = false;
+          if (ny === null || ny - curY > 0.35 || p.distanceTo(new Vector3(x, curY, zOuter)) > 0.05) continuousClimb = false;
+          else curY = ny;
+        }
+        // Transition to inner balcony walkway (if more floors remain) or exit straight onto roof
+        if (f < desc.floors - 1) {
+          for (let z = zOuter; z >= zInner; z -= 0.15) {
+            const ny = highriseSurfaceY(desc, feX1 - 0.5, z, curY);
+            if (ny === null || Math.abs(ny - (f + 1) * FLOOR_H) > 0.05) continuousClimb = false;
+            else curY = ny;
+          }
+          for (let x = feX1 - 0.5; x >= feX0 + 0.5; x -= 0.3) {
+            const ny = highriseSurfaceY(desc, x, zInner, curY);
+            const ceil = cw.ceilingAt(x, zInner, 0.25, curY + 0.4);
+            if (ceil < curY + 2.2) headroomOk = false;
+            if (ny === null || Math.abs(ny - (f + 1) * FLOOR_H) > 0.05) continuousClimb = false;
+          }
+          for (let z = zInner; z <= zOuter; z += 0.15) {
+            const ny = highriseSurfaceY(desc, feX0 + 0.5, z, curY);
+            if (ny === null || Math.abs(ny - (f + 1) * FLOOR_H) > 0.05) continuousClimb = false;
+          }
+        }
+      }
+      // Check stepping straight across parapet exit [feX1 - FE_ROOF_GAP .. feX1] onto the roof slab
+      const exitX = feX1 - FE_ROOF_GAP * 0.5;
+      let roofExitOk = Math.abs(curY - desc.floors * FLOOR_H) < 0.05;
+      for (let z = zOuter; z >= L.z1 - 1.0; z -= 0.2) {
+        const ny = highriseSurfaceY(desc, exitX, z, curY);
+        const p = new Vector3(exitX, curY, z);
+        cw.resolveCircle(p, 0.3);
+        if (ny === null || Math.abs(ny - desc.floors * FLOOR_H) > 0.05 || Math.hypot(p.x - exitX, p.z - z) > 0.05) {
+          roofExitOk = false;
+        }
+      }
+      void FE_LAND_W;
       check(
-        feCount === desc.floors && topReach === desc.floors * FLOOR_H,
-        `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & reaches roof (${topReach} m)`,
+        feCount === desc.floors && continuousClimb && headroomOk && roofExitOk,
+        `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & climbs smoothly to roof (${curY.toFixed(1)} m, headroom=${headroomOk}, roofExit=${roofExitOk})`,
       );
       void LIFE_STRIDE;
     }

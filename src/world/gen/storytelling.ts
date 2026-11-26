@@ -53,13 +53,16 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
     const askew = rand() < 0.55 ? dir * (0.26 + rand() * 0.42) : (rand() - 0.5) * 0.16;
     const x = alongX ? t : cx + lane + (rand() - 0.5) * 1.4;
     const z = alongX ? cz + lane + (rand() - 0.5) * 1.4 : t;
-    if (rand() < 0.24 && t + 11.5 < to - 3.5) {
+    const trailSign = alongX ? -Math.cos(heading) : Math.sin(heading);
+    const rigFits = trailSign < 0 ? t >= from + 13.2 && t <= to - 4.0 : t >= from + 4.0 && t <= to - 13.2;
+    if (rand() < 0.24 && rigFits) {
       const yaw = heading + (rand() - 0.5) * 0.14;
       car(b, x, z, yaw, rand, 0.2, 'semi');
-      const tx = x - Math.cos(yaw) * 9.8;
-      const tz = z + Math.sin(yaw) * 9.8;
+      // Couple trailer 6.75 m behind tractor so trailer nose sits squarely over the fifth-wheel saddle.
+      const tx = x - Math.cos(yaw) * 6.75;
+      const tz = z + Math.sin(yaw) * 6.75;
       car(b, tx, tz, yaw, rand, 0.1, 'trailer');
-      t += 16.5 + rand() * 3.0;
+      t += (trailSign > 0 ? 15.5 : 9.5) + rand() * 3.0;
       n += 2;
       continue;
     }

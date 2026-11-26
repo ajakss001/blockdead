@@ -164,9 +164,19 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
     const L = spec.size[2];
     const hx = L * 0.5 + 0.02;
     const hz = W * 0.48;
-    const hoodH = Math.max(0.95, H * 0.62);
-    world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
-    world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, H + 0.12));
+    if (id === 'Semi_Trailer_Cargo_20') {
+      // Solid full-extent outer BoxCollider matching Box3 walls & roof so players never fall inside the trailer.
+      world.addOrientedBox(o.x, o.z, hx + 0.02, W * 0.5 + 0.02, o.yaw, -0.5, H);
+    } else if (id === 'Semi_Truck_Tractor_24') {
+      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, 1.56);
+      const cabX = o.x + Math.cos(o.yaw) * (L * 0.25);
+      const cabZ = o.z - Math.sin(o.yaw) * (L * 0.25);
+      world.addOrientedBox(cabX, cabZ, L * 0.25 + 0.02, hz, o.yaw, 1.56, H);
+    } else {
+      const hoodH = Math.max(0.95, H * 0.62);
+      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
+      world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, H + 0.12));
+    }
 
     if (containers) {
       const pickup = id === 'emercom_pickup_17k';

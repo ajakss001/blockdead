@@ -210,9 +210,10 @@ export class GlbPropPool {
           extraMat = new MeshStandardMaterial({ color: 0x4c5056, roughness: 0.75, metalness: 0.4 });
           extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
         } else if (id === 'Sport_Sedan_22k') {
-          extraGeo = new BoxGeometry(spec.size[0] * 0.76, spec.size[1] * 0.60, spec.size[2] * 0.78);
+          // Small matte baffle tucked inside the rear trunk well (<=35% H, <=18% L, <=65% W) so nothing clips hood/windows.
+          extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
           extraMat = new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 });
-          extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.44, 0);
+          extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.40, spec.size[2] * 0.30);
         }
 
         root.traverse((obj) => {

@@ -325,11 +325,11 @@ export class Firearms {
     // Compact wispy gunsmoke forward of the muzzle after sustained fire (never blocking ADS sight picture).
     if (this.smokeT > 0) {
       this.smokeT -= dt;
-      if (Math.random() < dt * 9) {
+      if (Math.random() < dt * 8) {
         this.muzzleWorld(_p);
         this.w.camera.getWorldDirection(_d);
-        _p.addScaledVector(_d, 0.28);
-        if (gv.ads) _p.y -= 0.04;
+        _p.addScaledVector(_d, 0.42);
+        if (gv.ads) _p.y -= 0.05;
         this.w.particles.muzzleSmoke(_p.x, _p.y, _p.z, _d.x, _d.y, _d.z);
       }
     }

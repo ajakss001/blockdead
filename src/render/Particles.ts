@@ -116,23 +116,23 @@ export class Particles {
     const shade = 0.62 + Math.random() * 0.08;
     const i = this.take(
       KIND.puff,
-      x + (Math.random() - 0.5) * 0.03,
-      y + (Math.random() - 0.5) * 0.03,
-      z + (Math.random() - 0.5) * 0.03,
-      0.25 + Math.random() * 0.13,
-      0.042 + Math.random() * 0.014,
+      x + (Math.random() - 0.5) * 0.02,
+      y + (Math.random() - 0.5) * 0.02,
+      z + (Math.random() - 0.5) * 0.02,
+      0.22 + Math.random() * 0.12,
+      0.025 + Math.random() * 0.010,
       0,
-      0.14 + Math.random() * 0.06,
+      0.12 + Math.random() * 0.06,
       shade,
       shade,
       shade * 1.02,
     );
-    this.size1[i] = 0.14 + Math.random() * 0.07;
+    this.size1[i] = 0.08 + Math.random() * 0.04;
     this.vel.set(
       [
-        dx * 0.55 + (Math.random() - 0.5) * 0.18,
-        dy * 0.35 + 0.18 + Math.random() * 0.12,
-        dz * 0.55 + (Math.random() - 0.5) * 0.18,
+        dx * 0.75 + (Math.random() - 0.5) * 0.16,
+        dy * 0.45 + 0.22 + Math.random() * 0.10,
+        dz * 0.75 + (Math.random() - 0.5) * 0.16,
       ],
       i * 3,
     );

@@ -2156,10 +2156,15 @@ export class WorldScene implements IScene {
 
   private drawSearchZones(dt: number): void {
     const f = this.dead ? null : this.interaction.focus;
-    const hideVehicleOutline =
-      !!f && (f.type === 'trunk' || f.type === 'vehicleCabin' || f.type === 'cargoHold' || f.type === 'planeCabin');
-    this.searchOutline.visible = !!f && !hideVehicleOutline;
-    if (f && !hideVehicleOutline) {
+    const hideSearchOutline =
+      !!f &&
+      (f.type === 'trunk' ||
+        f.type === 'vehicleCabin' ||
+        f.type === 'cargoHold' ||
+        f.type === 'planeCabin' ||
+        f.type.startsWith('body'));
+    this.searchOutline.visible = !!f && !hideSearchOutline;
+    if (f && !hideSearchOutline) {
       const b = searchBox(f);
       this.searchOutline.position.set(b[0], b[1], b[2]);
       this.searchOutline.scale.set(b[3] * 2, b[4] * 2, b[5] * 2);

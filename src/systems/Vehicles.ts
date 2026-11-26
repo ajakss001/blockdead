@@ -271,11 +271,12 @@ export class Vehicles {
         const holder = new Group();
         holder.add(root);
         if (kind === 'sedan') {
+          // Compact matte baffle recessed strictly inside the rear trunk well (never protruding through hood/glass).
           const blocker = new Mesh(
-            new BoxGeometry(1.60, 0.88, 3.55),
+            new BoxGeometry(1.22, 0.44, 0.64),
             new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 }),
           );
-          blocker.position.set(0, 0.64, 0);
+          blocker.position.set(0, 0.58, 1.38);
           blocker.castShadow = false;
           blocker.receiveShadow = false;
           holder.add(blocker);

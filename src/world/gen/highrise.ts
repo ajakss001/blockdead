@@ -20,6 +20,10 @@ import { type Builder, PAL, pick, type Rand } from './pieces';
 
 export const FLOOR_H = 3.2;
 export const WALL = 0.3;
+export const FE_HALF_W = 3.0;
+export const FE_DEPTH = 1.75;
+export const FE_LAND_W = 1.35;
+export const FE_ROOF_GAP = 2.0;
 export const CORE_W = 3.2;
 const CORE_D = 5.4;
 /** Floor-level landing at the corridor side of the core. */
@@ -197,32 +201,38 @@ export function highriseSurfaceY(b: BuildingDesc, wx: number, wz: number, y: num
     if (h <= reach && h > best) best = h;
   };
   const inCore = x >= L.cx0 && x <= L.cx1 && z >= L.cz0 && z <= L.cz1;
-  // Exterior fire escape along the back wall (L.z1 .. L.z1 + 1.4).
-  const feX0 = (L.x0 + L.x1) / 2 - 3.0;
-  const feX1 = feX0 + 6.0;
-  if (b.floors >= 2 && x >= feX0 - 0.05 && x <= feX1 + 0.05 && z >= L.z1 - 0.15 && z <= L.z1 + 1.42) {
-    const landW = 1.3;
-    const run = feX1 - feX0 - 2 * landW;
-    for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
-      if (k === b.floors) {
-        const oddTop = b.floors % 2 === 1;
-        if ((oddTop && x >= feX1 - landW - 0.1) || (!oddTop && x <= feX0 + landW + 0.1)) {
-          consider(b.floors * FLOOR_H);
+  // Exterior fire escape along the back wall (L.z1 .. L.z1 + FE_DEPTH) + roof doorway bridge (L.z1 - WALL .. L.z1).
+  const feX0 = (L.x0 + L.x1) / 2 - FE_HALF_W;
+  const feX1 = feX0 + FE_HALF_W * 2;
+  const feGap0 = feX1 - FE_ROOF_GAP;
+  const H = b.floors * FLOOR_H;
+  if (b.floors >= 2 && x >= feX0 - 0.08 && x <= feX1 + 0.08 && z >= L.z1 - WALL - 0.05 && z <= L.z1 + FE_DEPTH + 0.08) {
+    if (z < L.z1) {
+      if (x >= feGap0 - 0.12 && x <= feX1 + 0.08 && y >= H - 0.65) {
+        return H;
+      }
+    } else {
+      const run = feX1 - feX0 - 2 * FE_LAND_W;
+      const innerLane = z <= L.z1 + FE_DEPTH * 0.48;
+      for (let k = Math.max(0, kc - 1); k <= Math.min(b.floors, kc + 1); k++) {
+        if (k === b.floors) {
+          // Top arrival zone on outer lane (x >= feX1 - FE_LAND_W) & roof exit doorway bridge on inner lane (x >= feGap0).
+          if (innerLane ? x >= feGap0 - 0.15 : x >= feX1 - FE_LAND_W) consider(H);
+          continue;
         }
-        continue;
+        const y0 = k * FLOOR_H;
+        if (innerLane) {
+          // Flat inner balcony walkway connects top arrival (feX1) smoothly back to bottom flight entry (feX0).
+          consider(y0);
+        } else {
+          // Smooth ramp in the outer stair lane with open hatch cutout at the top landing (x >= feX1 - FE_LAND_W).
+          if (x <= feX0 + FE_LAND_W) consider(y0);
+          else if (x >= feX1 - FE_LAND_W) consider(y0 + FLOOR_H);
+          else consider(y0 + ((x - (feX0 + FE_LAND_W)) / run) * FLOOR_H);
+        }
       }
-      const y0 = k * FLOOR_H;
-      if (k % 2 === 0) {
-        if (x <= feX0 + landW) consider(y0);
-        else if (x >= feX1 - landW) consider(y0 + FLOOR_H);
-        else consider(y0 + ((x - (feX0 + landW)) / run) * FLOOR_H);
-      } else {
-        if (x >= feX1 - landW) consider(y0);
-        else if (x <= feX0 + landW) consider(y0 + FLOOR_H);
-        else consider(y0 + ((feX1 - landW - x) / run) * FLOOR_H);
-      }
+      return best > -Infinity ? best : null;
     }
-    return best > -Infinity ? best : null;
   }
   // Outside the building footprint (and off the fire escape): never return phantom elevated floors.
   if (x < L.x0 || x > L.x1 || z < L.z0 || z > L.z1) return null;
@@ -311,30 +321,32 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     wx = o.x1;
   }
   if (L.x1 - wx > 0.01) b.block(tint, wx, 0, L.z0, L.x1 - wx, FLOOR_H, WALL, f, true);
-  // Back wall up to roof, plus parapet with a doorway gap for the exterior fire escape.
-  const feX0 = (L.x0 + L.x1) / 2 - 3.0;
-  const feX1 = feX0 + 6.0;
-  const feLandW = 1.3;
+  // Back wall up to roof, plus parapet with a doorway gap for the exterior fire escape top exit.
+  const feX0 = (L.x0 + L.x1) / 2 - FE_HALF_W;
+  const feX1 = feX0 + FE_HALF_W * 2;
   if (desc.floors >= 2) {
     b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, true);
-    const gap0 = desc.floors % 2 === 1 ? feX1 - feLandW : feX0;
-    const gap1 = gap0 + feLandW;
+    // Open parapet exit always sits directly at the top flight arrival (feX1 - FE_ROOF_GAP .. feX1), clear of head-house.
+    const gap0 = feX1 - FE_ROOF_GAP;
+    const gap1 = feX1;
     if (gap0 > L.x0 + 0.05) b.block(tint, L.x0, H, L.z1 - WALL, gap0 - L.x0, top - H, WALL, f, true);
     if (L.x1 > gap1 + 0.05) b.block(tint, gap1, H, L.z1 - WALL, L.x1 - gap1, top - H, WALL, f, true);
-    // Exterior working fire escape (ground to roof) along L.z1 using fire_escape_smart_top.glb modules.
-    const feD = 1.4;
+    // Flush metal roof threshold bridge joining the top fire-escape landing straight onto the roof slab.
+    b.block(0x52565c, gap0, H - 0.06, L.z1 - WALL, FE_ROOF_GAP, 0.06, WALL + FE_DEPTH * 0.52, 'metal', false);
+    // Exterior working fire escape (ground to roof) along L.z1: scaled so GLB platform (y_local=0.65 -> 3.20) spans FLOOR_H per flight.
     const feCx = (feX0 + feX1) * 0.5;
+    const feSy = FLOOR_H / 2.55;
     for (let k = 0; k < desc.floors; k++) {
-      b.glb('fire_escape_smart_top', feCx, k * FLOOR_H, L.z1 + feD * 0.5, Math.PI, {
+      b.glb('fire_escape_smart_top', feCx, k * FLOOR_H - 0.65 * feSy, L.z1 + FE_DEPTH * 0.5, Math.PI, {
         sx: (feX1 - feX0) / 3.179,
-        sy: 1,
-        sz: feD / 1.509,
+        sy: feSy,
+        sz: FE_DEPTH / 1.509,
       });
     }
-    // Outer and end rail colliders above ground floor so the climber cannot walk off the edge.
-    b.solid(feX0, L.z1 + feD - 0.05, feX1, L.z1 + feD + 0.05, FLOOR_H, H + 0.9);
-    b.solid(feX0 - 0.05, L.z1, feX0 + 0.05, L.z1 + feD, FLOOR_H, H + 0.9);
-    b.solid(feX1 - 0.05, L.z1, feX1 + 0.05, L.z1 + feD, FLOOR_H, H + 0.9);
+    // Clean simplified outer perimeter guard-rail colliders strictly outside the balcony & stair ramp zone (floors 1..roof).
+    b.solid(feX0 - 0.125, L.z1 + FE_DEPTH + 0.02, feX1 + 0.125, L.z1 + FE_DEPTH + 0.27, FLOOR_H, H + 1.0);
+    b.solid(feX0 - 0.27, L.z1, feX0 - 0.02, L.z1 + FE_DEPTH, FLOOR_H, H + 1.0);
+    b.solid(feX1 + 0.02, L.z1, feX1 + 0.27, L.z1 + FE_DEPTH, FLOOR_H, H + 1.0);
   } else {
     b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
   }
