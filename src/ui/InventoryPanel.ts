@@ -70,6 +70,8 @@ export interface InventoryHost {
   onClose(): void;
   /** «Новый персонаж»: retire this survivor and open the character editor. */
   newCharacter?(): void;
+  /** Enter live wall-to-wall placement preview for an explosive tripwire item. */
+  startTripwirePlacement?(): void;
 }
 
 type Slot = WearSlot | 'hand';
@@ -1286,6 +1288,11 @@ export class InventoryPanel {
 
   private use(place: Place): void {
     if (place.from !== 'bag') return;
+    if (place.id === 'tripwire') {
+      this.close();
+      this.host.startTripwirePlacement?.();
+      return;
+    }
     const { inventory, survival, player } = this.host;
     const def = ITEMS[place.id];
     if (inventory.removeByUid(place.uid, 1) === 0) return;

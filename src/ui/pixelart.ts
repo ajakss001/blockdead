@@ -827,7 +827,42 @@ const WEAR_DRAW: Partial<Record<ItemId, (s: Sprite) => void>> = {
   },
 };
 
-Object.assign(DRAW, GUN_DRAW, WEAR_DRAW);
+const SPECIAL_DRAW: Partial<Record<string, (s: Sprite) => void>> = {
+  tripwire: (s) => {
+    // Grenade body + wooden/metal stake + taut steel tripwire across.
+    s.rect(2, 5, 4, 8, 0x3c4b34);
+    s.rect(3, 4, 2, 1, 0x7b807a);
+    s.dot(5, 4, 0xc8a440); // pin ring
+    s.rect(12, 6, 2, 8, 0x5c4632);
+    s.line(5, 8, 12, 8, 0xb6bec2); // wire
+  },
+  heliAvionics: (s) => {
+    s.rect(2, 3, 12, 10, 0x26343c);
+    s.rect(3, 4, 10, 8, 0x1a262c);
+    s.rect(4, 5, 5, 4, 0x389c68); // radar/avionics screen
+    s.dot(11, 5, 0xe09030);
+    s.dot(11, 7, 0x40d070);
+    s.dot(11, 9, 0xd84040);
+    s.rect(4, 10, 5, 1, 0x809098);
+  },
+  heliFuelPump: (s) => {
+    s.rect(3, 5, 8, 7, 0x8a3a2a);
+    s.rect(5, 3, 4, 2, 0x9aa2a6);
+    s.rect(11, 7, 3, 2, 0x9aa2a6);
+    s.rect(4, 12, 6, 2, 0x282c30);
+    s.dot(6, 7, 0xd0a848);
+  },
+  heliBattery: (s) => {
+    s.rect(2, 4, 12, 10, 0x22262c);
+    s.rect(2, 4, 12, 2, 0x323840);
+    s.rect(4, 2, 2, 2, 0xc84038); // + terminal
+    s.rect(10, 2, 2, 2, 0x3878c8); // - terminal
+    s.line(7, 7, 9, 9, 0xe8c040);
+    s.line(9, 9, 7, 11, 0xe8c040);
+  },
+};
+
+Object.assign(DRAW, GUN_DRAW, WEAR_DRAW, SPECIAL_DRAW);
 
 /** Generic clothing icon by slot, in the item's color (the pieces with their own drawing: WEAR_DRAW). */
 function garment(s: Sprite, id: ItemId): void {

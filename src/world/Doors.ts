@@ -28,16 +28,23 @@ const SWING_SPEED = 6;
 const DRAFT_SPEED = 0.13;
 const START_CAPACITY = 128;
 /** Door collider owners: a private id range, one per door. */
-const DOOR_OWNER_BASE = 3e15;
+export const DOOR_OWNER_BASE = 3e15;
+type PoolKey = DoorStyle | 'glassBroken';
+/** Peek angle (~27.5 deg): leaves a ~0.46 m crack that admits bullets/LOS while blocking a 0.60 m capsule. */
+const PEEK_ANGLE = 0.48;
 
 interface DoorState {
   spot: DoorSpot;
   width: number;
   style: DoorStyle;
+  poolKey: PoolKey;
   open: boolean;
+  peek: boolean;
+  glassBroken: boolean;
   angle: number;
+  colliderAngle: number;
   owner: number;
-  /** Index inside its style pool (kept dense: removal moves the last door into the hole). */
+  /** Index inside its pool (kept dense: removal moves the last door into the hole). */
   slot: number;
   set: number;
   /** Partner leaf of a double door (index inside the same set), or -1. */
@@ -48,8 +55,16 @@ interface DoorState {
   /** Boards the player nailed across it (0–3), and on which side of the leaf (±1 along its normal). */
   planks: number;
   plankSide: number;
-  /** Swinging shut slowly (a draught), not pushed. */
+  /** Swinging shut slowly (a draught or stealth peek), not pushed. */
   slow?: boolean;
+}
+
+export interface DoorBulletResult {
+  kind: 'wood' | 'barricaded' | 'glass' | 'lab';
+  penetrate: boolean;
+  mul: number;
+  brokenNow: boolean;
+  glassShattered: boolean;
 }
 
 interface Pool {
@@ -118,7 +133,8 @@ export class Doors {
   private readonly unlocked = new Set<string>();
   /** The boards themselves: one InstancedMesh for every door. */
   private readonly plankMesh: InstancedMesh;
-  private readonly pools: Record<DoorStyle, Pool>;
+  private readonly pools: Record<PoolKey, Pool>;
+  private readonly byOwner = new Map<number, DoorState>();
   private nextOwner = 0;
 
   constructor(
@@ -153,10 +169,14 @@ export class Doors {
     ])!;
     const pane = slab(LEAF_W - 0.14, LEAF_H - 0.31, 0.012, LEAF_W / 2, 0.22 + (LEAF_H - 0.31) / 2);
     const glassDoor = mergeGeometries([tint(frame, 0x8a8e90, 1), tint(pane, 0x5c6a72, 0.32)])!;
+    const brokenGlassDoor = tint(frame, 0x8a8e90, 1);
     const lambert = lighting === 'lambert';
     const glass = lambert
       ? new MeshLambertMaterial({ vertexColors: true, transparent: true, side: DoubleSide })
       : new MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.4, transparent: true, side: DoubleSide });
+    const glassFrameMat = lambert
+      ? new MeshLambertMaterial({ vertexColors: true, side: DoubleSide })
+      : new MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.5, side: DoubleSide });
     const plank = (y: number, tilt: number, zOff: number): BufferGeometry => {
       const g = new BoxGeometry(LEAF_W + 0.16, 0.14, 0.035);
       g.rotateZ(tilt);
@@ -178,6 +198,7 @@ export class Doors {
     this.pools = {
       wood: this.pool([[wood, characterMaterial('handle', 0x5a4632)]]),
       glass: this.pool([[glassDoor, glass]]),
+      glassBroken: this.pool([[brokenGlassDoor, glassFrameMat]]),
       lab: this.pool([[wood, characterMaterial('handle', 0x5c6468)]]),
       barricaded: this.pool([[barricadedLeaf, barricadedMat]]),
     };
@@ -199,13 +220,18 @@ export class Doors {
     const doors: DoorState[] = spots.map((spot, i) => {
       const style: DoorStyle = spot.style ?? (spot.lock ? 'lab' : spot.barricaded ? 'barricaded' : 'wood');
       const open = (same ? keep[i] : !!spot.open) && !spot.barricaded && !(spot.lock && !this.unlocked.has(doorKey(spot)));
+      const owner = DOOR_OWNER_BASE + this.nextOwner++;
       const d: DoorState = {
         spot,
         width: spot.width ?? 0.95,
         style,
+        poolKey: style,
         open,
+        peek: false,
+        glassBroken: false,
         angle: open ? spot.yaw + spot.swing * Math.PI * 0.48 : spot.yaw,
-        owner: DOOR_OWNER_BASE + this.nextOwner++,
+        colliderAngle: NaN,
+        owner,
         slot: -1,
         set: key,
         pair: spot.pair !== undefined ? i + spot.pair : -1,
@@ -214,11 +240,12 @@ export class Doors {
         planks: 0,
         plankSide: 1,
       };
-      const pool = this.pools[style];
+      this.byOwner.set(owner, d);
+      const pool = this.pools[d.poolKey];
       d.slot = pool.doors.length;
       pool.doors.push(d);
       this.ensureCapacity(pool);
-      this.collide(d, !d.open);
+      this.collide(d);
       return d;
     });
     this.sets.set(key, doors);
@@ -228,9 +255,10 @@ export class Doors {
         d.planks = b[0];
         d.plankSide = b[1];
         d.open = false;
+        d.peek = false;
         d.angle = d.spot.yaw;
         d.hp += PLANK_HP * d.planks;
-        this.collide(d, true);
+        this.collide(d);
       }
     }
     for (const pool of Object.values(this.pools)) this.writeAll(pool);
@@ -242,7 +270,8 @@ export class Doors {
     if (!doors) return;
     for (const d of doors) {
       this.world.removeOwner(d.owner);
-      const pool = this.pools[d.style];
+      this.byOwner.delete(d.owner);
+      const pool = this.pools[d.poolKey];
       const last = pool.doors.pop()!;
       if (last !== d) {
         pool.doors[d.slot] = last;
@@ -279,26 +308,37 @@ export class Doors {
     return best;
   }
 
-  /** Middle of the doorway, style and state (for sounds). */
-  info(ref: DoorRef): { x: number; y: number; z: number; style: DoorStyle; open: boolean; creaky: boolean; pitch: number } | null {
+  /** Middle of the doorway, style and state (for sounds and interactions). */
+  info(ref: DoorRef): { x: number; y: number; z: number; style: DoorStyle; open: boolean; peek: boolean; glassBroken: boolean; creaky: boolean; pitch: number } | null {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return null;
     const s = d.spot;
     // The voice of this door, fixed by where it hangs (generated, never changes): 30% creak, pitch ±10%.
     const h = doorHash(s.hx, s.y, s.hz);
-    return { x: s.hx + Math.cos(s.yaw) * d.width * 0.5, y: s.y + 1.1, z: s.hz - Math.sin(s.yaw) * d.width * 0.5, style: d.style, open: d.open, creaky: d.style === 'wood' && h < 0.3, pitch: 0.9 + 0.2 * ((h * 7.31) % 1) };
+    return {
+      x: s.hx + Math.cos(s.yaw) * d.width * 0.5,
+      y: s.y + 1.1,
+      z: s.hz - Math.sin(s.yaw) * d.width * 0.5,
+      style: d.style,
+      open: d.open,
+      peek: d.peek,
+      glassBroken: d.glassBroken,
+      creaky: d.style === 'wood' && h < 0.3,
+      pitch: 0.9 + 0.2 * ((h * 7.31) % 1),
+    };
   }
 
-  describe(ref: DoorRef): 'open' | 'closed' | 'barricaded' | 'boarded' | 'locked' {
+  describe(ref: DoorRef): 'open' | 'peek' | 'closed' | 'barricaded' | 'boarded' | 'locked' {
     const d = this.sets.get(ref.building)?.[ref.index];
     if (!d) return 'closed';
     if (d.spot.barricaded) return 'barricaded';
     if (this.lockOf(ref)) return 'locked';
     if (d.planks > 0) return 'boarded';
-    return d.open ? 'open' : 'closed';
+    if (d.open) return 'open';
+    return d.peek ? 'peek' : 'closed';
   }
 
-  /** Returns false if the door is boarded up. Double doors swing together. */
+  /** Returns false if the door is boarded up or locked. Double doors swing together. */
   toggle(ref: DoorRef): boolean {
     const doors = this.sets.get(ref.building);
     const d = doors?.[ref.index];
@@ -306,8 +346,30 @@ export class Doors {
     const open = !d.open;
     for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
       leaf.open = open;
+      leaf.peek = false;
       leaf.slow = false;
-      this.collide(leaf, !open);
+      if (open) {
+        // Clear closed doorway blocker immediately for synchronous callers (e.g. AI LOS), while update(dt) tracks the swinging leaf OBB.
+        this.world.removeOwner(leaf.owner);
+        leaf.colliderAngle = leaf.angle;
+      } else {
+        this.collide(leaf);
+      }
+    }
+    return true;
+  }
+
+  /** Stealth peek (~27.5 deg crack): blocks body passage, lets bullets/LOS through silently. */
+  peekToggle(ref: DoorRef): boolean {
+    const doors = this.sets.get(ref.building);
+    const d = doors?.[ref.index];
+    if (!doors || !d || d.spot.barricaded || d.broken || d.planks > 0 || this.lockOf(ref)) return false;
+    const nextPeek = d.open ? true : !d.peek;
+    for (const leaf of d.pair >= 0 && doors[d.pair] ? [d, doors[d.pair]] : [d]) {
+      leaf.open = false;
+      leaf.peek = nextPeek;
+      leaf.slow = true;
+      this.collide(leaf);
     }
     return true;
   }
@@ -329,8 +391,9 @@ export class Doors {
     const ref = pool[Math.floor(Math.random() * pool.length)];
     const d = this.sets.get(ref.building)![ref.index];
     d.open = false;
+    d.peek = false;
     d.slow = true;
-    this.collide(d, true);
+    this.collide(d);
     const at = this.info(ref)!;
     return { x: at.x, y: at.y, z: at.z, creaky: at.creaky, pitch: at.pitch, dur: (Math.PI * 0.48) / (SWING_SPEED * DRAFT_SPEED) };
   }
@@ -390,10 +453,75 @@ export class Doors {
       leaf.planks = 0;
       this.boards.delete(doorKey(leaf.spot));
       leaf.open = true;
-      this.collide(leaf, false);
+      leaf.peek = false;
+      this.world.removeOwner(leaf.owner);
+      leaf.colliderAngle = leaf.angle;
     }
     this.writePlanks();
     return true;
+  }
+
+  /** Resolves bullet/blast impact against a door leaf owner: handles glass shatter, wood penetration, and lab ricochet. */
+  bulletImpact(owner: number, damage: number): DoorBulletResult | null {
+    const d = this.byOwner.get(owner);
+    if (!d) return null;
+    if (d.style === 'lab') {
+      return { kind: 'lab', penetrate: false, mul: 0, brokenNow: false, glassShattered: false };
+    }
+    if (d.style === 'glass') {
+      const brokenBefore = d.glassBroken;
+      if (!brokenBefore) this.shatterGlass(d);
+      return { kind: 'glass', penetrate: true, mul: brokenBefore ? 1.0 : 0.85, brokenNow: false, glassShattered: !brokenBefore };
+    }
+    const hadPlanks = d.planks > 0 || !!d.spot.barricaded;
+    const doors = this.sets.get(d.set);
+    const idx = doors?.indexOf(d) ?? -1;
+    let brokenNow = false;
+    if (idx >= 0) {
+      if (d.planks > 0 && Math.random() < 0.35) this.removePlank({ building: d.set, index: idx });
+      brokenNow = this.damage({ building: d.set, index: idx }, damage * 0.35);
+    }
+    return { kind: d.style === 'barricaded' ? 'barricaded' : 'wood', penetrate: true, mul: hadPlanks ? 0.32 : 0.55, brokenNow, glassShattered: false };
+  }
+
+  /** Shatters nearby glass doors (or damages nearby wood doors) within an explosion radius. */
+  blastNear(at: Vector3, radius: number, damage = 90): { brokenGlassAt: Vector3[] } {
+    const brokenGlassAt: Vector3[] = [];
+    for (const [building, doors] of this.sets) {
+      doors.forEach((d, index) => {
+        const mx = d.spot.hx + Math.cos(d.angle) * d.width * 0.5;
+        const mz = d.spot.hz - Math.sin(d.angle) * d.width * 0.5;
+        const my = d.spot.y + 1.0;
+        const dist = Math.hypot(mx - at.x, my - at.y, mz - at.z);
+        if (dist > radius) return;
+        const k = 1 - dist / radius;
+        if (d.style === 'glass' && !d.glassBroken) {
+          this.shatterGlass(d);
+          brokenGlassAt.push(new Vector3(mx, my, mz));
+        } else if (d.style !== 'lab' && !d.open && !d.broken) {
+          this.damage({ building, index }, damage * k);
+        }
+      });
+    }
+    return { brokenGlassAt };
+  }
+
+  private shatterGlass(d: DoorState): void {
+    if (d.glassBroken || d.poolKey === 'glassBroken') return;
+    const oldPool = this.pools[d.poolKey];
+    const last = oldPool.doors.pop()!;
+    if (last !== d) {
+      oldPool.doors[d.slot] = last;
+      last.slot = d.slot;
+    }
+    const newPool = this.pools.glassBroken;
+    d.poolKey = 'glassBroken';
+    d.glassBroken = true;
+    d.slot = newPool.doors.length;
+    newPool.doors.push(d);
+    this.ensureCapacity(newPool);
+    this.writeAll(oldPool);
+    this.writeAll(newPool);
   }
 
   /** The lock still holding this door shut, or null. */
@@ -486,8 +614,9 @@ export class Doors {
         d.planks = b[0];
         d.plankSide = b[1];
         d.open = false;
+        d.peek = false;
         d.hp += PLANK_HP * d.planks;
-        this.collide(d, true);
+        this.collide(d);
       }
     }
     this.writePlanks();
@@ -546,15 +675,25 @@ export class Doors {
     this.plankMesh.visible = true;
   }
 
-  /** Animate swinging leaves; only pools with moving doors re-upload their matrices. */
+  /** Animate swinging leaves; only pools with moving doors re-upload their matrices and OBB colliders. */
   update(dt: number): void {
     for (const pool of Object.values(this.pools)) {
       for (const d of pool.doors) {
-        const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.spot.yaw;
+        const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.peek ? d.spot.yaw + d.spot.swing * PEEK_ANGLE : d.spot.yaw;
         const diff = target - d.angle;
-        if (Math.abs(diff) < 1e-3) continue;
-        d.angle += Math.sign(diff) * Math.min(Math.abs(diff), SWING_SPEED * (d.slow ? DRAFT_SPEED : 1) * dt);
-        if (Math.abs(target - d.angle) < 1e-3) d.slow = false;
+        if (Math.abs(diff) < 1e-3) {
+          if (Math.abs(d.colliderAngle - d.angle) > 0.005) this.collide(d);
+          continue;
+        }
+        const rate = SWING_SPEED * (d.peek ? 0.55 : d.slow ? DRAFT_SPEED : 1);
+        d.angle += Math.sign(diff) * Math.min(Math.abs(diff), rate * dt);
+        if (Math.abs(target - d.angle) < 1e-3) {
+          d.angle = target;
+          d.slow = false;
+        }
+        if (Math.abs(d.angle - d.colliderAngle) > 0.005 || d.angle === target) {
+          this.collide(d);
+        }
         this.write(pool, d);
         pool.dirty = true;
       }
@@ -616,28 +755,28 @@ export class Doors {
     pool.dirty = false;
   }
 
-  private collide(d: DoorState, closed: boolean): void {
+  private collide(d: DoorState): void {
     this.world.removeOwner(d.owner);
-    if (!closed) return;
-    const lx = Math.cos(d.spot.yaw);
-    const lz = -Math.sin(d.spot.yaw);
-    const nx = Math.sin(d.spot.yaw);
-    const nz = Math.cos(d.spot.yaw);
-    const ex = d.spot.hx + lx * d.width;
-    const ez = d.spot.hz + lz * d.width;
-    const halfT = 0.13;
-    const endPad = 0.02;
-    const padX = Math.abs(nx) * halfT + Math.abs(lx) * endPad;
-    const padZ = Math.abs(nz) * halfT + Math.abs(lz) * endPad;
-    this.world.addOwned(
+    d.colliderAngle = d.angle;
+    const c = Math.cos(d.angle);
+    const s = Math.sin(d.angle);
+    const cx = d.spot.hx + c * (d.width * 0.5);
+    const cz = d.spot.hz - s * (d.width * 0.5);
+    // Thin open/peeking leaf (~0.09 m) admits bullets & LOS through the crack while closed leaf keeps 0.25 m thickness.
+    const wideOpen = d.open && !d.peek;
+    const halfT = (wideOpen || d.peek) && Math.abs(d.angle - d.spot.yaw) > 0.25 ? 0.045 : 0.125;
+    this.world.addOwnedOriented(
       d.owner,
-      Math.min(d.spot.hx, ex) - padX,
-      Math.min(d.spot.hz, ez) - padZ,
-      Math.max(d.spot.hx, ex) + padX,
-      Math.max(d.spot.hz, ez) + padZ,
+      cx,
+      cz,
+      d.width * 0.5 + 0.02,
+      halfT,
+      d.angle,
       d.spot.y,
       d.spot.y + (d.spot.height ?? LEAF_H),
+      d.style === 'glass',
       true,
+      wideOpen,
     );
   }
 }

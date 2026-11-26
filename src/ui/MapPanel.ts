@@ -12,6 +12,8 @@ export interface MapHost {
   player(): { x: number; z: number; yaw: number };
   /** Active story objective coordinates and label, if any. */
   questTarget?(): { x: number; z: number; label: string } | null;
+  /** Flyable Mi-8 location and status, if active. */
+  heli?(): { x: number; z: number; repaired: boolean; crashed?: boolean } | null;
 }
 
 /** Faded paper-map colours (through the grim palette by eye: no bright spots). */
@@ -362,6 +364,26 @@ export class MapPanel {
       g.strokeRect(qx - tw / 2 - 5, qy - 29, tw + 10, 16);
       g.fillStyle = '#f0c878';
       g.fillText(qt.label, qx, qy - 15);
+      g.restore();
+    }
+
+    const heli = this.host.heli?.();
+    if (heli && !heli.crashed) {
+      const hx = X(heli.x);
+      const hy = Y(heli.z);
+      g.save();
+      g.fillStyle = heli.repaired ? '#52d681' : '#58b4d8';
+      g.strokeStyle = '#141816';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(hx, hy, 8, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#141816';
+      g.font = '700 10px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('H', hx, hy + 0.5);
       g.restore();
     }
 

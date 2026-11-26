@@ -25,11 +25,16 @@ const EYE = new Vector3(0, 0.085, 0.1);
 
 type Gait = 'idle' | 'walk' | 'run' | 'crouch';
 
+const UPPER_FP_KINDS = new Set(['helmet', 'glasses', 'mask', 'vest', 'pack', 'bag']);
+export const FP_SHADOW_LAYER = 2;
+
 export class BodyModel {
   readonly root = new Group();
   private rig: CharacterRig | null = null;
+  private shadowMesh: SkinnedMesh | null = null;
   private readonly hide = { value: 0 };
   private readonly gear = new Map<GearId, SkinnedMesh>();
+  private readonly gearShadow = new Map<GearId, SkinnedMesh>();
   private gearWant: GearId[] = [];
 
   /** The model's bones (tests). */
@@ -53,15 +58,31 @@ export class BodyModel {
     this.scale = scale;
     this.root.scale.setScalar(scale);
     if (body === this.body) return;
+    this.shadowMesh?.removeFromParent();
+    this.shadowMesh = null;
     this.rig?.dispose();
     this.posed = false;
     if (this.rig) this.root.remove(this.rig.root);
     this.body = body;
     for (const m of this.gear.values()) (m.material as { dispose(): void }).dispose();
+    for (const m of this.gearShadow.values()) {
+      m.removeFromParent();
+      (m.material as { dispose(): void }).dispose();
+    }
     this.gear.clear();
+    this.gearShadow.clear();
     coverBody(body);
     const r = new CharacterRig(body, 0, { cover: true, hide: this.hide, near: NEAR }, fpBodyGeometry(body));
-    r.mesh.castShadow = true;
+    // Layer 0 renders only pelvis/legs/boots in first person; layer 2 casts the full unstripped body shadow.
+    r.mesh.castShadow = false;
+    const sm = new SkinnedMesh(bodyAsset(body).lod0.geometry, r.mesh.material);
+    sm.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+    sm.frustumCulled = false;
+    sm.castShadow = true;
+    sm.receiveShadow = false;
+    sm.layers.set(FP_SHADOW_LAYER);
+    r.root.add(sm);
+    this.shadowMesh = sm;
     this.root.add(r.root);
     this.rig = r;
     this.dress();
@@ -90,7 +111,7 @@ export class BodyModel {
     this.dress();
   }
 
-  /** The gear on its body (the ones still loading come when they are in). */
+  /** The gear on its body (upper torso/shoulder gear casts shadow on layer 2 only, hidden from first-person camera). */
   private dress(): void {
     const r = this.rig;
     const body = this.body;
@@ -101,20 +122,41 @@ export class BodyModel {
         (m.material as { dispose(): void }).dispose();
         this.gear.delete(g);
       }
+    for (const [g, m] of this.gearShadow)
+      if (!this.gearWant.includes(g)) {
+        m.removeFromParent();
+        (m.material as { dispose(): void }).dispose();
+        this.gearShadow.delete(g);
+      }
     let missing = false;
     for (const g of this.gearWant) {
-      if (this.gear.has(g)) continue;
+      if (this.gearShadow.has(g)) continue;
       const geo = gearGeometry(body, g, 0);
       if (!geo) {
         missing = true;
         continue;
       }
-      const m = new SkinnedMesh(geo, characterMaterial(bodyAsset(body), r.rig, { map: gearTexture(g), near: NEAR }));
-      m.bind(r.mesh.skeleton, r.mesh.bindMatrix);
-      m.frustumCulled = false;
-      m.castShadow = true;
-      r.mesh.add(m);
-      this.gear.set(g, m);
+      const kind = gearKind(g);
+      const tex = gearTexture(g);
+      // Full geometry shadow-caster mesh stays on layer 2 so vests/packs still cast shadows without blocking FP camera.
+      const sm = new SkinnedMesh(geo, characterMaterial(bodyAsset(body), r.rig, { map: tex, near: NEAR }));
+      sm.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+      sm.frustumCulled = false;
+      sm.castShadow = true;
+      sm.receiveShadow = false;
+      sm.layers.set(FP_SHADOW_LAYER);
+      r.root.add(sm);
+      this.gearShadow.set(g, sm);
+
+      const fpGeo = kind && UPPER_FP_KINDS.has(kind) ? null : fpGearGeometry(body, g, geo);
+      if (fpGeo && !this.gear.has(g)) {
+        const m = new SkinnedMesh(fpGeo, characterMaterial(bodyAsset(body), r.rig, { map: tex, near: NEAR }));
+        m.bind(r.mesh.skeleton, r.mesh.bindMatrix);
+        m.frustumCulled = false;
+        m.castShadow = false;
+        r.mesh.add(m);
+        this.gear.set(g, m);
+      }
     }
     this.hide.value = hideBits(this.gearWant);
     const want = this.gearWant;
@@ -207,47 +249,83 @@ export class BodyModel {
   }
 
   dispose(): void {
+    this.shadowMesh?.removeFromParent();
+    this.shadowMesh = null;
+    for (const m of this.gear.values()) (m.material as { dispose(): void }).dispose();
+    for (const m of this.gearShadow.values()) {
+      m.removeFromParent();
+      (m.material as { dispose(): void }).dispose();
+    }
+    this.gear.clear();
+    this.gearShadow.clear();
     this.rig?.dispose();
   }
 }
 
+function isUpperBone(n: string): boolean {
+  return (
+    n === 'Head' ||
+    n.startsWith('HeadTop') ||
+    n.includes('Eye') ||
+    n === 'Neck' ||
+    n === 'Spine' ||
+    n === 'Spine1' ||
+    n === 'Spine2' ||
+    /^(Left|Right)(Shoulder|Arm|ForeArm|Hand)/.test(n)
+  );
+}
+
 /**
- * The body as the player sees it from inside: the model without its head and arms (the arms are
- * player/fpArms, the head is where the eyes are). Whole triangles go — any corner on the head or the neck's top
- * (≥ 30%) or on an arm (≥ 50%) — so nothing is folded away by squashing bones (that stretched the skin across
- * the view). Shared per body.
+ * Keeps only triangles with < 0.15 upper-body bone weight (head, neck, spine, shoulders, arms) so
+ * 1st-person layer 0 renders only lower pelvis/legs/boots while full silhouettes cast shadows on layer 2.
  */
+export function stripUpperTriangles(src: BufferGeometry, names: readonly string[]): BufferGeometry | null {
+  const si = src.getAttribute('skinIndex');
+  const sw = src.getAttribute('skinWeight');
+  const idx = src.index;
+  if (!si || !sw || !idx) return null;
+  const upperBone = names.map(isUpperBone);
+  const n = si.count;
+  const upperWeight = new Float32Array(n);
+  for (let v = 0; v < n; v++) {
+    for (let k = 0; k < 4; k++) {
+      const j = si.getComponent(v, k);
+      if (upperBone[j]) upperWeight[v] += sw.getComponent(v, k);
+    }
+  }
+  const keep: number[] = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
+    if (upperWeight[a] < 0.15 && upperWeight[b] < 0.15 && upperWeight[c] < 0.15) keep.push(a, b, c);
+  }
+  if (keep.length === 0) return null;
+  const g = new BufferGeometry();
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'aCover']) {
+    const attr = src.getAttribute(name);
+    if (attr) g.setAttribute(name, attr);
+  }
+  g.setIndex(keep);
+  g.boundingBox = src.boundingBox ?? (src.computeBoundingBox(), src.boundingBox);
+  return g;
+}
+
 const fpGeos = new Map<BodyId, BufferGeometry>();
 function fpBodyGeometry(body: BodyId): BufferGeometry {
   let g = fpGeos.get(body);
   if (g) return g;
   const rig = bodyAsset(body).lod0;
-  const src = rig.geometry;
-  const si = src.getAttribute('skinIndex');
-  const sw = src.getAttribute('skinWeight');
-  const isHead = rig.names.map((n) => n === 'Head' || n.startsWith('HeadTop') || n.includes('Eye'));
-  const isArm = rig.names.map((n) => /^(Left|Right)(Arm|ForeArm|Hand)/.test(n));
-  const n = si.count;
-  const head = new Float32Array(n);
-  const arm = new Float32Array(n);
-  for (let v = 0; v < n; v++)
-    for (let k = 0; k < 4; k++) {
-      const j = si.getComponent(v, k);
-      if (isHead[j]) head[v] += sw.getComponent(v, k);
-      if (isArm[j]) arm[v] += sw.getComponent(v, k);
-    }
-  const off = (v: number) => head[v] >= 0.3 || arm[v] >= 0.5;
-  const idx = src.index!;
-  const keep: number[] = [];
-  for (let t = 0; t < idx.count; t += 3) {
-    const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
-    if (!off(a) && !off(b) && !off(c)) keep.push(a, b, c);
-  }
-  g = new BufferGeometry();
-  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'aCover']) if (src.getAttribute(name)) g.setAttribute(name, src.getAttribute(name));
-  g.setIndex(keep);
-  g.boundingBox = src.boundingBox ?? (src.computeBoundingBox(), src.boundingBox);
+  g = stripUpperTriangles(rig.geometry, rig.names) ?? new BufferGeometry();
   fpGeos.set(body, g);
+  return g;
+}
+
+const fpGearGeos = new Map<string, BufferGeometry | null>();
+function fpGearGeometry(body: BodyId, gear: GearId, src: BufferGeometry): BufferGeometry | null {
+  const key = `${body}:${gear}`;
+  if (fpGearGeos.has(key)) return fpGearGeos.get(key) ?? null;
+  const rig = bodyAsset(body).lod0;
+  const g = stripUpperTriangles(src, rig.names);
+  fpGearGeos.set(key, g);
   return g;
 }
 

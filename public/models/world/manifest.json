@@ -1,0 +1,484 @@
+{
+  "models": [
+    {
+      "file": "gaz_tigr_4x4_17k.glb",
+      "category": "vehicle",
+      "size": [
+        2.951,
+        3.337,
+        5.7
+      ],
+      "minY": 0,
+      "tris": 17176,
+      "bytes": 707912
+    },
+    {
+      "file": "zsu_23_4_shilka_14k.glb",
+      "category": "vehicle",
+      "size": [
+        3.223,
+        3.88,
+        6.5
+      ],
+      "minY": 0,
+      "tris": 13246,
+      "bytes": 629160
+    },
+    {
+      "file": "omon_swat_van_17k.glb",
+      "category": "vehicle",
+      "size": [
+        2.679,
+        3.055,
+        6.2
+      ],
+      "minY": 0,
+      "tris": 16237,
+      "bytes": 616884
+    },
+    {
+      "file": "Police_Sedan_DPS_22k.glb",
+      "category": "vehicle",
+      "size": [
+        2.235,
+        1.768,
+        4.6
+      ],
+      "minY": 0,
+      "tris": 21822,
+      "bytes": 624608
+    },
+    {
+      "file": "gazelle_ambulance_17k.glb",
+      "category": "vehicle",
+      "size": [
+        2.596,
+        3.062,
+        5.6
+      ],
+      "minY": -0.0002,
+      "tris": 16403,
+      "bytes": 717636
+    },
+    {
+      "file": "kamaz_fire_truck_20k.glb",
+      "category": "vehicle",
+      "size": [
+        3.12,
+        3.853,
+        8.2
+      ],
+      "minY": 0.0002,
+      "tris": 18892,
+      "bytes": 799464
+    },
+    {
+      "file": "emercom_pickup_17k.glb",
+      "category": "vehicle",
+      "size": [
+        2.256,
+        2.413,
+        5.3
+      ],
+      "minY": -0.0001,
+      "tris": 16929,
+      "bytes": 757516
+    },
+    {
+      "file": "Kamaz_6x6_25k.glb",
+      "category": "vehicle",
+      "size": [
+        3.084,
+        3.495,
+        7.8
+      ],
+      "minY": 0,
+      "tris": 24574,
+      "bytes": 835312
+    },
+    {
+      "file": "paz_3205_bus_11000.glb",
+      "category": "vehicle",
+      "size": [
+        2.82,
+        2.835,
+        7.2
+      ],
+      "minY": 0,
+      "tris": 10289,
+      "bytes": 583960
+    },
+    {
+      "file": "UAZ_Bukhanka_22k.glb",
+      "category": "vehicle",
+      "size": [
+        2.246,
+        2.67,
+        4.5
+      ],
+      "minY": 0.0001,
+      "tris": 21491,
+      "bytes": 686828
+    },
+    {
+      "file": "Luxury_SUV_Gelik_22k.glb",
+      "category": "vehicle",
+      "size": [
+        2.319,
+        2.257,
+        4.8
+      ],
+      "minY": 0.0001,
+      "tris": 21656,
+      "bytes": 760820
+    },
+    {
+      "file": "Sport_Sedan_22k.glb",
+      "category": "vehicle",
+      "size": [
+        2.108,
+        1.457,
+        4.6
+      ],
+      "minY": 0,
+      "tris": 21972,
+      "bytes": 699248
+    },
+    {
+      "file": "Semi_Truck_Tractor_24.glb",
+      "category": "vehicle",
+      "size": [
+        3.374,
+        4.872,
+        7
+      ],
+      "minY": 0,
+      "tris": 23682,
+      "bytes": 817520
+    },
+    {
+      "file": "Semi_Trailer_Cargo_20.glb",
+      "category": "vehicle",
+      "size": [
+        2.897,
+        4.954,
+        12.2
+      ],
+      "minY": -0.0001,
+      "tris": 17744,
+      "bytes": 751664
+    },
+    {
+      "file": "burned_car_wreck.glb",
+      "category": "vehicle",
+      "size": [
+        1.678,
+        1.632,
+        4.4
+      ],
+      "minY": 0,
+      "tris": 6087,
+      "bytes": 233088
+    },
+    {
+      "file": "mi8_emercom_22k.glb",
+      "category": "aviation",
+      "size": [
+        12.378,
+        5.133,
+        18.2
+      ],
+      "minY": -0.0005,
+      "tris": 22297,
+      "bytes": 678060
+    },
+    {
+      "file": "mi8_wreck_remesh.glb",
+      "category": "aviation",
+      "size": [
+        5.382,
+        4.031,
+        15.5
+      ],
+      "minY": -0.0005,
+      "tris": 16312,
+      "bytes": 574676
+    },
+    {
+      "file": "passenger_airliner_22.glb",
+      "category": "aviation",
+      "size": [
+        28.327,
+        10.865,
+        36
+      ],
+      "minY": -0.0004,
+      "tris": 22107,
+      "bytes": 598304
+    },
+    {
+      "file": "crosswalk_sign_1500.glb",
+      "category": "sign",
+      "size": [
+        0.967,
+        2.6,
+        0.313
+      ],
+      "minY": 0,
+      "tris": 1412,
+      "bytes": 145364
+    },
+    {
+      "file": "Sign_Bus_Stop_1500.glb",
+      "category": "sign",
+      "size": [
+        0.969,
+        2.6,
+        0.238
+      ],
+      "minY": 0,
+      "tris": 1105,
+      "bytes": 136224
+    },
+    {
+      "file": "Sign_Give_Way_1500.glb",
+      "category": "sign",
+      "size": [
+        1.427,
+        2.5,
+        0.201
+      ],
+      "minY": 0,
+      "tris": 1115,
+      "bytes": 120568
+    },
+    {
+      "file": "Sign_Main_Road_1500.glb",
+      "category": "sign",
+      "size": [
+        1.221,
+        2.5,
+        0.183
+      ],
+      "minY": 0,
+      "tris": 1264,
+      "bytes": 147936
+    },
+    {
+      "file": "Sign_No_Entry_1500.glb",
+      "category": "sign",
+      "size": [
+        1.148,
+        2.5,
+        0.219
+      ],
+      "minY": 0,
+      "tris": 1358,
+      "bytes": 129720
+    },
+    {
+      "file": "Sign_No_Stopping_1500.glb",
+      "category": "sign",
+      "size": [
+        1.011,
+        2.5,
+        0.167
+      ],
+      "minY": 0,
+      "tris": 1215,
+      "bytes": 138108
+    },
+    {
+      "file": "street_lamp_2000.glb",
+      "category": "infra",
+      "size": [
+        2.487,
+        6.2,
+        0.493
+      ],
+      "minY": 0,
+      "tris": 1772,
+      "bytes": 138944
+    },
+    {
+      "file": "traffic_light_2500.glb",
+      "category": "infra",
+      "size": [
+        1.012,
+        5.5,
+        1.279
+      ],
+      "minY": 0,
+      "tris": 2543,
+      "bytes": 163780
+    },
+    {
+      "file": "speed_bump_1000.glb",
+      "category": "infra",
+      "size": [
+        3.4,
+        0.405,
+        1.247
+      ],
+      "minY": 0.0001,
+      "tris": 997,
+      "bytes": 128852
+    },
+    {
+      "file": "Soviet_Bus_Stop_Shelt.glb",
+      "category": "infra",
+      "size": [
+        4.8,
+        3.128,
+        2.772
+      ],
+      "minY": 0,
+      "tris": 15601,
+      "bytes": 687832
+    },
+    {
+      "file": "Dead_Autumn_Tree_6000.glb",
+      "category": "nature",
+      "size": [
+        6.175,
+        9.5,
+        3.891
+      ],
+      "minY": 0,
+      "tris": 4806,
+      "bytes": 594280
+    },
+    {
+      "file": "Spruce_Pine_Tree_7000.glb",
+      "category": "nature",
+      "size": [
+        5.61,
+        11.5,
+        5.423
+      ],
+      "minY": 0,
+      "tris": 5846,
+      "bytes": 505564
+    },
+    {
+      "file": "Urban_Bush_2500.glb",
+      "category": "nature",
+      "size": [
+        2.204,
+        1.45,
+        1.952
+      ],
+      "minY": -0.0001,
+      "tris": 1230,
+      "bytes": 134492
+    },
+    {
+      "file": "garbage_cluster_1500.glb",
+      "category": "prop",
+      "size": [
+        2.2,
+        1.618,
+        1.855
+      ],
+      "minY": 0.0001,
+      "tris": 1494,
+      "bytes": 137012
+    },
+    {
+      "file": "Road_Debris_Cluster_2.glb",
+      "category": "prop",
+      "size": [
+        3.2,
+        1.805,
+        2.589
+      ],
+      "minY": -0.0001,
+      "tris": 2051,
+      "bytes": 142728
+    },
+    {
+      "file": "Soviet_Dumpster_3000.glb",
+      "category": "prop",
+      "size": [
+        2,
+        1.935,
+        1.896
+      ],
+      "minY": 0,
+      "tris": 2856,
+      "bytes": 166556
+    },
+    {
+      "file": "abandoned_luggage_pil.glb",
+      "category": "prop",
+      "size": [
+        1.5,
+        0.893,
+        1.432
+      ],
+      "minY": 0,
+      "tris": 2344,
+      "bytes": 77780
+    },
+    {
+      "file": "checkpoint_barricade.glb",
+      "category": "prop",
+      "size": [
+        3.4,
+        1.983,
+        2.058
+      ],
+      "minY": 0.0001,
+      "tris": 4292,
+      "bytes": 98708
+    },
+    {
+      "file": "quarantine_tent.glb",
+      "category": "prop",
+      "size": [
+        6.2,
+        3.019,
+        4.134
+      ],
+      "minY": 0.0001,
+      "tris": 5083,
+      "bytes": 198420
+    },
+    {
+      "file": "generator_light_tower.glb",
+      "category": "prop",
+      "size": [
+        3.534,
+        4.2,
+        1.756
+      ],
+      "minY": 0,
+      "tris": 4842,
+      "bytes": 107408
+    },
+    {
+      "file": "burn_barrel.glb",
+      "category": "prop",
+      "size": [
+        0.658,
+        0.95,
+        0.656
+      ],
+      "minY": 0,
+      "tris": 1919,
+      "bytes": 72232
+    },
+    {
+      "file": "fire_escape_smart_top.glb",
+      "category": "structure",
+      "size": [
+        3.179,
+        3.2,
+        1.509
+      ],
+      "minY": 0,
+      "tris": 15582,
+      "bytes": 181028
+    }
+  ]
+}

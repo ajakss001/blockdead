@@ -7,6 +7,7 @@ export type Action =
   | 'crouch'
   | 'flashlight'
   | 'use'
+  | 'peek'
   | 'inventory'
   | 'item1'
   | 'item2'

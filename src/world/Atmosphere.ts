@@ -7,13 +7,9 @@ import { ATMO } from './atmoConfig';
 import type { CollisionWorld } from './CollisionWorld';
 import type { Doors } from './Doors';
 import { LEAFY, LIFE, spotHash } from './gen/lifeKinds';
-import { type Plant, Vegetation } from '../render/Vegetation';
-import type { Species } from '../render/vegetation/models';
+import { Vegetation } from '../render/Vegetation';
 import { Street } from './Street';
 import { LIFE_STRIDE } from './WorldLife';
-
-/** Tree spot tag → species (lifeKinds TREE). */
-const TREE_SPECIES: Species[] = ['maple', 'oak', 'elm', 'spruce', 'pine', 'dead'];
 const _ident = new Matrix4();
 
 /** Leaks drip (seen and heard) within this distance, m; taps, loops, phones — their own. */
@@ -259,7 +255,6 @@ export class Atmosphere {
     this.particles.windX = Math.cos(windDir) * wind;
     this.particles.windZ = Math.sin(windDir) * wind;
     this.street.update(dt, player, f.speed, f.crouched, !indoors, f.urban, gust, windDir);
-    this.vegetation.update(this.time, gust, f.camera, f.eye, f.sunDir, f.sunColor, f.fogFar);
 
     // Leaves let go in the gusts.
     if (!indoors) {
@@ -490,7 +485,6 @@ export class Atmosphere {
     const loud: number[] = [];
     const pools: number[] = [];
     const lamps: number[] = [];
-    const plants: Plant[] = [];
     const oldLeaks = this.leaks;
     this.leaks = [];
     this.taps = [];
@@ -514,13 +508,9 @@ export class Atmosphere {
             break;
           case LIFE.tree:
             trees.push(x, y, z, spots[i + 6], spots[i + 9]);
-            plants.push({ species: TREE_SPECIES[spots[i + 9]] ?? 'maple', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 4], spots[i + 5]), scale: spots[i + 7] || 1 });
             break;
           case LIFE.bush:
-            plants.push({ species: spots[i + 7] ? 'bushSpread' : 'bushRound', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 4], spots[i + 5]), scale: spots[i + 6] || 1 });
-            break;
           case LIFE.hedge:
-            plants.push({ species: 'hedge', pick: seed, x, y, z, yaw: Math.atan2(spots[i + 5], spots[i + 4]), scale: spots[i + 6] || 1 });
             break;
           case LIFE.car:
             cars.push(x, z, spots[i + 4], spots[i + 5]);
@@ -610,7 +600,7 @@ export class Atmosphere {
     this.leakList = leaks;
     this.pools = pools;
     this.foliage.setSources({ trees, cars, ivy });
-    this.vegetation.setPlants(plants);
+    this.vegetation.setPlants([]);
     this.street.setSpots({ perches, cars, fires, hydrants, sparks, steams, jets, loud });
     this.wet.setLeaks(leaks, this.rainPools.length ? pools.concat(this.rainPools) : pools);
   }

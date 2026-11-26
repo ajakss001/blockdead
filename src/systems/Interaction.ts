@@ -7,6 +7,7 @@ import type { Player } from '../player/Player';
 import type { InventoryPanel } from '../ui/InventoryPanel';
 import { type DoorRef, type Doors, MAX_PLANKS } from '../world/Doors';
 import { type GroundWeapon, type GroundWeapons, groundItem } from '../weapons/GroundWeapons';
+import { TRIPWIRE_DISARM_S, type TripwireEntry, type Tripwires } from './Tripwires';
 
 /**
  * Locks on POI doors. A key (or an access card) opens it; or a code — every note that holds a part of
@@ -89,9 +90,13 @@ const WEAPON_PRIORITY: ItemId[] = ['axe', 'crowbar', 'bat', 'knife', 'hammer'];
  */
 export class Interaction {
   private searchT = -1;
-  /** E held on a door (−1 = not): a tap opens/closes, holding starts boarding it up / prying a board off. */
+  /** E held on a door (−1 = not): tap opens/closes, hold boards up / prys, crouch-hold stealth-peeks. */
   private holdT = -1;
   private holdDoor: DoorRef | null = null;
+  private holdMode: 'board' | 'peek' | null = null;
+  /** Disarming an explosive tripwire while crouched. */
+  private disarmT = -1;
+  private disarmWire: TripwireEntry | null = null;
   /** Boarding (or prying) in progress: seconds, the door, which. */
   private boardT = -1;
   private boardDoor: DoorRef | null = null;
@@ -127,6 +132,10 @@ export class Interaction {
   aimingAtLivingNpc: ((o: Vector3, d: Vector3, reach: number) => boolean) | null = null;
   /** Experience for what was done here (the scene gives it to the skills). */
   onSkill: ((id: 'search' | 'carpentry', xp: number) => void) | null = null;
+  /** Emits AI-audible noise when a door opens normally (~12 m) or stealth-peeks (~2 m). */
+  onDoorNoise: ((x: number, y: number, z: number, radius: number) => void) | null = null;
+  /** Deployed and enemy ambush explosive tripwires (for crouch disarming). */
+  tripwires: Tripwires | null = null;
 
   constructor(
     private readonly ctx: GameContext,
@@ -166,6 +175,8 @@ export class Interaction {
     }
 
     const use = input.consumePressed('use');
+    const peek = input.consumePressed('peek');
+    if (this.updateDisarm(dt)) return;
     if (this.updateBoarding(dt, use)) return;
     if (this.searchT >= 0) {
       if (this.player.controller.speed > 0.4 || input.isHeld('attack')) {
@@ -184,7 +195,22 @@ export class Interaction {
           this.panel.open(ref);
         }
       }
+    } else if (peek) {
+      const door = this.doorTarget();
+      if (door) this.peekDoor(door);
     } else if (use) {
+      const wire = this.disarmTarget();
+      if (wire) {
+        if (this.player.controller.crouched) {
+          this.disarmWire = wire;
+          this.disarmT = 0;
+          this.ctx.events.emit('ui:busy', { busy: true });
+          this.player.busy = true;
+          return;
+        }
+        hud.toast(tr('Присядьте (C) и зажмите E чтобы обезвредить растяжку', 'Crouch (C) and hold E to disarm tripwire'), 1500);
+        return;
+      }
       const lying = this.groundTarget();
       if (lying) {
         this.pickUp(lying);
@@ -193,10 +219,16 @@ export class Interaction {
       const door = this.doorTarget();
       const ref = this.target();
       if (door && (!ref || this.doorCloser(door, ref))) {
-        // Hammer, boards and nails at hand (or boards to pry off): wait — a tap opens, a hold boards up.
         if (this.canNail(door) || this.canPry(door)) {
           this.holdT = 0;
           this.holdDoor = door;
+          this.holdMode = 'board';
+          return;
+        }
+        if (this.player.controller.crouched) {
+          this.holdT = 0;
+          this.holdDoor = door;
+          this.holdMode = 'peek';
           return;
         }
         this.toggleDoor(door);
@@ -246,6 +278,17 @@ export class Interaction {
       this.ctx.hud.setPrompt(`${key}${tr('Подобрать', 'Pick up')}: ${ITEMS[groundItem(lying.weapon)].name}`);
       return;
     }
+    const wire = this.disarmTarget();
+    if (wire) {
+      this.focus = null;
+      this.setTargeting(true);
+      this.ctx.hud.setPrompt(
+        this.player.controller.crouched
+          ? tr('Зажать E (2 сек) — Обезвредить растяжку', 'Hold E (2s) — Disarm tripwire')
+          : tr('Присядьте (C) и зажмите E — Обезвредить растяжку', 'Crouch (C) & hold E — Disarm tripwire'),
+      );
+      return;
+    }
     const ref = this.target();
     const door = this.doorTarget();
     this.focus = ref && !(door && this.doorCloser(door, ref)) ? ref : null;
@@ -253,15 +296,20 @@ export class Interaction {
     if (door && (!ref || this.doorCloser(door, ref))) {
       const state = this.doors.describe(door);
       const hold = this.ctx.input.mode === 'kbm' ? tr('держать E', 'hold E') : tr('удерживать', 'hold');
+      const peekHint = this.ctx.input.mode === 'kbm' ? ` · Alt+E — ${tr('приоткрыть тихо', 'stealth peek')}` : '';
       if (state === 'boarded')
         this.ctx.hud.setPrompt(
           `${tr('Заколочено досками', 'Boarded up')}: ${this.doors.planksOn(door)}/${MAX_PLANKS}${this.canPry(door) ? ` · ${hold} — ${tr('оторвать доску', 'pry plank off')}` : ''}`,
         );
       else if (state === 'barricaded') this.ctx.hud.setPrompt(tr('Дверь заколочена', 'Door is barricaded'));
       else if (state === 'locked') this.ctx.hud.setPrompt(`${key}${this.lockPrompt(door)}`);
+      else if (state === 'peek')
+        this.ctx.hud.setPrompt(
+          `${key}${tr('Распахнуть', 'Open wide')}${this.ctx.input.mode === 'kbm' ? ` · Alt+E — ${tr('тихо закрыть', 'close quietly')}` : ''}`,
+        );
       else
         this.ctx.hud.setPrompt(
-          `${key}${state === 'open' ? tr('Закрыть дверь', 'Close door') : tr('Открыть дверь', 'Open door')}${this.canNail(door) ? ` · ${hold} — ${tr('заколотить', 'board up')}` : ''}`,
+          `${key}${state === 'open' ? tr('Закрыть дверь', 'Close door') : tr('Открыть дверь', 'Open door')}${this.canNail(door) ? ` · ${hold} — ${tr('заколотить', 'board up')}` : peekHint}`,
         );
       return;
     }
@@ -330,9 +378,66 @@ export class Interaction {
     } else if (at) {
       const style: 'wood' | 'glass' | 'metal' =
         at.style === 'glass' ? 'glass' : at.style === 'lab' || at.y < 0.8 ? 'metal' : 'wood';
-      sfx.door(style, !at.open, at, at.creaky, at.pitch);
+      sfx.door(style, !at.open, at, at.creaky, at.pitch, false);
+      this.onDoorNoise?.(at.x, at.y, at.z, 12);
     }
     this.player.busy = false;
+  }
+
+  private peekDoor(door: DoorRef): void {
+    const lock = this.doors.lockOf(door);
+    if (lock) {
+      this.toggleDoor(door);
+      return;
+    }
+    const at = this.doors.info(door);
+    const state = this.doors.describe(door);
+    if (!this.doors.peekToggle(door)) {
+      this.ctx.hud.toast(state === 'boarded' ? tr('Заколочено досками', 'Boarded up') : tr('Заколочено с той стороны', 'Barricaded from the other side'), 1200);
+      if (at) sfx.doorStuck(at);
+    } else if (at) {
+      const style: 'wood' | 'glass' | 'metal' =
+        at.style === 'glass' ? 'glass' : at.style === 'lab' || at.y < 0.8 ? 'metal' : 'wood';
+      sfx.door(style, !at.peek, at, at.creaky, at.pitch, true);
+      this.onDoorNoise?.(at.x, at.y, at.z, 2);
+    }
+    this.player.busy = false;
+  }
+
+  private disarmTarget(): TripwireEntry | null {
+    if (!this.tripwires) return null;
+    const c = this.player.controller;
+    return this.tripwires.disarmTarget(c.position.x, c.position.y, c.position.z, -Math.sin(c.yaw), -Math.cos(c.yaw));
+  }
+
+  private updateDisarm(dt: number): boolean {
+    if (this.disarmT < 0 || !this.disarmWire) return false;
+    const { input, hud } = this.ctx;
+    const stop = (msg: string | null) => {
+      this.disarmT = -1;
+      this.disarmWire = null;
+      this.player.busy = false;
+      this.ctx.events.emit('ui:busy', { busy: false });
+      hud.hideAction();
+      if (msg) hud.toast(msg, 1200);
+    };
+    if (!input.isHeld('use') || !this.player.controller.crouched || this.player.controller.speed > 0.45 || !this.disarmWire.armed) {
+      stop(tr('Обезвреживание прервано', 'Disarm interrupted'));
+      return true;
+    }
+    this.disarmT += dt;
+    hud.showAction(tr('Обезвреживание растяжки', 'Disarming tripwire'), this.disarmT / TRIPWIRE_DISARM_S);
+    if (this.disarmT >= TRIPWIRE_DISARM_S) {
+      const ok = this.tripwires?.disarm(this.disarmWire.id);
+      if (ok) {
+        const added = this.inventory.add('tripwire', 1);
+        sfx.item('pick');
+        stop(added > 0 ? tr('Растяжка обезврежена (+1)', 'Tripwire disarmed (+1)') : tr('Растяжка обезврежена (рюкзак полон)', 'Tripwire disarmed (pack full)'));
+      } else {
+        stop(null);
+      }
+    }
+    return true;
   }
 
   /** What a locked door's prompt says (an electronic lock tells whether it has power). */
@@ -388,12 +493,22 @@ export class Interaction {
     if (this.holdT >= 0 && this.holdDoor) {
       if (input.isHeld('use') && !pressed) {
         this.holdT += dt;
+        if (this.holdMode === 'peek') {
+          if (this.holdT < 0.35) return true;
+          const door = this.holdDoor;
+          this.holdT = -1;
+          this.holdDoor = null;
+          this.holdMode = null;
+          this.peekDoor(door);
+          return true;
+        }
         if (this.holdT < 0.45) return true;
         this.boardPry = !this.canNail(this.holdDoor);
         this.boardDoor = this.holdDoor;
         this.boardT = 0;
         this.boardKnock = 0;
         this.holdT = -1;
+        this.holdMode = null;
         this.ctx.events.emit('ui:busy', { busy: true });
         this.player.busy = true;
         return true;
@@ -402,6 +517,7 @@ export class Interaction {
       const door = this.holdDoor;
       this.holdT = -1;
       this.holdDoor = null;
+      this.holdMode = null;
       this.toggleDoor(door);
       return true;
     }

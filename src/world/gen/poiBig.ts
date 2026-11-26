@@ -1,12 +1,10 @@
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Matrix4, Vector3 } from 'three';
 import type { ContainerType } from '../../data/loot';
-import { pickModel } from '../models';
-import { modelLibrary, placeModel } from '../props/car';
+import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
 import { sandbags } from './chaos';
 import * as F from './furniture';
 import type { Place, Quarter } from './furniture';
 import type { Rand } from './pieces';
-import { charTint } from './charred';
 import type { Site } from './poiSite';
 
 /*
@@ -71,59 +69,61 @@ function watchtower(S: Site, lx: number, lz: number): void {
 
 /** A model of a group (tank, apc, truck, heli), nose along local yaw; a searchable cabin over all of it (trucks: the bed). */
 function vehicleModel(S: Site, group: string, lx: number, lz: number, yaw: number, rand: Rand): boolean {
-  const m = pickModel(modelLibrary(), group, rand());
-  if (!m) return false;
+  const glbId = pickWorldVehicle(group, rand());
+  const spec = GLB_WORLD_SPECS[glbId];
   const [x, z] = S.p.pt(lx, lz);
   if (!S.b.inClip(x, z)) return true;
   const wyaw = yaw + (S.p.r * Math.PI) / 2;
-  const mat = new Matrix4().compose(new Vector3(x, 0.01, z), new Quaternion().setFromEuler(new Euler(0, wyaw, 0)), new Vector3(1, 1, 1));
-  placeModel(S.b.batch, m, mat, null);
-  S.b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, wyaw, -0.5, m.size[1] + 0.05);
+  S.b.glb(glbId, x, 0.01, z, wyaw - Math.PI / 2);
+  // spec.size = [W, H, L] with L along nose (-Z)
+  const W = spec.size[0];
+  const H = spec.size[1];
+  const L = spec.size[2];
+  S.b.colliders.addOrientedBox(x, z, L / 2, W / 2, wyaw, -0.5, H + 0.05);
   const truck = group === 'truck';
-  const back = truck ? m.size[0] * 0.18 : 0;
+  const back = truck ? L * 0.18 : 0;
   const c = Math.cos(wyaw);
   const sn = Math.sin(wyaw);
   S.b.containers.push({
     type: truck ? 'cargoHold' : 'vehicleCabin',
     x: x - c * back,
     z: z + sn * back,
-    box: [x - c * back, m.size[1] / 2, z + sn * back, (truck ? m.size[0] * 0.32 : m.size[0] / 2) + 0.03, m.size[1] / 2 + 0.03, m.size[2] / 2 + 0.03, wyaw],
+    box: [x - c * back, H / 2, z + sn * back, (truck ? L * 0.32 : L / 2) + 0.03, H / 2 + 0.03, W / 2 + 0.03, wyaw],
   });
   return true;
 }
 
-/** What an aircraft model needs: its group, the fuselage's width (the collider: one walks under the wings) and its search zones. */
+/** What an aircraft model needs: its GLB id, scale, fuselage width (walk under wings) and search zones. */
 interface Craft {
-  group: string;
+  glbId: GlbModelId;
+  scale: number;
   body: number;
   /** Zones along the nose axis: type, middle (fraction of the length from the middle, + = nose), half length (fraction), y0, y1 (fractions of the height), half width (m). */
   zones: [ContainerType, number, number, number, number, number][];
 }
 const CRAFT: Record<'airliner' | 'lightplane' | 'fighter' | 'heliMil', Craft> = {
-  airliner: { group: 'airliner', body: 4.2, zones: [['planeCabin', 0.2, 0.22, 0.17, 0.58, 2.1], ['cargoHold', -0.15, 0.18, 0.12, 0.3, 2.1]] },
-  lightplane: { group: 'lightplane', body: 1.4, zones: [['planeCabin', 0.08, 0.16, 0.2, 0.85, 0.75]] },
-  fighter: { group: 'fighter', body: 2.6, zones: [['vehicleCabin', 0.18, 0.12, 0.3, 0.8, 0.8]] },
-  heliMil: { group: 'heliMil', body: 2.6, zones: [['vehicleCabin', 0.12, 0.14, 0.05, 0.75, 1.3]] },
+  airliner: { glbId: 'passenger_airliner_22', scale: 1.0, body: 4.2, zones: [['planeCabin', 0.2, 0.22, 0.17, 0.58, 2.1], ['cargoHold', -0.15, 0.18, 0.12, 0.3, 2.1]] },
+  lightplane: { glbId: 'passenger_airliner_22', scale: 0.34, body: 1.4, zones: [['planeCabin', 0.08, 0.16, 0.2, 0.85, 0.75]] },
+  fighter: { glbId: 'mi8_wreck_remesh', scale: 0.78, body: 2.6, zones: [['vehicleCabin', 0.18, 0.12, 0.3, 0.8, 0.8]] },
+  heliMil: { glbId: 'mi8_wreck_remesh', scale: 1.0, body: 2.6, zones: [['vehicleCabin', 0.12, 0.14, 0.05, 0.75, 1.3]] },
 };
 
 /**
- * An installed aircraft model on a place (its nose along the place's local +Z, tipped if the place is),
+ * An installed aircraft GLB model on a place (its nose along the place's local +Z, tipped if the place is),
  * collider over the fuselage, its cabin / hold zones.
  */
-export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, rand: Rand, charred = false): boolean {
+export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, _rand: Rand, _charred = false): boolean {
   const c = CRAFT[kind];
-  const m = pickModel(modelLibrary(), c.group, rand());
-  if (!m && modelLibrary() !== null) return false;
+  const spec = GLB_WORLD_SPECS[c.glbId];
   const M = q.frame(new Matrix4()).multiply(new Matrix4().makeRotationY(-Math.PI / 2)).multiply(new Matrix4().makeTranslation(0, 0.01, 0));
   const at = new Vector3().setFromMatrixPosition(M);
   if (!S.b.inClip(at.x, at.z)) return true;
   const nose = new Vector3(1, 0, 0).transformDirection(M);
   const yaw = Math.atan2(-nose.z, nose.x);
-  const [L, H] = m ? m.size : [16, 4];
-  if (m) {
-    placeModel(S.b.batch, m, M, null, charred ? charTint : undefined);
-    S.b.colliders.addOrientedBox(at.x, at.z, L / 2, c.body / 2, yaw, -0.5, at.y + H);
-  }
+  const L = spec.size[2] * c.scale;
+  const H = spec.size[1] * c.scale;
+  S.b.glb(c.glbId, at.x, at.y, at.z, yaw - Math.PI / 2, { scale: c.scale });
+  S.b.colliders.addOrientedBox(at.x, at.z, L / 2, c.body / 2, yaw, -0.5, at.y + H);
   for (const [type, mid, half, y0, y1, w] of c.zones) {
     const x = at.x + nose.x * mid * L;
     const z = at.z + nose.z * mid * L;
@@ -337,15 +337,13 @@ export function militaryBase(S: Site, rand: Rand): void {
   S.slab(0x4a4c4e, 8, -12, 56, 22, 0, 0.032, 'concrete');
   aircraft(S, 'airliner', p.at(32, 6, 1), rand);
 
-  // Helipad with its H, two helicopters.
+  // Helipad with its H (reserved cleanly for the interactive flyable Mi-8).
   S.slab(0x5a5c5e, 24, 28, 50, 54, 0, 0.034, 'concrete');
   for (const [x, z, w, d] of [
     [33, 41, 0.8, 7],
     [41, 41, 0.8, 7],
     [37, 41, 8, 0.8],
   ]) p.box(0xd8d4c8, x, 0.036, z, w, 0.005, d, 'asphalt');
-  aircraft(S, 'heliMil', p.at(30, 35, 0).tipped(0.4), rand);
-  aircraft(S, 'heliMil', p.at(45, 49, 1), rand);
 
   // Parade ground with the flagpole.
   S.slab(0x5a5c5e, -48, -8, -16, 8, 0, 0.032, 'concrete');

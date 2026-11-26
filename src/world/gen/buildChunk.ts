@@ -3,8 +3,8 @@ import { mulberry32 } from '../../core/random';
 import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
+import { type GlbPlacement, pickRoadSign } from '../worldModels';
 import { curbParking, downtownBlock } from './cityFill';
-import { Place } from './furniture';
 import { type BuildingDesc, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
@@ -32,6 +32,8 @@ export interface ChunkData {
   doors: DoorSpot[];
   /** World-life spots (lit windows, curtains…), see world/WorldLife. */
   ambient: Float32Array;
+  /** Streamed instanced world GLB placements (vehicles, trees, bushes, signs, street props). */
+  glbs: GlbPlacement[];
   /** Generation time in the worker, ms. */
   ms: number;
 }
@@ -109,6 +111,7 @@ export function buildChunk(layout: WorldLayout, i: number, j: number, bodies: Bo
     shelters: new Float32Array(b.shelters),
     doors: b.doors,
     ambient: new Float32Array(b.ambient),
+    glbs: batch.glbs,
     ms: performance.now() - t0,
   };
 }
@@ -159,6 +162,17 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + ROAD_HALF + 1.2, z + CHUNK * t, -1, 0);
       for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + side * (ROAD_HALF + 1.0), z + CHUNK * t, SIDEWALK_H);
+      b.glb(pickRoadSign(rand()), x + ROAD_HALF + 1.0, SIDEWALK_H, z + BAND + 2.5, 0);
+      if (spotHash(i, j, 71) < 0.28) {
+        const bsz = z + CHUNK * 0.52;
+        const bsx = x + ROAD_HALF + 2.0;
+        b.glb('Soviet_Bus_Stop_Shelt', bsx, SIDEWALK_H, bsz, -Math.PI / 2);
+        b.glb('Sign_Bus_Stop_1500', x + ROAD_HALF + 1.0, SIDEWALK_H, bsz - 3.0, 0);
+        b.solid(bsx - 1.1, bsz - 2.1, bsx + 1.1, bsz + 2.1, SIDEWALK_H, SIDEWALK_H + 2.8);
+      }
+      if (!layout.isDowntown(i, j) && spotHash(i, j, 72) < 0.22) {
+        b.glb('speed_bump_1000', x, 0.015, z + CHUNK * 0.5, 0);
+      }
     }
     // Downtown: the queue that never got out; elsewhere cars sit where people left them.
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
@@ -186,6 +200,10 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       for (const t of [0.25, 0.75]) lampPost(b, x + CHUNK * t, z + ROAD_HALF + 1.2, 0, -1);
       for (const side of [-1, 1]) for (const t of [0.12, 0.36, 0.62, 0.88]) streetTree(b, x + CHUNK * t, z + side * (ROAD_HALF + 1.0), SIDEWALK_H);
+      b.glb(pickRoadSign(rand()), x + BAND + 2.5, SIDEWALK_H, z + ROAD_HALF + 1.0, Math.PI / 2);
+      if (spotHash(i, j, 73) < 0.16) {
+        b.glb('Road_Debris_Cluster_2', x + CHUNK * 0.65, 0.01, z + (spotHash(i, j, 74) < 0.5 ? -2.2 : 2.2), spotHash(i, j, 75) * Math.PI * 2);
+      }
     }
     const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
     if (layout.urbanZ(i, j)) {
@@ -208,6 +226,16 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         [x + ROAD_HALF, z + ROAD_HALF],
       ] as const) {
         b.block(PAL.sidewalk, cx, 0, cz, v, SIDEWALK_H, v, 'asphalt');
+      }
+      if (spotHash(i, j, 76) < 0.75) {
+        const tl1x = x + ROAD_HALF + 1.0;
+        const tl1z = z + ROAD_HALF + 1.0;
+        const tl2x = x - ROAD_HALF - 1.0;
+        const tl2z = z - ROAD_HALF - 1.0;
+        b.glb('traffic_light_2500', tl1x, SIDEWALK_H, tl1z, 0);
+        b.glb('traffic_light_2500', tl2x, SIDEWALK_H, tl2z, Math.PI);
+        b.solid(tl1x - 0.16, tl1z - 0.16, tl1x + 0.16, tl1z + 0.16, SIDEWALK_H, SIDEWALK_H + 5.2);
+        b.solid(tl2x - 0.16, tl2z - 0.16, tl2x + 0.16, tl2z + 0.16, SIDEWALK_H, SIDEWALK_H + 5.2);
       }
       // The intersection remembers the day: a pile-up, or the checkpoint that did not hold.
       const core = Math.max(Math.abs(i), Math.abs(j)) <= DOWNTOWN_RADIUS + 1;
@@ -331,13 +359,15 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
   if (spotHash(X0, Z0, 96) < 0.35) {
     // Someone kept warm here: a rusty barrel, still burning.
     const bx = X0 + 2 + spotHash(X0, Z0, 97) * (X1 - X0 - 4);
-    new Place(b, bx, 0, zMid + 0.9, 0).model('barrel', 0, 0, 0, 0, 0, 1, 0.65, 0.4, true);
+    b.glb('burn_barrel', bx, 0, zMid + 0.9, 0);
+    b.solid(bx - 0.34, zMid + 0.56, bx + 0.34, zMid + 1.24, 0, 0.95);
     b.life(LIFE.fire, bx, 0.92, zMid + 0.9, 0, 0, 0.55, 0, spotHash(X0, Z0, 98));
   }
   const seg = (X1 - X0 - 6) / 3;
   for (let n = 0; n < 3; n++) {
     const dx = X0 + 2 + n * seg + rand() * Math.max(0.1, seg - 2.4);
-    new Place(b, dx + 0.9, 0, zMid - 0.25, 0).model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35, true);
+    b.glb('Soviet_Dumpster_3000', dx + 0.9, 0, zMid - 0.25, 0, { sx: 0.9, sy: 0.72, sz: 0.58 });
+    b.solid(dx, zMid - 0.8, dx + 1.8, zMid + 0.3, 0.12, 1.35);
     if (spotHash(dx, zMid, 53) < 0.5) b.life(LIFE.flies, dx + 0.9, 1.5, zMid - 0.25, 0, 0, 0, 0, spotHash(dx, zMid, 54));
   }
 }

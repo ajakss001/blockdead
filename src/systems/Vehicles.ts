@@ -1,8 +1,8 @@
 import {
+  Box3,
   BoxGeometry,
   CanvasTexture,
   Group,
-  LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
@@ -12,9 +12,6 @@ import {
   PointLight,
   Scene,
   SpotLight,
-  SRGBColorSpace,
-  Texture,
-  TextureLoader,
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -222,15 +219,11 @@ export class Vehicles {
   private isBraking = false;
   private lowQuality = false;
   private forceHeadShadow: boolean | null = null;
-  private aniso = 4;
 
-  setAnisotropy(n: number): void {
-    this.aniso = Math.max(1, n);
-  }
+  setAnisotropy(_n: number): void {}
 
   setLowQuality(low: boolean): void {
     this.lowQuality = low;
-    this.aniso = low ? 1 : 4;
     if (low) {
       this.headLightL.castShadow = false;
       this.headBounceLight.intensity = 0;
@@ -266,6 +259,7 @@ export class Vehicles {
     this.headLightL.shadow.normalBias = 0.04;
     this.headLightL.shadow.camera.near = 0.45;
     this.headLightL.shadow.camera.far = 50;
+    this.headLightL.shadow.camera.layers.enable(2);
     this.headLightR.castShadow = false;
     this.headTargetL = new Object3D();
     this.headTargetR = new Object3D();
@@ -283,38 +277,31 @@ export class Vehicles {
 
   private loadModel(kind: VehicleKind): void {
     if (this.loading.has(kind)) return;
+    if (typeof fetch !== 'function' || typeof window === 'undefined') return;
     this.loading.add(kind);
-    const base = `${import.meta.env?.BASE_URL ?? '/'}models/vehicles/${kind}`;
+    const file = kind === 'suv' ? 'Luxury_SUV_Gelik_22k.glb' : 'Sport_Sedan_22k.glb';
+    const baseUrl = import.meta.env?.BASE_URL ?? '/';
     const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-    const texLoader = new TextureLoader();
 
-    Promise.all([
-      gltfLoader.loadAsync(`${base}.glb?v=6`),
-      texLoader.loadAsync(`${base}.webp?v=6`).then(async (t: Texture) => {
-        await (t.image as HTMLImageElement | undefined)?.decode?.().catch(() => {});
-        t.colorSpace = SRGBColorSpace;
-        t.flipY = false;
-        t.minFilter = LinearMipmapLinearFilter;
-        t.anisotropy = this.aniso;
-        return t;
-      }),
-    ])
-      .then(([gltf, tex]) => {
+    void gltfLoader
+      .loadAsync(`${baseUrl}models/world/${file}`)
+      .then((gltf) => {
         const root = gltf.scene;
-        const mat = new MeshLambertMaterial({
-          map: tex,
-          color: 0xffffff,
-        });
+        root.updateMatrixWorld(true);
+        const box = new Box3().setFromObject(root);
+        if (Number.isFinite(box.min.y)) {
+          root.position.set(-(box.min.x + box.max.x) * 0.5, -box.min.y, -(box.min.z + box.max.z) * 0.5);
+        }
         root.traverse((obj) => {
           if ((obj as Mesh).isMesh) {
             const m = obj as Mesh;
-            m.material = mat;
             m.castShadow = true;
             m.receiveShadow = true;
           }
         });
-        this.templates.set(kind, root);
-        // Upgrade any already-spawned cars of this kind
+        const holder = new Group();
+        holder.add(root);
+        this.templates.set(kind, holder);
         for (const car of this.cars) {
           if (car.kind === kind) this.attachVisual(car);
         }

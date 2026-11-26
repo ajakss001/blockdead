@@ -7,6 +7,7 @@
  */
 
 import {
+  AdditiveBlending,
   type AnimationAction,
   BoxGeometry,
   type BufferGeometry,
@@ -17,6 +18,7 @@ import {
   Quaternion,
   type Scene,
   SkinnedMesh,
+  SphereGeometry,
   Vector3,
 } from 'three';
 import { sfx, type EchoPlace, type GunSound } from '../audio/Sound';
@@ -26,6 +28,7 @@ import { handFrame } from '../characters/hands';
 import { slerpBoneWorld, solveTwoBoneIK } from '../characters/ik';
 import { characterMaterial, LENS_TINT } from '../characters/material';
 import { CharacterRig, RagdollPose, stand } from '../characters/rig';
+import { tr } from '../core/i18n';
 import { ensureStackUid, type ItemId, type ItemStack, WEAR_SLOTS, type WearSlot } from '../data/items';
 import type { Ragdoll } from '../physics/ragdoll';
 import { BASE_LOOK, type Appearance, type Sex } from '../player/appearance';
@@ -41,12 +44,13 @@ import { type BuildingDesc, FLOOR_H } from '../world/gen/highrise';
 import { applyZonalArmor, type HitZone } from './Armor';
 import { type BlockedSpot, findBotPath, hasWalkableLine, type NavBox, type NavWaypoint } from './botNav';
 import type { CorpseData, CorpseSlotKey } from './Containers';
+import type { BlastSpec } from './Firearms';
 import type { Worn } from './Inventory';
 import type { BanditTarget, Zombie, ZombieSim } from './zombies';
 
 export type FactionId = 'scavs' | 'bear' | 'usec' | 'black' | 'boss' | 'pmc' | 'snipers';
 export type SpawnKind = 'street' | 'indoor' | 'sniper' | 'boss';
-export type BotRole = 'regular' | 'ambusher' | 'boss' | 'guard';
+export type BotRole = 'regular' | 'ambusher' | 'boss' | 'guard' | 'goon_assault' | 'goon_support' | 'goon_marksman';
 
 /**
  * Faction hostility matrix (EFT rules, no cultists):
@@ -105,6 +109,9 @@ export interface BanditWorld {
   isInteriorLoaded?(buildingId: number): boolean;
   onDropLoot?(bot: Bandit): void;
   onRemoveCorpse?(bot: Bandit): void;
+  bushOccludes?(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): boolean;
+  explode?(at: Vector3, spec?: BlastSpec): void;
+  toast?(text: string, ms?: number): void;
 }
 
 export interface BanditHit {
@@ -248,6 +255,24 @@ interface Tracer {
   life: number;
 }
 
+interface ThrownGrenade {
+  pos: Vector3;
+  vel: Vector3;
+  fuse: number;
+  mesh: Mesh;
+}
+
+interface SquadBlackboard {
+  lastX: number;
+  lastY: number;
+  lastZ: number;
+  lastT: number;
+  tokens: number[];
+  grenadeCd: number;
+}
+
+const HELI_PARTS: readonly ItemId[] = ['heliAvionics', 'heliFuelPump', 'heliBattery'];
+
 interface BanditRigVisual {
   body: BodyId;
   scale: number;
@@ -311,6 +336,9 @@ export interface Bandit extends BanditTarget {
   coverX: number;
   coverZ: number;
   coverT: number;
+  coverKey: string | null;
+  grenadeCd: number;
+  hasFireToken: boolean;
   flankSign: -1 | 1;
   flankT: number;
   lastHitT: number;
@@ -349,6 +377,7 @@ export interface Bandit extends BanditTarget {
   corpse: CorpseData;
   root: Group;
   visual: BanditRigVisual | null;
+  glintMesh: Mesh | null;
   ragdoll: Ragdoll | null;
   ragdollPose: RagdollPose | null;
   lootDropped: boolean;
@@ -358,6 +387,9 @@ export interface Bandit extends BanditTarget {
 function factionTitle(faction: FactionId, role: BotRole, preset?: BossPreset): string {
   if (preset) return preset.name;
   if (role === 'guard') return 'Охранник босса';
+  if (role === 'goon_assault') return 'Goon · Штурмовик';
+  if (role === 'goon_support') return 'Goon · Пулемётчик';
+  if (role === 'goon_marksman') return 'Goon · Снайпер';
   switch (faction) {
     case 'bear': return 'Оперативник BEAR';
     case 'usec': return 'Боец USEC';
@@ -467,6 +499,15 @@ function buildBanditLootAndCorpse(
       if (role === 'boss') {
         pushStack(backpack, 'batteries', 2);
         pushStack(backpack, 'mod_suppressor', 1);
+        pushStack(backpack, HELI_PARTS[Math.floor(Math.random() * HELI_PARTS.length)], 1);
+      } else if (role === 'goon_assault') {
+        pushStack(backpack, 'heliBattery', 1);
+      } else if (role === 'goon_support') {
+        pushStack(backpack, 'heliFuelPump', 1);
+      } else if (role === 'goon_marksman') {
+        pushStack(backpack, 'heliAvionics', 1);
+      } else if (faction === 'black' && Math.random() < 0.18) {
+        pushStack(backpack, HELI_PARTS[Math.floor(Math.random() * HELI_PARTS.length)], 1);
       }
     }
   }
@@ -476,17 +517,23 @@ function buildBanditLootAndCorpse(
       ? `Босс · ${look.name}`
       : role === 'guard'
         ? 'Охранник босса'
-        : faction === 'black'
-          ? 'Чёрный рейдер'
-          : faction === 'bear'
-            ? 'ЧВК BEAR'
-            : faction === 'usec'
-              ? 'ЧВК USEC'
-              : faction === 'snipers'
-                ? 'Снайпер'
-                : tier === 'elite'
-                  ? 'Элитный боец'
-                  : 'Дикий';
+        : role === 'goon_assault'
+          ? 'Goon · Штурмовик'
+          : role === 'goon_support'
+            ? 'Goon · Пулемётчик'
+            : role === 'goon_marksman'
+              ? 'Goon · Снайпер'
+              : faction === 'black'
+                ? 'Чёрный рейдер'
+                : faction === 'bear'
+                  ? 'ЧВК BEAR'
+                  : faction === 'usec'
+                    ? 'ЧВК USEC'
+                    : faction === 'snipers'
+                      ? 'Снайпер'
+                      : tier === 'elite'
+                        ? 'Элитный боец'
+                        : 'Дикий';
 
   const corpse: CorpseData = {
     name: look.name,
@@ -515,9 +562,16 @@ export class Bandits {
   private maxActive = MAX_ACTIVE;
   private disposed = false;
   private readonly tracers: Tracer[] = [];
+  private readonly grenades: ThrownGrenade[] = [];
+  private readonly squads = new Map<number, SquadBlackboard>();
+  private readonly coverClaims = new Map<string, number>();
   private readonly coverBoxCache: NavBox[] = [];
   private readonly tracerGeo = new BoxGeometry(0.025, 0.025, 1);
   private readonly tracerMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.78 });
+  private readonly grenadeGeo = new SphereGeometry(0.07, 8, 6);
+  private readonly grenadeMat = new MeshBasicMaterial({ color: 0x70ff50 });
+  private readonly glintGeo = new BoxGeometry(0.09, 0.09, 0.02);
+  private readonly glintMat = new MeshBasicMaterial({ color: 0xfff4c2, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false });
 
   constructor(private readonly w: BanditWorld) {
     void loadBody('male');
@@ -550,6 +604,9 @@ export class Bandits {
     playerArmed = false,
   ): void {
     this.updateTracers(dt);
+    this.updateGrenades(dt);
+    this.updateSquadBlackboards(dt);
+    this.applySeparation(dt);
 
     this.spawnCd -= dt;
     let aliveStreet = 0;
@@ -616,6 +673,8 @@ export class Bandits {
       b.swingT = Math.max(0, b.swingT - dt * 3.6);
       b.doorCd = Math.max(0, b.doorCd - dt);
       b.coverT = Math.max(0, b.coverT - dt);
+      if (b.coverT <= 0 && b.coverKey) this.releaseCover(b);
+      b.grenadeCd = Math.max(0, b.grenadeCd - dt);
       b.flankT = Math.max(0, b.flankT - dt);
       b.navTimer = Math.max(0, b.navTimer - dt);
       b.targetLockT = Math.max(0, b.targetLockT - dt);
@@ -647,19 +706,30 @@ export class Bandits {
       const bossDamaged = Boolean(boss && !boss.isDead && (boss.hp < boss.maxHp * 0.78 || boss.lastHitT < 4));
 
       // Threat sensing restricted to realistic 116 deg frontal FOV (plus close touch < 2m / active combat lock)
-      const sightRange = (b.spawnKind === 'sniper' ? 56 : b.role === 'ambusher' && !b.ambushTriggered ? 16 : 38) * fogMul;
+      const sightRange =
+        (b.role === 'goon_marksman' ? 92 : b.spawnKind === 'sniper' ? 56 : b.role === 'ambusher' && !b.ambushTriggered ? 16 : 38) * fogMul;
       const nearZombie = this.findNearestZombie(b, 13 * (1 - 0.45 * fog));
       const nearHostileBot = this.findNearestHostileBot(b, sightRange * 0.92);
       const playerVisibleAngle =
         this.inFieldOfView(b, px, pz) ||
         distPlayer < 2.0 ||
         (b.lockedKind === 'player' && b.targetLockT > 0);
+      const unalerted = b.state !== 'combat' && b.investigateT <= 0;
+      const bushBlocked = unalerted && distPlayer > 6 && !!this.w.bushOccludes?.(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.4, pz);
       const canSeePlayer =
         !playerDead &&
+        !bushBlocked &&
         distPlayer < sightRange &&
         playerVisibleAngle &&
         (this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.56, pz) ||
           this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.15, pz));
+      if (canSeePlayer) {
+        const bb = this.getSquad(b.squadId);
+        bb.lastX = px;
+        bb.lastY = py;
+        bb.lastZ = pz;
+        bb.lastT = 12;
+      }
 
       // Target stickiness (1.5-2.5s lock) so bots never oscillate between zombie/bot/player every frame
       let lockKind: 'none' | 'player' | 'bot' | 'zombie' = 'none';
@@ -776,17 +846,32 @@ export class Bandits {
         b.faction === 'black' ||
         b.faction === 'boss' ||
         b.faction === 'snipers' ||
-        b.role === 'guard';
+        b.role === 'guard' ||
+        b.role === 'goon_assault' ||
+        b.role === 'goon_support' ||
+        b.role === 'goon_marksman';
 
       if (b.role === 'ambusher' && !b.ambushTriggered) {
         if (choosePlayer || chooseBot || activeZombie || b.lastHitT < 2 || distPlayer < 4.5) {
           b.ambushTriggered = true;
           b.state = 'combat';
-          b.reactT = isPro ? 0.25 + Math.random() * 0.12 : 0.45 + Math.random() * 0.15;
+          b.reactT = isPro ? 0.35 + Math.random() * 0.05 : 0.45 + Math.random() * 0.2;
         }
       } else if ((choosePlayer || chooseBot) && b.state !== 'combat') {
         b.state = 'combat';
-        b.reactT = isPro ? 0.25 + Math.random() * 0.15 : 0.45 + Math.random() * 0.30;
+        b.reactT = isPro ? 0.35 + Math.random() * 0.05 : 0.45 + Math.random() * 0.2;
+      }
+
+      if (b.glintMesh) {
+        const showGlint = (b.role === 'goon_marksman' || b.spawnKind === 'sniper') && b.state === 'combat' && b.aiming > 0.5 && canSeePlayer && distPlayer > 18;
+        b.glintMesh.visible = showGlint;
+        if (showGlint) {
+          const sx = b.pos.x + Math.sin(b.yaw) * 0.42;
+          const sz = b.pos.z + Math.cos(b.yaw) * 0.42;
+          const sy = b.pos.y + (b.crouching ? 1.06 : 1.46);
+          b.glintMesh.position.set(sx, sy, sz);
+          b.glintMesh.lookAt(px, py + 1.5, pz);
+        }
       }
 
       const prevX = b.pos.x;
@@ -1002,20 +1087,32 @@ export class Bandits {
     const goalFootY = targetBot ? targetBot.pos.y : ty - (inCar ? 1.05 : 1.38);
     const glassHit = hasLOS ? this.glassBetween(b.pos.x, b.pos.y + 1.4, b.pos.z, tx, ty, tz) : null;
 
-    if (b.spawnKind === 'sniper') {
+    if (b.spawnKind === 'sniper' || b.role === 'goon_marksman') {
+      const maxRange = b.role === 'goon_marksman' ? 92 : 56;
+      const keepDist = b.role === 'goon_marksman' ? 32 : 24;
       b.crouching = b.reloadT > 0 || b.burstPause > 0.15;
-      if (b.hp < b.maxHp * 0.35 && dist < 24) {
+      if ((b.hp < b.maxHp * 0.45 || b.role === 'goon_marksman') && dist < keepDist) {
         if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
-          this.moveOrOpenDoor(b, -nx, -nz, 1.8, dt);
-          this.trackAntiStuck(b, -nx, -nz, 1.8, dt);
-          return 1.8;
+          this.moveOrOpenDoor(b, -nx, -nz, 2.3, dt);
+          this.trackAntiStuck(b, -nx, -nz, 2.3, dt);
+          return 2.3;
         }
       }
       this.resetAntiStuck(b);
-      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 56) {
+      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < maxRange) {
         this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
       }
       return 0;
+    }
+
+    // Assault Goon throws a frag grenade when enemy takes cover or holds a room/corner 7..26 m away.
+    const sq = this.getSquad(b.squadId);
+    if (b.role === 'goon_assault' && b.grenadeCd <= 0 && sq.grenadeCd <= 0 && targetIsPlayer && dist >= 7 && dist <= 26) {
+      if (!hasLOS || Math.random() < dt * 0.14) {
+        this.throwGrenade(b, tx, goalFootY, tz);
+        b.grenadeCd = 11 + Math.random() * 4;
+        sq.grenadeCd = 7.5;
+      }
     }
 
     if (!b.isGun) {
@@ -1115,14 +1212,22 @@ export class Bandits {
     b.crouching = b.burstPause > 0.25 && hasLOS;
     const targetFleeing = dist > 9 && targetVx * nx + targetVz * nz > 2.0;
 
-    if (bossDeadEnraged || (targetReloading && dist < 26 && !inCar) || targetFleeing) {
-      // Aggressive push (guard avenging dead boss, or pushing reloading/fleeing target)
+    if (bossDeadEnraged || (targetReloading && dist < 26 && !inCar) || targetFleeing || b.role === 'goon_assault') {
+      // Aggressive push (guard avenging dead boss, assault goon breaching, or pushing reloading/fleeing target)
       const rushSpd = bossDeadEnraged ? 4.35 : 3.95;
       if (dist > 4.5 || !hasLOS) {
         moveSpeed = this.navigateToward(b, tx, goalFootY, tz, rushSpd, dt, false);
       } else {
         this.resetAntiStuck(b);
       }
+    } else if (!b.hasFireToken && hasLOS && dist < 34) {
+      // Squadmates without an active aimed fire token flank laterally for crossfire instead of bunching behind shooters.
+      const flankSpd = 2.6;
+      const sx = -nz * b.flankSign;
+      const sz = nx * b.flankSign;
+      this.moveOrOpenDoor(b, sx, sz, flankSpd, dt);
+      this.trackAntiStuck(b, sx, sz, flankSpd, dt);
+      moveSpeed = flankSpd;
     } else if (boss && !boss.isDead && !bossDamaged && Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z) > 7.5) {
       // Guard stays in perimeter around living boss
       moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 3.2, dt, false);
@@ -1151,17 +1256,18 @@ export class Bandits {
     }
 
     if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
-      this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      // Non-token members still lay suppressive bursts (with wider spread), never exceeding 2 simultaneous aimed shooters per squad.
+      this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, !b.hasFireToken);
     }
     return moveSpeed;
   }
 
-  /** Find nearest solid cover point (behind a wall/car >=0.85m tall, ignoring glass) that breaks LOS to threat. */
+  /** Find nearest unreserved solid cover point (behind a wall/car >=0.85m tall, ignoring glass) that breaks LOS to threat. */
   private findCoverNear(b: Bandit, tx: number, ty: number, tz: number): { x: number; z: number } | null {
     const boxes = this.coverBoxCache;
     boxes.length = 0;
     this.w.boxesNear(b.pos.x, b.pos.z, 9.5, boxes);
-    let best: { x: number; z: number } | null = null;
+    let best: { x: number; z: number; key: string } | null = null;
     let bestScore = Infinity;
 
     for (let i = 0; i < boxes.length; i++) {
@@ -1182,14 +1288,32 @@ export class Bandits {
       const moveDist = Math.hypot(spotX - b.pos.x, spotZ - b.pos.z);
       if (moveDist > 9.5 || moveDist < 0.5) continue;
       if (Math.abs(this.w.groundY(spotX, spotZ, b.pos.y) - b.pos.y) > 0.65) continue;
+      const cKey = `${Math.round(spotX * 0.5)},${Math.round(b.pos.y / 2)},${Math.round(spotZ * 0.5)}`;
+      const claimer = this.coverClaims.get(cKey);
+      if (claimer !== undefined && claimer !== b.id) continue;
+      let crowded = false;
+      for (const ally of this.list) {
+        if (ally === b || ally.state === 'dead' || areFactionsHostile(b.faction, ally.faction)) continue;
+        if (Math.hypot(ally.pos.x - spotX, ally.pos.z - spotZ) < 3.0) {
+          crowded = true;
+          break;
+        }
+      }
+      if (crowded) continue;
       if (this.hasLineOfSight(spotX, b.pos.y + 1.35, spotZ, tx, ty, tz)) continue;
 
       if (moveDist < bestScore) {
         bestScore = moveDist;
-        best = { x: spotX, z: spotZ };
+        best = { x: spotX, z: spotZ, key: cKey };
       }
     }
-    return best;
+    if (best) {
+      this.releaseCover(b);
+      b.coverKey = best.key;
+      this.coverClaims.set(best.key, b.id);
+      return { x: best.x, z: best.z };
+    }
+    return null;
   }
 
   /** Returns intact window glass blocking the eye ray before any opaque wall, or null. */
@@ -1403,6 +1527,8 @@ export class Bandits {
       b.isDead = true;
       b.state = 'dead';
       b.deadT = 0;
+      this.releaseCover(b);
+      if (b.glintMesh) b.glintMesh.visible = false;
       this.becomeRagdoll(b, fromX, fromZ);
       if (b.isDead && !b.ragdoll && !b.lootDropped) {
         b.lootDropped = true;
@@ -1451,9 +1577,17 @@ export class Bandits {
     this.disposed = true;
     for (let i = this.list.length - 1; i >= 0; i--) this.removeAt(i);
     for (const t of this.tracers) this.w.scene.remove(t.mesh);
+    for (const g of this.grenades) this.w.scene.remove(g.mesh);
     this.tracers.length = 0;
+    this.grenades.length = 0;
+    this.squads.clear();
+    this.coverClaims.clear();
     this.tracerGeo.dispose();
     this.tracerMat.dispose();
+    this.grenadeGeo.dispose();
+    this.grenadeMat.dispose();
+    this.glintGeo.dispose();
+    this.glintMat.dispose();
   }
 
   private pickStreetWeapon(faction: FactionId): { weapon: ItemId; isGun: boolean; mods: ModId[] } {
@@ -1513,7 +1647,7 @@ export class Bandits {
       const baseZ = _v1.z;
       for (let m = 0; m < count; m++) {
         const offAng = (m / Math.max(1, count)) * Math.PI * 2 + Math.random() * 0.4;
-        const offR = m === 0 ? 0 : 2.2 + Math.random() * 1.4;
+        const offR = m === 0 ? 0 : 4.0 + Math.random() * 1.4;
         const mx = baseX + Math.cos(offAng) * offR;
         const mz = baseZ + Math.sin(offAng) * offR;
         const my = this.w.groundY(mx, mz, sy);
@@ -1603,6 +1737,11 @@ export class Bandits {
       anchorZ = _v1.z;
     }
 
+    if (room >= 3 && Math.random() < 0.35) {
+      this.spawnGoonsSquad(anchorX, anchorY, anchorZ);
+      return true;
+    }
+
     const preset = BOSS_PRESETS[Math.floor(Math.random() * BOSS_PRESETS.length)];
     const squadId = this.nextSquadId++;
     const boss = this.spawnBot(anchorX, anchorY, anchorZ, 'boss', 'boss', preset.weapon, true, preset.mods, {
@@ -1614,8 +1753,8 @@ export class Bandits {
     const guardCount = Math.max(2, Math.min(room - 1, 2 + Math.floor(Math.random() * 2)));
     for (let g = 0; g < guardCount; g++) {
       const ang = (g / guardCount) * Math.PI * 2;
-      const gx = anchorX + Math.cos(ang) * 2.8;
-      const gz = anchorZ + Math.sin(ang) * 2.8;
+      const gx = anchorX + Math.cos(ang) * 4.2;
+      const gz = anchorZ + Math.sin(ang) * 4.2;
       const gy = this.w.groundY(gx, gz, anchorY);
       _v2.set(gx, gy, gz);
       this.w.resolveCircle(_v2, 0.45);
@@ -1627,6 +1766,36 @@ export class Bandits {
       });
     }
     return true;
+  }
+
+  /** Spawns an elite 3-role Goons squad (Assault w/ grenades, Support gunner, 45–90 m Marksman w/ glint). */
+  spawnGoonsNear(px: number, pz: number, dist = 36): Bandit[] {
+    const ang = Math.random() * Math.PI * 2;
+    const ax = px + Math.cos(ang) * dist;
+    const az = pz + Math.sin(ang) * dist;
+    const ay = this.w.groundY(ax, az);
+    _v1.set(ax, ay, az);
+    this.w.resolveCircle(_v1, 0.45);
+    return this.spawnGoonsSquad(_v1.x, ay, _v1.z);
+  }
+
+  private spawnGoonsSquad(anchorX: number, anchorY: number, anchorZ: number): Bandit[] {
+    const squadId = this.nextSquadId++;
+    const specs: { role: BotRole; weapon: BanditGunId; mods: ModId[]; r: number; ang: number }[] = [
+      { role: 'goon_assault', weapon: 'rifle_m4a1', mods: ['mod_flashlight', 'mod_ext_mag_m4'], r: 0, ang: 0 },
+      { role: 'goon_support', weapon: 'rifle_ak', mods: ['mod_ext_mag_ak', 'mod_flashlight'], r: 4.5, ang: 2.1 },
+      { role: 'goon_marksman', weapon: 'rifle_hunting', mods: ['mod_suppressor'], r: 6.5, ang: 4.2 },
+    ];
+    const spawned: Bandit[] = [];
+    for (const s of specs) {
+      const x = anchorX + Math.cos(s.ang) * s.r;
+      const z = anchorZ + Math.sin(s.ang) * s.r;
+      const y = this.w.groundY(x, z, anchorY);
+      _v2.set(x, y, z);
+      this.w.resolveCircle(_v2, 0.45);
+      spawned.push(this.spawnBot(_v2.x, y, _v2.z, 'black', 'boss', s.weapon, true, s.mods, { role: s.role, squadId }));
+    }
+    return spawned;
   }
 
   private trySpawnSniper(px: number, pz: number): boolean {
@@ -1670,15 +1839,21 @@ export class Bandits {
 
     const maxHp = preset
       ? preset.hp
-      : role === 'guard'
-        ? 270
-        : faction === 'black'
-          ? 290
-          : faction === 'snipers'
-            ? 260
-            : faction === 'bear' || faction === 'usec' || faction === 'pmc'
-              ? 250
-              : 180;
+      : role === 'goon_assault'
+        ? 360
+        : role === 'goon_support'
+          ? 340
+          : role === 'goon_marksman'
+            ? 290
+            : role === 'guard'
+              ? 270
+              : faction === 'black'
+                ? 290
+                : faction === 'snipers'
+                  ? 260
+                  : faction === 'bear' || faction === 'usec' || faction === 'pmc'
+                    ? 250
+                    : 180;
     const builtLoot = buildBanditLootAndCorpse(faction, role, look, worn, tint, weapon, isGun, mods);
     const wornDirt: Partial<Record<WearSlot, number>> = {};
     for (const slot of WEAR_SLOTS) {
@@ -1694,8 +1869,17 @@ export class Bandits {
       faction === 'black' ||
       faction === 'boss' ||
       faction === 'snipers' ||
-      role === 'guard';
+      role === 'guard' ||
+      role === 'goon_assault' ||
+      role === 'goon_support' ||
+      role === 'goon_marksman';
     const maxTurnDeg = isProTurn ? 180 + Math.random() * 60 : 120 + Math.random() * 40;
+    const glintMesh =
+      role === 'goon_marksman' || spawnKind === 'sniper' ? new Mesh(this.glintGeo, this.glintMat) : null;
+    if (glintMesh) {
+      glintMesh.visible = false;
+      this.w.scene.add(glintMesh);
+    }
 
     const bot: Bandit = {
       id: this.nextId++,
@@ -1740,6 +1924,9 @@ export class Bandits {
       coverX: rx,
       coverZ: rz,
       coverT: 0,
+      coverKey: null,
+      grenadeCd: role === 'goon_assault' ? 2.5 : 99,
+      hasFireToken: true,
       flankSign: Math.random() < 0.5 ? -1 : 1,
       flankT: 0,
       lastHitT: 9,
@@ -1778,6 +1965,7 @@ export class Bandits {
       corpse: builtLoot.corpse,
       root,
       visual: null,
+      glintMesh,
       ragdoll: null,
       ragdollPose: null,
       lootDropped: false,
@@ -2198,6 +2386,8 @@ export class Bandits {
 
   private removeAt(i: number): void {
     const b = this.list[i];
+    this.releaseCover(b);
+    if (b.glintMesh) this.w.scene.remove(b.glintMesh);
     if (b.state === 'dead') this.w.onRemoveCorpse?.(b);
     if (b.ragdoll) this.w.removeRagdoll(b.ragdoll);
     this.w.scene.remove(b.root);
@@ -2252,7 +2442,7 @@ export class Bandits {
     return best;
   }
 
-  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false, targetBot: Bandit | null = null): void {
+  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false, targetBot: Bandit | null = null, suppressive = false): void {
     const gId = b.weapon as BanditGunId;
     const g = GUNS[gId];
     const ox = b.pos.x;
@@ -2271,10 +2461,16 @@ export class Bandits {
     const targetDist = _to.length() || 1;
     _to.divideScalar(targetDist);
 
-    const isEliteAim = b.faction === 'snipers' || b.faction === 'black' || b.role === 'boss' || b.role === 'ambusher';
-    const isTactical = b.faction === 'bear' || b.faction === 'usec' || b.faction === 'pmc' || b.role === 'guard';
+    const isEliteAim =
+      b.faction === 'snipers' ||
+      b.faction === 'black' ||
+      b.role === 'boss' ||
+      b.role === 'ambusher' ||
+      b.role === 'goon_assault' ||
+      b.role === 'goon_marksman';
+    const isTactical = b.faction === 'bear' || b.faction === 'usec' || b.faction === 'pmc' || b.role === 'guard' || b.role === 'goon_support';
     const baseSpread =
-      b.faction === 'snipers'
+      b.faction === 'snipers' || b.role === 'goon_marksman'
         ? 0.028
         : isEliteAim
           ? gId === 'shotgun_pump'
@@ -2294,13 +2490,14 @@ export class Bandits {
         : b.aimShots === 1
           ? 1.35
           : Math.max(1.0, 1.15 - Math.min(1, b.aimWarmupT / 2.0) * 0.15);
-    const spread = baseSpread * warmupMul;
+    const bushPenalty = this.w.bushOccludes?.(ox, oy, oz, rawAimX, rawAimY, rawAimZ) ? 1.85 : 1;
+    const spread = baseSpread * warmupMul * bushPenalty * (suppressive ? 2.0 : 1);
     _to.x += (Math.random() - 0.5) * spread;
     _to.y += (Math.random() - 0.5) * spread * 0.65;
     _to.z += (Math.random() - 0.5) * spread;
     _to.normalize();
 
-    const maxRange = 48;
+    const maxRange = b.role === 'goon_marksman' || b.spawnKind === 'sniper' ? 92 : 48;
     const solidWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, false);
     const opaqueWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, true);
     const shotGlass = solidWall >= 0 && (opaqueWall < 0 || solidWall < opaqueWall - 0.04);
@@ -2365,10 +2562,155 @@ export class Bandits {
     if (b.ammoInMag <= 0) {
       b.reloadT = 2.2;
     } else if (b.burstLeft <= 0) {
-      b.burstLeft = 2 + Math.floor(Math.random() * 3);
-      b.burstPause = b.faction === 'black' || b.role === 'boss' ? 0.45 + Math.random() * 0.35 : 0.65 + Math.random() * 0.45;
+      b.burstLeft = b.role === 'goon_support' ? 4 + Math.floor(Math.random() * 4) : 2 + Math.floor(Math.random() * 3);
+      b.burstPause =
+        b.role === 'goon_support'
+          ? 0.28 + Math.random() * 0.25
+          : b.faction === 'black' || b.role === 'boss'
+            ? 0.45 + Math.random() * 0.35
+            : 0.65 + Math.random() * 0.45;
     } else {
       b.fireCd = Math.max(0.16, 60 / Math.min(300, g.rpm));
+    }
+  }
+
+  private releaseCover(b: Bandit): void {
+    if (b.coverKey) {
+      if (this.coverClaims.get(b.coverKey) === b.id) this.coverClaims.delete(b.coverKey);
+      b.coverKey = null;
+    }
+  }
+
+  private getSquad(squadId: number): SquadBlackboard {
+    let bb = this.squads.get(squadId);
+    if (!bb) {
+      bb = { lastX: 0, lastY: 0, lastZ: 0, lastT: 0, tokens: [], grenadeCd: 0 };
+      this.squads.set(squadId, bb);
+    }
+    return bb;
+  }
+
+  /** Maintains shared squad target memory and enforces <= 2 simultaneous aimed shooters per squad. */
+  private updateSquadBlackboards(dt: number): void {
+    const aliveIds = new Set<number>();
+    const bySquad = new Map<number, Bandit[]>();
+    for (const b of this.list) {
+      if (b.isDead || b.state === 'dead') continue;
+      aliveIds.add(b.id);
+      let arr = bySquad.get(b.squadId);
+      if (!arr) {
+        arr = [];
+        bySquad.set(b.squadId, arr);
+      }
+      arr.push(b);
+    }
+    for (const [sid, bb] of this.squads) {
+      bb.lastT = Math.max(0, bb.lastT - dt);
+      bb.grenadeCd = Math.max(0, bb.grenadeCd - dt);
+      bb.tokens = bb.tokens.filter((id) => aliveIds.has(id));
+      if (!bySquad.has(sid)) {
+        this.squads.delete(sid);
+        continue;
+      }
+      const members = bySquad.get(sid)!;
+      const maxTokens = Math.min(2, members.length);
+      const activeTokens = new Set<number>(bb.tokens.slice(0, maxTokens));
+      // Fill remaining fire token slots (prioritize boss/marksman/ambusher, then shooters ready in combat).
+      if (activeTokens.size < maxTokens) {
+        const ranked = members
+          .filter((m) => m.state === 'combat' && m.reloadT <= 0 && m.healT <= 0 && !activeTokens.has(m.id))
+          .sort((a, b) => {
+            const pA = a.role === 'boss' || a.role === 'goon_marksman' || a.role === 'ambusher' ? 0 : 1;
+            const pB = b.role === 'boss' || b.role === 'goon_marksman' || b.role === 'ambusher' ? 0 : 1;
+            return pA - pB;
+          });
+        for (const m of ranked) {
+          if (activeTokens.size >= maxTokens) break;
+          activeTokens.add(m.id);
+        }
+      }
+      bb.tokens = [...activeTokens];
+      for (const m of members) m.hasFireToken = activeTokens.has(m.id) || members.length === 1;
+    }
+    for (const [key, ownerId] of this.coverClaims) {
+      if (!aliveIds.has(ownerId)) this.coverClaims.delete(key);
+    }
+  }
+
+  /** Enforces >= 3.8–4.5 m ally combat spacing and >= 1.1 m hard anti-overlap so squads spread out naturally. */
+  private applySeparation(dt: number): void {
+    const n = this.list.length;
+    for (let i = 0; i < n; i++) {
+      const a = this.list[i];
+      if (a.isDead || a.state === 'dead') continue;
+      if (a.role === 'ambusher' && !a.ambushTriggered) continue;
+      for (let j = i + 1; j < n; j++) {
+        const b = this.list[j];
+        if (b.isDead || b.state === 'dead') continue;
+        if (b.role === 'ambusher' && !b.ambushTriggered) continue;
+        if (Math.abs(a.pos.y - b.pos.y) > 2.2) continue;
+        const dx = a.pos.x - b.pos.x;
+        const dz = a.pos.z - b.pos.z;
+        const d = Math.hypot(dx, dz);
+        const sameTeam = !areFactionsHostile(a.faction, b.faction);
+        const minSep = sameTeam ? (a.state === 'combat' || b.state === 'combat' ? 4.2 : 2.6) : 1.05;
+        if (d >= minSep) continue;
+        const nx = d > 0.01 ? dx / d : (i % 2 === 0 ? 1 : -1);
+        const nz = d > 0.01 ? dz / d : (j % 2 === 0 ? 1 : -1);
+        const push = Math.min(1.6 * dt, (minSep - d) * 0.5 * Math.min(1, dt * 3.5));
+        if (push > 1e-4) {
+          this.stepBandit(a, nx, nz, push);
+          this.stepBandit(b, -nx, -nz, push);
+        }
+      }
+    }
+  }
+
+  private throwGrenade(b: Bandit, tx: number, ty: number, tz: number): void {
+    const start = new Vector3(b.pos.x, b.pos.y + 1.55, b.pos.z);
+    const dur = 1.05;
+    const vx = (tx - start.x) / dur;
+    const vz = (tz - start.z) / dur;
+    const vy = (ty + 0.1 - start.y + 0.5 * 9.8 * dur * dur) / dur;
+    const mesh = new Mesh(this.grenadeGeo, this.grenadeMat);
+    mesh.position.copy(start);
+    this.w.scene.add(mesh);
+    this.grenades.push({ pos: start, vel: new Vector3(vx, vy, vz), fuse: 1.45, mesh });
+    sfx.swing('heavy', 0.35, b.pos);
+    this.w.toast?.(tr('Боец: «Граната пошла!»', 'Goon: "Frag out!"'), 1600);
+  }
+
+  private updateGrenades(dt: number): void {
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      g.fuse -= dt;
+      g.vel.y -= 9.8 * dt;
+      const step = g.vel.length() * dt;
+      if (step > 0.01) {
+        _v1.copy(g.vel).divideScalar(step / dt);
+        const hit = this.w.rayHit(g.pos.x, g.pos.y, g.pos.z, _v1.x, _v1.y, _v1.z, step);
+        if (hit >= 0) {
+          g.pos.addScaledVector(_v1, Math.max(0, hit - 0.05));
+          g.vel.multiplyScalar(0.35);
+          g.vel.y = Math.abs(g.vel.y) * 0.45;
+        } else {
+          g.pos.addScaledVector(g.vel, dt);
+        }
+      }
+      const gy = this.w.groundY(g.pos.x, g.pos.z, g.pos.y);
+      if (g.pos.y < gy + 0.08) {
+        g.pos.y = gy + 0.08;
+        g.vel.y = Math.abs(g.vel.y) * 0.35;
+        g.vel.x *= 0.6;
+        g.vel.z *= 0.6;
+      }
+      g.mesh.position.copy(g.pos);
+      if (g.fuse <= 0) {
+        const at = g.pos.clone();
+        this.w.scene.remove(g.mesh);
+        this.grenades.splice(i, 1);
+        this.w.explode?.(at, { radius: 6.5, damage: 95, impulse: 3, noise: 60, selfDamage: 75, shrapnel: 24 });
+      }
     }
   }
 

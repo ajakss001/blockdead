@@ -17,7 +17,8 @@ import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
 import type { ContainerSpot } from '../gen/pieces';
-import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, modelLod1Indices, pickModel } from '../models';
+import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, modelLod1Indices } from '../models';
+import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
 
 /** Third-party vehicle and prop models (set in the worker once loaded); null = procedural only. */
 let library: ModelLibrary | null = null;
@@ -50,6 +51,8 @@ export interface CarOptions {
   smashed?: number;
   /** Model group (car, van, police, ambulance, wreck…); default: a civilian car or van. */
   kind?: string;
+  /** Optional explicit world GLB vehicle override. */
+  glbId?: GlbModelId;
 }
 
 // Mid-size 90s sedan, meters. Local axes: +X nose, +Y up, +Z left side.
@@ -126,31 +129,66 @@ const _s = new Vector3();
  */
 export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): void {
   const rand = mulberry32(o.seed ?? 1);
-  if (library) {
-    // A model: mostly cars, some vans; a badly smashed one is sometimes a burnt-out wreck.
-    const r = rand();
-    const kind = o.kind ?? ((o.smashed ?? 0) > 0.6 && r < 0.35 ? 'wreck' : r < 0.22 ? 'van' : 'car');
-    const m = pickModel(library, kind, rand()) ?? pickModel(library, 'car', rand());
-    if (m) {
-      const matrix = new Matrix4()
-        .makeTranslation(o.x, 0.01, o.z)
-        .multiply(new Matrix4().makeRotationY(o.yaw))
-        .multiply(new Matrix4().makeRotationFromEuler(new Euler(o.flatTire ? -0.02 : 0, 0, o.flatTire ? -0.01 : 0)));
-      placeModel(batch, m, matrix, m.tint ? paintFor(o.paint, rand) : null, dirt);
-      if (containers) containers.push(trunkSpot(m, matrix, o.yaw));
-      // Full footprint lower body so the player never clips into trunks/bumpers,
-      // and tall cabin collider so AI line-of-sight and bullets cannot shoot through cars.
-      const hx = m.size[0] * 0.5 + 0.05;
-      const hz = m.size[2] * 0.48;
-      const hoodH = Math.max(0.95, m.size[1] * 0.64);
-      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
-      world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, m.size[1] + 0.12));
-      return;
-    }
-  }
-  // Car transform: position, heading, plus sag towards a flat tire.
   const roll = o.flatTire ? -0.022 : 0;
   const pitch = o.flatTire ? -0.012 : 0;
+  const id = o.glbId ?? pickWorldVehicle(o.kind, rand(), o.smashed ?? 0);
+  const spec = GLB_WORLD_SPECS[id];
+  if (spec) {
+    // World GLBs face -Z at yaw 0; rotating by (o.yaw - PI/2) points nose along +X at o.yaw = 0.
+    batch.glbs.push({
+      id,
+      x: o.x,
+      y: 0.01,
+      z: o.z,
+      yaw: o.yaw - Math.PI / 2,
+      roll,
+      pitch,
+    });
+    // spec.size = [widthX, heightY, lengthZ]
+    const W = spec.size[0];
+    const H = spec.size[1];
+    const L = spec.size[2];
+    const hx = L * 0.5 + 0.02;
+    const hz = W * 0.48;
+    const hoodH = Math.max(0.95, H * 0.62);
+    world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, hoodH);
+    world.addOrientedBox(o.x, o.z, hx * 0.68, hz * 0.92, o.yaw, hoodH, Math.max(1.58, H + 0.12));
+
+    batch.addShadow(
+      new Matrix4().makeTranslation(o.x, 0.025, o.z).multiply(new Matrix4().makeRotationY(o.yaw)),
+      L * 1.12,
+      W * 1.18,
+      0.025,
+    );
+
+    if (containers) {
+      const pickup = id === 'emercom_pickup_17k';
+      const tall =
+        id === 'UAZ_Bukhanka_22k' ||
+        id === 'omon_swat_van_17k' ||
+        id === 'gazelle_ambulance_17k' ||
+        id === 'Kamaz_6x6_25k' ||
+        id === 'paz_3205_bus_11000' ||
+        id === 'kamaz_fire_truck_20k' ||
+        id === 'Semi_Truck_Tractor_24' ||
+        id === 'Semi_Trailer_Cargo_20';
+      const depth = pickup ? Math.min(1.9, L * 0.36) : tall ? 0.5 : Math.min(0.95, L * 0.22);
+      const y0 = pickup ? 0.45 : 0.3;
+      const y1 = pickup ? Math.min(1.15, H * 0.55) : tall ? Math.min(2.15, H * 0.85) : Math.min(1.2, H * 0.72);
+      const offset = -L * 0.5 + depth * 0.5 - 0.05;
+      const cx = o.x + Math.cos(o.yaw) * offset;
+      const cz = o.z - Math.sin(o.yaw) * offset;
+      containers.push({
+        type: 'trunk',
+        x: cx,
+        z: cz,
+        box: [cx, (y0 + y1) * 0.5, cz, depth * 0.5 + 0.06, (y1 - y0) * 0.5, W * 0.5 - 0.14, o.yaw],
+      });
+    }
+    return;
+  }
+
+  // Fallback procedural sedan only if spec lookup ever failed (all 40 GLBs are always in GLB_WORLD_SPECS).
   const car = new Matrix4()
     .makeTranslation(o.x, 0.01, o.z)
     .multiply(new Matrix4().makeRotationY(o.yaw))
@@ -269,28 +307,6 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
   // Full footprint + tall cabin so player cannot clip into trunk and bandits cannot shoot through cars.
   world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH + 0.04, WIDTH * 0.48, o.yaw, -0.5, 0.96);
   world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.66, WIDTH * 0.44, o.yaw, 0.96, 1.58);
-}
-
-/**
- * A model's trunk as a search zone: the rear of the car — lid and bumper (a sedan's, up to the lid),
- * a pickup's bed, a van's rear doors — not the roof or the bonnet.
- */
-function trunkSpot(m: ModelInfo, matrix: Matrix4, yaw: number): ContainerSpot {
-  const [L, H, W] = m.size;
-  const rear = m.min[0];
-  const pickup = m.name === 'pickup';
-  const tall = m.group !== 'car' && m.group !== 'wreck';
-  const depth = pickup ? Math.min(1.9, L * 0.36) : tall ? 0.45 : Math.min(0.95, L * 0.21);
-  const y0 = pickup ? 0.45 : 0.3;
-  const y1 = pickup ? Math.min(1.15, H * 0.55) : tall ? H * 0.88 : Math.min(1.15, H * 0.7);
-  const c = new Vector3(rear + depth / 2 - 0.02, (y0 + y1) / 2, m.min[2] + W / 2).applyMatrix4(matrix);
-  return { type: 'trunk', x: c.x, z: c.z, box: [c.x, c.y, c.z, depth / 2 + 0.03, (y1 - y0) / 2, W / 2 - 0.12, yaw] };
-}
-
-/** Faded paint over a model's own texture: a light multiply so the texture keeps its detail. */
-function paintFor(paint: number, rand: () => number): Color {
-  const c = new Color(paint);
-  return c.multiplyScalar(1.7).lerp(new Color(1, 1, 1), 0.35 + rand() * 0.25);
 }
 
 /** A model into the batch: vehicle metal by default, slightly rough; its glass as murky translucent car glass. */

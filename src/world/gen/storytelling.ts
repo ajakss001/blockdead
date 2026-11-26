@@ -105,5 +105,9 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
   cp.resetBounds();
   cp.model('supplyCrate', rand, 0, 0, 0, 0, 1, 0.78, 0.15, true);
   cp.container('militaryCrate', 0, 0.55);
+  b.glb('generator_light_tower', cx + 4.4, 0, cz - 1.6, rand() * 0.4 - 0.2);
+  b.glb('burn_barrel', cx - 3.8, 0, cz - 2.4, 0);
+  b.solid(cx - 4.15, cz - 2.75, cx - 3.45, cz - 2.05, 0, 0.95);
+  b.life(LIFE.fire, cx - 3.8, 0.92, cz - 2.4, 0, 0, 0.55, 0, spotHash(cx, cz, 88));
   for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

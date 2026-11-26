@@ -18,7 +18,6 @@ const FACADES: FacadeSurface[] = ['facadeConcrete', 'facadeBrick', 'facadeOffice
 const up3 = (v: number) => Math.ceil(v / 3) * 3;
 const down3 = (v: number) => Math.floor(v / 3) * 3;
 const SIDE_ALLEY = 3;
-const ESCAPE = 0x2c2a28;
 
 const paints = Object.values(CAR_PAINTS);
 const _m = new Matrix4();
@@ -211,15 +210,19 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
   }
 }
 
-/** Wheeled steel dumpster (3D model); `along` is the long axis. */
+/** Wheeled steel dumpster (GLB Soviet_Dumpster_3000); `along` is the long axis. */
 function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
   const sx = along === 'x' ? 1.8 : 1.1;
   const sz = along === 'x' ? 1.1 : 1.8;
-  const dp = new Place(b, x + sx / 2, 0, z + sz / 2, along === 'x' ? 0 : 1);
-  if (dp.model('dumpster', 0, 0, 0, 0, 0, 1, 0.72, 0.35)) {
-    b.solid(x, z, x + sx, z + sz, 0.12, 1.3);
-  }
-  b.batch.addShadow(_m.makeTranslation(x + sx / 2, PAVE.plaza, z + sz / 2), sx * 1.25, sz * 1.25, 0.025);
+  const cx = x + sx / 2;
+  const cz = z + sz / 2;
+  b.glb('Soviet_Dumpster_3000', cx, 0, cz, along === 'x' ? 0 : Math.PI / 2, {
+    sx: sx / 2.0,
+    sy: 0.72,
+    sz: sz / 1.896,
+  });
+  b.solid(x, z, x + sx, z + sz, 0.12, 1.35);
+  b.batch.addShadow(_m.makeTranslation(cx, PAVE.plaza, cz), sx * 1.25, sz * 1.25, 0.025);
 }
 
 /** A pallet with crates on it (3D model, sometimes searchable). */
@@ -303,43 +306,16 @@ function escapeClear(e: EscapeSpec, buildings: readonly BuildingDesc[]): boolean
 }
 
 export function fireEscape(b: Builder, axis: 'x' | 'z', wall: number, outward: 1 | -1, u0: number, storeys: number): void {
-  const L = 3;
-  const D = 1.2;
-  const box = (u: number, v: number, y: number, du: number, dv: number, dy: number) => {
-    // (u along the wall, v away from it) → world, min corner and size.
-    const v0 = outward > 0 ? wall + ESCAPE_GAP + v : wall - ESCAPE_GAP - v - dv;
-    if (axis === 'z') b.block(ESCAPE, u, y, v0, du, dy, dv, 'metal');
-    else b.block(ESCAPE, v0, y, u, dv, dy, du, 'metal');
-  };
+  const D = 1.25;
+  const wx = axis === 'z' ? u0 + 1.5 : wall + outward * (ESCAPE_GAP + D * 0.5);
+  const wz = axis === 'z' ? wall + outward * (ESCAPE_GAP + D * 0.5) : u0 + 1.5;
+  const yaw = axis === 'z' ? (outward > 0 ? 0 : Math.PI) : outward > 0 ? Math.PI / 2 : -Math.PI / 2;
   for (let k = 1; k <= storeys; k++) {
     const y = k * FLOOR_H - 0.05;
-    box(u0, 0, y, L, D, 0.06);
-    // Railing: a solid-looking guard on the open edge (top rail + a slatted panel read as one), rails at the ends.
-    box(u0, D - 0.04, y + 0.3, L, 0.04, 0.74);
-    box(u0, 0, y + 1.0, 0.04, D, 0.04);
-    box(u0 + L - 0.04, 0, y + 1.0, 0.04, D, 0.04);
-    if (k < storeys) flight(b, axis, wall, outward, k % 2 ? u0 + 0.3 : u0 + L - 0.3, k % 2 ? 1 : -1, y + 0.06, D * 0.5);
+    b.glb('fire_escape_smart_top', wx, y, wz, yaw, {
+      sx: 3.0 / 3.179,
+      sy: 1,
+      sz: D / 1.509,
+    });
   }
-  // Raised ladder under the first landing.
-  box(u0 + 0.3, D - 0.25, FLOOR_H - 1.6, 0.5, 0.04, 1.55);
-}
-
-/** One sloping flight between landings: a plank rising half a landing's length per storey. */
-function flight(b: Builder, axis: 'x' | 'z', wall: number, outward: number, uStart: number, dir: number, y: number, v: number): void {
-  const run = 2.4;
-  const len = Math.hypot(run, FLOOR_H);
-  const angle = Math.atan2(FLOOR_H, run) * dir;
-  const uc = uStart + (dir * run) / 2;
-  const vc = wall + outward * (ESCAPE_GAP + v);
-  // Rotate about the wall normal, tilt along u.
-  if (axis === 'z') {
-    _p.set(uc, y + FLOOR_H / 2, vc);
-    _q.setFromAxisAngle(_axis.set(0, 0, 1), angle);
-    _s.set(len, 0.06, 0.6);
-  } else {
-    _p.set(vc, y + FLOOR_H / 2, uc);
-    _q.setFromAxisAngle(_axis.set(1, 0, 0), -angle);
-    _s.set(0.6, 0.06, len);
-  }
-  b.batch.add(b.box, ESCAPE, _m.compose(_p, _q, _s), 'metal');
 }

@@ -2,6 +2,7 @@ import { mulberry32 } from '../../core/random';
 import { Color, Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { type ModelInfo, pickModel } from '../models';
 import { buildCar, modelLibrary, placeModel } from '../props/car';
+import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
 import * as F from './furniture';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
@@ -46,9 +47,32 @@ export function chaosScene(b: Builder, kind: SceneKind, x: number, z: number, ra
 
 // ── Building blocks ─────────────────────────────────────────────────────────────
 
+function resolveChaosGlb(group: string, r: number): GlbModelId | null {
+  if (group === 'tent' || group === 'tent_medical') return 'quarantine_tent';
+  if (group === 'barrier') return 'checkpoint_barricade';
+  if (['tank', 'apc', 'truck', 'van', 'ambulance', 'fireTruck', 'bus', 'heli', 'heliMil', 'semi', 'trailer'].includes(group)) {
+    return pickWorldVehicle(group, r);
+  }
+  return null;
+}
+
 /** A model of a group (nose +X along yaw), optionally tipped and lifted; collider over its footprint. */
 function model(b: Builder, group: string, x: number, z: number, yaw: number, rand: Rand, o: { roll?: number; pitch?: number; lift?: number; collide?: boolean; paint?: number } = {}): ModelInfo | null {
-  const m = pickModel(modelLibrary(), group, rand());
+  const r = rand();
+  const glbId = resolveChaosGlb(group, r);
+  if (glbId) {
+    const spec = GLB_WORLD_SPECS[glbId];
+    const y = (o.lift ?? 0) + 0.01;
+    const isBarrier = glbId === 'checkpoint_barricade' || glbId === 'quarantine_tent';
+    b.glb(glbId, x, y, z, isBarrier ? yaw : yaw - Math.PI / 2, { roll: o.roll, pitch: o.pitch });
+    if (o.collide !== false) {
+      const hx = isBarrier ? spec.size[0] / 2 : spec.size[2] / 2;
+      const hz = isBarrier ? spec.size[2] / 2 : spec.size[0] / 2;
+      b.colliders.addOrientedBox(x, z, hx, hz, yaw, -0.5, (o.lift ?? 0) + spec.size[1] + 0.05);
+    }
+    return null;
+  }
+  const m = pickModel(modelLibrary(), group, r);
   if (!m) return null;
   const mat = new Matrix4().compose(new Vector3(x, (o.lift ?? 0) + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, yaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
   placeModel(b.batch, m, mat, o.paint !== undefined && m.tint ? new Color(o.paint) : null);
@@ -93,41 +117,42 @@ export function jersey(p: Place, lx: number, lz: number, len: number): void {
   p.solid(lx, lz, len, 0.6, 0.85);
 }
 
-/** Road barrier (3D model only). */
+/** Road barrier (GLB checkpoint_barricade). */
 export function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = false): void {
-  if (!pickModel(modelLibrary(), 'barrier', 0)) return;
   const [x, z] = p.pt(lx, lz);
-  model(p.b, 'barrier', x, z, yawOf(p), () => (len > 2.6 ? 0.6 : 0.1), {
-    collide: !down,
+  p.b.glb('checkpoint_barricade', x, down ? 0.12 : 0, z, yawOf(p), {
+    sx: Math.max(0.7, len / 3.4),
     roll: down ? Math.PI / 2 - 0.1 : 0,
-    lift: down ? 0.12 : 0,
   });
-  if (!down) p.solid(lx, lz, len, 0.3, 1.0);
+  if (!down) p.solid(lx, lz, len, 0.45, 1.4);
 }
 
-/** Field tent (3D model only). */
-export function tent(b: Builder, x: number, z: number, yaw: number, rand: Rand, color?: number): Place {
-  model(b, color === 0xb0aca0 ? 'tent_medical' : 'tent', x, z, yaw, rand);
+/** Field tent (GLB quarantine_tent). */
+export function tent(b: Builder, x: number, z: number, yaw: number, _rand: Rand, _color?: number): Place {
+  b.glb('quarantine_tent', x, 0, z, yaw);
+  b.colliders.addOrientedBox(x, z, 3.1, 2.06, yaw, -0.5, 3.05);
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
-/** Box van / ambulance (3D model only). */
+/** Box van / ambulance (GLB). */
 function van(b: Builder, x: number, z: number, yaw: number, body: number, _stripe: number, _lights: [number, number]): Place {
   const ambulance = body === 0xc8c4b8;
-  model(b, ambulance ? 'ambulance' : 'van', x, z, yaw, () => Math.abs(Math.sin(x * 12.9898 + z * 78.233)), { paint: ambulance ? undefined : body + 0x101010 });
+  model(b, ambulance ? 'ambulance' : body === 0x1e2430 ? 'swat' : 'van', x, z, yaw, () => Math.abs(Math.sin(x * 12.9898 + z * 78.233)));
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
-/** Transit / heavy vehicle slot replaced with baked 3D van/truck model. */
+/** Transit / heavy vehicle slot (bus / semi / Kamaz). */
 function bus(b: Builder, x: number, z: number, yaw: number, rand: Rand): Place {
-  model(b, rand() < 0.5 ? 'truck' : 'van', x, z, yaw, rand);
+  const r = rand();
+  model(b, r < 0.55 ? 'bus' : r < 0.8 ? 'truck' : 'semi', x, z, yaw, rand);
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
-/** Crashed helicopter (3D model only, with ground skid/soot/shards/oil decals and real road barriers). */
+/** Crashed helicopter (GLB mi8_wreck_remesh with ground decals & road barriers). */
 function heliCrash(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyMode): void {
   const yaw = rand() * Math.PI * 2;
-  model(b, 'heli', x, z, yaw, rand, { pitch: -0.22, roll: 0.18, lift: 0.15 });
+  b.glb('mi8_wreck_remesh', x, 0.05, z, yaw - Math.PI / 2, { pitch: -0.14, roll: 0.16 });
+  b.colliders.addOrientedBox(x, z, 7.6, 2.6, yaw, -0.5, 4.1);
   stripDecal(b, x - Math.cos(yaw) * 6, z + Math.sin(yaw) * 6, yaw, 10, 1.6, 'decalSkid');
   groundDecal(b, 'decalSoot', x, 0, z, 6, rand, 1.4);
   groundDecal(b, 'decalShards', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 3, rand);
@@ -222,13 +247,13 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyM
   // Stretchers, luggage, boxes, barriers.
   const A = new Place(b, x, 0, z, alongX ? 0 : 1);
   for (let k = 0; k < 2; k++) stretcher(A, (rand() - 0.5) * 6, 4 + rand() * 2, rand);
-  for (let k = 0; k < 5; k++) F.suitcase(A.at((rand() - 0.5) * 12, (rand() - 0.5) * 9, Math.floor(rand() * 4)), rand, rand() < 0.4);
+  for (let k = 0; k < 4; k++) b.glb('abandoned_luggage_pil', x + (rand() - 0.5) * 12, 0, z + (rand() - 0.5) * 9, rand() * 6.28);
   for (let k = 0; k < 2; k++) F.boxes(A.at((rand() - 0.5) * 10, (rand() - 0.5) * 8, Math.floor(rand() * 4)), rand, 2);
   stripedBarrier(A, 0, BAND + 1.0, 2.6, rand() < 0.5);
 }
 
 export function fireTruck(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
-  model(b, 'truck', x, z, yaw, rand);
+  model(b, 'fireTruck', x, z, yaw, rand);
 }
 
 function stretcher(p: Place, lx: number, lz: number, rand: Rand): void {

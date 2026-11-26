@@ -667,13 +667,14 @@ export class Sound {
     this.sample(out, t, 'hitMetal', { rate: 1.15 - heavy * 0.15, vary: 0.08, gain: 0.35 + 0.35 * heavy });
   }
 
-  door(style: 'wood' | 'glass' | 'metal', open: boolean, pos: Pos, _creaky = false, pitch = 1): void {
+  door(style: 'wood' | 'glass' | 'metal', open: boolean, pos: Pos, _creaky = false, pitch = 1, quiet = false): void {
     if (style === 'glass') return;
     const v = this.voice(pos, 1.1, 1.5, true, 'env');
     if (!v) return;
     const [out, t] = v;
-    if (style === 'metal') this.sample(out, t, 'doorMetal', { rate: pitch, vary: 0.05, gain: open ? 0.82 : 0.72 });
-    else this.sample(out, t, 'doorWood', { rate: pitch, vary: 0.06, gain: open ? 0.78 : 0.64 });
+    const mul = quiet ? 0.28 : 1;
+    if (style === 'metal') this.sample(out, t, 'doorMetal', { rate: pitch, vary: 0.05, gain: (open ? 0.82 : 0.72) * mul });
+    else this.sample(out, t, 'doorWood', { rate: pitch, vary: 0.06, gain: (open ? 0.78 : 0.64) * mul });
   }
 
   groan(_pos: Pos, _alarm: boolean): void {}

@@ -79,6 +79,11 @@ export class KeyboardMouseInput {
       if (!e.repeat) this.input.press('checkAmmo');
       return;
     }
+    if (e.altKey && e.code === 'KeyE') {
+      e.preventDefault();
+      if (!e.repeat) this.input.press('peek');
+      return;
+    }
     const action = KEY_ACTIONS[e.code];
     const isMove = FORWARD.includes(e.code) || BACK.includes(e.code) || LEFT.includes(e.code) || RIGHT.includes(e.code);
     if (!action && !isMove) return;
@@ -93,6 +98,9 @@ export class KeyboardMouseInput {
     this.keys.delete(e.code);
     if (e.code === 'KeyT' || e.code === 'AltLeft' || e.code === 'AltRight') {
       this.input.release('checkAmmo');
+    }
+    if (e.code === 'KeyE' || e.code === 'AltLeft' || e.code === 'AltRight') {
+      this.input.release('peek');
     }
     const action = KEY_ACTIONS[e.code];
     if (action) this.input.release(action);

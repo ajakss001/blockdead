@@ -22,6 +22,17 @@ export interface ColliderSink {
   addOrientedBox(cx: number, cz: number, halfX: number, halfZ: number, yaw: number, minY?: number, maxY?: number): void;
 }
 
+/** Detailed raycast hit including owner id, flags and outward surface normal. */
+export interface RayHitDetail {
+  t: number;
+  owner: number;
+  door: boolean;
+  glass: boolean;
+  nx: number;
+  ny: number;
+  nz: number;
+}
+
 interface Box {
   /** Broad-phase bounds (the rotated footprint's AABB). */
   minX: number;
@@ -35,6 +46,8 @@ interface Box {
   glass: boolean;
   /** Door collider owned by Doors system (passable in bot A* if unlocked/unbarricaded). */
   door: boolean;
+  /** Ray/bullet-only collider (e.g., wide-open/swinging-open door leaf: blocks bullets/LOS without snagging or shoving actors into jambs). */
+  rayOnly?: boolean;
   /** Oriented boxes only: center, half extents and rotation. */
   obb: { cx: number; cz: number; hx: number; hz: number; c: number; s: number } | null;
 }
@@ -81,19 +94,19 @@ export class CollisionWorld implements ColliderSink {
     this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, glass, door, obb: null });
   }
 
-  addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {
+  addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, door = false, rayOnly = false): void {
     const c = Math.cos(yaw);
     const s = Math.sin(yaw);
     // Nearly axis-aligned: a plain box is exact and cheaper.
     if (Math.abs(s) < 1e-3 || Math.abs(c) < 1e-3) {
       const ax = Math.abs(c) > 0.5 ? hx : hz;
       const az = Math.abs(c) > 0.5 ? hz : hx;
-      this.addBox(cx - ax, cz - az, cx + ax, cz + az, minY, maxY);
+      this.insert({ minX: cx - ax, minZ: cz - az, maxX: cx + ax, maxZ: cz + az, minY, maxY, owner: this.owner, glass, door, rayOnly, obb: null });
       return;
     }
     const ex = hx * Math.abs(c) + hz * Math.abs(s);
     const ez = hx * Math.abs(s) + hz * Math.abs(c);
-    this.insert({ minX: cx - ex, minZ: cz - ez, maxX: cx + ex, maxZ: cz + ez, minY, maxY, owner: this.owner, glass: false, door: false, obb: { cx, cz, hx, hz, c, s } });
+    this.insert({ minX: cx - ex, minZ: cz - ez, maxX: cx + ex, maxZ: cz + ez, minY, maxY, owner: this.owner, glass, door, rayOnly, obb: { cx, cz, hx, hz, c, s } });
   }
 
   private insert(box: Box): void {
@@ -143,10 +156,18 @@ export class CollisionWorld implements ColliderSink {
   }
 
   /** Add one box under a specific owner (doors). */
-  addOwned(owner: number, minX: number, minZ: number, maxX: number, maxZ: number, minY: number, maxY: number, door = false): void {
+  addOwned(owner: number, minX: number, minZ: number, maxX: number, maxZ: number, minY: number, maxY: number, door = false, glass = false): void {
     const prev = this.owner;
     this.owner = owner;
-    this.addBox(minX, minZ, maxX, maxZ, minY, maxY, false, door);
+    this.addBox(minX, minZ, maxX, maxZ, minY, maxY, glass, door);
+    this.owner = prev;
+  }
+
+  /** Add an oriented box under a specific owner (rotating doors). */
+  addOwnedOriented(owner: number, cx: number, cz: number, hx: number, hz: number, yaw: number, minY: number, maxY: number, glass = false, door = false, rayOnly = false): void {
+    const prev = this.owner;
+    this.owner = owner;
+    this.addOrientedBox(cx, cz, hx, hz, yaw, minY, maxY, glass, door, rayOnly);
     this.owner = prev;
   }
 
@@ -211,7 +232,7 @@ export class CollisionWorld implements ColliderSink {
       let pushed = false;
       for (let i = 0; i < this.candidates.length; i++) {
         const b = this.boxes[this.candidates[i]];
-        if (!b || b.maxY <= feet || b.minY >= head) continue;
+        if (!b || b.rayOnly || b.maxY <= feet || b.minY >= head) continue;
         if (b.obb) {
           if (this.pushOutOfObb(pos, b.obb, radius)) pushed = true;
           continue;
@@ -246,6 +267,27 @@ export class CollisionWorld implements ColliderSink {
 
   /** Distance along a ray to the first box it enters (2D DDA across grid cells + exact slab test), or −1 within maxDist. */
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number, ignoreGlass = false): number {
+    return this.traceRay(ox, oy, oz, dx, dy, dz, maxDist, ignoreGlass, null);
+  }
+
+  /** Detailed ray hit returning distance, owner id, door/glass flags, and surface normal, or null. */
+  rayHitDetail(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number, ignoreGlass = false): RayHitDetail | null {
+    const out: RayHitDetail = { t: -1, owner: 0, door: false, glass: false, nx: 0, ny: 1, nz: 0 };
+    const t = this.traceRay(ox, oy, oz, dx, dy, dz, maxDist, ignoreGlass, out);
+    return t >= 0 ? out : null;
+  }
+
+  private traceRay(
+    ox: number,
+    oy: number,
+    oz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    maxDist: number,
+    ignoreGlass: boolean,
+    detailOut: RayHitDetail | null,
+  ): number {
     const tClip = 0.02;
     if (maxDist < tClip || !Number.isFinite(ox + oy + oz + dx + dy + dz + maxDist)) return -1;
 
@@ -299,6 +341,9 @@ export class CollisionWorld implements ColliderSink {
           // Y slab test first (fastest rejection for above/below floor boxes).
           let tMin = 0;
           let tMax = bestT;
+          let cnx = -dx;
+          let cny = -dy;
+          let cnz = -dz;
           if (invDy !== 0) {
             let t1 = (b.minY - oy) * invDy;
             let t2 = (b.maxY - oy) * invDy;
@@ -307,7 +352,12 @@ export class CollisionWorld implements ColliderSink {
               t1 = t2;
               t2 = tmp;
             }
-            if (t1 > tMin) tMin = t1;
+            if (t1 > tMin) {
+              tMin = t1;
+              cnx = 0;
+              cny = dy > 0 ? -1 : 1;
+              cnz = 0;
+            }
             if (t2 < tMax) tMax = t2;
             if (tMin > tMax || tMax < tClip) continue;
           } else if (oy < b.minY || oy > b.maxY) {
@@ -332,7 +382,13 @@ export class CollisionWorld implements ColliderSink {
                 t1 = t2;
                 t2 = tmp;
               }
-              if (t1 > tMin) tMin = t1;
+              if (t1 > tMin) {
+                tMin = t1;
+                const lnx = ldx > 0 ? -1 : 1;
+                cnx = lnx * o.c;
+                cny = 0;
+                cnz = -lnx * o.s;
+              }
               if (t2 < tMax) tMax = t2;
               if (tMin > tMax || tMax < tClip) continue;
             } else if (lox < -o.hx || lox > o.hx) {
@@ -348,7 +404,13 @@ export class CollisionWorld implements ColliderSink {
                 t1 = t2;
                 t2 = tmp;
               }
-              if (t1 > tMin) tMin = t1;
+              if (t1 > tMin) {
+                tMin = t1;
+                const lnz = ldz > 0 ? -1 : 1;
+                cnx = lnz * o.s;
+                cny = 0;
+                cnz = lnz * o.c;
+              }
               if (t2 < tMax) tMax = t2;
               if (tMin > tMax || tMax < tClip) continue;
             } else if (loz < -o.hz || loz > o.hz) {
@@ -363,7 +425,12 @@ export class CollisionWorld implements ColliderSink {
                 t1 = t2;
                 t2 = tmp;
               }
-              if (t1 > tMin) tMin = t1;
+              if (t1 > tMin) {
+                tMin = t1;
+                cnx = dx > 0 ? -1 : 1;
+                cny = 0;
+                cnz = 0;
+              }
               if (t2 < tMax) tMax = t2;
               if (tMin > tMax || tMax < tClip) continue;
             } else if (ox < b.minX || ox > b.maxX) {
@@ -378,7 +445,12 @@ export class CollisionWorld implements ColliderSink {
                 t1 = t2;
                 t2 = tmp;
               }
-              if (t1 > tMin) tMin = t1;
+              if (t1 > tMin) {
+                tMin = t1;
+                cnx = 0;
+                cny = 0;
+                cnz = dz > 0 ? -1 : 1;
+              }
               if (t2 < tMax) tMax = t2;
               if (tMin > tMax || tMax < tClip) continue;
             } else if (oz < b.minZ || oz > b.maxZ) {
@@ -390,6 +462,15 @@ export class CollisionWorld implements ColliderSink {
           if (ht < bestT || hit < 0) {
             bestT = ht;
             hit = ht;
+            if (detailOut) {
+              detailOut.t = ht;
+              detailOut.owner = b.owner;
+              detailOut.door = b.door;
+              detailOut.glass = b.glass;
+              detailOut.nx = cnx;
+              detailOut.ny = cny;
+              detailOut.nz = cnz;
+            }
           }
         }
       }

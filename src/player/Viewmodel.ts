@@ -388,6 +388,13 @@ export class Viewmodel {
       for (const [id, g] of this.held) g.visible = id === this.item;
       for (const [id, g] of this.guns) g.holder.visible = id === this.item;
       if (isGun(this.item)) this.rightDown = 1;
+      // Clear stale wall-tip / ADS smoothing from the previous weapon so swapped guns don't dip into the floor.
+      this.wallT = 0;
+      this.ads = 0;
+      this.adsTime = 0;
+      this.gunView.wall = 0;
+      this.gunView.wallDist = 99;
+      this.gunView.ads = false;
       this.rig.reset();
     }
     const twoHanded = this.twoHands;

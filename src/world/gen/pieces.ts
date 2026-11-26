@@ -7,6 +7,7 @@ import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
 import { pickModel } from '../models';
 import { modelLibrary, placeModel } from '../props/car';
+import type { GlbModelId, GlbPlacement } from '../worldModels';
 
 /** A searchable spot in the world (world XZ of its front face, Y of its floor). */
 /**
@@ -208,6 +209,21 @@ export class Builder {
     const s = this.flip ? -1 : 1;
     if (!this.inClip(this.wx(x), this.wz(z))) return;
     this.ambient.push(kind, this.wx(x), y, this.wz(z), nx * s, nz * s, w, h, seed, tag);
+  }
+
+  /** Streamed world GLB placement in the current frame (instanced & distance-culled via GlbPropPool). */
+  glb(id: GlbModelId, x: number, y: number, z: number, yaw = 0, opts?: Omit<GlbPlacement, 'id' | 'x' | 'y' | 'z' | 'yaw'>): void {
+    const wx = this.wx(x);
+    const wz = this.wz(z);
+    if (!this.inClip(wx, wz)) return;
+    this.batch.glbs.push({
+      id,
+      x: wx,
+      y,
+      z: wz,
+      yaw: this.flip ? yaw + Math.PI : yaw,
+      ...opts,
+    });
   }
 
   /** Register a door by its hinge and closed yaw in the current frame. */
@@ -683,10 +699,11 @@ export function tree(b: Builder, x: number, y: number, z: number, scale: number,
   plantTree(b, x, y, z, s, r[0] * Math.PI * 2, species);
 }
 
-/** A tree spot of a given species (see lifeKinds TREE), its trunk collider, maybe fallen branches. */
+/** A tree spot of a given species (see lifeKinds TREE), its trunk collider, and its streamed GLB model. */
 export function plantTree(b: Builder, x: number, y: number, z: number, s: number, yaw: number, species: number): void {
   const conifer = species === TREE.spruce || species === TREE.pine;
   b.life(LIFE.tree, x, y, z, Math.sin(yaw), Math.cos(yaw), (conifer ? 2.4 : 3) * s, s, spotHash(x, z, 31), species);
+  b.glb(conifer ? 'Spruce_Pine_Tree_7000' : 'Dead_Autumn_Tree_6000', x, y, z, yaw, { scale: conifer ? s * 0.82 : s * 0.88 });
   b.batch.addShadow(new Matrix4().makeTranslation(x, y, z), (conifer ? 2.6 : 3.1) * s, (conifer ? 2.6 : 3.1) * s, 0.025);
   const t = (conifer ? 0.16 : 0.2) * s;
   b.colliders.addBox(x - t, z - t, x + t, z + t);
@@ -699,16 +716,17 @@ export function pine(b: Builder, x: number, y: number, z: number, scale: number,
   plantTree(b, x, y, z, scale * (spotHash(x, z, 34) < 0.2 ? 1.25 : 1), r[0] * Math.PI * 2, species);
 }
 
-/** A bush (round, or low and spreading): four draws from `rand`, as before. */
+/** A bush (GLB Urban_Bush_2500): four draws from `rand`, as before. */
 export function bush(b: Builder, x: number, y: number, z: number, scale: number, rand: Rand): void {
   const r = [rand(), rand(), rand(), rand()];
   const yaw = r[0] * Math.PI * 2;
   b.life(LIFE.bush, x, y, z, Math.sin(yaw), Math.cos(yaw), scale, spotHash(x, z, 40) < 0.35 ? 1 : 0, spotHash(x, z, 41));
+  b.glb('Urban_Bush_2500', x, y, z, yaw, { scale: 0.72 + scale * 0.28 });
 }
 
 /**
- * A clipped hedge gone wild, from (ax, az) to (bx, bz) along X or Z, in 3 m stretches (spots for the
- * Vegetation and colliders), with a gap for a gate at `gapAt`.
+ * A clipped hedge gone wild, from (ax, az) to (bx, bz) along X or Z, in 3 m stretches (GLB bushes + colliders),
+ * with a gap for a gate at `gapAt`.
  */
 export function hedge(b: Builder, ax: number, az: number, bx: number, bz: number, gapAt?: number, gapW = 1.8): void {
   const alongX = Math.abs(bz - az) < 1e-6;
@@ -722,36 +740,37 @@ export function hedge(b: Builder, ax: number, az: number, bx: number, bz: number
   for (const [s0, s1] of spans) {
     const len = s1 - s0;
     if (len < 1) continue;
-    const n = Math.max(1, Math.round(len / 3));
+    const n = Math.max(1, Math.round(len / 2.2));
     const seg = len / n;
     for (let k = 0; k < n; k++) {
       const m = s0 + seg * (k + 0.5);
       const x = alongX ? m : fixed;
       const z = alongX ? fixed : m;
-      b.life(LIFE.hedge, x, 0, z, alongX ? 1 : 0, alongX ? 0 : 1, seg / 3, 0.9 + spotHash(x, z, 42) * 0.3, spotHash(x, z, 43));
+      const hScale = 0.85 + spotHash(x, z, 42) * 0.25;
+      b.life(LIFE.hedge, x, 0, z, alongX ? 1 : 0, alongX ? 0 : 1, seg / 3, hScale, spotHash(x, z, 43));
+      b.glb('Urban_Bush_2500', x, 0, z, alongX ? 0 : Math.PI / 2, { sx: (seg / 2.2) * 1.04, sy: hScale, sz: 0.65 });
     }
     if (alongX) b.colliders.addBox(s0, fixed - 0.5, s1, fixed + 0.5);
     else b.colliders.addBox(fixed - 0.5, s0, fixed + 0.5, s1);
   }
 }
 
-/** Street lamp; the arm points along +X/−X/+Z/−Z towards the road. */
+/** Street lamp GLB; the arm points along +X/-X/+Z/-Z towards the road. */
 export function lampPost(b: Builder, x: number, z: number, armX: number, armZ: number): void {
-  b.batch.add(b.cyl8, PAL.metal, _m.compose(_p.set(x, 2.1, z), _q.identity(), _s.set(0.07, 4.2, 0.07)), 'metal');
+  const yaw = armX === 0 && armZ === 0 ? 0 : Math.atan2(-armZ, armX);
+  b.glb('street_lamp_2000', x, 0, z, yaw);
+  b.colliders.addBox(x - 0.14, z - 0.14, x + 0.14, z + 0.14);
   const ax = armX * 1.1;
   const az = armZ * 1.1;
-  b.block(PAL.metal, Math.min(x, x + ax) - 0.04, 4.1, Math.min(z, z + az) - 0.04, Math.abs(ax) + 0.08, 0.06, Math.abs(az) + 0.08, 'metal');
-  b.block(0x55585a, x + ax - 0.15, 3.98, z + az - 0.15, 0.3, 0.12, 0.3, 'metal');
-  b.colliders.addBox(x - 0.13, z - 0.13, x + 0.13, z + 0.13);
   b.life(LIFE.perch, x + ax / 2, 4.14, z + az / 2, armX, armZ, 1.0, 0, spotHash(x, z, 91));
 }
 
 export function mailbox(_b: Builder, _x: number, _z: number): void {}
 
 export function trashBins(b: Builder, x: number, z: number): void {
-  const tp = new Place(b, x + 0.35, 0, z, 0);
-  tp.resetBounds();
-  tp.model('barrel', 0, 0, 0, 0, 0, 1, 0.65, 0.4, true);
-  tp.container('trash', 0, 0.55);
-  if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, x + 0.35, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
+  const cx = x + 0.35;
+  b.glb('garbage_cluster_1500', cx, 0, z, spotHash(x, z, 50) * Math.PI * 2, { scale: 0.62 });
+  b.solid(cx - 0.62, z - 0.52, cx + 0.62, z + 0.52, 0, 1.05);
+  b.container('trash', cx, z, 0, [cx - 0.62, 0, z - 0.52, cx + 0.62, 1.05, z + 0.52]);
+  if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, cx, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
 }

@@ -9,7 +9,9 @@ import type { InventoryData } from './Inventory';
 import type { IPlatform } from '../platform/IPlatform';
 import type { SurvivalState } from './Survival';
 import type { MetaData, SkillXp } from './Skills';
+import type { HeliSave } from './Helicopter';
 import type { StorySave } from './Story';
+import type { TripwireSave } from './Tripwires';
 import type { CarSave } from './Vehicles';
 
 const VERSION = 1;
@@ -60,6 +62,10 @@ export interface SaveV1 {
   playerArmed?: boolean;
   /** Lootable bandit corpses with structured equipment slots and search state. */
   corpses?: [ContainerRef, CorpseData][];
+  /** Deployed and enemy-ambush explosive tripwires. */
+  tripwires?: TripwireSave[];
+  /** Flyable Mi-8 EMERCOM helicopter state. */
+  heli?: HeliSave;
 }
 
 /** A dead survivor as a zombie: where, the colors of their clothes and skin, everything they had. */

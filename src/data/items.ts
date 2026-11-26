@@ -125,6 +125,10 @@ export type ItemId =
   | 'engineParts'
   | 'carTire'
   | 'wrench'
+  | 'tripwire'
+  | 'heliAvionics'
+  | 'heliFuelPump'
+  | 'heliBattery'
   // Firearms, their ammunition, spare magazines and modules (weapons/guns).
   | GunId
   | AmmoId
@@ -349,6 +353,10 @@ export const ITEMS: Readonly<Record<ItemId, ItemDef>> = {
   engineParts: { name: 'Запчасти двигателя', kind: 'material', weight: 1.2, stack: 5, note: 'Поршни, свечи и ремни для ремонта двигателя (нужен гаечный ключ).' },
   carTire: { name: 'Автомобильное колесо', kind: 'material', weight: 4.5, stack: 2, note: 'Запасное колесо в сборе. Восстанавливает ходовую часть и сцепление автомобиля.' },
   wrench: { name: 'Гаечный ключ', kind: 'tool', weight: 0.9, stack: 1, note: 'Тяжёлый разводной ключ для ремонта двигателя и ходовой части машины.' },
+  tripwire: { name: 'Осколочная растяжка', kind: 'tool', weight: 0.55, stack: 4, note: 'Боевая мина-растяжка с гранатой. Применить — натянуть поперёк прохода (до 3.5 м).' },
+  heliAvionics: { name: 'Блок авионики Ми-8', kind: 'tool', weight: 3.2, stack: 1, note: 'Редкий навигационный модуль кабины пилота. Нужен для ремонта вертолёта Ми-8 на военной базе.' },
+  heliFuelPump: { name: 'Топливный насос Ми-8', kind: 'tool', weight: 2.8, stack: 1, note: 'Военный авиационный насос высокого давления. Нужен для ремонта вертолёта Ми-8.' },
+  heliBattery: { name: 'Бортовой АКБ Ми-8', kind: 'tool', weight: 5.0, stack: 1, note: 'Высоковольтная 28V стартерная батарея вертолёта. Нужна для запуска турбин Ми-8.' },
   scrubsTop: { name: 'Медицинская рубашка', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'torso', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 }, sleeves: false } },
   scrubsPants: { name: 'Медицинские брюки', kind: 'clothing', weight: 0.2, stack: 1, wear: { slot: 'legs', color: 0x5a8a86, stats: { bite: 0.02, warmth: 1 } } },
   officeShirt: { name: 'Офисная рубашка', kind: 'clothing', weight: 0.3, stack: 1, wear: { slot: 'torso', color: 0xb8bcc2, stats: { bite: 0.03, warmth: 3 } } },
@@ -424,6 +432,7 @@ export function useVerb(def: ItemDef): string | null {
   if (def.dressesWound) return tr('Перевязать', 'Bandage');
   if (def.kind === 'medical') return tr('Принять', 'Take');
   if (def.battery) return tr('Вставить в фонарь', 'Load flashlight');
+  if (def === ITEMS.tripwire) return tr('Установить', 'Deploy');
   if (def.wear) return tr('Надеть', 'Wear');
   return null;
 }
@@ -761,6 +770,34 @@ const ITEM_TEXT: Readonly<Record<Exclude<ItemId, GunId | AmmoId | MagId | ModId>
     note: [
       'Тяжёлый разводной ключ для ремонта двигателя и ходовой части машины.',
       'Heavy adjustable wrench for repairing vehicle engines and tires.',
+    ],
+  },
+  tripwire: {
+    name: ['Осколочная растяжка', 'Frag tripwire'],
+    note: [
+      'Боевая мина-растяжка с гранатой. Применить — натянуть поперёк прохода (до 3.5 м).',
+      'Military frag tripwire grenade. Use to string across a corridor or doorway (up to 3.5 m).',
+    ],
+  },
+  heliAvionics: {
+    name: ['Блок авионики Ми-8', 'Mi-8 avionics module'],
+    note: [
+      'Редкий навигационный модуль кабины пилота. Нужен для ремонта вертолёта Ми-8 на военной базе.',
+      'Rare cockpit navigation unit required to repair the Mi-8 helicopter at the military base.',
+    ],
+  },
+  heliFuelPump: {
+    name: ['Топливный насос Ми-8', 'Mi-8 fuel pump'],
+    note: [
+      'Военный авиационный насос высокого давления. Нужен для ремонта вертолёта Ми-8.',
+      'High-pressure aviation fuel pump required to repair the Mi-8 helicopter.',
+    ],
+  },
+  heliBattery: {
+    name: ['Бортовой АКБ Ми-8', 'Mi-8 starter battery'],
+    note: [
+      'Высоковольтная 28V стартерная батарея вертолёта. Нужна для запуска турбин Ми-8.',
+      '28V heavy helicopter starter battery required to crank the Mi-8 turbines.',
     ],
   },
   scrubsTop: { name: ['Медицинская рубашка', 'Scrub top'] },

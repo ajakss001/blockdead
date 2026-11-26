@@ -12,6 +12,17 @@ import type { Inventory } from './Inventory';
 import { applyZonalArmor, type HitZone } from './Armor';
 import type { Bandit, BanditHit } from './Bandits';
 import type { HitResult, ZombieSim } from './zombies';
+import type { RayHitDetail } from '../world/CollisionWorld';
+import type { DoorBulletResult } from '../world/Doors';
+
+export interface BlastSpec {
+  radius: number;
+  damage: number;
+  impulse: number;
+  noise: number;
+  selfDamage?: number;
+  shrapnel?: number;
+}
 
 /**
  * Firearms in the world (CLAUDE.md «Огнестрельное оружие»): the gun in hand's logic (weapons/gunState) on the
@@ -34,6 +45,9 @@ export interface FirearmsWorld {
   /** The world camera (the arms' space is its own). */
   camera: Object3D;
   rayHit(o: Vector3, d: Vector3, max: number): number;
+  rayHitDetail?(o: Vector3, d: Vector3, max: number, ignoreGlass?: boolean): RayHitDetail | null;
+  doorBullet?(owner: number, dmg: number): DoorBulletResult | null;
+  doorsBlast?(at: Vector3, radius: number, dmg: number): { brokenGlassAt: Vector3[] };
   surface(o: Vector3, d: Vector3, dist: number): Surface | null;
   /** A noise zombies and hordes hear, m. */
   noise(x: number, y: number, z: number, r: number): void;
@@ -118,6 +132,9 @@ const _r = new Vector3();
 const _u = new Vector3();
 const _p = new Vector3();
 const _p2 = new Vector3();
+const _rayO = new Vector3();
+const _origO = new Vector3();
+const _shpD = new Vector3();
 const _q = new Quaternion();
 
 interface Rocket {
@@ -220,6 +237,9 @@ export class Firearms {
     }
     const gs = this.state;
     if (!id || !gs) {
+      vm.gunView.wall = 0;
+      vm.gunView.wallDist = 99;
+      vm.gunView.ads = false;
       // Keep the gun's state shown to the viewmodel during the switch away.
       input.consumePressed('reload');
       input.consumePressed('inspect');
@@ -230,10 +250,16 @@ export class Firearms {
     }
     const g = GUNS[id];
     const c = player.controller;
-    // A wall straight ahead: the gun goes up and back (it never goes into it), and can't fire.
-    const eye = this.w.camera.getWorldPosition(_o);
-    const dir = this.w.camera.getWorldDirection(_d);
-    const hit = this.w.rayHit(eye, dir, 2);
+    // A wall straight ahead: compute live eye when controller has position (avoids 1-frame crouch lag), fallback to camera in unit tests.
+    if (c.position && typeof c.eyeHeight === 'function') {
+      _o.set(c.position.x, c.position.y + c.eyeHeight(1), c.position.z);
+      const cp = Math.cos(c.pitch);
+      _d.set(-Math.sin(c.yaw) * cp, Math.sin(c.pitch), -Math.cos(c.yaw) * cp);
+    } else {
+      this.w.camera.getWorldPosition(_o);
+      this.w.camera.getWorldDirection(_d);
+    }
+    const hit = this.w.rayHit(_o, _d, 2);
     this.wallDist = hit < 0 ? 99 : hit;
     const reachOut = g.cls === 'pistol' ? 0.62 : g.cls === 'launcher' ? 0.55 : 0.85;
     vm.gunView.wall = Math.max(0, Math.min(1, (reachOut + 0.15 - this.wallDist) / 0.45));
@@ -390,13 +416,13 @@ export class Firearms {
         if (suppressed) this.fx.noFlash();
         else this.fx.muzzleFlash(_p, g.cls === 'launcher' ? 2.2 : g.pellets ? 1.4 : 1);
         if (e.burst >= 3 || g.pellets || g.cls === 'launcher') this.smokeT = g.cls === 'launcher' ? 1.6 : 0.9;
-        // The noise: zombies within it come to look.
         const eye = this.w.camera.getWorldPosition(_o);
+        const nx = eye.x;
+        const ny = eye.y;
+        const nz = eye.z;
         const r = noiseOf(id, mods);
         this.lastNoise = r;
         this.onShot?.(r);
-        this.w.noise(eye.x, eye.y, eye.z, r);
-        p.controller.addNoise(Math.min(1, r / 60));
         if (g.cls === 'launcher') this.launch();
         else {
           const nPellets = g.pellets ?? 1;
@@ -407,6 +433,9 @@ export class Firearms {
           this.shotHitMarked = false;
           for (let i = 0; i < nPellets; i++) this.bullet(id, mods);
         }
+        // Alert AI after resolving pellets so unalerted Stealth First Strike shots trigger ×1.75 crit damage first.
+        this.w.noise(nx, ny, nz, r);
+        p.controller.addNoise(Math.min(1, r / 60));
         if (g.cls !== 'launcher' && g.action !== 'pump' && g.action !== 'bolt') {
           this.pendingCasings.push({ t: 0.3 + Math.random() * 0.2, shell: false });
         }
@@ -506,7 +535,7 @@ export class Firearms {
     this.fx.dropMag(_p, _q, _p2.set(0, -0.5, 0));
   }
 
-  /** One bullet (a pellet): a ray from the eye in the cone; the nearest zombie or wall takes it. */
+  /** One bullet (a pellet): multi-hop ray supporting door material penetration/ricochet/glass shatter and Stealth First Strike. */
   private bullet(id: GunId, mods: readonly string[]): void {
     const g = GUNS[id];
     const o = this.w.camera.getWorldPosition(_o);
@@ -517,26 +546,78 @@ export class Firearms {
     const a = Math.random() * Math.PI * 2;
     const rr = Math.sqrt(Math.random()) * Math.tan(half);
     d.addScaledVector(_r.set(1, 0, 0).applyQuaternion(_q), Math.cos(a) * rr).addScaledVector(_u.set(0, 1, 0).applyQuaternion(_q), Math.sin(a) * rr).normalize();
-    const max = g.range * 4;
-    const wall = this.w.rayHit(o, d, max);
-    const lim = wall >= 0 ? wall : max;
-    const z = this.w.zombies.hitTest(o, d, lim, 0.02);
-    const bHit = this.w.bandits?.hitTest(o, d, z ? z.dist : lim, 0.03);
-    if (bHit) {
-      this.hitBandit(id, mods as never, bHit, o);
+    _origO.copy(o);
+    _rayO.copy(o);
+    let remain = g.range * 4;
+    let traveled = 0;
+    let dmgMul = 1;
+    const isMulti = this.shotTotalPellets > 1;
+    for (let hop = 0; hop < 3 && remain > 0.05; hop++) {
+      const det = this.w.rayHitDetail ? this.w.rayHitDetail(_rayO, d, remain) : null;
+      const wall = det ? det.t : this.w.rayHit(_rayO, d, remain);
+      const lim = wall >= 0 ? wall : remain;
+      const z = this.w.zombies.hitTest(_rayO, d, lim, 0.02);
+      const bHit = this.w.bandits?.hitTest(_rayO, d, z ? z.dist : lim, 0.03);
+      if (bHit) {
+        this.hitBandit(id, mods as never, bHit, _origO, dmgMul, traveled + bHit.dist);
+        return;
+      }
+      if (z) {
+        this.hitZombie(id, mods as never, z, _origO, dmgMul, traveled + z.dist);
+        return;
+      }
+      if (wall < 0) return;
+      if (det && det.door && this.w.doorBullet) {
+        const [lo, hi] = damageOf(id, mods as never);
+        const nom = ((lo + hi) * 0.5) * falloff(id, traveled + wall) * dmgMul;
+        const dr = this.w.doorBullet(det.owner, nom);
+        if (dr) {
+          _p.copy(_rayO).addScaledVector(d, wall - 0.02);
+          if (dr.kind === 'lab') {
+            this.w.particles.sparks(_p.x, _p.y, _p.z, 6);
+            if (!isMulti || this.shotHitSounds < 2) {
+              sfx.bulletHit('metal', _p);
+              this.shotHitSounds++;
+            }
+            return;
+          }
+          if (dr.kind === 'glass') {
+            if (dr.glassShattered) {
+              if (!isMulti || this.shotHitSounds < 2) {
+                this.w.onBreakGlass?.(_p, d);
+                this.shotHitSounds++;
+              }
+            }
+            const step = wall + 0.08;
+            _rayO.addScaledVector(d, step);
+            traveled += step;
+            remain -= step;
+            dmgMul *= dr.mul;
+            continue;
+          }
+          // Wood or barricaded plank door: splinter, damage, attenuate, and continue ray.
+          this.w.particles.burst(_p, 5, 0.55);
+          if (!isMulti || this.shotHitSounds < 2) {
+            sfx.bulletHit('wood', _p);
+            this.shotHitSounds++;
+          }
+          const step = wall + 0.30;
+          _rayO.addScaledVector(d, step);
+          traveled += step;
+          remain -= step;
+          dmgMul *= dr.mul;
+          continue;
+        }
+      }
+      this.hitWorld(_rayO, d, wall);
       return;
     }
-    if (z) {
-      this.hitZombie(id, mods as never, z, o);
-      return;
-    }
-    if (wall < 0) return;
-    this.hitWorld(o, d, wall);
   }
 
-  private hitBandit(id: GunId, mods: readonly never[], res: BanditHit, o: Vector3): void {
+  private hitBandit(id: GunId, mods: readonly never[], res: BanditHit, o: Vector3, dmgMul = 1, distOverride?: number): void {
     const [lo, hi] = damageOf(id, mods);
-    const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, res.dist) * (res.head ? 2 : 1);
+    const stealthCrit = res.bot.state === 'patrol' && res.bot.investigateT <= 0 ? 1.75 : 1;
+    const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, distOverride ?? res.dist) * (res.head ? 2 : 1) * dmgMul * stealthCrit;
     const killed = this.w.bandits!.hit(res.bot, dmg, o.x, o.z, res.head, res.zone);
     const armored = applyZonalArmor(1, res.zone, res.bot.worn, res.bot.wornDirt).armored;
     const isMulti = this.shotTotalPellets > 1;
@@ -547,18 +628,18 @@ export class Firearms {
       if (armored) sfx.armorHit();
       this.shotHitSounds++;
     }
-    this.hitMark = res.head ? 'head' : 'body';
+    this.hitMark = res.head || stealthCrit > 1 ? 'head' : 'body';
     this.hitMarkT = 0;
     if (!isMulti || !this.shotHitMarked) {
-      sfx.hitMarker(res.head);
+      sfx.hitMarker(res.head || stealthCrit > 1);
       this.shotHitMarked = true;
     }
     this.w.onHit?.(killed, res.head);
   }
 
-  private hitZombie(id: GunId, mods: readonly never[], res: HitResult, o: Vector3): void {
+  private hitZombie(id: GunId, mods: readonly never[], res: HitResult, o: Vector3, dmgMul = 1, distOverride?: number): void {
     const [lo, hi] = damageOf(id, mods);
-    const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, res.dist) * (res.head ? 2 : 1);
+    const dmg = (lo + Math.random() * (hi - lo)) * falloff(id, distOverride ?? res.dist) * (res.head ? 2 : 1) * dmgMul;
     const killed = this.w.zombies.hit(res.zombie, dmg, o.x, o.z, res.head, res.point, GUNS[id].pellets ? 1.2 : 1.4);
     const isMulti = this.shotTotalPellets > 1;
     if (!isMulti || this.shotHitSounds < 2) {
@@ -673,16 +754,43 @@ export class Firearms {
     }
   }
 
-  /** The blast: damage falling off over the radius, ragdolls thrown, the survivor hurt up close, cars on fire. */
-  explode(at: Vector3): void {
-    const b = GUNS.launcher_rpg.blast!;
+  /** The blast: damage falling off over the radius, radial shrapnel rays blocked by walls, doors shattered, ragdolls thrown. */
+  explode(at: Vector3, spec?: BlastSpec): void {
+    const def = GUNS.launcher_rpg.blast!;
+    const b: Required<BlastSpec> = {
+      radius: spec?.radius ?? def.radius,
+      damage: spec?.damage ?? def.damage,
+      impulse: spec?.impulse ?? def.impulse,
+      noise: spec?.noise ?? GUNS.launcher_rpg.noise,
+      selfDamage: spec?.selfDamage ?? 90,
+      shrapnel: spec?.shrapnel ?? 24,
+    };
     sfx.explosion(at);
     this.fx.muzzleFlash(at, 4);
     const pt = this.w.particles;
     pt.burst(at, 30, 3);
     pt.sparks(at.x, at.y, at.z, 24);
     for (let i = 0; i < 8; i++) pt.smoke(at.x, at.y, at.z);
-    this.w.noise(at.x, at.y, at.z, GUNS.launcher_rpg.noise);
+    this.w.noise(at.x, at.y, at.z, b.noise);
+    const doorRes = this.w.doorsBlast?.(at, b.radius, b.damage * 0.65);
+    if (doorRes && this.w.onBreakGlass) {
+      for (const gAt of doorRes.brokenGlassAt) {
+        this.w.onBreakGlass(gAt, _shpD.subVectors(gAt, at).normalize());
+      }
+    }
+    // Radial shrapnel rays break nearby window glass and scatter sparks along open lines of sight.
+    for (let i = 0; i < b.shrapnel; i++) {
+      const ang = (i / b.shrapnel) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+      const elev = (Math.random() - 0.25) * 0.35;
+      _shpD.set(Math.cos(ang), elev, Math.sin(ang)).normalize();
+      const det = this.w.rayHitDetail ? this.w.rayHitDetail(at, _shpD, b.radius) : null;
+      const hitDist = det ? det.t : this.w.rayHit(at, _shpD, b.radius);
+      if (hitDist >= 0) {
+        _p.copy(at).addScaledVector(_shpD, Math.max(0.05, hitDist - 0.03));
+        if (det?.glass && this.w.onBreakGlass) this.w.onBreakGlass(_p, _shpD);
+        else pt.sparks(_p.x, _p.y, _p.z, 2);
+      }
+    }
     for (const z of this.w.zombies.list) {
       if (z.state === 'dead') continue;
       const d = Math.hypot(z.pos.x - at.x, z.pos.y + 1 - at.y, z.pos.z - at.z);
@@ -703,7 +811,7 @@ export class Firearms {
     if (pd < b.radius) {
       _d.subVectors(eye, at).normalize();
       const wall = this.w.rayHit(at, _d, pd);
-      if (wall < 0 || wall > pd - 0.3) this.w.hurtSelf(90 * (1 - pd / b.radius) ** 1.5);
+      if (wall < 0 || wall > pd - 0.3) this.w.hurtSelf(b.selfDamage * (1 - pd / b.radius) ** 1.5);
     }
     this.w.player.shake(Math.max(0.3, 2.2 * (1 - pd / 30)));
     this.w.igniteCars(at.x, at.y, at.z, b.radius * 0.8);

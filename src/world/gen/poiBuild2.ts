@@ -524,7 +524,9 @@ export function park(S: Site, _rand: Rand): void {
       const lx = qx * (4 + spotHash(qx + k * 3, qz, 56) * 18);
       const lz = qz * (4 + spotHash(qz + k * 3, qx, 57) * 18);
       const [wx, wz] = p.pt(lx, lz);
-      b.life(LIFE.bush, wx, 0.05, wz, 0, 1, 0.9 + spotHash(wx, wz, 58) * 0.5, spotHash(wx, wz, 59) < 0.4 ? 1 : 0, spotHash(wx, wz, 60));
+      const bScale = 0.9 + spotHash(wx, wz, 58) * 0.5;
+      b.life(LIFE.bush, wx, 0.05, wz, 0, 1, bScale, spotHash(wx, wz, 59) < 0.4 ? 1 : 0, spotHash(wx, wz, 60));
+      b.glb('Urban_Bush_2500', wx, 0.05, wz, spotHash(wx, wz, 57) * Math.PI * 2, { scale: 0.72 + bScale * 0.25 });
     }
   }
   // The hedge round it, gaps where the paths leave.

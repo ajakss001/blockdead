@@ -170,8 +170,9 @@ export class Player {
     this.flashlight.shadow.autoUpdate = false;
     this.flashlight.shadow.bias = -0.0006;
     this.flashlight.shadow.normalBias = 0.03;
-    this.flashlight.shadow.camera.near = 0.15;
+    this.flashlight.shadow.camera.near = 0.28;
     this.flashlight.shadow.camera.far = f.distance;
+    this.flashlight.shadow.camera.layers.enable(2);
     camera.add(target);
     if (!camera.parent) scene.add(camera);
     this.bounceLight = new PointLight(f.color, 0, 9.5, 1.8);
@@ -325,6 +326,7 @@ export class Player {
   private shakeT = 0;
   private lastZoom = 1;
   private baseFov = 0;
+  private smoothEyeY = NaN;
 
   render(alpha: number, frameDt: number): void {
     const c = this.controller;
@@ -341,34 +343,34 @@ export class Player {
     const amp = clamp(c.speed / SPEED_WALK, 0, 1.6);
     const cos = Math.cos(c.yaw);
     const sin = Math.sin(c.yaw);
-    // Attach the camera back to the head bone (with local-space smoothing so running never clips torso).
+    // Keep 3rd-person lower-body rig animated (only pelvis/legs are on layer 0; upper torso/arms cast layer-2 shadow).
     this.body.update(x, y, z, c.yaw, c.speed, crouchT, c.pitch, c.airborne, frameDt);
-    this.body.root.visible = crouchT < 0.25;
-    const eye = this.body.eyePosition(_eye, frameDt);
     const bob = this.cameraBob;
     const baseY = y + c.eyeHeight(alpha);
-    const headBobY = clamp(eye.y - (y + this.body.standEye(crouchT)), -0.08, 0.08) * (1 - crouchT * 0.75) * bob;
-    eye.y = baseY + headBobY;
-    // Keep crouched camera horizontally centered on the controller so crouched_walking head sway never jerks or clips walls.
-    eye.x = lerp(eye.x, x, crouchT);
-    eye.z = lerp(eye.z, z, crouchT);
-    const fwdPush = 0.04 + crouchT * 0.06;
-    eye.x += -sin * fwdPush;
-    eye.z += -cos * fwdPush;
-    const ahead = (eye.x - x) * -sin + (eye.z - z) * -cos;
+    const bobY = -Math.abs(Math.sin(phase)) * 0.032 * amp * (1 - crouchT * 0.75) * bob;
+    const targetEyeY = baseY + bobY;
+    if (!Number.isFinite(this.smoothEyeY) || Math.abs(targetEyeY - this.smoothEyeY) > 1.5 || frameDt <= 0) {
+      this.smoothEyeY = targetEyeY;
+    } else {
+      this.smoothEyeY = damp(this.smoothEyeY, targetEyeY, 20, frameDt);
+    }
+    // Decouple first-person camera XZ from crouched 3rd-person head bone animation so shoulders/torso never enter camera.
+    const fwdPush = 0.04;
+    _eye.set(x - sin * fwdPush, this.smoothEyeY, z - cos * fwdPush);
+    const ahead = (_eye.x - x) * -sin + (_eye.z - z) * -cos;
     if (ahead > 0.02) {
       const room = this.world.rayHit(x, baseY, z, -sin, 0, -cos, ahead + 0.2);
       if (room >= 0) {
         const fit = Math.max(0, room - 0.18);
         if (fit < ahead) {
-          eye.x += sin * (ahead - fit);
-          eye.z += cos * (ahead - fit);
+          _eye.x += sin * (ahead - fit);
+          _eye.z += cos * (ahead - fit);
         }
       }
     }
     this.landDip = damp(this.landDip, 0, 7, frameDt);
     this.hitKick = damp(this.hitKick, 0, 16, frameDt);
-    this.camera.position.set(eye.x, eye.y - this.landDip * bob, eye.z);
+    this.camera.position.set(_eye.x, _eye.y - this.landDip * bob, _eye.z);
     this.shakeT = damp(this.shakeT, 0, 14, frameDt);
     const sh = this.shakeT * 0.02 * bob;
     this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick * bob + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp * bob + (Math.random() - 0.5) * sh, 'YXZ');

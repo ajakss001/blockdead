@@ -76,8 +76,11 @@ import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
 import { StorySystem } from '../systems/Story';
+import { Helicopter } from '../systems/Helicopter';
+import { Tripwires } from '../systems/Tripwires';
 import { Vehicles } from '../systems/Vehicles';
 import { CarHud } from '../ui/CarHud';
+import { HeliHud } from '../ui/HeliHud';
 import { type BodyPart, PART_NAMES, Survival } from '../systems/Survival';
 import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
@@ -104,6 +107,7 @@ import { rollLoot } from '../data/loot';
 import { ATMO } from '../world/atmoConfig';
 import { Weather } from '../world/Weather';
 import { Pois } from '../world/Pois';
+import { GlbPropPool } from '../world/GlbPropPool';
 import { FarSmoke } from '../render/FarSmoke';
 import { Landmarks } from '../render/Landmarks';
 import { nearestPoi, POI, type PoiKind, siteToWorld } from '../world/gen/poi';
@@ -273,7 +277,11 @@ export class WorldScene implements IScene {
   private saves!: SaveGame;
   private story!: StorySystem;
   private vehicles!: Vehicles;
+  private helicopter!: Helicopter;
+  private heliHud!: HeliHud;
   private bandits!: Bandits;
+  private tripwires!: Tripwires;
+  private ambushScanT = 0;
   private carHud!: CarHud;
   private interiors!: Interiors;
   private doors!: Doors;
@@ -366,6 +374,7 @@ export class WorldScene implements IScene {
   private carFires: { key: number; t: number }[] = [];
   private carFireN = 0;
   private atmo!: Atmosphere;
+  private glbPool!: GlbPropPool;
   /** Dead survivors walking (saved until killed), and the bodies they left with their things. */
   private twins: TwinRecord[] = [];
   private bodies: ContainerRef[] = [];
@@ -453,11 +462,21 @@ export class WorldScene implements IScene {
     this.scene.add(this.baseProps.group);
     this.doors = new Doors(this.scene, this.world, ctx.quality.preset.lighting);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
+    this.glbPool = new GlbPropPool(this.scene, this.particles);
+    this.tripwires = new Tripwires({
+      scene: this.scene,
+      rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
+      groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
+      explode: (at, spec) => this.firearms.explode(at, spec),
+      sparkAt: (at) => this.particles.sparks(at.x, at.y, at.z, 6),
+      toast: (t, ms) => this.ctx.hud.toast(t, ms),
+    });
     this.bandits = new Bandits({
       scene: this.scene,
       groundY: (x, z, y = 0) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
+      bushOccludes: (ox, oy, oz, tx, ty, tz) => this.glbPool.bushOccludes(ox, oy, oz, tx, ty, tz),
       boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
       buildingsNear: (x, z, r) => this.interiors.buildingsNear(x, z, r),
       doorsNear: (x, y, z, r) => this.doors.doorsNear(x, y, z, r),
@@ -486,6 +505,8 @@ export class WorldScene implements IScene {
         if (info && info.style !== 'glass') sfx.door(info.style === 'lab' ? 'metal' : 'wood', true, info, info.creaky, info.pitch);
         return true;
       },
+      explode: (at, spec) => this.firearms.explode(at, spec),
+      toast: (t, ms) => this.ctx.hud.toast(t, ms),
       isInteriorLoaded: (id) => this.interiors.isLoaded(id),
       onDropLoot: (bot) => {
         if (!bot.isDead || bot.state !== 'dead') return;
@@ -514,6 +535,7 @@ export class WorldScene implements IScene {
       this.doors.add(entranceKey(key), data.doors);
       this.life?.add(key, data.ambient);
       this.atmo?.add(key, data.ambient);
+      this.glbPool?.addChunk(key, data.glbs);
     };
     this.chunks.onChunkUnloaded = (key) => {
       this.containers.removeChunk(key);
@@ -522,6 +544,7 @@ export class WorldScene implements IScene {
       this.doors.remove(entranceKey(key));
       this.life?.remove(key);
       this.atmo?.remove(key);
+      this.glbPool?.removeChunk(key);
     };
     const syncBody = () => this.syncBody();
     this.panel = new InventoryPanel(
@@ -544,6 +567,7 @@ export class WorldScene implements IScene {
         syncBody,
         onClose: () => void this.save(),
         newCharacter: () => void this.newCharacter(),
+        startTripwirePlacement: () => this.tripwires.startPlacement(this.inventory),
       },
       document.getElementById('ui')!,
     );
@@ -601,6 +625,19 @@ export class WorldScene implements IScene {
       () => void this.save(),
       document.getElementById('ui')!,
     );
+    this.helicopter = new Helicopter({
+      scene: this.scene,
+      world: this.world,
+      layout: this.layout,
+      particles: this.particles,
+      groundY: (gx, gz, refY = 0) => this.interiors.surfaceY(gx, gz, refY) ?? this.layout.walkHeightAt(gx, gz),
+      toast: (t, ms) => this.ctx.hud.toast(t, ms),
+      hurtPlayer: (hp, cause) => this.hurt(hp, cause, true),
+      explode: (at, spec) => this.firearms.explode(at, spec),
+      onEscape: () => this.showVictoryScreen('heli'),
+      onSave: () => void this.save(),
+    });
+    this.heliHud = new HeliHud(document.getElementById('ui')!);
     const origPanelOpen = this.panel.open.bind(this.panel);
     this.panel.open = (ref) => {
       if (ref) {
@@ -622,10 +659,22 @@ export class WorldScene implements IScene {
           const t = this.story.target;
           return t ? { x: t.x, z: t.z, label: `${tr('Цель', 'Target')}: ${POI[t.kind].name}` } : null;
         },
+        heli: () => ({
+          x: this.helicopter.x,
+          z: this.helicopter.z,
+          repaired: this.helicopter.isRepaired,
+          crashed: this.helicopter.crashed,
+        }),
       },
       document.getElementById('ui')!,
     );
     this.interaction = new Interaction(ctx, this.player, this.containers, this.inventory, this.panel, syncBody, this.doors);
+    this.interaction.tripwires = this.tripwires;
+    this.interaction.onDoorNoise = (x, y, z, r) => {
+      this.zombies.noiseAt(x, y, z, r);
+      this.hordes.hear(x, z, r);
+      this.bandits.onNoise(x, z, r);
+    };
     this.interaction.ground = this.ground;
     this.interaction.onSkill = (id, xp) => this.skills.add(id, xp);
     this.grid = gridSchedule(seed);
@@ -710,6 +759,9 @@ export class WorldScene implements IScene {
       camera: this.camera,
       toast: (t, ms) => this.ctx.hud.toast(t, ms),
       rayHit: (o, d, max) => this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, max),
+      rayHitDetail: (o, d, max, ignoreGlass = false) => this.world.rayHitDetail(o.x, o.y, o.z, d.x, d.y, d.z, max, ignoreGlass),
+      doorBullet: (owner, dmg) => this.doors.bulletImpact(owner, dmg),
+      doorsBlast: (at, radius, dmg) => this.doors.blastNear(at, radius, dmg),
       surface: (o, d, dist) => this.player.surfaceAlong(o, d, dist),
       noise: (x, y, z, r) => {
         this.zombies.noiseAt(x, y, z, r);
@@ -837,6 +889,8 @@ export class WorldScene implements IScene {
       if (maxRestoredBotId > 0) this.bandits.reserveIdsAbove(maxRestoredBotId);
       this.base.restore(save.base);
       for (const p of this.base.list) if (p.kind === 'stash') this.containers.addLoose(stashRef(p), []);
+      this.tripwires.restore(save.tripwires);
+      this.helicopter.restore(save.heli);
       if (save.clock !== undefined) this.clock.minutes = save.clock;
       this.bornAt = save.dead ? this.clock.minutes : (save.bornAt ?? this.clock.minutes);
       this.meta = { ...emptyMeta(), ...save.meta };
@@ -914,6 +968,13 @@ export class WorldScene implements IScene {
     const sp = new URLSearchParams(location.search);
     if (sp.get('poi') === 'cars' || sp.has('car') || sp.has('cars')) {
       this.vehicles.spawnTestCars(x, z, c.yaw);
+    }
+    if (sp.has('heli')) {
+      const ready = sp.get('heli') === 'ready';
+      this.helicopter.placeForTest(x + 22, z - 18, ready);
+    }
+    if (sp.has('goons')) {
+      this.bandits.spawnGoonsNear(x, z, 28);
     }
   }
 
@@ -1105,7 +1166,23 @@ export class WorldScene implements IScene {
       this.die(tr('Отладка', 'Debug'), c.position.clone().addScaledVector(f, 1));
     }
     const inCar = !this.dead && !!this.vehicles.activeCar;
-    if (inCar) {
+    const inHeli = !this.dead && this.helicopter.piloting;
+    if (inHeli) {
+      this.player.viewmodel.scene.visible = false;
+      this.player.body.root.visible = false;
+      this.player.suppressLight(true);
+      if (this.ctx.input.consumePressed('flashlight')) {
+        if (this.helicopter.tryExit(c.position, c.prevPosition) && !this.dead) {
+          c.yaw = this.helicopter.yaw;
+          this.player.viewmodel.scene.visible = true;
+          this.player.body.root.visible = true;
+          this.player.suppressLight(false);
+        }
+      } else {
+        this.helicopter.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
+        c.yaw = this.helicopter.yaw;
+      }
+    } else if (inCar) {
       this.player.viewmodel.scene.visible = false;
       this.player.body.root.visible = false;
       this.player.suppressLight(true);
@@ -1116,6 +1193,7 @@ export class WorldScene implements IScene {
         this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
         if (this.vehicles.activeCar) c.yaw = this.vehicles.activeCar.yaw;
       }
+      this.helicopter.fixedUpdate(dt, null, c.position, c.prevPosition);
     } else {
       this.player.suppressLight(false);
       if (!this.dead) {
@@ -1128,8 +1206,10 @@ export class WorldScene implements IScene {
       // Tired: the swing is slower.
       this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
       if (!this.dead) this.player.fixedUpdate(dt);
-      if (!this.dead) this.firearms.fixedUpdate(dt);
+      const consumedByWire = !this.dead && this.tripwires.handlePlacementInput(c.position.x, c.position.y, c.position.z, c.yaw, this.ctx.input, this.inventory);
+      if (!this.dead && !consumedByWire && !this.tripwires.isPlacing) this.firearms.fixedUpdate(dt);
       this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
+      this.helicopter.fixedUpdate(dt, null, c.position, c.prevPosition);
     }
     this.hitFromT += dt;
     for (let i = this.carFires.length - 1; i >= 0; i--) {
@@ -1165,6 +1245,11 @@ export class WorldScene implements IScene {
       this.weather.fog,
       this.playerArmed,
     );
+    this.tripwires.update(dt, c.position, c.crouched, this.dead, this.zombies.list, this.bandits.list);
+    if ((this.ambushScanT -= dt) <= 0) {
+      this.ambushScanT = 1.5;
+      this.tripwires.spawnAmbushNearDoors(this.doors.doorsNear(c.position.x, c.position.y, c.position.z, 38), this.bandits.list, this.saves.seed);
+    }
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
       const car = this.vehicles.activeCar;
       this.bandits.ramByCar(car.x, car.z, Math.sin(car.yaw) * car.speed, Math.cos(car.yaw) * car.speed);
@@ -1280,7 +1365,7 @@ export class WorldScene implements IScene {
     }
     if (c.jumped) sfx.jump(feet);
     if (c.landed > 0.8) sfx.land(this.surfaceAt(feet.x, feet.z, c.position.y), feet, c.landed);
-    if (!this.dead && !this.vehicles.activeCar) this.interaction.fixedUpdate(dt);
+    if (!this.dead && !this.vehicles.activeCar && !this.helicopter.piloting) this.interaction.fixedUpdate(dt);
     this.clock.update(dt);
     this.updateGrid();
     // Climate & room reverb: outdoor streets dry (0.02), downtown alleys (0.10), concrete indoors (0.42).
@@ -1333,18 +1418,24 @@ export class WorldScene implements IScene {
   /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
+    this.glbPool?.update(gameDt, this.camera.position, gameDt <= 0);
     // The survivor's body, arms and light move by world time (or the active vehicle camera when driving).
     if (this.editor.active) {
       this.editor.update(frameDt);
+    } else if (this.helicopter.piloting && !this.dead) {
+      const look = { x: 0, y: 0 };
+      this.ctx.input.consumeLook(look);
+      this.helicopter.applyCamera(this.camera, look.x);
     } else if (this.vehicles.activeCar && !this.dead) {
       this.vehicles.render(frameDt, this.camera, this.ctx.input);
     } else {
       this.player.render(alpha, gameDt);
       this.vehicles.render(frameDt, this.camera, this.ctx.input);
     }
-    const inVehicle = !this.dead && Boolean(this.vehicles.activeCar);
+    const inVehicle = !this.dead && (Boolean(this.vehicles.activeCar) || this.helicopter.piloting);
     document.body.classList.toggle('in-vehicle', inVehicle);
     this.carHud.update();
+    this.heliHud.update(this.helicopter.piloting && !this.dead ? this.helicopter.hudState() : null);
     this.firearms.render(gameDt);
     {
       const fa = this.firearms;
@@ -1633,6 +1724,11 @@ export class WorldScene implements IScene {
         const c = this.containers.serializeCorpses();
         return c.length ? c : undefined;
       })(),
+      tripwires: (() => {
+        const tw = this.tripwires.serialize();
+        return tw.length ? tw : undefined;
+      })(),
+      heli: this.helicopter.serialize(),
     });
   }
 
@@ -2286,13 +2382,24 @@ export class WorldScene implements IScene {
     }
     if (this.atmo.bedNear(eye, dir))
       return { text: tr('Лечь спать', 'Go to sleep'), act: true, run: () => this.sleep(true) };
+    const pos = this.player.controller.position;
+    const heliPrompt = this.helicopter.interactPrompt(pos.x, pos.y, pos.z, this.inventory);
+    if (heliPrompt) {
+      return {
+        text: heliPrompt.replace(/^E — /, ''),
+        act: !this.helicopter.crashed && heliPrompt.startsWith('E — '),
+        run: () => {
+          this.helicopter.interact(pos.x, pos.y, pos.z, this.inventory);
+        },
+      };
+    }
     const storySpot = this.story.spotAt(eye.x, eye.z);
     if (storySpot) return storySpot;
     return null;
   }
 
-  /** Victory screen when the survivor completes Act IV ("Protocol Dawn") at the Airport. */
-  private showVictoryScreen(): void {
+  /** Victory screen when the survivor completes Act IV ("Protocol Dawn") or escapes via the Mi-8 Secret Ending. */
+  private showVictoryScreen(ending: 'dawn' | 'heli' = 'dawn'): void {
     this.ctx.loop.pause('menu');
     this.ctx.events.emit('ui:modal', { open: true });
     if (document.pointerLockElement) document.exitPointerLock();
@@ -2337,16 +2444,28 @@ export class WorldScene implements IScene {
     const toggle = langToggle();
     toggle.style.marginTop = '6px';
     const renderText = () => {
-      const title = tr('ПРОТОКОЛ «РАССВЕТ» ВЫПОЛНЕН', 'PROTOCOL "DAWN" COMPLETE');
-      const sub = tr(
-        'Эвакуационный борт сел на взлётную полосу. Контейнер «Гелиос-0» и журналы лаборатории переданы группе биозащиты — у тех, кто остался за периметром, появился шанс создать антидот.',
-        'The extraction chopper touched down on the runway. Container "Helios-0" and the laboratory logs were handed over to the bio-containment team — giving those beyond the perimeter a chance to synthesize an antidote.',
-      );
+      const title =
+        ending === 'heli'
+          ? tr('СЕКРЕТНАЯ КОНЦОВКА: ВОЗДУШНАЯ ЭВАКУАЦИЯ', 'SECRET ENDING: AIR EVACUATION')
+          : tr('ПРОТОКОЛ «РАССВЕТ» ВЫПОЛНЕН', 'PROTOCOL "DAWN" COMPLETE');
+      const sub =
+        ending === 'heli'
+          ? tr(
+              'Восстановленный Ми-8 ЭМЕРКОМ пересёк внешний периметр карантинной зоны. Город и орды мертвецов остаются далеко внизу в тумане — вы прорвались к свободе по воздуху.',
+              'Your repaired Mi-8 EMERCOM crossed the outer quarantine perimeter. The dead city fades into the mist below — you broke free through the skies.',
+            )
+          : tr(
+              'Эвакуационный борт сел на взлётную полосу. Контейнер «Гелиос-0» и журналы лаборатории переданы группе биозащиты — у тех, кто остался за периметром, появился шанс создать антидот.',
+              'The extraction chopper touched down on the runway. Container "Helios-0" and the laboratory logs were handed over to the bio-containment team — giving those beyond the perimeter a chance to synthesize an antidote.',
+            );
       const stat = tr(
         `Дней в карантине: ${days} · Убито заражённых: ${this.skills.kills}`,
         `Days in quarantine: ${days} · Infected killed: ${this.skills.kills}`,
       );
-      const tag = tr('БОРТ ЭВАКУАЦИИ // СЕКТОР ЧИСТ', 'EXTRACTION CHOPPER // SECTOR CLEAR');
+      const tag =
+        ending === 'heli'
+          ? tr('БОРТ МИ-8 ЭМЕРКОМ // ПЕРИМЕТР ПРОЙДЕН', 'MI-8 EMERCOM // PERIMETER CLEARED')
+          : tr('БОРТ ЭВАКУАЦИИ // СЕКТОР ЧИСТ', 'EXTRACTION CHOPPER // SECTOR CLEAR');
       body.innerHTML = `<div style="font-size:12px;letter-spacing:0.14em;color:#d8a248">${tag}</div><div style="font-size:30px;font-weight:700;letter-spacing:1.5px;color:#eee6d4">${title}</div><div style="opacity:.88">${this.look.name} · ${classDef(this.classId).name}</div><div style="opacity:.78;font-size:15px">${sub}</div><div style="opacity:.65;font-size:14px">${stat}</div>`;
       keepBtn.textContent = tr('Остаться в городе (свободная игра)', 'Stay in the city (freeplay)');
       ngBtn.textContent = tr('Эвакуироваться (новый выживший + наследие)', 'Evacuate (new survivor + legacy)');
@@ -2567,13 +2686,17 @@ export class WorldScene implements IScene {
     sfx.setLootLoop(false);
     this.editor.dispose();
     this.firearms.dispose();
+    this.tripwires.dispose();
     this.bandits.dispose();
     this.gunHud.dispose();
     this.carHud.dispose();
+    this.heliHud.dispose();
+    this.helicopter.dispose();
     this.vehicles.dispose();
     this.models.dispose();
     this.baseProps.dispose();
     this.particles.dispose();
+    this.glbPool?.dispose();
     this.atmo.dispose();
     this.weather.dispose();
     this.landmarks.dispose();

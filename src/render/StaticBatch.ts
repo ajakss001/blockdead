@@ -1,4 +1,5 @@
 import { type BufferGeometry, Color, type ColorRepresentation, Matrix3, Matrix4, PlaneGeometry } from 'three';
+import type { GlbPlacement } from '../world/worldModels';
 import { type Bucket, bucketOf, MODEL_LAYER_BASE, type Surface, SURFACES, surfaceLayer } from './look/surfaces';
 
 const _shadowLocal = new Matrix4();
@@ -141,6 +142,7 @@ const qByte = (v: number) => (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255 + 0.5) | 0);
  * and shadow culling. Runs inside the chunk worker; GPU meshes are created by `meshesFromBuffers`.
  */
 export class StaticBatch {
+  readonly glbs: GlbPlacement[] = [];
   private readonly accs = new Map<Bucket, BucketAcc>();
   private readonly color = new Color();
   private readonly tmpColor = new Color();

@@ -44,6 +44,14 @@ export const RECIPES: readonly Recipe[] = [
   { id: 'barrel', name: 'Сборник дождевой воды', about: 'Ставится снаружи, в дождь набирается вода', needs: [['planks', 2], ['junk', 2], ['nails', 6]], tool: ['hammer'], place: 'barrel', xp: 20 },
   { id: 'stash', name: 'Сундук', about: 'Сюда можно сложить вещи — они останутся', needs: [['planks', 3], ['nails', 10]], tool: ['hammer'], place: 'stash', xp: 25 },
   { id: 'trap', name: 'Растяжка с банками', about: 'Звенит, когда зомби задевает её, — и уводит их на звук', needs: [['rope', 1], ['junk', 2]], place: 'trap', xp: 8 },
+  {
+    id: 'tripwire',
+    name: 'Осколочная растяжка',
+    about: 'Хлам + верёвка + скотч + 3 патрона → боевая мина-растяжка в проход (до 3.5 м)',
+    needs: [['junk', 2], ['rope', 1], ['tape', 1], [['ammo_12', 'ammo_762', 'ammo_556', 'ammo_9mm', 'ammo_45'], 3]],
+    gives: ['tripwire', 1],
+    xp: 18,
+  },
 ];
 
 /** What the scene tells the recipe list. */
@@ -105,7 +113,8 @@ export function craft(r: Recipe, w: CraftWorld): { ok: boolean; text: string } {
 }
 
 export function needName(need: ItemId | ItemId[]): string {
-  return Array.isArray(need) ? tr('рубашка или футболка', 'shirt or T-shirt') : ITEMS[need].name.toLowerCase();
+  if (!Array.isArray(need)) return ITEMS[need].name.toLowerCase();
+  return need.includes('ammo_12') ? tr('патроны (3 шт)', 'any ammo (3)') : tr('рубашка или футболка', 'shirt or T-shirt');
 }
 
 /** Ingredient line with what is in the bag: "доска 1/2 · хлам 3/2". */
@@ -155,6 +164,13 @@ const RECIPE_TEXT: Readonly<Record<string, { name: [string, string]; about: [str
   trap: {
     name: ['Растяжка с банками', 'Tin-can tripwire'],
     about: ['Звенит, когда зомби задевает её, — и уводит их на звук', 'Rattles when a zombie trips it — drawing them toward the noise'],
+  },
+  tripwire: {
+    name: ['Осколочная растяжка', 'Frag tripwire'],
+    about: [
+      'Хлам + верёвка + скотч + 3 патрона → боевая мина-растяжка в проход (до 3.5 м)',
+      'Scrap + rope + tape + 3 rounds → tactical frag tripwire for doorways/corridors (up to 3.5 m)',
+    ],
   },
 };
 

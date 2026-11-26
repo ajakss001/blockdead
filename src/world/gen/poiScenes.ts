@@ -1,11 +1,10 @@
-import { Color, Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { mulberry32 } from '../../core/random';
 import type { ItemId } from '../../data/items';
 import type { Surface } from '../../render/look/surfaces';
-import { type ModelInfo, pickModel } from '../models';
-import { CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
+import { CAR_PAINTS } from '../props/car';
+import { GLB_WORLD_SPECS, pickWorldVehicle } from '../worldModels';
 import { fireTruck, jersey, sandbags, stripedBarrier, tent } from './chaos';
-import { char, charTint } from './charred';
+import { char } from './charred';
 import * as F from './furniture';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
@@ -68,19 +67,21 @@ function decal(c: Ctx, surface: Surface, lx: number, lz: number, size: number, s
   groundDecal(c.b, surface, x, y + 0.016 + (c.k++ % 6) * 0.0025, z, size, c.rand, stretch);
 }
 
-/** A model of a group at a local point, nose (+X) along local yaw: tipped, lifted, charred; null if there is none. */
-function mdl(c: Ctx, group: string, lx: number, lz: number, yaw: number, o: { roll?: number; pitch?: number; lift?: number | 'flip'; flipK?: number; charred?: boolean; collide?: boolean; paint?: number } = {}): ModelInfo | null {
-  const m = pickModel(modelLibrary(), group, c.rand());
-  if (!m) return null;
+/** A GLB vehicle/aircraft of a group at a local point, nose (+X) along local yaw: tipped, lifted; returns placed size. */
+function mdl(c: Ctx, group: string, lx: number, lz: number, yaw: number, o: { roll?: number; pitch?: number; lift?: number | 'flip'; flipK?: number; charred?: boolean; collide?: boolean; paint?: number } = {}): { size: [number, number, number] } | null {
+  const glbId = pickWorldVehicle(group, c.rand());
+  const spec = GLB_WORLD_SPECS[glbId];
+  const L = spec.size[2];
+  const H = spec.size[1];
+  const W = spec.size[0];
   const [x, z] = c.p.pt(lx, lz);
-  if (!c.b.inClip(x, z)) return m;
+  if (!c.b.inClip(x, z)) return { size: [L, H, W] };
   const wyaw = yawW(c, yaw);
-  const lift = o.lift === 'flip' ? m.size[1] * (o.flipK ?? 0.96) : (o.lift ?? 0);
-  const top = o.roll === Math.PI ? m.size[1] : o.roll ? Math.max(1.2, lift * 2) : lift + m.size[1];
-  const mat = new Matrix4().compose(new Vector3(x, lift + 0.01, z), new Quaternion().setFromEuler(new Euler(o.roll ?? 0, wyaw, o.pitch ?? 0, 'YXZ')), new Vector3(1, 1, 1));
-  placeModel(c.b.batch, m, mat, o.paint !== undefined ? new Color(o.paint) : null, o.charred ? charTint : undefined);
-  if (o.collide !== false) c.b.colliders.addOrientedBox(x, z, m.size[0] / 2, m.size[2] / 2, wyaw, -0.5, top + 0.05);
-  return m;
+  const lift = o.lift === 'flip' ? H * (o.flipK ?? 0.96) : (o.lift ?? 0);
+  const top = o.roll === Math.PI ? H : o.roll ? Math.max(1.2, lift * 2) : lift + H;
+  c.b.glb(glbId, x, lift + 0.01, z, wyaw - Math.PI / 2, { roll: o.roll, pitch: o.pitch });
+  if (o.collide !== false) c.b.colliders.addOrientedBox(x, z, L / 2, W / 2, wyaw, -0.5, top + 0.05);
+  return { size: [L, H, W] };
 }
 
 /** A sub-place turned by a free yaw (and tipped). */
@@ -129,9 +130,15 @@ function tape(q: Place, x0: number, x1: number, y: number, roll = 0, surface: Su
   }
 }
 
-/** A row of suitcases and bags dropped about. */
+/** A row of abandoned luggage piles dropped about (GLB abandoned_luggage_pil). */
 function luggage(c: Ctx, x0: number, z0: number, x1: number, z1: number, n: number): void {
-  for (let k = 0; k < n; k++) F.suitcase(at(c, x0 + c.rand() * (x1 - x0), z0 + c.rand() * (z1 - z0), c.rand() * 6, 0, c.rand() < 0.4 ? Math.PI / 2 - 0.1 : 0, c.rand() < 0.4 ? 0.2 : 0), c.rand, c.rand() < 0.35);
+  const count = Math.max(1, Math.ceil(n / 2));
+  for (let k = 0; k < count; k++) {
+    const lx = x0 + c.rand() * (x1 - x0);
+    const lz = z0 + c.rand() * (z1 - z0);
+    const [wx, wz] = c.p.pt(lx, lz);
+    c.b.glb('abandoned_luggage_pil', wx, 0, wz, c.rand() * Math.PI * 2);
+  }
 }
 
 /** A beacon (warning light): red (tag 0) / amber (1) / white tube (2); mode 5 blinking, 6 turning, 1–2 flickering. */
@@ -140,9 +147,11 @@ function beacon(c: Ctx, lx: number, y: number, lz: number, size: number, mode: n
   c.p.life(LIFE.beacon, lx, y, lz, size, mode, spotHash(lx, lz + y, 9), tag);
 }
 
-/** Barrel standing at a point (3D model only). */
+/** Barrel standing at a point (GLB burn_barrel). */
 function barrel(c: Ctx, lx: number, lz: number, y = 0): void {
-  c.p.model('barrel', c.rand, lx, y, lz, c.rand() * 6, 1, 0.65, 0.4, true);
+  const [wx, wz] = c.p.pt(lx, lz);
+  c.b.glb('burn_barrel', wx, y, wz, c.rand() * Math.PI * 2);
+  c.b.solid(wx - 0.34, wz - 0.34, wx + 0.34, wz + 0.34, y, y + 0.95);
 }
 
 /** Helicopter wreck (3D model only). */
@@ -618,6 +627,8 @@ const TEMPLATES: Partial<Record<PoiKind, Record<string, Build>>> = {
     },
     burnBarrel(c) {
       barrel(c, -17, 11.5);
+      const [bx, bz] = c.p.pt(-17, 11.5);
+      c.b.life(LIFE.fire, bx, 0.92, bz, 0, 0, 0.55, 0, spotHash(-17, 11.5, 99));
     },
     biotape(c) {
       // Across the door (an X), across the gate on posts, round the yard.
