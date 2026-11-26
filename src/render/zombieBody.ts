@@ -6,7 +6,12 @@ import type { Zombie } from '../systems/zombies';
  * A dead zombie's ragdoll: it starts from the model's own pose and build (render/ZombieModels.deathStart),
  * pushed by the killing blow — the part nearest the hit (or the head) takes the impulse, away from the hitter.
  */
-export function zombieRagdoll(z: Zombie, start: { parts: PartPose[]; shape: BodyShape; scale?: number }, boxes: StaticBox[]): Ragdoll {
+export function zombieRagdoll(
+  z: Zombie,
+  start: { parts: PartPose[]; shape: BodyShape; scale?: number },
+  boxes: StaticBox[],
+  groundY?: (x: number, z: number, y: number) => number,
+): Ragdoll {
   const d = z.death!;
   const parts = start.parts;
   const at = d.point ?? parts[PART.chest].p;
@@ -28,6 +33,7 @@ export function zombieRagdoll(z: Zombie, start: { parts: PartPose[]; shape: Body
     velocity: new Vector3(Math.sin(z.yaw), 0, Math.cos(z.yaw)).multiplyScalar(d.speed),
     impulse: { part, at, dir, strength: (30 + Math.min(d.damage, 90) * 1.6) * (d.push ?? 1) },
     floorY: z.pos.y,
+    groundY,
     boxes,
     shape: start.shape,
   });

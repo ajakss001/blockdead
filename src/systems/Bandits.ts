@@ -47,10 +47,13 @@ import type { CorpseData, CorpseSlotKey } from './Containers';
 import type { BlastSpec } from './Firearms';
 import type { Worn } from './Inventory';
 import type { BanditTarget, Zombie, ZombieSim } from './zombies';
+import type { RayHitDetail } from '../world/CollisionWorld';
 
 export type FactionId = 'scavs' | 'bear' | 'usec' | 'black' | 'boss' | 'pmc' | 'snipers';
 export type SpawnKind = 'street' | 'indoor' | 'sniper' | 'boss';
 export type BotRole = 'regular' | 'ambusher' | 'boss' | 'guard' | 'goon_assault' | 'goon_support' | 'goon_marksman';
+export type BotMoveMode = 'idle' | 'walk' | 'aim_walk' | 'sprint';
+export type BotTacticState = 'NONE' | 'SEEK_COVER' | 'IN_COVER' | 'PEEK_AND_SHOOT' | 'RETREAT_OR_FLANK' | 'PUSH_RELOAD';
 
 /**
  * Faction hostility matrix (EFT rules, no cultists):
@@ -63,6 +66,14 @@ export function areFactionsHostile(a: FactionId, b: FactionId): boolean {
 
 const FOV_HALF_RAD = (58 * Math.PI) / 180; // 116 deg horizontal field of view
 const FIRE_CONE_RAD = (11 * Math.PI) / 180; // must aim within +/-11 deg of target before firing
+/** Unified movement bounds matched to PlayerController (walk 2.2, sprint 4.25, ADS ~43% of walk). */
+export const BOT_WALK_SPEED = 2.2;
+export const BOT_ADS_SPEED = 0.95;
+export const BOT_CROUCH_SPEED = 0.9;
+export const BOT_SPRINT_SPEED = 4.25;
+export const BOT_ADS_RAISE_MIN = 0.25;
+export const BOT_ADS_RAISE_MAX = 0.35;
+const RELOAD_PUSH_HEAR_RADIUS = 25;
 
 export function angleDiff(from: number, to: number): number {
   let d = (to - from) % (Math.PI * 2);
@@ -95,6 +106,7 @@ export interface BanditWorld {
   groundY(x: number, z: number, y?: number): number;
   resolveCircle(pos: Vector3, r: number): void;
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number, ignoreGlass?: boolean): number;
+  rayHitDetail?(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number, ignoreGlass?: boolean): RayHitDetail | null;
   boxesNear(x: number, z: number, r: number, out: NavBox[]): void;
   buildingsNear(x: number, z: number, r: number): BuildingDesc[];
   doorsNear?(x: number, y: number, z: number, r: number): DoorNavSpot[];
@@ -337,6 +349,19 @@ export interface Bandit extends BanditTarget {
   coverZ: number;
   coverT: number;
   coverKey: string | null;
+  coverHeight: number;
+  peekX: number;
+  peekZ: number;
+  peeksDone: number;
+  moveMode: BotMoveMode;
+  adsRaiseT: number;
+  actualSpeed: number;
+  tacticState: BotTacticState;
+  tacticTimer: number;
+  reloadPushGoalX: number;
+  reloadPushGoalZ: number;
+  reloadPushT: number;
+  sprintBobPhase: number;
   grenadeCd: number;
   hasFireToken: boolean;
   flankSign: -1 | 1;
@@ -559,6 +584,7 @@ export class Bandits {
   private nextId = 1;
   private nextSquadId = 1;
   private spawnCd = 4;
+  private reloadPushCd = 0;
   private maxActive = MAX_ACTIVE;
   private disposed = false;
   private readonly tracers: Tracer[] = [];
@@ -602,11 +628,13 @@ export class Bandits {
     playerVz = 0,
     fog = 0,
     playerArmed = false,
+    playerCrouched = false,
   ): void {
     this.updateTracers(dt);
     this.updateGrenades(dt);
     this.updateSquadBlackboards(dt);
     this.applySeparation(dt);
+    this.reloadPushCd = Math.max(0, this.reloadPushCd - dt);
 
     this.spawnCd -= dt;
     let aliveStreet = 0;
@@ -674,6 +702,8 @@ export class Bandits {
       b.doorCd = Math.max(0, b.doorCd - dt);
       b.coverT = Math.max(0, b.coverT - dt);
       if (b.coverT <= 0 && b.coverKey) this.releaseCover(b);
+      b.tacticTimer = Math.max(0, b.tacticTimer - dt);
+      b.reloadPushT = Math.max(0, b.reloadPushT - dt);
       b.grenadeCd = Math.max(0, b.grenadeCd - dt);
       b.flankT = Math.max(0, b.flankT - dt);
       b.navTimer = Math.max(0, b.navTimer - dt);
@@ -715,14 +745,17 @@ export class Bandits {
         distPlayer < 2.0 ||
         (b.lockedKind === 'player' && b.targetLockT > 0);
       const unalerted = b.state !== 'combat' && b.investigateT <= 0;
-      const bushBlocked = unalerted && distPlayer > 6 && !!this.w.bushOccludes?.(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.4, pz);
+      const pEyeHigh = inCar ? 1.15 : playerCrouched ? 1.05 : 1.56;
+      const pEyeMid = inCar ? 0.85 : playerCrouched ? 0.72 : 1.15;
+      const pAimOff = inCar ? 1.05 : playerCrouched ? 0.92 : 1.38;
+      const bushBlocked = unalerted && distPlayer > 6 && !!this.w.bushOccludes?.(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + pEyeHigh - 0.14, pz);
       const canSeePlayer =
         !playerDead &&
         !bushBlocked &&
         distPlayer < sightRange &&
         playerVisibleAngle &&
-        (this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.56, pz) ||
-          this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + 1.15, pz));
+        (this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + pEyeHigh, pz) ||
+          this.hasLineOfSight(b.pos.x, b.pos.y + 1.5, b.pos.z, px, py + pEyeMid, pz));
       if (canSeePlayer) {
         const bb = this.getSquad(b.squadId);
         bb.lastX = px;
@@ -876,6 +909,8 @@ export class Bandits {
 
       const prevX = b.pos.x;
       const prevZ = b.pos.z;
+      const prevMoveMode = b.moveMode;
+      b.moveMode = 'idle';
       let moveSpeed = 0;
 
       if (activeZombie) {
@@ -885,7 +920,7 @@ export class Bandits {
         const targetIsPlayer = choosePlayer || (!chooseBot && !playerDead);
         const searchUnknown = !chooseBot && !choosePlayer && b.investigateT > 0;
         const tx = chooseBot ? lockBot!.pos.x : searchUnknown ? b.investigateX : px;
-        const ty = chooseBot ? lockBot!.pos.y + 1.38 : searchUnknown ? this.w.groundY(b.investigateX, b.investigateZ, b.pos.y) + 1.38 : py + (inCar ? 1.05 : 1.38);
+        const ty = chooseBot ? lockBot!.pos.y + 1.38 : searchUnknown ? this.w.groundY(b.investigateX, b.investigateZ, b.pos.y) + 1.38 : py + pAimOff;
         const tz = chooseBot ? lockBot!.pos.z : searchUnknown ? b.investigateZ : pz;
         const hasTargetLOS = chooseBot ? true : canSeePlayer;
 
@@ -899,6 +934,7 @@ export class Bandits {
           chooseBot ? lockBot : null,
           inCar && targetIsPlayer,
           playerReloading && targetIsPlayer,
+          playerCrouched && targetIsPlayer,
           playerVx,
           playerVz,
           boss,
@@ -914,14 +950,18 @@ export class Bandits {
         this.resetAntiStuck(b);
         b.crouching = true;
         b.aiming = 1;
+        b.moveMode = 'idle';
         b.yaw = turnTowardYaw(b.yaw, b.patrolYaw, b.maxTurnRate * 0.65, dt);
         b.aimPitch = 0;
       } else {
         b.crouching = false;
+        b.aiming = 0;
         if (b.role === 'guard' && boss && !boss.isDead) {
           const bd = Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z);
           if (bd > 5.8) {
-            moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 2.5, dt, true);
+            b.moveMode = 'sprint';
+            b.aiming = 0;
+            moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 3.0, dt, true);
           } else {
             this.resetAntiStuck(b);
             b.patrolT -= dt;
@@ -938,8 +978,9 @@ export class Bandits {
             b.investigateT -= dt;
             const idist = Math.hypot(b.investigateX - b.pos.x, b.investigateZ - b.pos.z);
             if (idist > 2.0) {
+              b.moveMode = 'walk';
               const goalY = this.w.groundY(b.investigateX, b.investigateZ, b.pos.y);
-              moveSpeed = this.navigateToward(b, b.investigateX, goalY, b.investigateZ, 2.4, dt, true);
+              moveSpeed = this.navigateToward(b, b.investigateX, goalY, b.investigateZ, BOT_WALK_SPEED, dt, true);
             } else {
               this.resetAntiStuck(b);
             }
@@ -959,34 +1000,53 @@ export class Bandits {
             b.patrolYaw += Math.PI * (0.55 + Math.random() * 0.4);
           }
           moveSpeed = movedPatrol ? 1.55 : 0;
+          b.moveMode = movedPatrol ? 'walk' : 'idle';
         }
       }
 
       if (b.investigateT > 0 && !choosePlayer && !chooseBot) b.investigateT -= dt;
 
+      const curMoveMode = b.moveMode as BotMoveMode;
+      if (b.isGun && curMoveMode === 'sprint') {
+        b.aiming = 0;
+        if (prevMoveMode !== 'sprint' || b.adsRaiseT < BOT_ADS_RAISE_MIN) {
+          b.adsRaiseT = BOT_ADS_RAISE_MIN + Math.random() * (BOT_ADS_RAISE_MAX - BOT_ADS_RAISE_MIN);
+        }
+        b.sprintBobPhase += dt * 11;
+      } else if (curMoveMode !== 'sprint') {
+        b.adsRaiseT = Math.max(0, b.adsRaiseT - dt);
+        if (b.state === 'combat' && b.isGun && b.adsRaiseT > 0) {
+          b.aiming = Math.min(b.aiming, 0.35);
+        }
+      }
+
       if (dt > 1e-4) {
         const moved = Math.hypot(b.pos.x - prevX, b.pos.z - prevZ);
+        const instSpd = moved / dt;
+        b.actualSpeed = instSpd;
         b.vel.set((b.pos.x - prevX) / dt, 0, (b.pos.z - prevZ) / dt);
         const quietRat = b.role === 'ambusher' && !b.ambushTriggered;
         if (!quietRat && moved > 0.002) {
           b.stepDist += moved;
-          const stride = moveSpeed > 3.2 ? 2.2 : 1.75;
+          const stride = instSpd > 2.6 ? 2.2 : 1.75;
           if (b.stepDist >= stride) {
             b.stepDist %= stride;
             const surf = Math.abs(b.pos.y) > 0.4 ? 'concrete' : 'asphalt';
-            sfx.step(surf, b.crouching ? 'crouch' : moveSpeed > 3.2 ? 'run' : 'walk', b.pos, b.crouching ? 0.35 : 0.78);
+            sfx.step(surf, b.crouching ? 'crouch' : instSpd > 2.6 ? 'run' : 'walk', b.pos, b.crouching ? 0.35 : 0.78);
           }
         }
+      } else {
+        b.actualSpeed = 0;
       }
+      void moveSpeed;
 
       b.root.position.copy(b.pos);
       b.root.rotation.set(0, b.yaw, 0);
-      this.animateRig(b, dt, moveSpeed);
+      this.animateRig(b, dt, b.actualSpeed);
     }
   }
 
   private engageZombie(b: Bandit, nearZombie: Zombie, dt: number, setSpd: (s: number) => void): void {
-    b.aiming = 1;
     const zdx = nearZombie.pos.x - b.pos.x;
     const zdz = nearZombie.pos.z - b.pos.z;
     const zd = Math.hypot(zdx, zdz) || 1;
@@ -997,6 +1057,8 @@ export class Bandits {
 
     if (b.reactT > 0) {
       b.reactT -= dt;
+      b.aiming = 1;
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
       return;
     }
@@ -1004,32 +1066,148 @@ export class Bandits {
     if (b.isGun) {
       const dPitch = Math.max(-0.45, Math.min(0.45, (nearZombie.pos.y - b.pos.y) / zd));
       b.aimPitch += (dPitch - b.aimPitch) * Math.min(1, dt * 8);
-      if (zd < 5.5) {
-        this.moveOrOpenDoor(b, -zdx / zd, -zdz / zd, 2.5, dt);
-        this.trackAntiStuck(b, -zdx / zd, -zdz / zd, 2.5, dt);
-        setSpd(2.5);
-      } else if (zd > 11) {
-        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, 3.0, dt);
-        this.trackAntiStuck(b, zdx / zd, zdz / zd, 3.0, dt);
-        setSpd(3.0);
+      if (zd > 14) {
+        b.moveMode = 'sprint';
+        b.aiming = 0;
+        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, BOT_SPRINT_SPEED, dt);
+        this.trackAntiStuck(b, zdx / zd, zdz / zd, BOT_SPRINT_SPEED, dt);
+        setSpd(BOT_SPRINT_SPEED);
+        return;
+      }
+      b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
+      if (zd < 5.0) {
+        b.moveMode = 'aim_walk';
+        this.moveOrOpenDoor(b, -zdx / zd, -zdz / zd, BOT_ADS_SPEED, dt);
+        this.trackAntiStuck(b, -zdx / zd, -zdz / zd, BOT_ADS_SPEED, dt);
+        setSpd(BOT_ADS_SPEED);
       } else {
+        b.moveMode = 'idle';
         this.resetAntiStuck(b);
       }
-      if (b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0) {
+      if (b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0) {
         this.shootAt(b, nearZombie.pos.x, nearZombie.pos.y + 1.25, nearZombie.pos.z, false);
       }
     } else {
+      b.aiming = 1;
       if (zd > 1.75) {
-        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, 3.8, dt);
-        this.trackAntiStuck(b, zdx / zd, zdz / zd, 3.8, dt);
-        setSpd(3.8);
+        b.moveMode = 'sprint';
+        this.moveOrOpenDoor(b, zdx / zd, zdz / zd, BOT_SPRINT_SPEED, dt);
+        this.trackAntiStuck(b, zdx / zd, zdz / zd, BOT_SPRINT_SPEED, dt);
+        setSpd(BOT_SPRINT_SPEED);
       } else if (b.meleeCd <= 0) {
+        b.moveMode = 'idle';
         this.resetAntiStuck(b);
         b.meleeCd = 0.95;
         b.swingT = 1;
         this.w.zombies.hit(nearZombie, 26, b.pos.x, b.pos.z, false, _v1.set(nearZombie.pos.x, nearZombie.pos.y + 1.1, nearZombie.pos.z));
         sfx.swing('heavy', 0.25, b.pos);
       }
+    }
+  }
+
+  /** Triggered when player starts reloading: alerts nearby bots and sends 1-2 closest/assault rushers into PUSH_RELOAD. */
+  onPlayerReloading(playerPos: Vector3): void {
+    if (this.reloadPushCd > 0) return;
+    const ppx = playerPos.x;
+    const ppy = playerPos.y;
+    const ppz = playerPos.z;
+    const eyeY = ppy + 1.35;
+    const aware: Bandit[] = [];
+
+    for (const b of this.list) {
+      if (b.isDead || b.state === 'dead' || !b.isGun) continue;
+      const d = Math.hypot(ppx - b.pos.x, ppz - b.pos.z);
+      const inHear = d <= RELOAD_PUSH_HEAR_RADIUS && Math.abs(ppy - b.pos.y) <= 6;
+      const inSight = d <= 65 && this.hasLineOfSight(b.pos.x, b.pos.y + 1.45, b.pos.z, ppx, eyeY, ppz);
+      if (!inHear && !inSight) continue;
+      if (b.role === 'ambusher' && !b.ambushTriggered && !inSight) continue;
+      aware.push(b);
+      if (b.state !== 'combat') b.state = 'combat';
+      b.ambushTriggered = true;
+      b.reactT = Math.min(b.reactT, 0.12);
+      b.investigateX = ppx;
+      b.investigateZ = ppz;
+      b.investigateT = 10;
+      b.lockedKind = 'player';
+      b.targetLockT = Math.max(b.targetLockT, 2.5);
+    }
+    if (aware.length === 0) return;
+
+    const pushCandidates: Bandit[] = [];
+    for (const b of aware) {
+      const isOverwatch = b.role === 'goon_support' || b.role === 'goon_marksman' || b.spawnKind === 'sniper';
+      if (isOverwatch) {
+        if (b.tacticState === 'IN_COVER' || b.tacticState === 'SEEK_COVER' || b.tacticState === 'NONE') {
+          b.tacticState = 'PEEK_AND_SHOOT';
+          b.crouching = false;
+          b.tacticTimer = 2.6;
+          b.burstLeft = Math.max(b.burstLeft, 4);
+          b.burstPause = 0;
+        }
+        continue;
+      }
+      if (b.reloadT > 0.25 || b.healT > 0.25 || b.tacticState === 'PUSH_RELOAD') continue;
+      const d = Math.hypot(ppx - b.pos.x, ppz - b.pos.z);
+      if (d > 5.5) pushCandidates.push(b);
+    }
+    if (pushCandidates.length === 0) return;
+
+    pushCandidates.sort((a, b) => {
+      const prio = (x: Bandit) => (x.role === 'goon_assault' ? 0 : x.faction === 'black' || x.role === 'boss' || x.role === 'guard' ? 1 : 2);
+      const pDiff = prio(a) - prio(b);
+      if (pDiff !== 0) return pDiff;
+      return Math.hypot(a.pos.x - ppx, a.pos.z - ppz) - Math.hypot(b.pos.x - ppx, b.pos.z - ppz);
+    });
+
+    const maxPushers = pushCandidates.length >= 2 ? 2 : 1;
+    let pushedCount = 0;
+    let voiceAnchor: Bandit | null = null;
+    for (let i = 0; i < pushCandidates.length && pushedCount < maxPushers; i++) {
+      const b = pushCandidates[i];
+      const curD = Math.hypot(ppx - b.pos.x, ppz - b.pos.z);
+      const cov = this.findCoverNear(b, ppx, eyeY, ppz, 18, true);
+      let gx = ppx;
+      let gz = ppz;
+      if (cov && Math.hypot(cov.x - ppx, cov.z - ppz) < curD - 4.0) {
+        gx = cov.x;
+        gz = cov.z;
+        b.coverX = cov.x;
+        b.coverZ = cov.z;
+        b.peekX = cov.peekX;
+        b.peekZ = cov.peekZ;
+        b.coverHeight = cov.height;
+        b.coverT = 8.0;
+      } else {
+        this.releaseCover(b);
+        const awayX = (b.pos.x - ppx) / (curD || 1);
+        const awayZ = (b.pos.z - ppz) / (curD || 1);
+        const flankAng = (i % 2 === 0 ? 1 : -1) * (0.18 + Math.random() * 0.16);
+        const c = Math.cos(flankAng);
+        const s = Math.sin(flankAng);
+        const targetR = Math.max(4.8, curD - (8.5 + Math.random() * 6.5));
+        gx = ppx + (awayX * c - awayZ * s) * targetR;
+        gz = ppz + (awayX * s + awayZ * c) * targetR;
+        const gy = this.w.groundY(gx, gz, b.pos.y);
+        _v2.set(gx, gy, gz);
+        this.w.resolveCircle(_v2, 0.4);
+        gx = _v2.x;
+        gz = _v2.z;
+      }
+      b.tacticState = 'PUSH_RELOAD';
+      b.moveMode = 'sprint';
+      b.aiming = 0;
+      b.crouching = false;
+      b.adsRaiseT = BOT_ADS_RAISE_MIN + Math.random() * (BOT_ADS_RAISE_MAX - BOT_ADS_RAISE_MIN);
+      b.reloadPushGoalX = gx;
+      b.reloadPushGoalZ = gz;
+      b.reloadPushT = 3.6;
+      pushedCount++;
+      if (!voiceAnchor) voiceAnchor = b;
+    }
+    if (voiceAnchor) {
+      this.reloadPushCd = 2.0;
+      sfx.pivot('asphalt', voiceAnchor.pos, true);
+      this.w.toast?.(tr('Боец: «Перезаряжается! Давим!»', 'Raider: "Reloading! Push him!"'), 1600);
     }
   }
 
@@ -1043,6 +1221,7 @@ export class Bandits {
     targetBot: Bandit | null,
     inCar: boolean,
     targetReloading: boolean,
+    playerCrouched: boolean,
     targetVx: number,
     targetVz: number,
     boss: Bandit | undefined,
@@ -1056,51 +1235,63 @@ export class Bandits {
     const nx = dx / dist;
     const nz = dz / dist;
 
-    b.aiming = 1;
+    if (targetReloading && targetIsPlayer && this.reloadPushCd <= 0) {
+      this.onPlayerReloading(_v3.set(tx, ty - (inCar ? 1.05 : playerCrouched ? 0.92 : 1.38), tz));
+    }
+
     const desiredYaw = Math.atan2(dx, dz);
-    b.yaw = turnTowardYaw(b.yaw, desiredYaw, b.maxTurnRate, dt);
     const desiredPitch = Math.max(-0.55, Math.min(0.55, (ty - 1.38 - b.pos.y) / dist));
     b.aimPitch += (desiredPitch - b.aimPitch) * Math.min(1, dt * 8);
 
-    if (hasLOS) {
-      b.investigateX = tx;
-      b.investigateZ = tz;
-      b.investigateT = 10;
-      this.updateAimTrack(b, tx, ty, tz, dt);
-      const yawErr = Math.abs(angleDiff(b.yaw, desiredYaw));
-      if (yawErr < (20 * Math.PI) / 180) b.aimWarmupT += dt;
-      else if (yawErr > (35 * Math.PI) / 180) {
-        b.aimWarmupT = 0;
-        b.aimShots = 0;
+    const turnToTarget = () => {
+      b.yaw = turnTowardYaw(b.yaw, desiredYaw, b.maxTurnRate, dt);
+      if (hasLOS) {
+        b.investigateX = tx;
+        b.investigateZ = tz;
+        b.investigateT = 10;
+        this.updateAimTrack(b, tx, ty, tz, dt);
+        const yawErr = Math.abs(angleDiff(b.yaw, desiredYaw));
+        if (yawErr < (20 * Math.PI) / 180) b.aimWarmupT += dt;
+        else if (yawErr > (35 * Math.PI) / 180) {
+          b.aimWarmupT = 0;
+          b.aimShots = 0;
+        }
+      } else {
+        b.aimWarmupT = Math.max(0, b.aimWarmupT - dt * 1.8);
+        if (b.aimWarmupT <= 0) b.aimShots = 0;
       }
-    } else {
-      b.aimWarmupT = Math.max(0, b.aimWarmupT - dt * 1.8);
-      if (b.aimWarmupT <= 0) b.aimShots = 0;
-    }
+    };
 
     if (b.reactT > 0) {
       b.reactT -= dt;
+      turnToTarget();
+      b.aiming = b.isGun ? 0.5 : 1;
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
       return 0;
     }
 
-    const goalFootY = targetBot ? targetBot.pos.y : ty - (inCar ? 1.05 : 1.38);
+    const goalFootY = targetBot ? targetBot.pos.y : ty - (inCar ? 1.05 : playerCrouched ? 0.92 : 1.38);
     const glassHit = hasLOS ? this.glassBetween(b.pos.x, b.pos.y + 1.4, b.pos.z, tx, ty, tz) : null;
 
     if (b.spawnKind === 'sniper' || b.role === 'goon_marksman') {
+      turnToTarget();
       const maxRange = b.role === 'goon_marksman' ? 92 : 56;
       const keepDist = b.role === 'goon_marksman' ? 32 : 24;
       b.crouching = b.reloadT > 0 || b.burstPause > 0.15;
+      b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
       if ((b.hp < b.maxHp * 0.45 || b.role === 'goon_marksman') && dist < keepDist) {
         if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
-          this.moveOrOpenDoor(b, -nx, -nz, 2.3, dt);
-          this.trackAntiStuck(b, -nx, -nz, 2.3, dt);
-          return 2.3;
+          b.moveMode = 'aim_walk';
+          this.moveOrOpenDoor(b, -nx, -nz, BOT_ADS_SPEED, dt);
+          this.trackAntiStuck(b, -nx, -nz, BOT_ADS_SPEED, dt);
+          return BOT_ADS_SPEED;
         }
       }
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
-      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < maxRange) {
-        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      if (hasLOS && b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < maxRange) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, false, playerCrouched);
       }
       return 0;
     }
@@ -1117,16 +1308,22 @@ export class Bandits {
 
     if (!b.isGun) {
       b.crouching = false;
+      b.aiming = 1;
       if (b.hp < b.maxHp * 0.25 && dist < 6) {
         if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+          turnToTarget();
+          b.moveMode = 'sprint';
           this.moveOrOpenDoor(b, -nx, -nz, 3.6, dt);
           this.trackAntiStuck(b, -nx, -nz, 3.6, dt);
           return 3.6;
         }
       }
       if (dist > 1.65 || !hasLOS || glassHit !== null) {
-        return this.navigateToward(b, tx, goalFootY, tz, 4.25, dt, false);
+        b.moveMode = 'sprint';
+        return this.navigateToward(b, tx, goalFootY, tz, BOT_SPRINT_SPEED, dt, true);
       }
+      turnToTarget();
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
       if (b.meleeCd <= 0) {
         b.meleeCd = 1.05 + Math.random() * 0.25;
@@ -1138,180 +1335,437 @@ export class Bandits {
       return 0;
     }
 
-    // Need heal or reload -> find nearby cover, crouch, and recover
-    const needHeal = b.hp < b.maxHp * 0.42 && b.medkits > 0 && b.healT <= 0;
-    const needCover = needHeal || b.healT > 0 || b.reloadT > 0 || (b.lastHitT < 1.3 && dist > 6);
-    if (needHeal && b.healT <= 0) b.healT = 2.5;
-
-    let moveSpeed = 0;
-    if (needCover && !bossDeadEnraged) {
-      if (b.coverT <= 0) {
-        const c = this.findCoverNear(b, tx, ty, tz);
-        if (c) {
-          b.coverX = c.x;
-          b.coverZ = c.z;
-          b.coverT = 3.2;
-        }
-      }
-      if (b.coverT > 0) {
-        const cdx = b.coverX - b.pos.x;
-        const cdz = b.coverZ - b.pos.z;
-        const cDist = Math.hypot(cdx, cdz);
-        if (cDist > 0.65) {
-          b.crouching = false;
-          const covY = this.w.groundY(b.coverX, b.coverZ, b.pos.y);
-          moveSpeed = this.navigateToward(b, b.coverX, covY, b.coverZ, 3.5, dt, false);
-        } else {
-          b.crouching = true;
-          this.resetAntiStuck(b);
-        }
-      } else {
-        b.crouching = b.reloadT > 0 || b.healT > 0;
-        if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
-          this.moveOrOpenDoor(b, -nx, -nz, 3.0, dt);
-          this.trackAntiStuck(b, -nx, -nz, 3.0, dt);
-          moveSpeed = 3.0;
-        } else {
-          this.resetAntiStuck(b);
-        }
-      }
-      if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 24) {
-        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
-      }
-      return moveSpeed;
-    }
-
     // Ambusher prefers crouching at doorway unless flanked/pushed closely
-    if (b.role === 'ambusher' && hasLOS && glassHit === null && dist > 4.5 && b.lastHitT > 2) {
+    if (b.role === 'ambusher' && b.tacticState === 'NONE' && hasLOS && glassHit === null && dist > 4.5 && b.lastHitT > 2) {
+      turnToTarget();
       b.crouching = true;
+      b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
-      if (b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 28) {
-        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
+      if (b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.burstPause <= 0 && dist < 28) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, false, playerCrouched);
       }
       return 0;
     }
 
-    // Sees target through intact window glass: never run head-first into the pane; either shoot it or flank via door
+    // Sees target through intact window glass: never run head-first into pane; hold standoff aim to break glass or sprint-flank
     if (glassHit !== null) {
-      b.crouching = b.burstPause > 0.25;
-      if (b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
-        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot);
-      }
       if (b.glassFlank) {
-        return this.navigateToward(b, tx, goalFootY, tz, 3.1, dt, false);
+        b.crouching = false;
+        b.moveMode = 'sprint';
+        b.aiming = 0;
+        return this.navigateToward(b, tx, goalFootY, tz, BOT_SPRINT_SPEED, dt, true);
       }
+      turnToTarget();
+      b.crouching = b.burstPause > 0.25;
+      b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
       if (glassHit.dist < 2.8 && hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
-        this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
-        this.trackAntiStuck(b, -nx, -nz, 2.2, dt);
-        return 2.2;
+        b.moveMode = 'aim_walk';
+        this.moveOrOpenDoor(b, -nx, -nz, BOT_ADS_SPEED, dt);
+        this.trackAntiStuck(b, -nx, -nz, BOT_ADS_SPEED, dt);
+        if (b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
+          this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, false, playerCrouched);
+        }
+        return BOT_ADS_SPEED;
       }
+      b.moveMode = 'idle';
+      this.resetAntiStuck(b);
+      if (b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
+        this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, false, playerCrouched);
+      }
+      return 0;
+    }
+
+    const needHeal = b.hp < b.maxHp * 0.42 && b.medkits > 0 && b.healT <= 0;
+    if (needHeal && b.healT <= 0) b.healT = 2.5;
+    const mustTakeCover = needHeal || b.healT > 0 || b.reloadT > 0;
+
+    // 1) Aggressive Reload Push: sprint with weapon lowered to closer cover/flank, stop cleanly, raise ADS, then shoot.
+    if (b.tacticState === 'PUSH_RELOAD' && !mustTakeCover) {
+      const gDist = Math.hypot(b.reloadPushGoalX - b.pos.x, b.reloadPushGoalZ - b.pos.z);
+      if (gDist > 1.0 && dist > 5.0 && b.reloadPushT > 0) {
+        b.crouching = false;
+        b.moveMode = 'sprint';
+        b.aiming = 0;
+        const gy = this.w.groundY(b.reloadPushGoalX, b.reloadPushGoalZ, b.pos.y);
+        return this.navigateToward(b, b.reloadPushGoalX, gy, b.reloadPushGoalZ, BOT_SPRINT_SPEED, dt, true);
+      }
+      turnToTarget();
+      this.resetAntiStuck(b);
+      b.tacticState = 'PEEK_AND_SHOOT';
+      b.tacticTimer = 2.6;
+      b.peeksDone = 0;
+      b.peekX = b.pos.x;
+      b.peekZ = b.pos.z;
+      b.burstLeft = 4 + Math.floor(Math.random() * 2);
+      b.burstPause = 0;
+      b.moveMode = 'idle';
+      b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
+      return 0;
+    }
+
+    // If reloading/healing out in the open, rush to cover first.
+    if (mustTakeCover && b.tacticState !== 'IN_COVER' && b.tacticState !== 'SEEK_COVER') {
+      const cov = this.findCoverNear(b, tx, ty, tz, 15, false);
+      if (cov) {
+        b.coverX = cov.x;
+        b.coverZ = cov.z;
+        b.peekX = cov.peekX;
+        b.peekZ = cov.peekZ;
+        b.coverHeight = cov.height;
+        b.coverT = 7.5;
+        b.tacticState = 'SEEK_COVER';
+        b.peeksDone = 0;
+      }
+    }
+
+    // 2) Seek initial or flanking cover while NOT in point-blank CQB (< 4.8 m) so ambushers/CQB fighters engage instead of turning tail.
+    if (b.tacticState === 'NONE' && !bossDeadEnraged && dist >= 4.8 && b.role !== 'ambusher' && b.tacticTimer <= 0) {
+      const cov = this.findCoverNear(b, tx, ty, tz, 15, false);
+      if (cov) {
+        b.coverX = cov.x;
+        b.coverZ = cov.z;
+        b.peekX = cov.peekX;
+        b.peekZ = cov.peekZ;
+        b.coverHeight = cov.height;
+        b.coverT = 8.0;
+        b.tacticState = 'SEEK_COVER';
+        b.peeksDone = 0;
+      } else {
+        b.tacticTimer = 0.85;
+      }
+    }
+
+    // 3) Cover State Machine: SEEK_COVER -> IN_COVER -> PEEK_AND_SHOOT -> RETREAT_OR_FLANK
+    if (b.tacticState === 'SEEK_COVER') {
+      if (!b.coverKey || b.coverT <= 0) {
+        b.tacticState = 'NONE';
+      } else {
+        const cDist = Math.hypot(b.coverX - b.pos.x, b.coverZ - b.pos.z);
+        if (cDist > 0.75) {
+          b.crouching = false;
+          b.moveMode = 'sprint';
+          b.aiming = 0;
+          const covY = this.w.groundY(b.coverX, b.coverZ, b.pos.y);
+          return this.navigateToward(b, b.coverX, covY, b.coverZ, BOT_SPRINT_SPEED, dt, true);
+        }
+        turnToTarget();
+        this.resetAntiStuck(b);
+        b.tacticState = 'IN_COVER';
+        b.tacticTimer = 1.0 + Math.random() * 1.5;
+        b.crouching = true;
+        b.moveMode = 'idle';
+        b.aiming = 0.2;
+        return 0;
+      }
+    }
+
+    if (b.tacticState === 'IN_COVER') {
+      turnToTarget();
+      b.crouching = true;
+      b.aiming = 0.2;
+      const cdx = b.coverX - b.pos.x;
+      const cdz = b.coverZ - b.pos.z;
+      const cDist = Math.hypot(cdx, cdz);
+      if (cDist > 0.65 && b.coverKey) {
+        b.moveMode = 'walk';
+        const covY = this.w.groundY(b.coverX, b.coverZ, b.pos.y);
+        return this.navigateToward(b, b.coverX, covY, b.coverZ, BOT_CROUCH_SPEED, dt, false);
+      }
+      b.moveMode = 'idle';
+      this.resetAntiStuck(b);
+      const exposedInCover = hasLOS && b.tacticTimer < 1.8 && (b.coverHeight <= 1.42 ? this.hasLineOfSight(b.pos.x, b.pos.y + 0.95, b.pos.z, tx, ty, tz) : true);
+      if ((exposedInCover || b.lastHitT < 0.22) && !mustTakeCover) {
+        b.tacticState = 'RETREAT_OR_FLANK';
+        return 0;
+      }
+      if (!mustTakeCover && b.tacticTimer <= 0) {
+        b.tacticState = 'PEEK_AND_SHOOT';
+        b.tacticTimer = 2.0 + Math.random() * 0.6;
+        b.burstLeft = 3 + Math.floor(Math.random() * 3);
+        b.burstPause = 0;
+        b.adsRaiseT = Math.max(b.adsRaiseT, BOT_ADS_RAISE_MIN);
+      }
+      return 0;
+    }
+
+    if (b.tacticState === 'PEEK_AND_SHOOT') {
+      if (b.burstPause > 0 || b.reloadT > 0 || b.healT > 0 || b.tacticTimer <= 0 || b.lastHitT < 0.16) {
+        turnToTarget();
+        b.tacticState = 'RETREAT_OR_FLANK';
+        b.crouching = true;
+        b.aiming = 0.25;
+        b.moveMode = 'idle';
+        this.resetAntiStuck(b);
+        return 0;
+      }
+      turnToTarget();
+        b.crouching = false;
+        const needStepPeek = b.coverHeight > 1.42 && b.coverKey !== null && Math.hypot(b.peekX - b.pos.x, b.peekZ - b.pos.z) > 0.3;
+        let spd = 0;
+        if (needStepPeek) {
+          b.moveMode = 'aim_walk';
+          const pyPeek = this.w.groundY(b.peekX, b.peekZ, b.pos.y);
+          spd = this.navigateToward(b, b.peekX, pyPeek, b.peekZ, BOT_ADS_SPEED, dt, false);
+        } else {
+          b.moveMode = 'idle';
+          this.resetAntiStuck(b);
+        }
+        b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
+        if (hasLOS && b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 44) {
+          this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, !b.hasFireToken, playerCrouched);
+        }
+        return spd;
+    }
+
+    if (b.tacticState === 'RETREAT_OR_FLANK') {
+      b.peeksDone++;
+      const coverValid = !!b.coverKey && b.coverT > 2.2;
+      if (!coverValid || b.peeksDone >= 2 || bossDeadEnraged) {
+        const nextCov = !bossDeadEnraged ? this.findCoverNear(b, tx, ty, tz, 16, dist > 16) : null;
+        if (nextCov) {
+          b.coverX = nextCov.x;
+          b.coverZ = nextCov.z;
+          b.peekX = nextCov.peekX;
+          b.peekZ = nextCov.peekZ;
+          b.coverHeight = nextCov.height;
+          b.coverT = 8.0;
+          b.tacticState = 'SEEK_COVER';
+          b.peeksDone = 0;
+          b.crouching = false;
+          b.moveMode = 'sprint';
+          b.aiming = 0;
+          const covY = this.w.groundY(nextCov.x, nextCov.z, b.pos.y);
+          return this.navigateToward(b, nextCov.x, covY, nextCov.z, BOT_SPRINT_SPEED, dt, true);
+        }
+        if (coverValid) {
+          turnToTarget();
+          b.peeksDone = 0;
+          b.tacticState = 'IN_COVER';
+          b.tacticTimer = 1.0 + Math.random() * 1.4;
+          b.crouching = true;
+          b.moveMode = 'idle';
+          b.aiming = 0.2;
+          return 0;
+        }
+        this.releaseCover(b);
+        b.tacticState = 'NONE';
+      } else {
+        turnToTarget();
+        b.tacticState = 'IN_COVER';
+        b.tacticTimer = 1.0 + Math.random() * 1.4;
+        b.crouching = true;
+        b.aiming = 0.2;
+        if (Math.hypot(b.coverX - b.pos.x, b.coverZ - b.pos.z) > 0.55) {
+          b.moveMode = 'walk';
+          const covY = this.w.groundY(b.coverX, b.coverZ, b.pos.y);
+          return this.navigateToward(b, b.coverX, covY, b.coverZ, BOT_CROUCH_SPEED, dt, false);
+        }
+        b.moveMode = 'idle';
+        this.resetAntiStuck(b);
+        return 0;
+      }
+    }
+
+    // 4) Open-ground fallback (when no valid cover collider exists nearby):
+    // Sprint with lowered weapon ONLY when far/no LOS/closing; strictly <= BOT_ADS_SPEED (0.95 m/s) when aiming or shooting.
+    b.crouching = mustTakeCover || (b.burstPause > 0.25 && hasLOS);
+    const targetFleeing = dist > 11 && targetVx * nx + targetVz * nz > 2.0;
+
+    if (mustTakeCover) {
+      turnToTarget();
+      b.aiming = 0.25;
+      if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+        b.moveMode = 'walk';
+        this.moveOrOpenDoor(b, -nx, -nz, BOT_CROUCH_SPEED, dt);
+        this.trackAntiStuck(b, -nx, -nz, BOT_CROUCH_SPEED, dt);
+        return BOT_CROUCH_SPEED;
+      }
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
       return 0;
     }
 
-    b.crouching = b.burstPause > 0.25 && hasLOS;
-    const targetFleeing = dist > 9 && targetVx * nx + targetVz * nz > 2.0;
+    if (!hasLOS || dist > (bossDeadEnraged ? 5.5 : 22) || (targetFleeing && dist > 14)) {
+      b.moveMode = 'sprint';
+      b.aiming = 0;
+      b.crouching = false;
+      return this.navigateToward(b, tx, goalFootY, tz, BOT_SPRINT_SPEED, dt, true);
+    }
 
-    if (bossDeadEnraged || (targetReloading && dist < 26 && !inCar) || targetFleeing || b.role === 'goon_assault') {
-      // Aggressive push (guard avenging dead boss, assault goon breaching, or pushing reloading/fleeing target)
-      const rushSpd = bossDeadEnraged ? 4.35 : 3.95;
-      if (dist > 4.5 || !hasLOS) {
-        moveSpeed = this.navigateToward(b, tx, goalFootY, tz, rushSpd, dt, false);
-      } else {
-        this.resetAntiStuck(b);
-      }
-    } else if (!b.hasFireToken && hasLOS && dist < 34) {
-      // Squadmates without an active aimed fire token flank laterally for crossfire instead of bunching behind shooters.
-      const flankSpd = 2.6;
+    if (boss && !boss.isDead && !bossDamaged && Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z) > 7.5) {
+      b.moveMode = 'sprint';
+      b.aiming = 0;
+      b.crouching = false;
+      return this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, BOT_SPRINT_SPEED, dt, true);
+    }
+
+    turnToTarget();
+    let moveSpeed = 0;
+    if (dist < 6.0 && hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
+      b.moveMode = 'aim_walk';
+      this.moveOrOpenDoor(b, -nx, -nz, BOT_ADS_SPEED, dt);
+      this.trackAntiStuck(b, -nx, -nz, BOT_ADS_SPEED, dt);
+      moveSpeed = BOT_ADS_SPEED;
+    } else if (!b.hasFireToken || b.burstPause > 0 || bossDamaged) {
+      b.moveMode = 'aim_walk';
       const sx = -nz * b.flankSign;
       const sz = nx * b.flankSign;
-      this.moveOrOpenDoor(b, sx, sz, flankSpd, dt);
-      this.trackAntiStuck(b, sx, sz, flankSpd, dt);
-      moveSpeed = flankSpd;
-    } else if (boss && !boss.isDead && !bossDamaged && Math.hypot(boss.pos.x - b.pos.x, boss.pos.z - b.pos.z) > 7.5) {
-      // Guard stays in perimeter around living boss
-      moveSpeed = this.navigateToward(b, boss.pos.x, boss.pos.y, boss.pos.z, 3.2, dt, false);
-    } else if (!hasLOS || dist > (b.faction === 'black' || b.role === 'boss' ? 22 : 18)) {
-      // Pathfind around walls/windows through open or closed doors instead of grinding into obstacles
-      const spd = dist > 18 ? 3.7 : 2.95;
-      moveSpeed = this.navigateToward(b, tx, goalFootY, tz, spd, dt, false);
-    } else if (dist < 7.5) {
-      if (hasWalkableLine(this.w, b.pos.x, b.pos.y, b.pos.z, b.pos.x - nx * 1.4, b.pos.y, b.pos.z - nz * 1.4, b.blockedSpots)) {
-        this.moveOrOpenDoor(b, -nx, -nz, 2.2, dt);
-        this.trackAntiStuck(b, -nx, -nz, 2.2, dt);
-        moveSpeed = 2.2;
-      } else {
-        this.resetAntiStuck(b);
-      }
-    } else if (b.burstPause > 0 || bossDamaged || b.faction === 'black' || b.faction === 'bear' || b.faction === 'usec') {
-      // Tactical sidestep / peek-strafe between bursts
-      const strafeSpd = bossDamaged ? 2.4 : 1.65;
-      const sx = -nz * b.flankSign;
-      const sz = nx * b.flankSign;
-      this.moveOrOpenDoor(b, sx, sz, strafeSpd, dt);
-      this.trackAntiStuck(b, sx, sz, strafeSpd, dt);
-      moveSpeed = strafeSpd;
+      this.moveOrOpenDoor(b, sx, sz, BOT_ADS_SPEED, dt);
+      this.trackAntiStuck(b, sx, sz, BOT_ADS_SPEED, dt);
+      moveSpeed = BOT_ADS_SPEED;
     } else {
+      b.moveMode = 'idle';
       this.resetAntiStuck(b);
     }
 
-    if (hasLOS && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
-      // Non-token members still lay suppressive bursts (with wider spread), never exceeding 2 simultaneous aimed shooters per squad.
-      this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, !b.hasFireToken);
+    b.aiming = b.adsRaiseT <= 0 ? 1 : 0.35;
+    if (hasLOS && b.adsRaiseT <= 0 && b.fireCd <= 0 && b.reloadT <= 0 && b.healT <= 0 && b.burstPause <= 0 && dist < 40) {
+      this.shootAt(b, tx, ty, tz, targetIsPlayer, inCar, targetBot, !b.hasFireToken, playerCrouched);
     }
     return moveSpeed;
   }
 
-  /** Find nearest unreserved solid cover point (behind a wall/car >=0.85m tall, ignoring glass) that breaks LOS to threat. */
-  private findCoverNear(b: Bandit, tx: number, ty: number, tz: number): { x: number; z: number } | null {
+  /**
+   * Find nearest unreserved solid cover point (car, building corner, concrete wall, barricade >= 0.85 m tall, ignoring glass)
+   * that breaks LOS to threat and offers a walkable low stand-up or lateral corner peek line of sight.
+   */
+  private findCoverNear(
+    b: Bandit,
+    tx: number,
+    ty: number,
+    tz: number,
+    searchRadius = 15,
+    preferCloser = false,
+  ): { x: number; z: number; peekX: number; peekZ: number; height: number } | null {
     const boxes = this.coverBoxCache;
     boxes.length = 0;
-    this.w.boxesNear(b.pos.x, b.pos.z, 9.5, boxes);
-    let best: { x: number; z: number; key: string } | null = null;
+    this.w.boxesNear(b.pos.x, b.pos.z, searchRadius, boxes);
+    let best: { x: number; z: number; peekX: number; peekZ: number; height: number; key: string } | null = null;
     let bestScore = Infinity;
+    const playerCurDist = Math.hypot(b.pos.x - tx, b.pos.z - tz);
 
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
-      if (box.glass || box.maxY - box.minY < 0.85 || box.minY > b.pos.y + 1.2 || box.maxY < b.pos.y + 0.9) continue;
+      if (box.glass) continue;
+      const boxH = box.maxY - b.pos.y;
+      if (box.maxY - box.minY < 0.85 || box.minY > b.pos.y + 1.2 || boxH < 0.88) continue;
       const w = box.maxX - box.minX;
       const d = box.maxZ - box.minZ;
-      if (w < 0.45 && d < 0.45) continue;
+      if (Math.max(w, d) < 0.45 || Math.min(w, d) < 0.18) continue;
+      if (Math.max(w, d) > 32) continue;
 
       const cx = (box.minX + box.maxX) * 0.5;
       const cz = (box.minZ + box.maxZ) * 0.5;
+      const hx = w * 0.5;
+      const hz = d * 0.5;
       const awayX = cx - tx;
       const awayZ = cz - tz;
       const len = Math.hypot(awayX, awayZ) || 1;
-      const spotX = cx + (awayX / len) * (Math.max(w, d) * 0.5 + 0.65);
-      const spotZ = cz + (awayZ / len) * (Math.max(w, d) * 0.5 + 0.65);
+      const ax = awayX / len;
+      const az = awayZ / len;
+      const edgeDist = Math.min(hx / Math.max(0.15, Math.abs(ax)), hz / Math.max(0.15, Math.abs(az)));
+      const baseX = cx + ax * (edgeDist + 0.64);
+      const baseZ = cz + az * (edgeDist + 0.64);
+      const lowCover = boxH <= 1.42;
 
-      const moveDist = Math.hypot(spotX - b.pos.x, spotZ - b.pos.z);
-      if (moveDist > 9.5 || moveDist < 0.5) continue;
-      if (Math.abs(this.w.groundY(spotX, spotZ, b.pos.y) - b.pos.y) > 0.65) continue;
-      const cKey = `${Math.round(spotX * 0.5)},${Math.round(b.pos.y / 2)},${Math.round(spotZ * 0.5)}`;
-      const claimer = this.coverClaims.get(cKey);
-      if (claimer !== undefined && claimer !== b.id) continue;
-      let crowded = false;
-      for (const ally of this.list) {
-        if (ally === b || ally.state === 'dead' || areFactionsHostile(b.faction, ally.faction)) continue;
-        if (Math.hypot(ally.pos.x - spotX, ally.pos.z - spotZ) < 3.0) {
-          crowded = true;
-          break;
+      const cands: { x: number; z: number; px: number; pz: number }[] = [{ x: baseX, z: baseZ, px: baseX, pz: baseZ }];
+      if (!lowCover) {
+        const cornerList: [number, number][] = [
+          [box.minX, box.minZ],
+          [box.maxX, box.minZ],
+          [box.minX, box.maxZ],
+          [box.maxX, box.maxZ],
+        ];
+        for (const [kx, kz] of cornerList) {
+          const toCenterX = cx - kx;
+          const toCenterZ = cz - kz;
+          const cl = Math.hypot(toCenterX, toCenterZ) || 1;
+          // Tuck slightly behind corner face away from threat, peek laterally outside edge
+          const dirToThreatX = tx - kx;
+          const dirToThreatZ = tz - kz;
+          const tl = Math.hypot(dirToThreatX, dirToThreatZ) || 1;
+          const tnx = dirToThreatX / tl;
+          const tnz = dirToThreatZ / tl;
+          const outX = kx < cx ? -1 : 1;
+          const outZ = kz < cz ? -1 : 1;
+          const sx = kx - tnx * 0.68 + (toCenterX / cl) * 0.38;
+          const sz = kz - tnz * 0.68 + (toCenterZ / cl) * 0.38;
+          const pkX = kx + outX * 0.72 - tnx * 0.28;
+          const pkZ = kz + outZ * 0.72 - tnz * 0.28;
+          cands.push({ x: sx, z: sz, px: pkX, pz: pkZ });
         }
       }
-      if (crowded) continue;
-      if (this.hasLineOfSight(spotX, b.pos.y + 1.35, spotZ, tx, ty, tz)) continue;
 
-      if (moveDist < bestScore) {
-        bestScore = moveDist;
-        best = { x: spotX, z: spotZ, key: cKey };
+      for (const cand of cands) {
+        const moveDist = Math.hypot(cand.x - b.pos.x, cand.z - b.pos.z);
+        if (moveDist > searchRadius || moveDist < 0.45) continue;
+        const candY = this.w.groundY(cand.x, cand.z, b.pos.y);
+        if (Math.abs(candY - b.pos.y) > 0.7) continue;
+
+        _v3.set(cand.x, candY, cand.z);
+        this.w.resolveCircle(_v3, 0.36);
+        if (Math.hypot(_v3.x - cand.x, _v3.z - cand.z) > 0.14) continue;
+
+        const threatDist = Math.hypot(cand.x - tx, cand.z - tz);
+        if (threatDist < 4.0) continue;
+
+        // Never pick cover whose approach runs straight through or past the enemy
+        const vbx = cand.x - b.pos.x;
+        const vbz = cand.z - b.pos.z;
+        const vlen2 = vbx * vbx + vbz * vbz || 1;
+        const tProj = Math.max(0, Math.min(1, ((tx - b.pos.x) * vbx + (tz - b.pos.z) * vbz) / vlen2));
+        const closestThreatD = Math.hypot(b.pos.x + vbx * tProj - tx, b.pos.z + vbz * tProj - tz);
+        if (closestThreatD < Math.min(3.6, playerCurDist - 0.4)) continue;
+
+        const cKey = `${Math.round(cand.x * 0.5)},${Math.round(b.pos.y / 2)},${Math.round(cand.z * 0.5)}`;
+        const claimer = this.coverClaims.get(cKey);
+        if (claimer !== undefined && claimer !== b.id) continue;
+
+        let crowded = false;
+        for (const ally of this.list) {
+          if (ally === b || ally.state === 'dead' || areFactionsHostile(b.faction, ally.faction)) continue;
+          if (Math.hypot(ally.pos.x - cand.x, ally.pos.z - cand.z) < 2.8) {
+            crowded = true;
+            break;
+          }
+        }
+        if (crowded) continue;
+
+        const hideEye = candY + (lowCover ? 0.92 : 1.35);
+        if (this.hasLineOfSight(cand.x, hideEye, cand.z, tx, ty, tz)) continue;
+
+        let canPeek = false;
+        if (lowCover) {
+          canPeek = this.hasLineOfSight(cand.x, candY + 1.48, cand.z, tx, ty, tz);
+        } else {
+          const pkY = this.w.groundY(cand.px, cand.pz, candY);
+          if (
+            Math.abs(pkY - candY) <= 0.5 &&
+            hasWalkableLine(this.w, cand.x, candY, cand.z, cand.px, pkY, cand.pz, b.blockedSpots) &&
+            this.hasLineOfSight(cand.px, pkY + 1.42, cand.pz, tx, ty, tz)
+          ) {
+            canPeek = true;
+          }
+        }
+        if (!canPeek && b.reloadT <= 0 && b.healT <= 0) continue;
+
+        let score = moveDist;
+        if (preferCloser) {
+          const delta = playerCurDist - threatDist;
+          score = moveDist - Math.max(-4, Math.min(14, delta)) * 1.15;
+        }
+        if (score < bestScore) {
+          bestScore = score;
+          best = { x: cand.x, z: cand.z, peekX: cand.px, peekZ: cand.pz, height: boxH, key: cKey };
+        }
       }
     }
     if (best) {
       this.releaseCover(b);
       b.coverKey = best.key;
       this.coverClaims.set(best.key, b.id);
-      return { x: best.x, z: best.z };
+      return { x: best.x, z: best.z, peekX: best.peekX, peekZ: best.peekZ, height: best.height };
     }
     return null;
   }
@@ -1925,6 +2379,19 @@ export class Bandits {
       coverZ: rz,
       coverT: 0,
       coverKey: null,
+      coverHeight: 1.5,
+      peekX: rx,
+      peekZ: rz,
+      peeksDone: 0,
+      moveMode: 'idle',
+      adsRaiseT: 0,
+      actualSpeed: 0,
+      tacticState: 'NONE',
+      tacticTimer: 0,
+      reloadPushGoalX: rx,
+      reloadPushGoalZ: rz,
+      reloadPushT: 0,
+      sprintBobPhase: Math.random() * Math.PI * 2,
       grenadeCd: role === 'goon_assault' ? 2.5 : 99,
       hasFireToken: true,
       flankSign: Math.random() < 0.5 ? -1 : 1,
@@ -2127,9 +2594,9 @@ export class Bandits {
 
     b.crouchBlend += ((b.crouching ? 1 : 0) - b.crouchBlend) * (1 - Math.exp(-dt * 9));
     const standW = Math.max(0, 1 - b.crouchBlend);
-    const targetIdle = (speed < 0.25 ? 1 : 0) * standW;
-    const targetRun = (speed > 3.2 ? 1 : 0) * standW;
-    const targetWalk = (speed >= 0.25 && speed <= 3.2 ? 1 : 0) * standW;
+    const targetIdle = (speed < 0.18 ? 1 : 0) * standW;
+    const targetRun = (speed > 2.6 ? 1 : 0) * standW;
+    const targetWalk = (speed >= 0.18 && speed <= 2.6 ? 1 : 0) * standW;
     const targetCrouch = b.crouchBlend;
 
     const k = 1 - Math.exp(-dt * 9);
@@ -2142,15 +2609,15 @@ export class Bandits {
     v.gaits.walk.setEffectiveWeight(v.weights.walk);
     v.gaits.run.setEffectiveWeight(v.weights.run);
     v.gaits.crouch.setEffectiveWeight(v.weights.crouch);
-    v.gaits.walk.setEffectiveTimeScale(speed > 0.25 ? Math.max(0.75, speed / 1.8) : 1);
-    v.gaits.run.setEffectiveTimeScale(speed > 3.2 ? Math.max(0.85, speed / 4.2) : 1);
-    v.gaits.crouch.setEffectiveTimeScale(speed > 0.2 ? Math.max(0.7, speed / 1.2) : 0);
+    v.gaits.walk.setEffectiveTimeScale(speed > 0.18 ? Math.max(0.42, speed / 1.8) : 1);
+    v.gaits.run.setEffectiveTimeScale(speed > 2.6 ? Math.max(0.82, speed / 4.2) : 1);
+    v.gaits.crouch.setEffectiveTimeScale(speed > 0.16 ? Math.max(0.65, speed / 1.2) : 0);
 
     v.rig.mixer.update(dt);
 
-    // Blend aim weight smoothly (gun bots hold at least 0.72 low-ready so arms NEVER droop in zombie pose).
-    const wantAim = b.aiming > 0.05 ? 1 : b.isGun ? 0.72 : 0;
-    b.aimBlend += (wantAim - b.aimBlend) * (1 - Math.exp(-dt * 9));
+    // Blend aim weight smoothly: sprint keeps gun lowered in low-ready (0.66), aim_walk/idle raises into ADS (1.0).
+    const wantAim = b.moveMode === 'sprint' ? 0.66 : b.aiming > 0.05 ? 1 : b.isGun ? 0.72 : 0;
+    b.aimBlend += (wantAim - b.aimBlend) * (1 - Math.exp(-dt * 11));
 
     // Pose right & left finger curls.
     const hr = handFrame(v.rig.rig, 'R');
@@ -2196,11 +2663,14 @@ export class Bandits {
     const isLong = GUNS[gid].cls === 'long';
     const sc = v.scale;
     const blend = Math.min(1, b.aimBlend);
-    const activeAim = b.aiming > 0.05 ? 1 : 0;
-    const combatPitch = (b.aimPitch + b.recoilKick * 0.16) * activeAim + -0.38 * (1 - activeAim);
+    const sprinting = b.moveMode === 'sprint';
+    const activeAim = sprinting ? 0 : Math.min(1, Math.max(0, (b.aiming - 0.15) / 0.85));
+    const sprintPump = sprinting ? Math.sin(b.sprintBobPhase) * 0.045 : 0;
+    const lowPitch = sprinting ? -0.54 : -0.38;
+    const combatPitch = (b.aimPitch + b.recoilKick * 0.16) * activeAim + lowPitch * (1 - activeAim) + sprintPump;
 
     // 1. Torso bladed combat twist (~17 deg around +Y, counter-twisted on Neck/Head to keep eyes locked on target).
-    const twistRad = 0.30 * blend;
+    const twistRad = (sprinting ? 0.14 : 0.30) * blend;
     r.bone('Spine').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.34));
     r.bone('Spine1').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.36));
     r.bone('Spine2').quaternion.multiply(_q.setFromAxisAngle(_up, twistRad * 0.30));
@@ -2219,8 +2689,8 @@ export class Bandits {
     // 2. Shoulder-pocket / chest weapon target anchored to RightArm shoulder
     const shoulderR = r.bone('RightArm').getWorldPosition(_pShR);
     const fwdDist = (isLong ? 0.27 : 0.36) * sc;
-    const inwardDist = (isLong ? 0.075 : 0.115) * sc;
-    const dropDist = (isLong ? 0.065 : 0.04) * sc + (1 - activeAim) * 0.10 * sc;
+    const inwardDist = (isLong ? 0.075 : 0.115) * sc + sprintPump * 0.25 * sc;
+    const dropDist = (isLong ? 0.065 : 0.04) * sc + (1 - activeAim) * (sprinting ? 0.145 : 0.10) * sc;
 
     _gripR
       .copy(shoulderR)
@@ -2338,8 +2808,9 @@ export class Bandits {
   private becomeRagdoll(b: Bandit, fromX: number, fromZ: number): void {
     const v = b.visual;
     if (!v) {
+      const gy = this.w.groundY(b.pos.x, b.pos.z, b.pos.y);
       b.root.rotation.set(-Math.PI / 2, b.yaw, 0);
-      b.root.position.set(b.pos.x, b.pos.y + 0.14, b.pos.z);
+      b.root.position.set(b.pos.x, gy + 0.05, b.pos.z);
       return;
     }
 
@@ -2364,7 +2835,17 @@ export class Bandits {
     const boxes: NavBox[] = [];
     this.w.boxesNear(b.pos.x, b.pos.z, 1.8, boxes);
     const killer = new Vector3(fromX, b.pos.y, fromZ);
-    const rd = playerRagdoll(b.pos, b.yaw + Math.PI, v.scale, b.vel, killer, boxes, Math.random, st.shape);
+    const rd = playerRagdoll(
+      b.pos,
+      b.yaw + Math.PI,
+      v.scale,
+      b.vel,
+      killer,
+      boxes,
+      Math.random,
+      st.shape,
+      (gx, gz, gy) => this.w.groundY(gx, gz, gy),
+    );
     const pose = new RagdollPose(v.body, 1, rig.rig, world, rd, v.scale);
     this.w.addRagdoll(rd);
     b.ragdoll = rd;
@@ -2417,9 +2898,15 @@ export class Bandits {
     const len = _v1.length();
     if (len < 0.1) return true;
     _v1.divideScalar(len);
-    // Window glass is transparent for sight; solid walls/ceilings/closed doors still block LOS.
+    // Opaque walls, slabs, closed wood/lab doors, and vehicles block LOS.
     const hit = this.w.rayHit(ox, oy, oz, _v1.x, _v1.y, _v1.z, len, true);
-    return hit < 0 || hit >= len - 0.05;
+    if (hit >= 0 && hit < len - 0.04) return false;
+    // Closed doors of ANY style (including intact glass entrance doors) also block LOS; window glass panes stay see-through.
+    if (this.w.rayHitDetail) {
+      const solid = this.w.rayHitDetail(ox, oy, oz, _v1.x, _v1.y, _v1.z, len, false);
+      if (solid && solid.door && solid.t < len - 0.04) return false;
+    }
+    return true;
   }
 
   private findNearestZombie(b: Bandit, radius: number) {
@@ -2442,12 +2929,32 @@ export class Bandits {
     return best;
   }
 
-  private shootAt(b: Bandit, tx: number, ty: number, tz: number, targetIsPlayer: boolean, inCar = false, targetBot: Bandit | null = null, suppressive = false): void {
+  private shootAt(
+    b: Bandit,
+    tx: number,
+    ty: number,
+    tz: number,
+    targetIsPlayer: boolean,
+    inCar = false,
+    targetBot: Bandit | null = null,
+    suppressive = false,
+    playerCrouched = false,
+  ): void {
+    // Hard physical rule: never shoot in sprint, while raising weapon into ADS, or moving faster than tactical ADS walk.
+    if (b.moveMode === 'sprint' || b.adsRaiseT > 0 || b.aiming < 0.45 || b.actualSpeed > BOT_ADS_SPEED + 0.25) return;
+
     const gId = b.weapon as BanditGunId;
     const g = GUNS[gId];
-    const ox = b.pos.x;
     const oy = b.pos.y + (b.crouching ? 1.02 : 1.42);
-    const oz = b.pos.z;
+    const dirX = Math.sin(b.yaw);
+    const dirZ = Math.cos(b.yaw);
+    // Abort shot if wall/door presses right up against the barrel (cannot poke muzzle through walls/doors).
+    const approxDist = Math.hypot(tx - b.pos.x, tz - b.pos.z);
+    const muzzleAdv = Math.min(0.32, Math.max(0.05, approxDist * 0.35));
+    const muzzleProbe = this.w.rayHit(b.pos.x, oy, b.pos.z, dirX, 0, dirZ, 0.36, false);
+    if (muzzleProbe >= 0 && muzzleProbe < muzzleAdv + 0.02) return;
+    const ox = b.pos.x + dirX * muzzleAdv;
+    const oz = b.pos.z + dirZ * muzzleAdv;
 
     const rawAimX = b.aimPosInit ? b.aimPos.x : tx;
     const rawAimY = (b.aimPosInit ? b.aimPos.y : ty) + (b.aimShots < 2 ? -0.14 : 0);
@@ -2455,6 +2962,8 @@ export class Bandits {
 
     // Never fire sideways: barrel yaw must align within +/-11 deg of target before trigger pull
     if (!this.canFireAtAngle(b, tx, tz) || !this.canFireAtAngle(b, rawAimX, rawAimZ)) return;
+    // Strict LOS check to both actual target and lagged aim point so stale aim never wallbangs
+    if (!this.hasLineOfSight(b.pos.x, oy, b.pos.z, tx, ty, tz)) return;
     if (!this.hasLineOfSight(ox, oy, oz, rawAimX, rawAimY, rawAimZ)) return;
 
     _to.set(rawAimX - ox, rawAimY - oy, rawAimZ - oz);
@@ -2498,10 +3007,13 @@ export class Bandits {
     _to.normalize();
 
     const maxRange = b.role === 'goon_marksman' || b.spawnKind === 'sniper' ? 92 : 48;
-    const solidWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, false);
+    const solidDetail = this.w.rayHitDetail?.(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, false) ?? null;
+    const solidWall = solidDetail ? solidDetail.t : this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, false);
     const opaqueWall = this.w.rayHit(ox, oy, oz, _to.x, _to.y, _to.z, maxRange, true);
-    const shotGlass = solidWall >= 0 && (opaqueWall < 0 || solidWall < opaqueWall - 0.04);
-    const maxTrace = opaqueWall >= 0 ? opaqueWall : maxRange;
+    const doorBlocked = !!solidDetail && solidDetail.door && solidDetail.t >= 0;
+    const shotGlass = !doorBlocked && solidWall >= 0 && (opaqueWall < 0 || solidWall < opaqueWall - 0.04);
+    let maxTrace = opaqueWall >= 0 ? opaqueWall : maxRange;
+    if (doorBlocked) maxTrace = Math.min(maxTrace, solidDetail!.t);
 
     let hitDist = maxTrace;
     let entityHitDist = Infinity;
@@ -2525,14 +3037,21 @@ export class Bandits {
       if (proj > 0 && proj < maxTrace - 0.04) {
         const d2 = ex * ex + ey * ey + ez * ez - proj * proj;
         if (d2 < 0.36 * 0.36) {
-          hitDist = proj;
-          entityHitDist = proj;
+          const hitX = ox + _to.x * proj;
           const hitY = oy + _to.y * proj;
-          const playerFeetY = ty - (inCar ? 1.05 : 1.38);
-          const relY = hitY - playerFeetY;
-          const hitZone: HitZone = relY >= 1.44 ? 'head' : relY >= 0.78 ? 'torso' : 'limbs';
-          const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24) * (shotGlass && proj > solidWall ? 0.85 : 1);
-          this.w.hurtPlayer(Math.max(6, Math.min(26, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
+          const hitZ = oz + _to.z * proj;
+          if (this.hasLineOfSight(ox, oy, oz, px, hitY, pz) && this.hasLineOfSight(hitX, hitY, hitZ, px, hitY, pz)) {
+            hitDist = proj;
+            entityHitDist = proj;
+            const centerOff = inCar ? 1.05 : playerCrouched ? 0.92 : 1.38;
+            const playerFeetY = ty - centerOff;
+            const relY = hitY - playerFeetY;
+            const headCut = playerCrouched ? 0.98 : 1.44;
+            const torsoCut = playerCrouched ? 0.52 : 0.78;
+            const hitZone: HitZone = relY >= headCut ? 'head' : relY >= torsoCut ? 'torso' : 'limbs';
+            const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24) * (shotGlass && proj > solidWall ? 0.85 : 1);
+            this.w.hurtPlayer(Math.max(6, Math.min(26, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
+          }
         }
       }
     } else {
@@ -2547,6 +3066,13 @@ export class Bandits {
 
     if (shotGlass && solidWall <= entityHitDist + 0.05) {
       this.w.onBreakGlass?.(new Vector3(ox + _to.x * solidWall, oy + _to.y * solidWall, oz + _to.z * solidWall), _to.clone());
+      // Finish the firing burst through the freshly shattered window before displacing into cover.
+      if (b.tacticState === 'NONE') {
+        b.tacticState = 'PEEK_AND_SHOOT';
+        b.tacticTimer = 1.1;
+        b.peekX = b.pos.x;
+        b.peekZ = b.pos.z;
+      }
     }
 
     const muzzleOff = Math.min(0.32, hitDist * 0.4);

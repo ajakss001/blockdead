@@ -111,6 +111,33 @@ export class Particles {
     this.vel.set([vx + (Math.random() - 0.5) * 0.3, 0.5 + Math.random() * 0.3, vz + (Math.random() - 0.5) * 0.3], i * 3);
   }
 
+  /** Compact low-opacity gunsmoke puff that clears quickly ahead of the muzzle without blocking ADS. */
+  muzzleSmoke(x: number, y: number, z: number, dx = 0, dy = 0, dz = 0): void {
+    const shade = 0.62 + Math.random() * 0.08;
+    const i = this.take(
+      KIND.puff,
+      x + (Math.random() - 0.5) * 0.03,
+      y + (Math.random() - 0.5) * 0.03,
+      z + (Math.random() - 0.5) * 0.03,
+      0.25 + Math.random() * 0.13,
+      0.042 + Math.random() * 0.014,
+      0,
+      0.14 + Math.random() * 0.06,
+      shade,
+      shade,
+      shade * 1.02,
+    );
+    this.size1[i] = 0.14 + Math.random() * 0.07;
+    this.vel.set(
+      [
+        dx * 0.55 + (Math.random() - 0.5) * 0.18,
+        dy * 0.35 + 0.18 + Math.random() * 0.12,
+        dz * 0.55 + (Math.random() - 0.5) * 0.18,
+      ],
+      i * 3,
+    );
+  }
+
   /** A puff of smoke rising off a fire, spreading and thinning; now and then a spark. */
   smoke(x: number, y: number, z: number): void {
     const d = 0.1 + Math.random() * 0.1;

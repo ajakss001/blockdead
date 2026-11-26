@@ -1,11 +1,17 @@
 import './domStub';
 import { Quaternion, Scene, Vector3 } from 'three';
 import { StaticBatch } from '../render/StaticBatch';
+import { Particles } from '../render/Particles';
+import { bodyParts, PARTS, type Ragdoll } from '../physics/ragdoll';
+import { stand } from '../characters/rig';
 import { applyZonalArmor } from '../systems/Armor';
 import {
   angleDiff,
   areFactionsHostile,
   BANDIT_BODY_ID,
+  BOT_ADS_RAISE_MAX,
+  BOT_ADS_RAISE_MIN,
+  BOT_ADS_SPEED,
   type Bandit,
   Bandits,
   type BanditWorld,
@@ -44,24 +50,30 @@ interface SpawnFn {
 export async function main(): Promise<number> {
   await loadCharactersNode();
 
-  const createHarness = (doors?: Doors, world = new CollisionWorld(), scene = new Scene()) => {
+  const createHarness = (
+    doors?: Doors,
+    world = new CollisionWorld(),
+    scene = new Scene(),
+    groundFn?: (x: number, z: number, y?: number) => number,
+  ) => {
     const zWorld: ZombieWorld = {
-      groundY: () => 0,
+      groundY: groundFn ?? (() => 0),
       resolveCircle: (p, r) => world.resolveCircle(p, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max) => world.rayHit(ox, oy, oz, dx, dy, dz, max),
     };
     const zombies = new ZombieSim(zWorld, 0);
     const containers = new Containers(1993);
-    const ragdolls: unknown[] = [];
+    const ragdolls: Ragdoll[] = [];
     const lootedDrops: number[] = [];
     let playerDmg = 0;
     let glassBreaks = 0;
 
     const bWorld: BanditWorld = {
       scene,
-      groundY: (_x, _z, y = 0) => Math.max(0, Math.floor((y + 0.1) / FLOOR_H) * FLOOR_H),
+      groundY: groundFn ?? ((_x, _z, y = 0) => Math.max(0, Math.floor((y + 0.1) / FLOOR_H) * FLOOR_H)),
       resolveCircle: (pos, r) => world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
+      rayHitDetail: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => world.rayHitDetail(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
       boxesNear: (x, z, r, out) => world.boxesNear(x, z, r, (b) => out.push(b)),
       buildingsNear: () => [],
       doorsNear: doors ? (x, y, z, r) => doors.doorsNear(x, y, z, r) : undefined,
@@ -107,6 +119,7 @@ export async function main(): Promise<number> {
       containers,
       zombies,
       bandits,
+      ragdolls,
       spawn: (bandits as unknown as SpawnFn),
       lootedDrops,
       get playerDmg() { return playerDmg; },
@@ -643,6 +656,209 @@ export async function main(): Promise<number> {
     h.bandits.dispose();
   }
 
-  console.log('[banditTest] ALL 18 SUITES PASSED (walls/doors, factions, bosses, 2-bone IK, nav, glass, anti-stuck, turn/FOV/lock/warm-up).');
+  // 19) Strict sprint/ADS lockout: weapon lowered & 0 shots during sprint, 0.25-0.35s ADS raise after sprint, and <= BOT_ADS_SPEED while shooting.
+  {
+    const h = createHarness();
+    const bot = h.spawn.spawnBot(0, 0, 28, 'bear', 'street', 'rifle_ak', true);
+    bot.yaw = Math.PI;
+    bot.patrolYaw = Math.PI;
+    bot.state = 'combat';
+    bot.reactT = 0;
+    bot.fireCd = 0;
+
+    let sawSprint = false;
+    let sawPostSprintRaise = false;
+    let shotsFired = 0;
+    let prevAmmo = bot.ammoInMag;
+    let prevMode = bot.moveMode;
+
+    for (let i = 0; i < 300; i++) {
+      h.bandits.update(1 / 60, 0, 0, 0, false, false);
+      if (bot.moveMode === 'sprint') {
+        sawSprint = true;
+        assert(bot.aiming === 0, `Bot kept weapon raised in ADS during sprint (aiming=${bot.aiming.toFixed(2)})`);
+        assert(bot.ammoInMag === prevAmmo, 'Bot fired while sprinting');
+      }
+      if (prevMode === 'sprint' && bot.moveMode !== 'sprint') {
+        assert(
+          bot.adsRaiseT >= BOT_ADS_RAISE_MIN - 0.03 && bot.adsRaiseT <= BOT_ADS_RAISE_MAX + 0.03,
+          `Post-sprint ADS raise delay out of [0.25,0.35]s: ${bot.adsRaiseT.toFixed(3)}`,
+        );
+      }
+      if (bot.adsRaiseT > 0.02) {
+        sawPostSprintRaise = true;
+        assert(bot.ammoInMag === prevAmmo, `Bot fired during ADS raise delay (adsRaiseT=${bot.adsRaiseT.toFixed(3)})`);
+      }
+      if (bot.ammoInMag < prevAmmo) {
+        shotsFired += prevAmmo - bot.ammoInMag;
+        assert(
+          bot.actualSpeed <= BOT_ADS_SPEED + 0.18 && bot.moveMode !== 'sprint',
+          `Bot shot at non-ADS speed (${bot.actualSpeed.toFixed(2)} m/s, mode=${bot.moveMode})`,
+        );
+      }
+      prevAmmo = bot.ammoInMag;
+      prevMode = bot.moveMode;
+    }
+    assert(sawSprint, 'Bot failed to sprint when closing from 28 m');
+    assert(sawPostSprintRaise, 'Bot skipped post-sprint ADS raise lockout');
+    assert(shotsFired >= 2, `Bot failed to fire after stopping sprint (shotsFired=${shotsFired})`);
+    h.bandits.dispose();
+  }
+
+  // 20) Cover-to-cover tactical loop: SEEK_COVER -> IN_COVER -> PEEK_AND_SHOOT -> RETREAT_OR_FLANK.
+  {
+    const h = createHarness();
+    // Low vehicle/barrier cover between bot at (2, 0, 2.5) and player at (0, 0, 15.0)
+    h.world.addBox(-1.5, 5.2, 1.5, 6.2, 0, 1.15);
+    const bot = h.spawn.spawnBot(2.2, 0, 2.5, 'usec', 'street', 'rifle_m4a1', true);
+    bot.yaw = 0;
+    bot.patrolYaw = 0;
+    bot.reactT = 0;
+    bot.fireCd = 0;
+
+    const visited = new Set<string>();
+    let peekShots = 0;
+    let prevAmmo = bot.ammoInMag;
+    for (let i = 0; i < 420; i++) {
+      h.bandits.update(1 / 60, 0, 0, 15.0, false, false);
+      visited.add(bot.tacticState);
+      if (bot.tacticState === 'IN_COVER') {
+        assert(bot.crouching === true, 'Bot failed to crouch while IN_COVER');
+        assert(bot.ammoInMag === prevAmmo, 'Bot fired blindly while crouching IN_COVER');
+      }
+      if (bot.ammoInMag < prevAmmo) {
+        assert(bot.tacticState === 'PEEK_AND_SHOOT', `Cover bot fired outside PEEK_AND_SHOOT (${bot.tacticState})`);
+        peekShots += prevAmmo - bot.ammoInMag;
+      }
+      prevAmmo = bot.ammoInMag;
+    }
+    assert(visited.has('SEEK_COVER'), `Never visited SEEK_COVER (visited=[${[...visited].join(',')}])`);
+    assert(visited.has('IN_COVER'), `Never visited IN_COVER (visited=[${[...visited].join(',')}])`);
+    assert(visited.has('PEEK_AND_SHOOT'), `Never visited PEEK_AND_SHOOT (visited=[${[...visited].join(',')}])`);
+    assert(visited.has('RETREAT_OR_FLANK'), `Never visited RETREAT_OR_FLANK (visited=[${[...visited].join(',')}])`);
+    assert(peekShots >= 3, `Bot failed to fire peek burst from cover (peekShots=${peekShots})`);
+    h.bandits.dispose();
+  }
+
+  // 21) Player reload trigger: 1-2 closest/assault bots enter PUSH_RELOAD sprint, close distance, raise gun, and open fire.
+  {
+    const h = createHarness();
+    const assault = h.spawn.spawnBot(0, 0, 17, 'black', 'boss', 'rifle_m4a1', true, [], { role: 'goon_assault', squadId: 77 });
+    const raider = h.spawn.spawnBot(4, 0, 18, 'black', 'street', 'rifle_ak', true, [], { role: 'regular', squadId: 77 });
+    const marksman = h.spawn.spawnBot(-5, 0, 22, 'black', 'boss', 'rifle_hunting', true, [], { role: 'goon_marksman', squadId: 77 });
+    assault.yaw = Math.PI;
+    raider.yaw = Math.PI;
+    marksman.yaw = Math.PI;
+    const startDist = assault.pos.distanceTo(new Vector3(0, 0, 0));
+
+    h.bandits.onPlayerReloading(new Vector3(0, 0, 0));
+    assert(assault.tacticState === 'PUSH_RELOAD' && assault.moveMode === 'sprint' && assault.aiming === 0, 'Assault goon did not initiate PUSH_RELOAD sprint');
+    assert(raider.tacticState === 'PUSH_RELOAD' && raider.moveMode === 'sprint', 'Second close gunner did not join reload push');
+    assert(marksman.tacticState !== 'PUSH_RELOAD', 'Marksman abandoned sniper overwatch during reload push');
+
+    let prevAmmo = assault.ammoInMag;
+    let shotsAfterStop = 0;
+    for (let i = 0; i < 240; i++) {
+      h.bandits.update(1 / 60, 0, 0, 0, false, false);
+      if (assault.moveMode === 'sprint') {
+        assert(assault.ammoInMag === prevAmmo, 'Assault rusher fired while sprinting during PUSH_RELOAD');
+      } else if (assault.ammoInMag < prevAmmo) {
+        shotsAfterStop += prevAmmo - assault.ammoInMag;
+      }
+      prevAmmo = assault.ammoInMag;
+    }
+    const endDist = assault.pos.distanceTo(new Vector3(0, 0, 0));
+    assert(endDist <= startDist - 6.0, `Reload pusher failed to close 8-15m toward player (${startDist.toFixed(1)} -> ${endDist.toFixed(1)})`);
+    assert(shotsAfterStop >= 1, 'Reload pusher failed to open fire after stopping sprint & raising weapon');
+    h.bandits.dispose();
+  }
+
+  // 22) Closed glass doors, wall corners, and crouched low-cover strictly block bot LOS and bullets.
+  {
+    // 22a: Closed glass door blocks LOS & damage completely
+    const hGlassDoor = createHarness();
+    hGlassDoor.world.addBox(-5, -0.1, -0.5, 0.1, 0, 3);
+    hGlassDoor.world.addBox(0.5, -0.1, 5, 0.1, 0, 3);
+    const glassDoors = new Doors(hGlassDoor.scene, hGlassDoor.world);
+    glassDoors.add(2, [{ hx: -0.5, hz: 0, y: 0, yaw: 0, swing: 1, barricaded: false, style: 'glass', width: 1.0, height: 2.1, open: false }]);
+    const gb = hGlassDoor.spawn.spawnBot(0, 0, -2.5, 'pmc', 'street', 'rifle_ak', true);
+    assert(!hGlassDoor.bandits.hasLineOfSight(gb.pos.x, 1.45, gb.pos.z, 0, 1.4, 2.5), 'Bot has LOS through closed glass door');
+    gb.state = 'combat';
+    gb.reactT = 0;
+    for (let i = 0; i < 90; i++) hGlassDoor.bandits.update(1 / 60, 0, 0, 2.5, false, false);
+    assert(hGlassDoor.playerDmg === 0, `Bot dealt ${hGlassDoor.playerDmg} dmg through closed glass door`);
+    hGlassDoor.bandits.dispose();
+
+    // 22b: Corner wall-graze guard prevents hitting player tucked 0.22 m behind wall corner
+    const hCorner = createHarness();
+    hCorner.world.addBox(-5, -0.15, 0, 0.15, 0, 3);
+    const cb = hCorner.spawn.spawnBot(0.38, 0, -6.0, 'bear', 'street', 'rifle_ak', true);
+    cb.yaw = 0;
+    cb.state = 'combat';
+    cb.reactT = 0;
+    for (let i = 0; i < 90; i++) hCorner.bandits.update(1 / 60, -0.22, 0, 0.55, false, false);
+    assert(hCorner.playerDmg === 0, `Corner graze dealt ${hCorner.playerDmg} dmg through wall corner`);
+    hCorner.bandits.dispose();
+
+    // 22c: Crouched player behind 1.2 m solid barrier stays hidden and unhit
+    const hCrouch = createHarness();
+    hCrouch.world.addBox(-4, -0.2, 4, 0.2, 0, 1.2);
+    const crb = hCrouch.spawn.spawnBot(0, 0, -7.0, 'pmc', 'street', 'rifle_m4a1', true);
+    crb.yaw = 0;
+    for (let i = 0; i < 90; i++) hCrouch.bandits.update(1 / 60, 0, 0, 4.0, false, false, false, 0, 0, 0, false, true);
+    assert(hCrouch.playerDmg === 0, `Bot saw/shot crouched player behind 1.2 m barrier (${hCrouch.playerDmg} dmg)`);
+    hCrouch.bandits.dispose();
+  }
+
+  // 23) Ragdoll corpse clamping on raised sidewalk step (minY >= groundY + 0.05 across all body parts).
+  {
+    const sidewalkGround = (x: number, _z: number) => (x > 0.2 ? 0.14 : 0);
+    const h = createHarness(undefined, new CollisionWorld(), new Scene(), sidewalkGround);
+    const bot = h.spawn.spawnBot(0.45, 0.14, 0, 'scavs', 'street', 'rifle_ak', true);
+    h.bandits.update(1 / 60, 20, 0, 20, false, false);
+    const scale = bot.visual!.scale;
+    const shape = stand(bot.visual!.body, 1).shape;
+    const parts = bodyParts(shape);
+    bot.hit(500, -2.5, 0, false, 'torso');
+    const rd = h.ragdolls[0];
+    assert(!!rd, 'Ragdoll not created on bot death');
+    for (let i = 0; i < 200; i++) rd.step();
+    assert(rd.asleep === true, 'Ragdoll failed to settle and sleep within 200 steps');
+    for (let pIdx = 0; pIdx < PARTS; pIdx++) {
+      const pose = rd.poses[pIdx];
+      const [hx, hy, hz] = parts[pIdx].h.map((v) => v * scale) as [number, number, number];
+      const { x: qx, y: qy, z: qz, w: qw } = pose.q;
+      const halfWorldY =
+        Math.abs(2 * (qx * qy + qw * qz)) * hx +
+        Math.abs(1 - 2 * (qx * qx + qz * qz)) * hy +
+        Math.abs(2 * (qy * qz - qw * qx)) * hz;
+      const minY = pose.p.y - halfWorldY;
+      const gy = sidewalkGround(pose.p.x, pose.p.z);
+      assert(minY >= gy + 0.048, `Part ${pIdx} sank below groundY+0.05 (minY=${minY.toFixed(3)}, gy=${gy.toFixed(3)})`);
+    }
+    h.bandits.dispose();
+  }
+
+  // 24) Compact low-opacity fast-clearing gunsmoke in Particles.muzzleSmoke.
+  {
+    const pt = new Particles();
+    pt.muzzleSmoke(0, 1.5, 0, 0, 0, -1);
+    const aLook = pt.points.geometry.getAttribute('aLook') as { array: Float32Array };
+    const aPos = pt.points.geometry.getAttribute('position') as { array: Float32Array };
+    assert(aLook.array[0] > 0 && aLook.array[0] <= 0.07, `Initial smoke too large: ${aLook.array[0].toFixed(3)} m`);
+    assert(aLook.array[2] > 0 && aLook.array[2] <= 0.25, `Initial smoke opacity too high: ${aLook.array[2].toFixed(3)}`);
+    for (let i = 0; i < 5; i++) {
+      pt.update(0.05);
+      if (aPos.array[1] > -900) {
+        assert(aLook.array[0] <= 0.24, `Expanding smoke too large: ${aLook.array[0].toFixed(3)} m`);
+        assert(aLook.array[2] <= 0.25, `Smoke opacity exceeded 0.25: ${aLook.array[2].toFixed(3)}`);
+      }
+    }
+    for (let i = 0; i < 4; i++) pt.update(0.05); // 0.45 s total -> must be fully expired
+    assert(aPos.array[1] < -900, `Gunsmoke lingered past 0.45 s (y=${aPos.array[1]})`);
+    pt.dispose();
+  }
+
+  console.log('[banditTest] ALL 24 SUITES PASSED (walls/doors, factions, bosses, 2-bone IK, nav, glass, anti-stuck, turn/FOV/lock/warm-up, sprint/ADS/cover/reload-push/corpse/smoke).');
   return 0;
 }

@@ -69,6 +69,8 @@ export interface FirearmsWorld {
   surfaceAt?(): StepSurface;
   /** A zombie hit (skills, kills count). */
   onHit?(killed: boolean, head: boolean): void;
+  /** Fired as soon as the player begins a reload sequence so nearby bots can push. */
+  onReloadStart?(): void;
   /** Hostile survivor bots. */
   bandits?: {
     hitTest(o: Vector3, d: Vector3, max: number, slack?: number): BanditHit | null;
@@ -320,12 +322,15 @@ export class Firearms {
     this.prevAds = gv.ads;
     player.zoom = g.zoom;
     if (gv.ads || trigger || gs.busy) this.sinceUse = Math.min(this.sinceUse, 0.5);
-    // Smoke from the muzzle after a burst.
+    // Compact wispy gunsmoke forward of the muzzle after sustained fire (never blocking ADS sight picture).
     if (this.smokeT > 0) {
       this.smokeT -= dt;
-      if (Math.random() < dt * 14) {
+      if (Math.random() < dt * 9) {
         this.muzzleWorld(_p);
-        this.w.particles.steam(_p.x, _p.y, _p.z, 0.45);
+        this.w.camera.getWorldDirection(_d);
+        _p.addScaledVector(_d, 0.28);
+        if (gv.ads) _p.y -= 0.04;
+        this.w.particles.muzzleSmoke(_p.x, _p.y, _p.z, _d.x, _d.y, _d.z);
       }
     }
   }
@@ -415,7 +420,7 @@ export class Firearms {
         this.muzzleWorld(_p);
         if (suppressed) this.fx.noFlash();
         else this.fx.muzzleFlash(_p, g.cls === 'launcher' ? 2.2 : g.pellets ? 1.4 : 1);
-        if (e.burst >= 3 || g.pellets || g.cls === 'launcher') this.smokeT = g.cls === 'launcher' ? 1.6 : 0.9;
+        if (e.burst >= 3 || g.pellets || g.cls === 'launcher') this.smokeT = g.cls === 'launcher' ? 0.9 : 0.45;
         const eye = this.w.camera.getWorldPosition(_o);
         const nx = eye.x;
         const ny = eye.y;
@@ -487,9 +492,12 @@ export class Firearms {
         break;
       case 'start':
         if (e.action === 'holster') mech('holster');
-        else if (e.action === 'reload' || e.action === 'reloadEmpty') {
-          if (id === 'rifle_ak' || id === 'rifle_m4a1') mech('reloadRifle');
-          else if (g.cls === 'pistol') sfx.ads(true);
+        else if (e.action === 'reload' || e.action === 'reloadEmpty' || e.action === 'loadStart') {
+          this.w.onReloadStart?.();
+          if (e.action !== 'loadStart') {
+            if (id === 'rifle_ak' || id === 'rifle_m4a1') mech('reloadRifle');
+            else if (g.cls === 'pistol') sfx.ads(true);
+          }
         }
         break;
     }

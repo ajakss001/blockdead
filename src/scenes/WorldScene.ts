@@ -478,6 +478,7 @@ export class WorldScene implements IScene {
       groundY: (x, z, y = 0) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
       resolveCircle: (pos, r) => this.world.resolveCircle(pos, r),
       rayHit: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHit(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
+      rayHitDetail: (ox, oy, oz, dx, dy, dz, max, ignoreGlass = false) => this.world.rayHitDetail(ox, oy, oz, dx, dy, dz, max, ignoreGlass),
       bushOccludes: (ox, oy, oz, tx, ty, tz) => this.glbPool.bushOccludes(ox, oy, oz, tx, ty, tz),
       boxesNear: (x, z, r, out) => this.world.boxesNear(x, z, r, (b) => out.push(b)),
       buildingsNear: (x, z, r) => this.interiors.buildingsNear(x, z, r),
@@ -776,6 +777,7 @@ export class WorldScene implements IScene {
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
+      onReloadStart: () => this.bandits.onPlayerReloading(this.player.controller.position),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
       surfaceAt: () => this.surfaceAt(this.player.controller.position.x, this.player.controller.position.z, this.player.controller.position.y),
@@ -1246,6 +1248,7 @@ export class WorldScene implements IScene {
       c.velocity.z,
       this.weather.fog,
       this.playerArmed,
+      c.crouched,
     );
     this.tripwires.update(dt, c.position, c.crouched, this.dead, this.zombies.list, this.bandits.list);
     if ((this.ambushScanT -= dt) <= 0) {
@@ -1876,7 +1879,7 @@ export class WorldScene implements IScene {
     if (!start) return;
     const boxes: StaticBox[] = [];
     this.world.boxesNear(z.pos.x, z.pos.z, 1.6, (b) => boxes.push(b));
-    const rd = zombieRagdoll(z, start, boxes);
+    const rd = zombieRagdoll(z, start, boxes, (gx, gz, gy) => this.interiors.surfaceY(gx, gz, gy) ?? this.layout.walkHeightAt(gx, gz));
     this.ragdolls.add(rd);
     this.corpseRd.set(z, rd);
     // Too many corpses drawn: the oldest goes, with its ragdoll and what could be searched on it.
@@ -2153,8 +2156,10 @@ export class WorldScene implements IScene {
 
   private drawSearchZones(dt: number): void {
     const f = this.dead ? null : this.interaction.focus;
-    this.searchOutline.visible = !!f;
-    if (f) {
+    const hideVehicleOutline =
+      !!f && (f.type === 'trunk' || f.type === 'vehicleCabin' || f.type === 'cargoHold' || f.type === 'planeCabin');
+    this.searchOutline.visible = !!f && !hideVehicleOutline;
+    if (f && !hideVehicleOutline) {
       const b = searchBox(f);
       this.searchOutline.position.set(b[0], b[1], b[2]);
       this.searchOutline.scale.set(b[3] * 2, b[4] * 2, b[5] * 2);

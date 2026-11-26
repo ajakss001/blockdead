@@ -8,7 +8,17 @@ import { type BodyShape, FIGURE_SHAPE, PART, Ragdoll, type StaticBox, standingPo
  * hunger, the infection): it just gives way. `shape`: the body's build (the survivor model's, from its
  * skeleton; the old figure's by default).
  */
-export function playerRagdoll(feet: Vector3, yaw: number, scale: number, velocity: Vector3, killer: Vector3 | null, boxes: StaticBox[], rnd = Math.random, shape: BodyShape = FIGURE_SHAPE): Ragdoll {
+export function playerRagdoll(
+  feet: Vector3,
+  yaw: number,
+  scale: number,
+  velocity: Vector3,
+  killer: Vector3 | null,
+  boxes: StaticBox[],
+  rnd = Math.random,
+  shape: BodyShape = FIGURE_SHAPE,
+  groundY?: (x: number, z: number, y: number) => number,
+): Ragdoll {
   const parts = standingPoses(shape, feet, yaw + Math.PI, scale);
   const dir = new Vector3();
   if (killer) dir.set(feet.x - killer.x, 0, feet.z - killer.z);
@@ -25,6 +35,7 @@ export function playerRagdoll(feet: Vector3, yaw: number, scale: number, velocit
     velocity,
     impulse: { part, at, dir, strength: killer ? 55 + rnd() * 30 : 10 + rnd() * 15 },
     floorY: feet.y,
+    groundY,
     boxes,
   });
 }

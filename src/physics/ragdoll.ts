@@ -122,6 +122,8 @@ export interface RagdollInit {
   impulse?: { part: number; at: Vector3; dir: Vector3; strength: number };
   /** The floor under it and the level's boxes near it. */
   floorY: number;
+  /** Optional dynamic surface query (sidewalks, steps, upper floors) to prevent any limb from sinking. */
+  groundY?: (x: number, z: number, y: number) => number;
   boxes: StaticBox[];
 }
 
@@ -129,8 +131,8 @@ export interface RagdollInit {
 const SLEEP_MOVE = 0.015;
 const SLEEP_TURN = 0.05;
 const SLEEP_AFTER = 0.5;
-/** The level is this much thicker for the body (m): a limb landing hard sinks into the skin, not the floor. */
-const SKIN = 0.03;
+/** The level is this much thicker for the body (m): a limb landing hard keeps >= 0.05 m clearance over ground. */
+const SKIN = 0.05;
 const MAX_SPEED = 6;
 /** Once down, it goes heavier still: no limb keeps trembling against the floor. */
 const SETTLE_AFTER = 1.1;
@@ -151,9 +153,12 @@ export class Ragdoll {
   /** Extra bodies stepped with it (a dropped weapon): body and the pose to write to. */
   readonly extras: { body: Body; pose: PartPose }[] = [];
   readonly floorY: number;
+  private readonly groundAt?: (x: number, z: number, y: number) => number;
+  private readonly partHalf: [number, number, number][] = [];
 
   constructor(init: RagdollInit) {
     this.floorY = init.floorY;
+    this.groundAt = init.groundY;
     const k = init.scale;
     const shape = init.shape ?? ZOMBIE_SHAPE;
     const parts = bodyParts(shape);
@@ -172,9 +177,13 @@ export class Ragdoll {
     // The parts, where the living body had them.
     parts.forEach((d, i) => {
       const pose = init.parts[i];
+      const hx = d.h[0] * k;
+      const hy = d.h[1] * k;
+      const hz = d.h[2] * k;
+      this.partHalf.push([hx, hy, hz]);
       const body = new Body({
         mass: d.m,
-        shape: new Box(new Vec3(d.h[0] * k, d.h[1] * k, d.h[2] * k)),
+        shape: new Box(new Vec3(hx, hy, hz)),
         position: new Vec3(pose.p.x, pose.p.y, pose.p.z),
         quaternion: new CQuat(pose.q.x, pose.q.y, pose.q.z, pose.q.w),
         linearDamping: 0.08,
@@ -217,6 +226,7 @@ export class Ragdoll {
       const dv = (J - local) / mass;
       for (const x of this.bodies) x.velocity.vadd(new Vec3(dir.x * dv, dir.y * dv, dir.z * dv), x.velocity);
     }
+    this.clampToGround();
     this.read();
   }
 
@@ -302,6 +312,7 @@ export class Ragdoll {
         if (v > MAX_SPEED) b.velocity.scale(MAX_SPEED / v, b.velocity);
       }
       this.world.step(1 / 120);
+      this.clampToGround();
     }
     this.age += 1 / 60;
     this.read();
@@ -324,9 +335,29 @@ export class Ragdoll {
     if ((this.still >= SLEEP_AFTER && this.age > 0.8) || this.age >= MAX_AWAKE - 1e-6) this.sleep();
   }
 
+  /** Keep every body part strictly at or above groundY + 0.05 m (including curbs, sidewalks, stairs, and slabs). */
+  private clampToGround(): void {
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      const [hx, hy, hz] = this.partHalf[i];
+      const { x: qx, y: qy, z: qz, w: qw } = b.quaternion;
+      const m10 = 2 * (qx * qy + qw * qz);
+      const m11 = 1 - 2 * (qx * qx + qz * qz);
+      const m12 = 2 * (qy * qz - qw * qx);
+      const halfWorldY = Math.abs(m10) * hx + Math.abs(m11) * hy + Math.abs(m12) * hz;
+      const gy = this.groundAt ? this.groundAt(b.position.x, b.position.z, Math.max(this.floorY, b.position.y)) : this.floorY;
+      const minY = gy + SKIN + halfWorldY;
+      if (b.position.y < minY) {
+        b.position.y = minY;
+        if (b.velocity.y < 0) b.velocity.y = 0;
+      }
+    }
+  }
+
   /** Bake the poses and drop the physics: from now on nothing changes. */
   sleep(): void {
     if (this.asleep) return;
+    this.clampToGround();
     this.read();
     this.asleep = true;
     for (const c of [...this.world.constraints]) this.world.removeConstraint(c);
