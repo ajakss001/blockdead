@@ -56,6 +56,36 @@ const ASSETS = [
     prompt:
       'Huge post-apocalyptic urban garbage mound, torn black trash bags, broken wooden crates, scrap metal, cardboard, rusted cans, gritty realistic PBR game asset',
   },
+  {
+    file: 'crash_skid_trench.glb',
+    polycount: 10000,
+    prompt:
+      'Deep gouged asphalt and scorched earth airplane crash landing skid trench crater, torn jagged pavement chunks, dark soot streaks, scattered charred aircraft fragments, low-profile flat ground terrain piece, gritty realistic PBR game asset',
+  },
+  {
+    file: 'charred_rubble_pile.glb',
+    polycount: 14000,
+    prompt:
+      'Dark charred post-apocalyptic rubble pile of shattered reinforced concrete chunks, broken dark red bricks, soot-blackened twisted steel I-beams and jagged rebar, ash and scorched debris, realistic gritty PBR game asset',
+  },
+  {
+    file: 'collapsed_concrete_slab.glb',
+    polycount: 12000,
+    prompt:
+      'Broken tilted reinforced concrete building floor slab collapsed at an angle, jagged fractured concrete edges with bent exposed rusted steel rebar rods sticking out, heavy soot and char marks, realistic PBR game asset',
+  },
+  {
+    file: 'plane_debris_cluster.glb',
+    polycount: 12000,
+    prompt:
+      'Scattered airliner crash interior debris cluster, bent scorched riveted aluminum fuselage panels, two charred broken airplane passenger seats, torn cables and insulation, realistic gritty PBR game asset',
+  },
+  {
+    file: 'emergency_gear_scatter.glb',
+    polycount: 12000,
+    prompt:
+      'Abandoned emergency rescue equipment cluster on asphalt, overturned wheeled medical stretcher gurney, open orange first-aid trauma kit box, coiled red fire hose with brass nozzle and knocked-over orange traffic cones, realistic gritty PBR game asset',
+  },
 ];
 
 function loadMeshyKey() {

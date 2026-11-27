@@ -535,8 +535,8 @@ export class WorldLife {
       }
       const w = F[i + 3];
       l.position.set(F[i], F[i + 1], F[i + 2]);
-      l.distance = 10 + w * 5;
-      l.intensity = (10 + w * 8) * (0.75 + 0.25 * Math.sin(this.time * 13 + F[i + 4] * 9) * Math.sin(this.time * 7.3 + F[i + 4]));
+      l.distance = 13 + w * 6.5;
+      l.intensity = (14 + w * 9) * (0.72 + 0.28 * Math.sin(this.time * 13 + F[i + 4] * 9) * Math.sin(this.time * 7.3 + F[i + 4]));
     }
   }
 
@@ -910,14 +910,19 @@ void main() {
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.8);
     col = vec3(1.0, 0.48, 0.16);
   } else if (vKind > 6.5) {
-    // A flame: licking tongues, yellow at the root, red at the tips.
+    // Volumetric multi-layered flame + soft outer ember halo (no hard cutout edges).
     float h = c.y + 0.5;
-    float x = c.x + 0.05 * sin(c.y * 9.0 - uTime * 8.0);
-    // A broad base breaking up into three or four tongues that flicker upwards.
-    float tongues = 0.16 * h * sin(x * 19.0 + uTime * 5.0 + h * 7.0) + 0.08 * h * sin(x * 31.0 - uTime * 9.0);
-    float body = (1.0 - h) * 0.5 - abs(x) * (0.55 + 0.6 * h) + tongues;
-    a = smoothstep(0.0, 0.07, body) * smoothstep(0.0, 0.06, h);
-    col = mix(vec3(1.0, 0.85, 0.4), vec3(1.0, 0.3, 0.08), h) * 2.2;
+    float sway = sin(h * 7.5 - uTime * 7.2) * 0.055 * h + sin(h * 15.0 - uTime * 11.5) * 0.025;
+    float x = c.x + sway;
+    float tongues = 0.14 * h * sin(x * 18.0 + uTime * 5.2 + h * 6.5) + 0.07 * h * sin(x * 29.0 - uTime * 9.3);
+    float body = (1.0 - h) * 0.54 - abs(x) * (0.62 + 0.65 * h) + tongues;
+    float core = smoothstep(0.0, 0.32, body) * pow(max(0.0, 1.0 - h), 1.25) * smoothstep(0.0, 0.11, h);
+    float rad = length(c * vec2(1.45, 1.15)) * 1.9;
+    float halo = 0.36 * pow(max(0.0, 1.0 - rad), 2.3) * smoothstep(0.0, 0.08, h);
+    a = core + halo;
+    vec3 flameCol = mix(vec3(1.0, 0.88, 0.48), vec3(1.0, 0.36, 0.08), smoothstep(0.08, 0.72, h));
+    flameCol = mix(flameCol, vec3(0.68, 0.12, 0.03), smoothstep(0.68, 1.0, h));
+    col = flameCol * (1.75 * core + 0.85 * halo) / max(a, 0.001);
   } else if (vKind > 5.5) {
     // A TV's light thrown on a wall, the floor: cold blue-white.
     a = pow(max(0.0, 1.0 - length(c) * 2.0), 1.6);

@@ -333,39 +333,74 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   const roll = rand();
   const entrance: 'doors' | 'smashed' = roll < 0.7 ? 'doors' : 'smashed';
 
+  const gbx0 = desc.breach && desc.breach.y < FLOOR_H ? Math.max(L.x0 + 0.6, Math.min(L.x1 - 2.0, desc.breach.x - desc.breach.w * 0.5)) : 0;
+  const gbx1 = desc.breach && desc.breach.y < FLOOR_H ? Math.min(L.x1 - 0.6, gbx0 + desc.breach.w) : -1;
+  const groundBreach = gbx1 > gbx0;
+  const overlapsBreach = (ax0: number, ax1: number) => groundBreach && Math.min(ax1, gbx1 + 0.3) > Math.max(ax0, gbx0 - 0.3);
+
   // Front wall: storeys 1+ in one slab (or split cleanly around a structural wall breach),
   // plus the ground floor in segments between the openings.
   if (desc.breach) {
     const bx0 = Math.max(L.x0 + 0.6, Math.min(L.x1 - 2.0, desc.breach.x - desc.breach.w * 0.5));
     const bx1 = Math.min(L.x1 - 0.6, bx0 + desc.breach.w);
-    const by0 = Math.max(FLOOR_H + 0.2, desc.breach.y);
+    const by0 = Math.max(0, desc.breach.y);
     const by1 = Math.min(H - 0.8, desc.breach.y + desc.breach.h);
     if (bx0 > L.x0 + 0.05) b.block(tint, L.x0, FLOOR_H, L.z0, bx0 - L.x0, top - FLOOR_H, WALL, f, false);
     if (L.x1 > bx1 + 0.05) b.block(tint, bx1, FLOOR_H, L.z0, L.x1 - bx1, top - FLOOR_H, WALL, f, false);
     if (by0 > FLOOR_H + 0.05) b.block(tint, bx0, FLOOR_H, L.z0, bx1 - bx0, by0 - FLOOR_H, WALL, f, false);
     if (top > by1 + 0.05) b.block(tint, bx0, by1, L.z0, bx1 - bx0, top - by1, WALL, f, false);
     // Destroyed charred interior cavity behind the breach (floor, soot ceiling/back/side walls & bent rebar).
-    const cavD = Math.min(4.6, desc.d * 0.35);
-    b.block(0x1e1d1c, bx0, by0 - 0.22, L.z0 + WALL, bx1 - bx0, 0.22, cavD, 'concrete', true);
+    const cavD = by0 < FLOOR_H ? Math.min(6.5, desc.d * 0.45) : Math.min(4.6, desc.d * 0.35);
+    const cavFloorY = Math.max(0.05, by0);
+    if (by0 >= 0.3) b.block(0x1e1d1c, bx0, by0 - 0.22, L.z0 + WALL, bx1 - bx0, 0.22, cavD, 'concrete', true);
+    else b.block(0x1e1d1c, bx0, 0.01, L.z0 + WALL, bx1 - bx0, 0.10, cavD, 'concrete', true);
     b.block(0x161515, bx0, by1 - 0.18, L.z0 + WALL, bx1 - bx0, 0.18, cavD, 'concrete', true);
-    b.block(0x141416, bx0, by0, L.z0 + WALL + cavD - 0.2, bx1 - bx0, by1 - by0, 0.2, 'concrete', true);
-    b.block(0x1a1919, bx0 - 0.15, by0, L.z0 + WALL, 0.2, by1 - by0, cavD, 'concrete', true);
-    b.block(0x1a1919, bx1 - 0.05, by0, L.z0 + WALL, 0.2, by1 - by0, cavD, 'concrete', true);
+    b.block(0x141416, bx0, cavFloorY, L.z0 + WALL + cavD - 0.2, bx1 - bx0, by1 - cavFloorY, 0.2, 'concrete', true);
+    b.block(0x1a1919, bx0 - 0.15, cavFloorY, L.z0 + WALL, 0.2, by1 - cavFloorY, cavD, 'concrete', true);
+    b.block(0x1a1919, bx1 - 0.05, cavFloorY, L.z0 + WALL, 0.2, by1 - cavFloorY, cavD, 'concrete', true);
     // Twisted exposed interior girders & hanging ceiling rubble around the breached edges.
-    b.block(0x3a2820, bx0 + 0.6, by0, L.z0 + 0.5, 0.14, (by1 - by0) * 0.72, 0.14, 'metal');
-    b.block(0x3a2820, bx1 - 0.8, by0 + 0.3, L.z0 + 0.4, 0.14, (by1 - by0) * 0.65, 0.14, 'metal');
+    b.block(0x3a2820, bx0 + 0.6, cavFloorY, L.z0 + 0.5, 0.14, (by1 - cavFloorY) * 0.72, 0.14, 'metal');
+    b.block(0x3a2820, bx1 - 0.8, cavFloorY + 0.3, L.z0 + 0.4, 0.14, (by1 - cavFloorY) * 0.65, 0.14, 'metal');
+    if (by0 < FLOOR_H) {
+      // Torn interior office partition stubs & fractured slab rebar beams inside the deep ground-to-3rd-floor crater
+      const cw = bx1 - bx0;
+      const pH = Math.min(FLOOR_H - 0.15, by1 - cavFloorY);
+      if (cw >= 5.0 && pH > 0.8) {
+        b.block(0x2a2723, bx0 + cw * 0.32, cavFloorY, L.z0 + WALL + 1.2, 0.18, pH, Math.max(1.2, cavD - 1.6), 'plaster', true);
+        b.block(0x262421, bx0 + cw * 0.68, cavFloorY, L.z0 + WALL + 1.8, 0.18, pH * 0.85, Math.max(1.0, cavD - 2.2), 'plaster', true);
+      }
+      for (const flY of [FLOOR_H, FLOOR_H * 2]) {
+        if (flY < by1 - 0.3) {
+          b.block(0x342a22, bx0 + 0.4, flY - 0.16, L.z0 + WALL + 0.2, 2.2, 0.16, Math.min(2.6, cavD * 0.55), 'concrete', true);
+          b.block(0x342a22, bx1 - 2.6, flY - 0.16, L.z0 + WALL + 0.2, 2.2, 0.16, Math.min(2.6, cavD * 0.55), 'concrete', true);
+          b.block(0x3d241c, bx0 + 2.4, flY - 0.12, L.z0 + WALL + 0.5, cw - 4.8, 0.08, 0.08, 'metal');
+        }
+      }
+    }
   } else {
     b.block(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f, false);
   }
-  const openings = [{ x0: d0, x1: d1, sill: 0, head: ENTRANCE_H }, ...panes.map((p) => ({ x0: p.x, x1: p.x + p.w, sill: 0.3, head: 2.8 }))].sort((a, c) => a.x0 - c.x0);
+  const addGroundWallSeg = (sx0: number, sx1: number) => {
+    if (sx1 - sx0 <= 0.01) return;
+    if (!groundBreach || sx1 <= gbx0 || sx0 >= gbx1) {
+      b.block(tint, sx0, 0, L.z0, sx1 - sx0, FLOOR_H, WALL, f, true);
+      return;
+    }
+    if (sx0 < gbx0) b.block(tint, sx0, 0, L.z0, gbx0 - sx0, FLOOR_H, WALL, f, true);
+    if (sx1 > gbx1) b.block(tint, gbx1, 0, L.z0, sx1 - gbx1, FLOOR_H, WALL, f, true);
+  };
+  const openings = [
+    ...(overlapsBreach(d0 - 0.8, d1 + 0.8) ? [] : [{ x0: d0, x1: d1, sill: 0, head: ENTRANCE_H }]),
+    ...panes.filter((p) => !overlapsBreach(p.x, p.x + p.w)).map((p) => ({ x0: p.x, x1: p.x + p.w, sill: 0.3, head: 2.8 })),
+  ].sort((a, c) => a.x0 - c.x0);
   let wx = L.x0;
   for (const o of openings) {
-    if (o.x0 - wx > 0.01) b.block(tint, wx, 0, L.z0, o.x0 - wx, FLOOR_H, WALL, f, true);
+    addGroundWallSeg(wx, o.x0);
     b.blockY(tint, o.x0, o.head, L.z0, o.x1 - o.x0, FLOOR_H - o.head, WALL, f);
     if (o.sill > 0) b.block(tint, o.x0, 0, L.z0, o.x1 - o.x0, o.sill, WALL, f);
     wx = o.x1;
   }
-  if (L.x1 - wx > 0.01) b.block(tint, wx, 0, L.z0, L.x1 - wx, FLOOR_H, WALL, f, true);
+  addGroundWallSeg(wx, L.x1);
   // Back wall up to roof, plus parapet with a doorway gap for the exterior fire escape top exit.
   // Keep vehicles clear of street-level building entrances and back fire-escape landings (>= 3 m).
   b.batch.keepClear.push({ x: b.wx(L.doorX), z: b.wz(L.z0), r: 0, kind: 'entrance' });
@@ -428,6 +463,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
   let storefrontCarSpawned = false;
   for (const { x, w: pw, broken } of panes) {
+    if (overlapsBreach(x, x + pw)) continue;
     // No protruding (rust-textured) frame bars over the brick: intact glass sits flush on the facade.
     if (broken) {
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
@@ -467,31 +503,35 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
       b.block(PAL.window, x, 0.3, L.z0 + WALL / 2 - 0.015, pw, 2.5, 0.03, 'windowGlass', true);
     }
   }
-  if (entrance === 'doors') {
-    // Double doors swinging in; glass on office towers, wood or glass on apartments; sometimes left open.
-    const style = desc.kind === 'offices' || rand() < 0.4 ? 'glass' : 'wood';
-    const open = rand() < 0.25;
-    const half = ENTRANCE_W / 2;
-    b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, height: ENTRANCE_H, style, open, pair: 1 });
-    b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, height: ENTRANCE_H, style, open, pair: -1 });
-    b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
-  } else {
-    // The doors are gone: glass on the ground, an open way in.
-    groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
-    groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
+  if (!overlapsBreach(d0 - 0.8, d1 + 0.8)) {
+    if (entrance === 'doors') {
+      // Double doors swinging in; glass on office towers, wood or glass on apartments; sometimes left open.
+      const style = desc.kind === 'offices' || rand() < 0.4 ? 'glass' : 'wood';
+      const open = rand() < 0.25;
+      const half = ENTRANCE_W / 2;
+      b.door(d0, L.z0 + WALL / 2, 0, 0, -1, false, { width: half, height: ENTRANCE_H, style, open, pair: 1 });
+      b.door(d1, L.z0 + WALL / 2, 0, Math.PI, 1, false, { width: half, height: ENTRANCE_H, style, open, pair: -1 });
+      b.block(PAL.window, d0, 2.15, L.z0 + 0.1, ENTRANCE_W, ENTRANCE_H - 2.15, 0.03, 'windowGlass');
+    } else {
+      // The doors are gone: glass on the ground, an open way in.
+      groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
+      groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
+    }
+    b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
+    b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
+    b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'concrete', true);
   }
-  b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
-  b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
-  b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'concrete', true);
-  b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'concrete');
-  const shop = groundShop(desc);
-  if (shop) {
-    // The shop's own sign panel (a color per trade, no names); a pale cross for the pharmacy.
-    b.block(SHOP_SIGN[shop.kind], L.x0 + 1.2, 3.05, L.z0 - 0.13, shop.x1 - L.x0 - 1.4, 0.5, 0.03, 'concrete');
-    if (shop.kind === 'pharmacy') {
-      const sx = (L.x0 + shop.x1) / 2;
-      b.block(0x9ad0a8, sx - 0.06, 3.1, L.z0 - 0.15, 0.12, 0.4, 0.02, 'lamp');
-      b.block(0x9ad0a8, sx - 0.2, 3.24, L.z0 - 0.15, 0.4, 0.12, 0.02, 'lamp');
+  if (!groundBreach) {
+    b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'concrete');
+    const shop = groundShop(desc);
+    if (shop) {
+      // The shop's own sign panel (a color per trade, no names); a pale cross for the pharmacy.
+      b.block(SHOP_SIGN[shop.kind], L.x0 + 1.2, 3.05, L.z0 - 0.13, shop.x1 - L.x0 - 1.4, 0.5, 0.03, 'concrete');
+      if (shop.kind === 'pharmacy') {
+        const sx = (L.x0 + shop.x1) / 2;
+        b.block(0x9ad0a8, sx - 0.06, 3.1, L.z0 - 0.15, 0.12, 0.4, 0.02, 'lamp');
+        b.block(0x9ad0a8, sx - 0.2, 3.24, L.z0 - 0.15, 0.4, 0.12, 0.02, 'lamp');
+      }
     }
   }
   shellLife(b, desc, L);
@@ -515,7 +555,7 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
     const rawX = desc.flip ? 2 * desc.cx - desc.breach.x : desc.breach.x;
     const bx0 = Math.max(x0 + 0.6, Math.min(x1 - 2.0, rawX - desc.breach.w * 0.5));
     const bx1 = Math.min(x1 - 0.6, bx0 + desc.breach.w);
-    const by0 = Math.max(FLOOR_H + 0.2, desc.breach.y);
+    const by0 = Math.max(0, desc.breach.y);
     const by1 = Math.min(H - 0.8, desc.breach.y + desc.breach.h);
     breach = { x0: bx0, x1: bx1, y0: by0, y1: by1 };
   }
@@ -646,9 +686,11 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
       for (const z of [z0 + mid, z1 - mid]) {
         if (k === 0 && z === front) continue;
         if (desc.breach && z === front) {
-          const bx0 = desc.breach.x - desc.breach.w * 0.5 - 0.6;
-          const bx1 = desc.breach.x + desc.breach.w * 0.5 + 0.6;
-          if (cx >= bx0 && cx <= bx1 && y >= desc.breach.y - 0.5 && y <= desc.breach.y + desc.breach.h + 0.5) continue;
+          const padX = desc.breach.y < FLOOR_H ? 3.2 : 0.6;
+          const padTop = desc.breach.y < FLOOR_H ? 2.1 * FLOOR_H : 0.5;
+          const bx0 = desc.breach.x - desc.breach.w * 0.5 - padX;
+          const bx1 = desc.breach.x + desc.breach.w * 0.5 + padX;
+          if (cx >= bx0 && cx <= bx1 && y >= desc.breach.y - 0.5 && y <= desc.breach.y + desc.breach.h + padTop) continue;
         }
         _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1));
         b.windows.push({ cx, cy: y, cz: z, sx: spec.width, sy: h, sz: 0.03 });

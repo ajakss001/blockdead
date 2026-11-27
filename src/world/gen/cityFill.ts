@@ -1,7 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickModel } from '../models';
 import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
-import type { GlbModelId } from '../worldModels';
+import { GLB_WORLD_SPECS, type GlbModelId } from '../worldModels';
 import { isGlbClear } from './footprint';
 import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal, wallDecalZ } from './highrise';
@@ -118,7 +118,7 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
   return out;
 }
 
-/** Monumental downtown catastrophe block: Boeing airliner crashed into a partially collapsed high-rise. */
+/** Monumental downtown catastrophe block: AAA 4-stage airliner crash & interrupted rescue story. */
 function airlinerCrashBlock(
   b: Builder,
   i: number,
@@ -131,192 +131,215 @@ function airlinerCrashBlock(
 ): BuildingDesc[] {
   const out: BuildingDesc[] = [];
   const chunkKey = (i + 32768) * 65536 + (j + 32768);
-  // Intact standing background tower in the NW corner
-  const standing: BuildingDesc = {
+
+  // 1. Hero 6-story Soviet concrete HQ/office building along North edge with massive ground-to-3rd-floor central breach
+  const bW = Math.min(36, down3(X1 - X0 - 6));
+  const bD = 18;
+  const bX0 = up3(X0 + (X1 - X0 - bW) * 0.5);
+  const bZ1 = down3(Z1 - 0.5);
+  const bZ0 = bZ1 - bD;
+  const bCx = bX0 + bW * 0.5;
+  const hero: BuildingDesc = {
     id: chunkKey * 16,
-    cx: up3(X0 + 0.3) + 9,
-    cz: down3(Z1 - 0.3) - 9,
-    w: 18,
-    d: 18,
-    floors: 7,
+    cx: bCx,
+    cz: bZ0 + bD * 0.5,
+    w: bW,
+    d: bD,
+    floors: 6,
     facade: 'facadeConcrete',
-    flip: true,
+    flip: false,
     kind: 'offices',
     seed: Math.floor(rand() * 1e9),
+    breach: { x: bCx, y: 0, w: 11.0, h: 3 * FLOOR_H },
   };
-  buildHighriseShell(b, standing, rand);
-  out.push(standing);
+  buildHighriseShell(b, hero, rand);
+  out.push(hero);
 
-  // Partially collapsed Soviet brick & concrete high-rise ruin in the NE/SE crash impact zone
-  const rx0 = X0 + 27;
-  const rx1 = X1 - 2.5;
-  const rz0 = Z0 + 24;
-  const rz1 = Z1 - 5.5;
-  const rw = rx1 - rx0;
-  const rd = rz1 - rz0;
-  const wallT = 0.45;
-  const slabT = 0.24;
+  // 00:01 — IMPACT WOUND, V-COLLAPSE SLABS, CHARRED RUBBLE & RISING FACADE SOOT
+  wallDecalZ(b, 'decalSoot', bCx - 2.8, 3.35 * FLOOR_H, bZ0, 4.8, -1);
+  wallDecalZ(b, 'decalSoot', bCx + 2.2, 3.8 * FLOOR_H, bZ0, 5.0, -1);
+  wallDecalZ(b, 'decalSoot', bCx - 0.2, 4.65 * FLOOR_H, bZ0, 4.4, -1);
 
-  // Ground-to-upper-floor slabs stepping back jaggedly away from the SW aircraft nose impact
-  for (let fl = 0; fl < 4; fl++) {
-    const sy = fl * FLOOR_H;
-    const cutX = Math.min(rx1 - 6.0, fl < 2 ? rx0 + fl * 1.8 : rx0 + 2.2 + (fl - 1) * 3.0);
-    const cutZ = Math.min(rz1 - 5.5, fl < 2 ? rz0 + fl * 1.4 : rz0 + 1.8 + (fl - 1) * 2.4);
-    const sW = rx1 - cutX;
-    const sD = rz1 - cutZ;
-    if (fl === 0) {
-      b.block(0x5c5953, cutX, 0, cutZ, sW, PAVE.plaza + 0.12, sD, 'concrete', true);
-    } else {
-      b.block(0x6d6a64, cutX, sy, cutZ, sW, slabT, sD, 'concrete', true);
-    }
+  b.glb('building_breach_frame', bCx - 4.4, PAVE.plaza, bZ0 - 0.35, 0.15, { scale: 1.15 });
+  b.glb('building_breach_frame', bCx + 4.4, PAVE.plaza, bZ0 - 0.35, -0.15, { scale: 1.15 });
 
-    // Thick structural concrete columns supporting every corner & midpoint grid (no floating slabs)
-    if (fl > 0) {
-      const colW = 0.55;
-      const xCols = [cutX, cutX + sW * 0.5 - colW * 0.5, rx1 - colW];
-      const zCols = [cutZ, cutZ + sD * 0.5 - colW * 0.5, rz1 - colW];
-      for (const cx of xCols) {
-        for (const cz of zCols) {
-          if (Math.abs(cx - cutX) < 0.2 || Math.abs(cz - cutZ) < 0.2 || Math.abs(cx - (rx1 - colW)) < 0.2 || Math.abs(cz - (rz1 - colW)) < 0.2) {
-            b.block(0x52504c, cx, (fl - 1) * FLOOR_H, cz, colW, FLOOR_H, colW, 'concrete', true);
-          }
-        }
-      }
-    }
+  // Upper floor V-shaped concrete slab collapse funnel suspended over floors 1-2 inside the breach
+  b.glb('collapsed_concrete_slab', bCx - 2.3, 4.1, bZ0 + 0.85, 0.18, { pitch: 0.42, roll: -0.34, scale: 0.92 });
+  b.glb('collapsed_concrete_slab', bCx + 2.3, 4.6, bZ0 + 0.95, -0.22, { pitch: 0.40, roll: 0.36, scale: 0.90 });
 
-    // Standing Soviet brick exterior walls along East (rx1) and North (rz1) with recessed window bays
-    if (fl < 3 || spotHash(rx1, sy, 401) > 0.1) {
-      const bay = 3.0;
-      const sillH = 0.85;
-      const headY = 2.65;
-      // North wall (rz1 - wallT) spanning East -> NW partial stub
-      const nStart = fl === 0 ? rx0 + 3.0 : cutX + 1.2;
-      for (let bx = nStart; bx + 1.8 <= rx1 - wallT; bx += bay) {
-        const bw = Math.min(bay, rx1 - wallT - bx);
-        if (bw < 2.2) {
-          b.block(0xb68a74, bx, sy, rz1 - wallT, bw, FLOOR_H, wallT, 'facadeBrick', true);
-        } else {
-          const pier = 0.55;
-          const winW = bw - pier * 2;
-          b.block(0xb68a74, bx, sy, rz1 - wallT, pier, FLOOR_H, wallT, 'facadeBrick', true);
-          b.block(0xb68a74, bx + bw - pier, sy, rz1 - wallT, pier, FLOOR_H, wallT, 'facadeBrick', true);
-          b.block(0xb68a74, bx + pier, sy, rz1 - wallT, winW, sillH, wallT, 'facadeBrick', true);
-          b.block(0xb68a74, bx + pier, sy + headY, rz1 - wallT, winW, FLOOR_H - headY, wallT, 'facadeBrick', true);
-          b.block(0x282725, bx + pier, sy + sillH, rz1 - wallT * 0.6, winW, headY - sillH, 0.06, 'concrete');
-        }
-      }
-      // East wall (rx1 - wallT) spanning North -> SE partial stub
-      const eStart = fl === 0 ? rz0 + 2.5 : cutZ + 1.2;
-      for (let bz = eStart; bz + 1.8 <= rz1 - wallT; bz += bay) {
-        const bd = Math.min(bay, rz1 - wallT - bz);
-        if (bd < 2.2) {
-          b.block(0xb68a74, rx1 - wallT, sy, bz, wallT, FLOOR_H, bd, 'facadeBrick', true);
-        } else {
-          const pier = 0.55;
-          const winD = bd - pier * 2;
-          b.block(0xb68a74, rx1 - wallT, sy, bz, wallT, FLOOR_H, pier, 'facadeBrick', true);
-          b.block(0xb68a74, rx1 - wallT, sy, bz + bd - pier, wallT, FLOOR_H, pier, 'facadeBrick', true);
-          b.block(0xb68a74, rx1 - wallT, sy, bz + pier, wallT, sillH, winD, 'facadeBrick', true);
-          b.block(0xb68a74, rx1 - wallT, sy + headY, bz + pier, wallT, FLOOR_H - headY, winD, 'facadeBrick', true);
-          b.block(0x282725, rx1 - wallT * 0.6, sy + sillH, bz + pier, 0.06, headY - sillH, winD, 'concrete');
-        }
-      }
-    }
-
-    // Broken interior apartment/office partition walls visible inside the cutaway (floors 0..2)
-    if (fl < 3) {
-      const partX = Math.max(cutX + 3.2, rx0 + rw * 0.52);
-      const partZ = Math.max(cutZ + 2.6, rz0 + rd * 0.52);
-      if (partZ + 2.2 < rz1 - wallT) {
-        b.block(0xc8c0ae, partX, sy, partZ + 1.1, 0.18, FLOOR_H - 0.1, rz1 - wallT - (partZ + 1.1), 'wallpaper', true);
-      }
-      if (partX + 2.0 < rx1 - wallT) {
-        b.block(0xbdb4a0, partX + 1.1, sy, partZ, rx1 - wallT - (partX + 1.1), FLOOR_H - 0.1, 0.18, 'plaster', true);
-      }
-    }
+  // 3x dark charred concrete/rebar rubble piles grounded in soot/ash decals around the breach lip
+  const charredPiles: [number, number, number, number][] = [
+    [bCx - 4.8, bZ0 - 1.2, 0.4, 0.96],
+    [bCx + 4.8, bZ0 - 1.1, -0.7, 0.92],
+    [bCx + 0.5, bZ0 + 0.6, 1.8, 0.86],
+  ];
+  for (const [rx, rz, ryaw, rsc] of charredPiles) {
+    b.glb('charred_rubble_pile', rx, PAVE.plaza - 0.18, rz, ryaw, { scale: rsc });
+    b.solid(rx - 1.65 * rsc, rz - 1.65 * rsc, rx + 1.65 * rsc, rz + 1.65 * rsc, PAVE.plaza, PAVE.plaza + 1.15 * rsc);
+    groundDecal(b, 'decalSoot', rx, PAVE.plaza + 0.014, rz, 5.2 * rsc, rand, 1.3);
   }
-  // Partial standing corner piers framing the torn SW breach on ground floor
-  b.block(0xb68a74, rx0 + 1.2, 0, rz1 - wallT, 3.2, FLOOR_H * 1.4, wallT, 'facadeBrick', true);
-  b.block(0xb68a74, rx1 - wallT, 0, rz0 + 1.2, wallT, FLOOR_H * 1.4, 3.0, 'facadeBrick', true);
 
-  // 15 x 40 m dark scorched impact trench & asphalt skid scar running diagonally into the collapsed tower.
-  const ax = X0 + 22.0;
-  const az = Z0 + 20.5;
-  const ayaw = -Math.PI * 0.72;
-  _m.compose(_p.set(ax - 3.5, PAVE.plaza + 0.012, az - 4.0), _q.setFromAxisAngle(_axis.set(0, 1, 0), ayaw), _s.set(15.0, 0.018, 40.0));
+  // Torn, charred Boeing fuselage lying heavy on asphalt with nose buried inside the breach
+  const ax = bCx - 1.2;
+  const az = bZ0 - 7.8;
+  const ayaw = -Math.PI * 0.44;
+  b.glb('crashed_boeing_fuselage', ax, PAVE.plaza - 0.16, az, ayaw, { pitch: 0.01, roll: 0.07 });
+  b.colliders.addOrientedBox(ax, az, 10.2, 3.2, ayaw, -0.5, 4.8);
+
+  // 00:00 — APPROACH VECTOR & TOUCHDOWN (gouged skid trench, soot/skid/oil streaks, downed poles & crushed cars)
+  _m.compose(
+    _p.set(ax - Math.cos(ayaw) * 4.5, PAVE.plaza + 0.012, az + Math.sin(ayaw) * 4.5),
+    _q.setFromAxisAngle(_axis.set(0, 1, 0), ayaw),
+    _s.set(28.0, 0.018, 10.5),
+  );
   b.geo(b.box, 0x161514, _m, 'asphalt');
   for (let sIdx = 0; sIdx < 4; sIdx++) {
-    const sx = ax - 10 + sIdx * 5.0;
-    const sz = az - 12 + sIdx * 5.5;
-    groundDecal(b, 'decalSoot', sx, PAVE.plaza + 0.015, sz, 9.5, rand, 1.6);
+    const t = -1.5 + sIdx * 5.2;
+    const sx = ax - Math.cos(ayaw) * t;
+    const sz = az + Math.sin(ayaw) * t;
+    groundDecal(b, 'decalSkid', sx, PAVE.plaza + 0.014, sz, 6.0, rand, 2.2);
+    groundDecal(b, 'decalSoot', sx, PAVE.plaza + 0.016, sz, 7.5, rand, 1.5);
   }
+  b.glb('street_lamp_2000', X0 + 18.0, PAVE.plaza + 0.25, Z0 + 14.5, 0.4, { pitch: 1.28, scale: 0.85 });
+  b.glb('Sign_No_Entry_1500', X0 + 30.5, PAVE.plaza + 0.12, Z0 + 14.0, -0.6, { pitch: 0.95 });
 
-  // Torn, charred airliner fuselage (NO landing gear) buried nose-first into massive concrete rubble inside the breach.
-  b.glb('crashed_boeing_fuselage', ax, PAVE.plaza - 0.08, az, ayaw, { pitch: 0.05, roll: 0.16 });
-  b.colliders.addOrientedBox(ax, az, 10.2, 3.2, ayaw, -0.5, 4.8);
-  b.glb('building_breach_frame', rx0 + 1.2, 0.15, rz0 + 1.1, -Math.PI * 0.25, { scale: 1.38 });
-
-  // Massive collapsed concrete rubble mounds piled around fuselage & sheared building corner.
-  const rubbleSpots: [number, number, number, number][] = [
-    [rx0 - 0.5, rz0 + 0.5, 0.4, 1.35],
-    [rx0 + 4.8, rz0 + 1.2, 1.7, 1.25],
-    [ax + 5.2, az + 4.5, -0.9, 1.15],
-    [ax - 3.2, az + 3.0, 2.4, 0.95],
-  ];
-  for (const [rx, rz, ryaw, rsc] of rubbleSpots) {
-    b.glb('concrete_rubble_mound', rx, PAVE.plaza, rz, ryaw, { scale: rsc });
-    b.solid(rx - 1.75 * rsc, rz - 1.75 * rsc, rx + 1.75 * rsc, rz + 1.75 * rsc, PAVE.plaza, PAVE.plaza + 1.2 * rsc);
-  }
-
-  // Detached broken airliner wing + damaged jet engine ~13.5 m away on the scorched plaza.
-  const wx = ax - 11.2;
-  const wz = az - 7.8;
-  const wyaw = ayaw + 1.9;
-  b.glb('crashed_plane_wing', wx, PAVE.plaza - 0.04, wz, wyaw, { pitch: -0.06, roll: 0.14 });
+  // 00:02-00:15 — INERTIA & SECONDARY DESTRUCTION (flat detached wing + jet engine, oil slicks, cabin seats/panels & luggage)
+  const wx = X0 + 12.5;
+  const wz = Z0 + 16.5;
+  const wyaw = 0.55;
+  b.glb('crashed_plane_wing', wx, PAVE.plaza - 0.14, wz, wyaw, { pitch: 0, roll: 0.02 });
   b.colliders.addOrientedBox(wx, wz, 5.8, 4.4, wyaw, -0.5, 3.2);
-  groundDecal(b, 'decalSoot', wx, PAVE.plaza + 0.015, wz, 6.2, rand, 1.3);
-  groundDecal(b, 'decalOil', wx + 1.2, PAVE.plaza + 0.016, wz - 0.8, 4.0, rand, 1.3);
+  groundDecal(b, 'decalSoot', wx, PAVE.plaza + 0.015, wz, 6.8, rand, 1.35);
+  groundDecal(b, 'decalOil', wx + 1.2, PAVE.plaza + 0.016, wz - 0.8, 5.2, rand, 1.4);
 
-  // Burning cars, scattered luggage, debris piles, scorch & fires around the impact site.
-  const carSpots: [number, number, number, 'roof' | undefined][] = [
-    [X0 + 11.0, Z0 + 8.8, 0.55, 'roof'],
-    [X0 + 38.5, Z0 + 9.2, -0.8, undefined],
+  // Helper for solid emergency rescue props & vehicles with clear perimeter spacing
+  const spawnRescueProp = (id: GlbModelId, x: number, z: number, yaw: number, sc = 1, solid = true) => {
+    if (!isGlbClear(b.batch, id, x, z, yaw, 0.35, { keepClearGap: 1.5, scale: sc })) return false;
+    b.glb(id, x, PAVE.plaza, z, yaw, { scale: sc });
+    if (solid) {
+      const sp = GLB_WORLD_SPECS[id];
+      b.colliders.addOrientedBox(x, z, sp.size[0] * 0.46 * sc, sp.size[2] * 0.46 * sc, yaw, PAVE.plaza, PAVE.plaza + sp.size[1] * 0.92 * sc);
+    }
+    return true;
+  };
+  const spawnRescueVehicle = (id: GlbModelId, x: number, z: number, yaw: number, seedOff: number) =>
+    buildCar(b.batch, b.colliders, { x, z, yaw, glbId: id, paint: CAR_PAINTS.slate, seed: 820 + seedOff, allowOverlap: false }, b.containers);
+
+  const cabinDebris: [number, number, number, number][] = [
+    [X0 + 15.2, Z0 + 21.5, 0.3, 1.05],
+    [X0 + 19.5, Z0 + 25.0, -0.9, 1.0],
+    [X0 + 11.2, Z0 + 22.8, 1.4, 0.95],
   ];
-  for (let k = 0; k < carSpots.length; k++) {
-    const [cx, cz, cyaw, flp] = carSpots[k];
-    if (
-      buildCar(
-        b.batch,
-        b.colliders,
-        { x: cx, z: cz, yaw: cyaw, paint: CAR_PAINTS.slate, seed: 700 + k, kind: 'wreck', smashed: 0.95, flipped: flp },
-        b.containers,
-      )
-    ) {
-      b.life(LIFE.fire, cx, 0.95, cz, 0, 0, 1.2, 0, 0.3 + k * 0.4);
+  for (const [dx, dz, dyaw, dsc] of cabinDebris) {
+    if (spawnRescueProp('plane_debris_cluster', dx, dz, dyaw, dsc, false)) {
+      groundDecal(b, 'decalSoot', dx, PAVE.plaza + 0.014, dz, 3.6, rand, 1.2);
     }
   }
+  spawnRescueProp('abandoned_luggage_pil', X0 + 10.0, Z0 + 19.2, 0.8, 1.2, false);
+
+  // 00:20 — INTERRUPTED EMERGENCY RESPONSE (Leading lines, fire hoses, cold floodlights vs warm breach fire, medical triage panic)
+  // Firefighters flanking the breach + snaking rubber fire hoses across the asphalt
+  if (spawnRescueVehicle('kamaz_fire_truck_20k', X0 + 7.5, Z0 + 27.5, -0.55, 1)) {
+    b.life(LIFE.beacon, X0 + 7.5, 3.9, Z0 + 27.5, 0, 0, 0.55, 5, 0.1, 0);
+  }
+  if (spawnRescueVehicle('kamaz_fire_truck_20k', X0 + 41.5, Z0 + 28.5, 2.65, 2)) {
+    b.life(LIFE.beacon, X0 + 41.5, 3.9, Z0 + 28.5, 0, 0, 0.55, 5, 0.45, 0);
+  }
+  spawnRescueVehicle('emercom_pickup_17k', X0 + 7.0, Z0 + 11.0, 0.45, 3);
+
+  const layFireHose = (x0: number, z0: number, x1: number, z1: number, seedBase: number) => {
+    const segs = 5;
+    for (let s = 0; s < segs; s++) {
+      const t = (s + 0.5) / segs;
+      const hx = x0 + (x1 - x0) * t + Math.sin(s * 1.9 + seedBase) * 0.45;
+      const hz = z0 + (z1 - z0) * t + Math.cos(s * 1.7 + seedBase) * 0.35;
+      const ang = Math.atan2(-(z1 - z0), x1 - x0);
+      _m.compose(_p.set(hx, PAVE.plaza + 0.035, hz), _q.setFromAxisAngle(_axis.set(0, 1, 0), ang), _s.set(2.4, 0.055, 0.095));
+      b.geo(b.box, 0x262628, _m, 'concrete');
+    }
+  };
+  layFireHose(X0 + 10.2, Z0 + 28.5, bCx - 6.0, bZ0 - 2.0, 1);
+  layFireHose(X0 + 38.5, Z0 + 29.2, bCx + 5.8, bZ0 - 2.2, 2);
+
+  // Medical triage & evacuation zone (ambulances, quarantine tent, PAZ bus, abandoned medical/fire gear)
+  if (spawnRescueVehicle('gazelle_ambulance_17k', X0 + 39.5, Z0 + 14.5, 0.95, 4)) {
+    b.life(LIFE.beacon, X0 + 39.5, 3.1, Z0 + 14.5, 0, 0, 0.45, 5, 0.22, 2);
+  }
+  if (spawnRescueVehicle('gazelle_ambulance_17k', X0 + 46.5, Z0 + 13.5, 1.45, 5)) {
+    b.life(LIFE.beacon, X0 + 46.5, 3.1, Z0 + 13.5, 0, 0, 0.45, 5, 0.78, 2);
+  }
+  spawnRescueVehicle('paz_3205_bus_11000', X0 + 45.5, Z0 + 6.5, 0.08, 6);
+  spawnRescueProp('quarantine_tent', X0 + 46.5, Z0 + 20.5, Math.PI * 0.5, 1.0, true);
+  spawnRescueProp('emergency_gear_scatter', X0 + 41.8, Z0 + 19.2, 0.4, 1.05, false);
+  spawnRescueProp('emergency_gear_scatter', X0 + 11.5, Z0 + 25.0, -0.3, 1.0, false);
+
+  // South street Police & OMON cordon forming leading lines toward the breach + blinking roof strobes
+  if (spawnRescueVehicle('Police_Sedan_DPS_22k', X0 + 14.5, Z0 + 5.2, 0.35, 7)) {
+    b.life(LIFE.beacon, X0 + 14.5, 1.85, Z0 + 5.2, 0, 0, 0.42, 6, 0.15, 0);
+  }
+  if (spawnRescueVehicle('omon_swat_van_17k', X0 + 22.5, Z0 + 4.8, 0.08, 8)) {
+    b.life(LIFE.beacon, X0 + 22.5, 3.1, Z0 + 4.8, 0, 0, 0.48, 6, 0.52, 2);
+  }
+  if (spawnRescueVehicle('Police_Sedan_DPS_22k', X0 + 30.5, Z0 + 5.0, -0.22, 9)) {
+    b.life(LIFE.beacon, X0 + 30.5, 1.85, Z0 + 5.0, 0, 0, 0.42, 6, 0.85, 0);
+  }
+  if (spawnRescueVehicle('Police_Sedan_DPS_22k', X0 + 37.0, Z0 + 4.8, -0.52, 10)) {
+    b.life(LIFE.beacon, X0 + 37.0, 1.85, Z0 + 4.8, 0, 0, 0.42, 5, 0.35, 1);
+  }
+  spawnRescueProp('checkpoint_barricade', X0 + 18.5, Z0 + 6.5, 0.2, 1.0, true);
+  spawnRescueProp('checkpoint_barricade', X0 + 26.8, Z0 + 6.2, -0.1, 1.0, true);
+
+  // Portable EMERCOM floodlight towers blasting cold white light toward the dark breach & smoke
+  if (spawnRescueProp('generator_light_tower', X0 + 13.5, Z0 + 28.5, -0.8, 1.0, true)) {
+    b.life(LIFE.lamp, X0 + 13.5, 4.1, Z0 + 28.5, 0, 0, 2.2, 4.1, 0.72);
+    b.life(LIFE.spin, X0 + 13.5, 4.2, Z0 + 28.5, 0, 0, 4.5, 0, 0.2, 1);
+  }
+  if (spawnRescueProp('generator_light_tower', X0 + 37.5, Z0 + 22.0, 2.2, 1.0, true)) {
+    b.life(LIFE.lamp, X0 + 37.5, 4.1, Z0 + 22.0, 0, 0, 2.2, 4.1, 0.88);
+    b.life(LIFE.spin, X0 + 37.5, 4.2, Z0 + 22.0, 0, 0, 4.5, 0, 0.65, 1);
+  }
+
+  // Crushed/burning civilian wrecks caught near the skid corridor + scattered evacuation luggage & debris
+  if (buildCar(b.batch, b.colliders, { x: X0 + 17.0, z: Z0 + 10.5, yaw: 0.65, paint: CAR_PAINTS.slate, seed: 701, kind: 'wreck', smashed: 0.95, flipped: 'roof' }, b.containers)) {
+    groundDecal(b, 'decalSoot', X0 + 17.0, PAVE.plaza + 0.015, Z0 + 10.5, 5.0, rand, 1.2);
+    b.life(LIFE.fire, X0 + 17.0, 0.95, Z0 + 10.5, 0, 0, 1.2, 0, 0.32);
+  }
+  if (buildCar(b.batch, b.colliders, { x: X0 + 35.0, z: Z0 + 29.0, yaw: 1.1, paint: CAR_PAINTS.slate, seed: 702, kind: 'wreck', smashed: 0.95 }, b.containers)) {
+    groundDecal(b, 'decalSoot', X0 + 35.0, PAVE.plaza + 0.015, Z0 + 29.0, 5.0, rand, 1.2);
+    b.life(LIFE.fire, X0 + 35.0, 0.95, Z0 + 29.0, 0, 0, 1.15, 0, 0.71);
+  }
+
   const debrisOffsets: [number, number, GlbModelId, number][] = [
-    [X0 + 15, Z0 + 13, 'Road_Debris_Cluster_2', 1.35],
-    [X0 + 28, Z0 + 13, 'Road_Debris_Cluster_2', 1.4],
-    [X0 + 10, Z0 + 22, 'abandoned_luggage_pil', 1.3],
-    [X0 + 14, Z0 + 27, 'abandoned_luggage_pil', 1.25],
-    [X0 + 18.5, Z0 + 8.5, 'giant_trash_mound', 0.95],
+    [X0 + 15.5, Z0 + 19.5, 'Road_Debris_Cluster_2', 0.9],
+    [X0 + 33.8, Z0 + 24.5, 'Road_Debris_Cluster_2', 0.9],
+    [X0 + 36.5, Z0 + 9.5, 'abandoned_luggage_pil', 1.15],
+    [X0 + 40.5, Z0 + 8.8, 'abandoned_luggage_pil', 1.1],
+    [X0 + 10.5, Z0 + 21.5, 'giant_trash_mound', 0.85],
   ];
   for (let k = 0; k < debrisOffsets.length; k++) {
     const [dx, dz, id, sc] = debrisOffsets[k];
-    if (isGlbClear(b.batch, id, dx, dz, k * 1.1, 0.25, { keepClearGap: 1.5, scale: sc })) {
-      b.glb(id, dx, PAVE.plaza, dz, k * 1.1, { scale: sc });
-    }
+    spawnRescueProp(id, dx, dz, k * 1.1, sc, false);
   }
-  groundDecal(b, 'decalSoot', ax, PAVE.plaza + 0.015, az, 9.0, rand, 1.6);
-  groundDecal(b, 'decalSoot', rx0 + 4, PAVE.plaza + 0.015, rz0 + 4, 7.5, rand, 1.4);
+
+  // 3D gouged skid trench crater spawned along the center approach corridor
+  const skidX = ax - Math.cos(ayaw) * 8.5;
+  const skidZ = az + Math.sin(ayaw) * 8.5;
+  b.glb('crash_skid_trench', skidX, PAVE.plaza - 0.04, skidZ, ayaw);
+
+  groundDecal(b, 'decalSoot', ax, PAVE.plaza + 0.015, az, 9.5, rand, 1.6);
+  groundDecal(b, 'decalSoot', bCx, PAVE.plaza + 0.015, bZ0 - 1.0, 9.0, rand, 1.4);
   groundDecal(b, 'decalShards', ax - 4, PAVE.plaza + 0.015, az - 5, 4.5, rand, 1.4);
-  groundDecal(b, 'decalOil', ax + 3, PAVE.plaza + 0.016, az - 4, 3.6, rand, 1.3);
-  b.life(LIFE.fire, ax + 5.5, 2.2, az + 5.5, 0, 0, 2.4, 0, 0.42);
-  b.life(LIFE.fire, rx0 + 3.2, 3.4, rz0 + 3.5, 0, 0, 2.2, 0, 0.87);
-  b.life(LIFE.fire, wx + 1.5, 1.2, wz + 0.8, 0, 0, 1.7, 0, 0.19);
-  b.life(LIFE.smoke, ax - 1.5, 2.6, az + 1.0, 0, 0, 0, 0, 0.31);
-  b.life(LIFE.smoke, rx0 + 5.0, 7.2, rz0 + 4.5, 0, 0, 0, 0, 0.63);
+  groundDecal(b, 'decalOil', ax + 3, PAVE.plaza + 0.016, az - 4, 4.0, rand, 1.3);
+
+  // Layered warm fire & smoke + sparking severed cables inside the breach contrasting with the cold floodlights
+  b.life(LIFE.fire, bCx - 2.2, 1.6, bZ0 + 1.8, 0, 0, 2.4, 0, 0.25);
+  b.life(LIFE.fire, bCx + 2.4, 3.8, bZ0 + 2.4, 0, 0, 2.3, 0, 0.62);
+  b.life(LIFE.fire, ax - 1.2, 2.0, az - 2.0, 0, 0, 2.0, 0, 0.42);
+  b.life(LIFE.fire, wx + 1.5, 1.1, wz + 0.8, 0, 0, 1.6, 0, 0.19);
+  b.life(LIFE.sparks, bCx - 3.6, 3.0, bZ0 + 0.4, 0, 0, 0, 0, 0.18);
+  b.life(LIFE.sparks, bCx + 3.4, 2.6, bZ0 + 0.5, 0, 0, 0, 0, 0.74);
+  b.life(LIFE.smoke, bCx, 6.8, bZ0 + 2.0, 0, 0, 0, 0, 0.63);
+  b.life(LIFE.smoke, ax - 1.5, 2.8, az + 1.0, 0, 0, 0, 0, 0.31);
   b.life(LIFE.smoke, wx, 1.8, wz, 0, 0, 0, 0, 0.51);
   return out;
 }

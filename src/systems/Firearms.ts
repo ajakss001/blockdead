@@ -65,8 +65,8 @@ export interface FirearmsWorld {
   onWindowBullet?(owner: number, at: Vector3, dir: Vector3, nx: number, ny: number, nz: number): boolean;
   /** Building window glass shattered directly by melee/blast (Stage 2 clean removal + shards). */
   onWindowShatter?(owner: number, dir: Vector3): boolean;
-  /** Vehicle hit callback returning `'glass'` (already handled) or `'metal'`, else null for generic surfaces. */
-  onVehicleBulletHit?(o: Vector3, d: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | null;
+  /** Vehicle hit callback returning `'glass'` (already handled), `'metal'`, or `'miss'` (grazed OBB corner), else null. */
+  onVehicleBulletHit?(o: Vector3, d: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | 'miss' | null;
   /** The class's handling of firearms (1 none, 1.3 military, 1.5 SWAT). */
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
@@ -707,6 +707,7 @@ export class Firearms {
     else _n.copy(d).negate();
     const withSound = !isMulti || this.shotHitSounds < 2;
     const vehHit = this.w.onVehicleBulletHit?.(o, d, dist, at, withSound) ?? null;
+    if (vehHit === 'miss') return;
     if (vehHit === 'glass') {
       if (withSound) this.shotHitSounds++;
       this.w.particles.burst(at, isMulti && this.shotHitSounds > 1 ? 2 : 5, 0.55);
@@ -720,7 +721,8 @@ export class Firearms {
     }
     const kind: BulletHit = vehHit === 'metal' ? 'car' : (s && BULLET[s]) ?? 'concrete';
     const holeKind = kind === 'wood' ? 'wood' : kind === 'metal' || kind === 'car' ? 'metal' : kind === 'glass' ? 'glass' : 'stone';
-    if (!isMulti || this.shotHitSounds < 2) this.fx.addBulletHole(at, _n, holeKind);
+    const breakingGlass = kind === 'glass' && Boolean(this.w.onBreakGlass);
+    if (!breakingGlass && (!isMulti || this.shotHitSounds < 2)) this.fx.addBulletHole(at, _n, holeKind);
     if (kind === 'glass' && this.w.onBreakGlass) {
       if (withSound) {
         this.w.onBreakGlass(at, d);

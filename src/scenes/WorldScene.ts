@@ -2011,12 +2011,16 @@ export class WorldScene implements IScene {
     return this.shatterWindow(owner, dirX, dirZ);
   }
 
-  /** Shatters car windshields/side/rear glass with accurate GLB mesh raycast + world normal orientation. */
-  private handleVehicleBulletHit(origin: Vector3, dir: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | null {
+  /** Shatters car windshields/side/rear glass with strict GLB mesh raycast so decals never float outside contoured meshes. */
+  private handleVehicleBulletHit(origin: Vector3, dir: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | 'miss' | null {
     const meshHit = this.glbPool.raycastVehicle(origin, dir, dist);
-    const hitPt = meshHit ? meshHit.point : at;
-    const v = meshHit ? meshHit.vehicle : this.glbPool.findVehicleAt(at.x, at.y, at.z);
-    if (!v) return null;
+    if (!meshHit) {
+      // Grazing the rectangular OBB corner without hitting the real 3D car mesh must never leave floating decals/sparks in air.
+      return this.glbPool.findVehicleAt(at.x, at.y, at.z) ? 'miss' : null;
+    }
+    const v = meshHit.vehicle;
+    const hitPt = meshHit.point;
+    at.copy(hitPt);
     const noGlass = v.id === 'Semi_Trailer_Cargo_20' || v.id === 'zsu_23_4_shilka_14k' || v.id === 'burned_car_wreck';
     const inGlassZone =
       !noGlass &&
@@ -2024,11 +2028,11 @@ export class WorldScene implements IScene {
         ? v.localZ < v.hl * 0.12 && hitPt.y > v.y + 1.95 && hitPt.y < v.y + 3.2
         : hitPt.y > v.y + v.H * 0.55);
     if (inGlassZone) {
-      const n = meshHit ? meshHit.normal : _wn.copy(dir).negate();
+      const n = meshHit.normal;
       if (playSound) sfx.glassBreak(hitPt, { x: hitPt.x, y: v.y + 0.05, z: hitPt.z });
       this.life.burstGlassShards(hitPt.x, hitPt.y, hitPt.z, n.x, Math.max(0.2, n.y), n.z, 16, v.y);
       this.life.addDynamicShards(hitPt.x + n.x * 0.55, v.y, hitPt.z + n.z * 0.55, 1.4);
-      this.life.addGlassCrackDecal(hitPt.x, hitPt.y, hitPt.z, n.x, n.y, n.z, 0.36);
+      this.life.addGlassCrackDecal(hitPt.x, hitPt.y, hitPt.z, n.x, n.y, n.z, 0.34);
       this.atmo.carHit(hitPt.x, hitPt.y, hitPt.z);
       return 'glass';
     }
