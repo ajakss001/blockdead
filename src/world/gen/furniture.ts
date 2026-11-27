@@ -41,6 +41,7 @@ const wall = (): BufferGeometry => (wallQuad ??= new PlaneGeometry(1, 1));
 export class Place {
   /** Free transform (tipped over / askew); null = quarter turns only. */
   private free: Matrix4 | null = null;
+  private allowDoorZone = false;
 
   constructor(
     readonly b: Builder,
@@ -49,6 +50,12 @@ export class Place {
     readonly z: number,
     readonly r: Quarter = 0,
   ) {}
+
+  /** Mark this placement as exempt from DoorClearanceZone rejection (used strictly for intentional door barricades). */
+  nearDoor(allow = true): Place {
+    this.allowDoorZone = allow;
+    return this;
+  }
 
   /** Local (x, z) → frame (x, z). */
   pt(lx: number, lz: number): [number, number] {
@@ -97,6 +104,7 @@ export class Place {
     const [x, z] = this.pt(lx, lz);
     const p = new Place(this.b, x, this.y, z, ((this.r + dr) & 3) as Quarter);
     p.parent = this;
+    p.allowDoorZone = this.allowDoorZone;
     return p;
   }
 
@@ -104,6 +112,7 @@ export class Place {
   tipped(yaw: number, pitch = 0, roll = 0, lift = 0): Place {
     const p = new Place(this.b, this.x, this.y, this.z, this.r);
     p.parent = this;
+    p.allowDoorZone = this.allowDoorZone;
     p.free = new Matrix4().compose(_p.set(this.x, this.y + lift, this.z), _q.setFromEuler(_e.set(pitch, (this.r * Math.PI) / 2 + yaw, roll, 'YXZ')), _s.set(1, 1, 1));
     return p;
   }
@@ -220,16 +229,17 @@ export class Place {
     metalness = 0.18,
     collide = false,
   ): boolean {
+    const [cx, cz] = this.pt(lx, lz);
+    if (!this.allowDoorZone && !this.b.isDoorClear(this.b.wx(cx), this.b.wz(cz), this.y + ly, 1.6)) return false;
     const m = pickModel(modelLibrary(), group, typeof rand === 'number' ? rand : rand());
     if (!m) {
       if (modelLibrary() === null) {
-        const [cx, cz] = this.pt(lx, lz);
         this.record(cx - 0.4, this.y + ly, cz - 0.4, cx + 0.4, this.y + ly + 1.0, cz + 0.4);
         this.b.logBox(cx - 0.4, this.y + ly, cz - 0.4, cx + 0.4, this.y + ly + 1.0, cz + 0.4);
+        return true;
       }
       return false;
     }
-    const [cx, cz] = this.pt(lx, lz);
     if (!this.b.inClip(this.b.wx(cx), this.b.wz(cz))) return true;
     _l.compose(_p.set(lx, ly, lz), _q.setFromAxisAngle(_up, yaw), _s.set(scale, scale, scale));
     _m.multiplyMatrices(this.base(), _l);
@@ -262,7 +272,7 @@ export function bed(p: Place, rand: Rand, width = 1.5, _messy = false): void {
 
 export function nightstand(p: Place, rand: Rand, open = false): void {
   p.resetBounds();
-  p.model('nightstand', rand, 0, 0, 0.44, 0, 1, 0.78, 0.12, true);
+  if (!p.model('nightstand', rand, 0, 0, 0.44, 0, 1, 0.78, 0.12, true)) return;
   p.container('nightstand', 0, 0.82);
   if (!open || rand() >= 0.5) p.model('tableLamp', rand, -0.08, 0.62, 0.44, rand() * 0.6, 1, 0.75, 0.15);
 }
@@ -270,7 +280,7 @@ export function nightstand(p: Place, rand: Rand, open = false): void {
 /** Wardrobe backed by 3D model. */
 export function wardrobe(p: Place, rand: Rand, open = false): void {
   p.resetBounds();
-  p.model(open ? 'wardrobeOpen' : 'wardrobe', rand, 0, 0, open ? 0.72 : 0.44, 0, 1, 0.8, 0.1, true);
+  if (!p.model(open ? 'wardrobeOpen' : 'wardrobe', rand, 0, 0, open ? 0.72 : 0.44, 0, 1, 0.8, 0.1, true)) return;
   p.container('wardrobe', 0, open ? 1.1 : 0.85);
 }
 
@@ -322,7 +332,7 @@ export function plant(_p: Place, _rand: Rand, _fallen = false): void {}
 /** Crates / stacked boxes from 3D models. */
 export function boxes(p: Place, rand: Rand, n = 3): void {
   p.resetBounds();
-  p.model(n >= 2 ? (rand() < 0.5 ? 'stackedBoxes' : 'palletCrates') : 'woodenCrate', rand, 0, 0, 0.45, (rand() - 0.5) * 0.4, 0.85, 0.85, 0.05, true);
+  if (!p.model(n >= 2 ? (rand() < 0.5 ? 'stackedBoxes' : 'palletCrates') : 'woodenCrate', rand, 0, 0, 0.45, (rand() - 0.5) * 0.4, 0.85, 0.85, 0.05, true)) return;
   p.container('boxes', 0, 0.75);
 }
 
@@ -334,10 +344,12 @@ export function kitchenRun(p: Place, rand: Rand, len: number, _messy = false, ra
   const n = Math.max(1, Math.round(len / 1.6));
   const step = len / n;
   const scale = Math.min(1.15, step / 1.64);
+  let placed = 0;
   for (let i = 0; i < n; i++) {
     const cx = -len / 2 + step * (i + 0.5);
-    p.model('kitchenCounter', rand, cx, 0, 0.42, 0, scale, 0.75, 0.15, true);
+    if (p.model('kitchenCounter', rand, cx, 0, 0.42, 0, scale, 0.75, 0.15, true)) placed++;
   }
+  if (placed === 0) return;
   const sx = len / 2 - 0.35;
   const kx = -len / 2 + 0.5;
   p.container('counter', 0, 0.75);
@@ -358,7 +370,7 @@ export function kitchenRun(p: Place, rand: Rand, len: number, _messy = false, ra
 
 export function fridge(p: Place, rand: Rand, open = false): void {
   p.resetBounds();
-  p.model('fridge', rand, 0, 0, 0.5, open ? (rand() < 0.5 ? 0.12 : -0.12) : 0, 1, 0.6, 0.35, true);
+  if (!p.model('fridge', rand, 0, 0, 0.5, open ? (rand() < 0.5 ? 0.12 : -0.12) : 0, 1, 0.6, 0.35, true)) return;
   p.container('fridge', 0, 1.0);
 }
 
@@ -374,7 +386,7 @@ export function chairDown(p: Place, rand: Rand, _color?: number): void {
 
 /** Table centered on the place, chairs around it (some knocked over when `messy`). */
 export function diningTable(p: Place, rand: Rand, chairs = 4, messy = false): void {
-  p.model('diningTable', rand, 0, 0, 0, 0, 1, 0.78, 0.08, true);
+  if (!p.model('diningTable', rand, 0, 0, 0, 0, 1, 0.78, 0.08, true)) return;
   const seats: [number, number, Quarter][] = [
     [-0.38, -0.78, 0],
     [0.38, 0.78, 2],
@@ -405,7 +417,7 @@ export function officeChair(p: Place, rand: Rand, down = false): void {
 
 export function desk(p: Place, rand: Rand, _open = false, _messy = false): void {
   p.resetBounds();
-  p.model('desk', rand, 0, 0, 0.58, 0, 1, 0.8, 0.15, true);
+  if (!p.model('desk', rand, 0, 0, 0.58, 0, 1, 0.8, 0.15, true)) return;
   p.container('desk', 0, 1.15);
 }
 
@@ -417,7 +429,7 @@ export function waterCooler(_p: Place, _rand: Rand): void {}
 
 export function filingCabinet(p: Place, rand: Rand, _open = false): void {
   p.resetBounds();
-  p.model('locker', rand, 0, 0, 0.25, 0, 0.85, 0.55, 0.45, true);
+  if (!p.model('locker', rand, 0, 0, 0.25, 0, 0.85, 0.55, 0.45, true)) return;
   p.container('cabinet', 0, 0.75);
 }
 
@@ -429,7 +441,7 @@ export function notes(_p: Place, _rand: Rand, _n = 2): void {}
 
 export function suitcase(p: Place, rand: Rand, _open = false): void {
   p.resetBounds();
-  p.model('suitcase', rand, 0, 0, 0.16, (rand() - 0.5) * 0.6, 1, 0.8, 0.15);
+  if (!p.model('suitcase', rand, 0, 0, 0.16, (rand() - 0.5) * 0.6, 1, 0.8, 0.15)) return;
   p.container('suitcase', 0, 0.55);
 }
 
@@ -497,14 +509,14 @@ export function shopShelf(p: Place, rand: Rand, len: number, kind: ShopKind, mes
   const [bw, bd] = SHELF_DIM[grp];
   const s = Math.min(1.15, len / bw);
   const lz = (bd * s) / 2 + 0.04;
-  p.model(grp, rand, 0, 0, lz, 0, s, 0.75, 0.25, true);
+  if (!p.model(grp, rand, 0, 0, lz, 0, s, 0.75, 0.25, true)) return;
   p.container(kind === 'pharmacy' ? 'pharmacy' : 'shelf', 0, lz + (bd * s) / 2 + 0.35);
 }
 
 /** Drinks cooler (3D fridge model). */
 export function cooler(p: Place, rand: Rand): void {
   p.resetBounds();
-  p.model('fridge', rand, 0, 0, 0.5, 0, 1, 0.6, 0.35, true);
+  if (!p.model('fridge', rand, 0, 0, 0.5, 0, 1, 0.6, 0.35, true)) return;
   p.container('cooler', 0, 1.0);
 }
 
@@ -512,7 +524,7 @@ export function cooler(p: Place, rand: Rand): void {
 export function shopCounter(p: Place, rand: Rand, kind: ShopKind): void {
   p.resetBounds();
   const cafe = kind === 'cafe';
-  p.model(cafe ? 'receptionDesk' : 'checkout', rand, 0, 0, cafe ? 0.72 : 0.5, 0, cafe ? 0.58 : 1, 0.75, 0.2, true);
+  if (!p.model(cafe ? 'receptionDesk' : 'checkout', rand, 0, 0, cafe ? 0.72 : 0.5, 0, cafe ? 0.58 : 1, 0.75, 0.2, true)) return;
   p.container(cafe ? 'cafe' : 'shopCounter', 0, cafe ? 1.45 : 1.0);
 }
 
@@ -522,6 +534,6 @@ export function cafeTable(p: Place, rand: Rand, messy = false): void {
 
 export function washer(p: Place, rand: Rand, _stacked = false): void {
   p.resetBounds();
-  p.model('metalShelf', rand, 0, 0, 0.35, 0, 0.75, 0.65, 0.4, true);
+  if (!p.model('metalShelf', rand, 0, 0, 0.35, 0, 0.75, 0.65, 0.4, true)) return;
   p.container('laundry', 0, 0.8);
 }

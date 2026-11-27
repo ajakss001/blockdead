@@ -205,6 +205,11 @@ export class Viewmodel {
     this.scene.add(this.root);
   }
 
+  /** Show/hide the first-person arms & held items without hiding sibling scene groups (e.g. Mi-8 cockpit). */
+  setArmsVisible(visible: boolean): void {
+    this.root.visible = visible;
+  }
+
   /** Swing timing of what is in hand. */
   get swing(): HeldConfig {
     return this.config(this.item);

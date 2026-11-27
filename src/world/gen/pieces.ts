@@ -93,6 +93,7 @@ export class Builder {
   readonly cone6 = new ConeGeometry(1, 1, 6);
   readonly containers: ContainerSpot[] = [];
   readonly doors: DoorSpot[] = [];
+  private readonly clearances: { x: number; y: number; z: number; r: number }[] = [];
   /** Roofed footprints in world space: [minX, minZ, maxX, maxZ, roofY, …] (see systems/Climate). */
   readonly shelters: number[] = [];
   /** World-life spots, LIFE_STRIDE each: kind, x, y, z, normal x, normal z, w, h, seed, tag (see world/WorldLife). */
@@ -226,11 +227,36 @@ export class Builder {
     });
   }
 
+  /** Register a DoorClearanceZone center in the current frame so no furniture/crates spawn inside radius r. */
+  registerDoorClearance(lx: number, y: number, lz: number, r = 1.6): void {
+    const wx = this.wx(lx);
+    const wz = this.wz(lz);
+    if (!this.inClip(wx, wz)) return;
+    this.clearances.push({ x: wx, y, z: wz, r });
+  }
+
+  /** True when world position (wx, y, wz) stays outside every registered DoorClearanceZone on that floor. */
+  isDoorClear(wx: number, wz: number, y: number, margin = 1.6): boolean {
+    for (let i = 0; i < this.clearances.length; i++) {
+      const c = this.clearances[i];
+      if (Math.abs(c.y - y) > 1.5) continue;
+      const minR = Math.max(c.r, margin);
+      const dx = wx - c.x;
+      const dz = wz - c.z;
+      if (dx * dx + dz * dz < minR * minR) return false;
+    }
+    return true;
+  }
+
   /** Register a door by its hinge and closed yaw in the current frame. */
   door(hx: number, hz: number, y: number, yaw: number, swing: number, barricaded = false, opts: DoorOptions = {}): void {
     // The leaf fills the opening: 1 × 2.1 m unless told otherwise (no slits round a closed door).
     if (!this.inClip(this.wx(hx), this.wz(hz))) return;
+    const width = opts.width ?? 1.0;
     this.doors.push({ hx: this.wx(hx), hz: this.wz(hz), y, yaw: this.flip ? yaw + Math.PI : yaw, swing, barricaded, width: 1.0, height: 2.1, ...opts });
+    const mx = hx + Math.cos(yaw) * width * 0.5;
+    const mz = hz - Math.sin(yaw) * width * 0.5;
+    this.clearances.push({ x: this.wx(mx), y, z: this.wz(mz), r: 1.6 });
   }
 
   /** Box that only blocks within its own vertical extent (storeys, railings, lintels). */
@@ -349,6 +375,7 @@ function partitionZ(b: Builder, paper: number, x: number, za: number, zb: number
     const d0 = dz - 0.45;
     b.block(paper, x, 0, from, 0.12, h, d0 - from, 'plaster', true);
     b.block(paper, x, DOOR_H, d0, 0.12, h - DOOR_H, 0.9, 'plaster', true);
+    b.registerDoorClearance(x + 0.06, 0, dz, 1.6);
     from = dz + 0.45;
   }
   b.block(paper, x, 0, from, 0.12, h, zb - from, 'plaster', true);
@@ -360,6 +387,7 @@ function partitionX(b: Builder, paper: number, xa: number, xb: number, z: number
   b.block(paper, xa, 0, z, d0 - xa, h, 0.12, 'plaster', true);
   b.block(paper, d1, 0, z, xb - d1, h, 0.12, 'plaster', true);
   b.block(paper, d0, DOOR_H, z, 0.9, h - DOOR_H, 0.12, 'plaster', true);
+  b.registerDoorClearance(doorX, 0, z + 0.06, 1.6);
 }
 
 /** Window on a wall facing ±Z (glass proud of the trim, both slightly outside the siding). */
@@ -485,7 +513,10 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   // Bedroom: bed along the side wall (headboard at the partition), wardrobe against the front wall.
   const bedX = x1 - WALL_T - 0.96;
   F.bed(new Place(b, bedX, 0, zp + 0.08, 0), rand, 1.45, messy);
-  F.nightstand(new Place(b, bedX - 1.3, 0, zp + 0.08, 0), rand, open());
+  const nsCand = Math.abs(bedX - 1.3 - bedDoorX) >= 1.6 ? bedX - 1.3 : bedX + 1.15;
+  if (nsCand <= x1 - WALL_T - 0.4 && Math.abs(nsCand - bedDoorX) >= 1.6) {
+    F.nightstand(new Place(b, nsCand, 0, zp + 0.08, 0), rand, open());
+  }
   F.wardrobe(new Place(b, xp + 1.8, 0, z1 - WALL_T, 2), rand, open());
 
   // Leaving: luggage and boxes by the front door.
@@ -571,8 +602,8 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
 
   b.block(PAL.floor, x0 + WALL_T, 0, z0 + WALL_T, w - 2 * WALL_T, 0.04, d - 2 * WALL_T, 'asphalt');
   b.block(PAL.ceiling, x0, h - 0.05, z0, w, 0.05, d, 'plaster', true);
-  // Flat roof with a parapet lip.
-  b.block(0x3a3a38, x0 - 0.1, h, z0 - 0.1, w + 0.2, 0.25, d + 0.2, 'roof');
+  // Flat roof with a parapet lip (solid = true for Mi-8 roof landings & walkable surfaces).
+  b.block(0x3a3a38, x0 - 0.1, h, z0 - 0.1, w + 0.2, 0.25, d + 0.2, 'roof', true);
   b.life(LIFE.perch, x0 + w / 2, h + 0.25, z1, 1, 0, w * 0.8, 0, spotHash(x0, z0, 93));
 
   const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };

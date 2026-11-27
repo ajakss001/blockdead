@@ -1,16 +1,19 @@
 import {
   Box3,
   BoxGeometry,
+  type Camera,
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Euler,
+  Frustum,
   InstancedMesh,
   Matrix4,
   Mesh,
   MeshStandardMaterial,
   PointLight,
   Quaternion,
+  Sphere,
   type BufferGeometry,
   type Material,
   type Scene,
@@ -19,7 +22,15 @@ import {
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { Particles } from '../render/Particles';
-import { GLB_BASE_SCALE as BASE_SCALE, GLB_WORLD_SPECS, TRAFFIC_LIGHT_SCALE, type GlbModelId, type GlbPlacement } from './worldModels';
+import {
+  GLB_BASE_SCALE as BASE_SCALE,
+  GLB_WORLD_SPECS,
+  LOD1_WORLD_MODELS,
+  lodSwitchDistOf,
+  TRAFFIC_LIGHT_SCALE,
+  type GlbModelId,
+  type GlbPlacement,
+} from './worldModels';
 
 interface ExtractedPart {
   geo: BufferGeometry;
@@ -34,6 +45,10 @@ interface AssetEntry {
   parts: ExtractedPart[];
   meshes: (InstancedMesh | null)[];
   capacities: number[];
+  lodReady: boolean;
+  lodParts: ExtractedPart[];
+  lodMeshes: (InstancedMesh | null)[];
+  lodCapacities: number[];
 }
 
 interface BushSphere {
@@ -62,6 +77,10 @@ const _scale = new Vector3();
 const _euler = new Euler(0, 0, 0, 'YXZ');
 const _instMat = new Matrix4();
 const _partMat = new Matrix4();
+const _frustum = new Frustum();
+const _projScreen = new Matrix4();
+const _sphere = new Sphere();
+const _camForward = new Vector3();
 
 const nextCap = (need: number) => {
   let c = 8;
@@ -70,8 +89,9 @@ const nextCap = (need: number) => {
 };
 
 /**
- * Streams and renders all 40 compressed world GLBs via shared-geometry `InstancedMesh` batches,
- * grounded (`Box3.min.y = 0`), distance-culled (`lodDist`), with bush LOS occlusion & prop FX.
+ * Streams and renders all 40 compressed world GLBs via shared-geometry 2-tier (LOD0/LOD1)
+ * `InstancedMesh` batches, grounded (`Box3.min.y = 0`), frustum & distance culled,
+ * with shadows disabled beyond <=50m, bush LOS occlusion & prop FX.
  */
 export class GlbPropPool {
   private readonly chunks = new Map<number, GlbPlacement[]>();
@@ -89,6 +109,7 @@ export class GlbPropPool {
   private indexesDirty = false;
   private lastRebuildX = 1e9;
   private lastRebuildZ = 1e9;
+  private readonly lastRebuildDir = new Vector3(0, 0, -1);
   private time = 0;
   private fxTimer = 0;
   private disposed = false;
@@ -174,13 +195,27 @@ export class GlbPropPool {
     return null;
   }
 
-  update(dt: number, camPos: Vector3, paused: boolean): void {
+  update(dt: number, camPos: Vector3, paused: boolean, camera?: Camera): void {
     if (this.disposed) return;
     if (this.indexesDirty) this.rebuildSpatialLists();
 
+    let hasFrustum = false;
+    let turned = false;
+    if (camera) {
+      camera.updateMatrixWorld();
+      _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      _frustum.setFromProjectionMatrix(_projScreen);
+      hasFrustum = true;
+      camera.getWorldDirection(_camForward);
+      if (_camForward.dot(this.lastRebuildDir) < 0.985) {
+        turned = true;
+      }
+    }
+
     const moved = Math.hypot(camPos.x - this.lastRebuildX, camPos.z - this.lastRebuildZ);
-    if (this.dirty || moved > 4.5) {
-      this.rebuildInstances(camPos.x, camPos.z);
+    if (this.dirty || moved > 3.0 || turned) {
+      if (camera) this.lastRebuildDir.copy(_camForward);
+      this.rebuildInstances(camPos.x, camPos.z, hasFrustum);
     }
 
     if (!paused) {
@@ -196,99 +231,27 @@ export class GlbPropPool {
     if (!spec) return;
     if (typeof fetch !== 'function' || typeof window === 'undefined') return;
 
-    const entry: AssetEntry = { status: 'loading', parts: [], meshes: [], capacities: [] };
+    const entry: AssetEntry = {
+      status: 'loading',
+      parts: [],
+      meshes: [],
+      capacities: [],
+      lodReady: false,
+      lodParts: [],
+      lodMeshes: [],
+      lodCapacities: [],
+    };
     this.assets.set(id, entry);
 
     const baseUrl = typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL ? import.meta.env.BASE_URL : '/';
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-    void loader
-      .loadAsync(`${baseUrl}models/world/${spec.file}`)
-      .then((gltf) => {
+
+    void this.loadGltfParts(loader, `${baseUrl}models/world/${spec.file}`, id, spec, false)
+      .then((parts) => {
         if (this.disposed) return;
-        const root = gltf.scene;
-        root.updateMatrixWorld(true);
-        const box = new Box3().setFromObject(root);
-        const minYOffset = Number.isFinite(box.min.y) ? -box.min.y : 0;
-        const baseMat = new Matrix4().makeTranslation(0, minYOffset, 0);
-        let assetMat = baseMat;
-
-        let extraGeo: BufferGeometry | null = null;
-        let extraMat: Material | null = null;
-        let extraLocal: Matrix4 | null = null;
-
-        if (id === 'street_lamp_2000') {
-          // Shift pole center (+1.035 X in GLB) to local origin so the arm points along -X.
-          assetMat = new Matrix4().makeTranslation(-1.035, 0, 0).multiply(baseMat);
-        } else if (spec.category === 'sign') {
-          const s = 0.68 / spec.size[0];
-          const lift = Math.max(0, 2.72 - spec.size[1] * s);
-          assetMat = new Matrix4()
-            .makeTranslation(0, lift, 0)
-            .multiply(new Matrix4().makeScale(s, s, s))
-            .multiply(baseMat);
-          const poleH = lift + 0.18;
-          extraGeo = new CylinderGeometry(0.032, 0.032, poleH, 8);
-          extraMat = new MeshStandardMaterial({ color: 0x5c6066, roughness: 0.78, metalness: 0.35 });
-          extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
-        } else if (id === 'traffic_light_2500') {
-          // Own GLB pole only (no procedural stand): base plate seated on the sidewalk (min.y = 0),
-          // pole (z ≈ -0.25 in the GLB) shifted onto the local origin so it matches the collider.
-          const s = TRAFFIC_LIGHT_SCALE;
-          assetMat = new Matrix4()
-            .makeScale(s, s, s)
-            .multiply(new Matrix4().makeTranslation(0, 0, 0.25))
-            .multiply(baseMat);
-        } else if (BASE_SCALE[id]) {
-          const [sx, sy, sz] = BASE_SCALE[id]!;
-          assetMat = new Matrix4().makeScale(sx, sy, sz).multiply(baseMat);
-        } else if (id === 'Sport_Sedan_22k') {
-          // Small matte baffle tucked inside the rear trunk well (<=35% H, <=18% L, <=65% W) so nothing clips hood/windows.
-          extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
-          extraMat = new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 });
-          extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.40, spec.size[2] * 0.30);
-        }
-
-        let partIdx = 0;
-        root.traverse((obj) => {
-          const m = obj as Mesh;
-          if (!m.isMesh || !m.geometry) return;
-          // Materials are owned per model file: never shared/reused by name ("Material", "material_0")
-          // across GLBs, and glTF maps keep flipY = false.
-          const isolate = (mm: Material): Material => {
-            const c = mm.clone();
-            c.name = `${spec.file}::${mm.name || partIdx}`;
-            const map = (c as MeshStandardMaterial).map;
-            if (map && map.flipY) {
-              map.flipY = false;
-              map.needsUpdate = true;
-            }
-            if (spec.category === 'vehicle') c.side = DoubleSide;
-            return c;
-          };
-          const mat = Array.isArray(m.material) ? m.material.map(isolate) : isolate(m.material);
-          partIdx++;
-          const local = assetMat.clone().multiply(m.matrixWorld);
-          entry.parts.push({
-            geo: m.geometry,
-            mat,
-            local,
-            castShadow: spec.castShadow,
-            receiveShadow: true,
-          });
-          entry.meshes.push(null);
-          entry.capacities.push(0);
-        });
-        if (extraGeo && extraMat && extraLocal) {
-          entry.parts.push({
-            geo: extraGeo,
-            mat: extraMat,
-            local: extraLocal,
-            castShadow: spec.castShadow,
-            receiveShadow: true,
-          });
-          entry.meshes.push(null);
-          entry.capacities.push(0);
-        }
+        entry.parts = parts;
+        entry.meshes = new Array(parts.length).fill(null);
+        entry.capacities = new Array(parts.length).fill(0);
         entry.status = 'ready';
         this.dirty = true;
       })
@@ -296,6 +259,108 @@ export class GlbPropPool {
         entry.status = 'error';
         console.warn(`[GlbPropPool] failed to load ${spec.file}:`, err);
       });
+
+    if (LOD1_WORLD_MODELS.has(id)) {
+      void this.loadGltfParts(loader, `${baseUrl}models/world/lod/${spec.file}`, id, spec, true)
+        .then((parts) => {
+          if (this.disposed) return;
+          entry.lodParts = parts;
+          entry.lodMeshes = new Array(parts.length).fill(null);
+          entry.lodCapacities = new Array(parts.length).fill(0);
+          entry.lodReady = true;
+          this.dirty = true;
+        })
+        .catch(() => {
+          // Optional LOD1 failure falls back cleanly to LOD0.
+        });
+    }
+  }
+
+  private async loadGltfParts(
+    loader: GLTFLoader,
+    url: string,
+    id: GlbModelId,
+    spec: (typeof GLB_WORLD_SPECS)[GlbModelId],
+    isLod: boolean,
+  ): Promise<ExtractedPart[]> {
+    const gltf = await loader.loadAsync(url);
+    if (this.disposed) return [];
+    const root = gltf.scene;
+    root.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(root);
+    const minYOffset = Number.isFinite(box.min.y) ? -box.min.y : 0;
+    const baseMat = new Matrix4().makeTranslation(0, minYOffset, 0);
+    let assetMat = baseMat;
+
+    let extraGeo: BufferGeometry | null = null;
+    let extraMat: Material | null = null;
+    let extraLocal: Matrix4 | null = null;
+
+    if (id === 'street_lamp_2000') {
+      assetMat = new Matrix4().makeTranslation(-1.035, 0, 0).multiply(baseMat);
+    } else if (spec.category === 'sign') {
+      const s = 0.68 / spec.size[0];
+      const lift = Math.max(0, 2.72 - spec.size[1] * s);
+      assetMat = new Matrix4()
+        .makeTranslation(0, lift, 0)
+        .multiply(new Matrix4().makeScale(s, s, s))
+        .multiply(baseMat);
+      const poleH = lift + 0.18;
+      extraGeo = new CylinderGeometry(0.032, 0.032, poleH, 8);
+      extraMat = new MeshStandardMaterial({ color: 0x5c6066, roughness: 0.78, metalness: 0.35 });
+      extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
+    } else if (id === 'traffic_light_2500') {
+      const s = TRAFFIC_LIGHT_SCALE;
+      assetMat = new Matrix4()
+        .makeScale(s, s, s)
+        .multiply(new Matrix4().makeTranslation(0, 0, 0.25))
+        .multiply(baseMat);
+    } else if (BASE_SCALE[id]) {
+      const [sx, sy, sz] = BASE_SCALE[id]!;
+      assetMat = new Matrix4().makeScale(sx, sy, sz).multiply(baseMat);
+    } else if (!isLod && id === 'Sport_Sedan_22k') {
+      extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
+      extraMat = new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 });
+      extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.40, spec.size[2] * 0.30);
+    }
+
+    const parts: ExtractedPart[] = [];
+    let partIdx = 0;
+    root.traverse((obj) => {
+      const m = obj as Mesh;
+      if (!m.isMesh || !m.geometry) return;
+      const isolate = (mm: Material): Material => {
+        const c = mm.clone();
+        c.name = `${spec.file}${isLod ? '#lod1' : ''}::${mm.name || partIdx}`;
+        const map = (c as MeshStandardMaterial).map;
+        if (map && map.flipY) {
+          map.flipY = false;
+          map.needsUpdate = true;
+        }
+        if (spec.category === 'vehicle') c.side = DoubleSide;
+        return c;
+      };
+      const mat = Array.isArray(m.material) ? m.material.map(isolate) : isolate(m.material);
+      partIdx++;
+      parts.push({
+        geo: m.geometry,
+        mat,
+        local: assetMat.clone().multiply(m.matrixWorld),
+        castShadow: !isLod && spec.castShadow,
+        receiveShadow: !isLod,
+      });
+    });
+
+    if (extraGeo && extraMat && extraLocal) {
+      parts.push({
+        geo: extraGeo,
+        mat: extraMat,
+        local: extraLocal,
+        castShadow: !isLod && spec.castShadow,
+        receiveShadow: !isLod,
+      });
+    }
+    return parts;
   }
 
   private rebuildSpatialLists(): void {
@@ -312,16 +377,22 @@ export class GlbPropPool {
         const spec = GLB_WORLD_SPECS[p.id];
         if (spec?.category === 'vehicle') {
           const s = p.scale ?? 1;
+          const sx = p.sx ?? s;
+          const sy = p.sy ?? s;
+          const sz = p.sz ?? s;
+          const absRoll = Math.abs(p.roll ?? 0);
+          const onSide = absRoll > 0.8 && absRoll < 2.2;
+          const upsideDown = absRoll >= 2.2;
           this.vehicles.push({
             id: p.id,
             x: p.x,
-            y: p.y,
+            y: onSide || upsideDown ? Math.min(p.y, 0.05) : p.y,
             z: p.z,
             cos: Math.cos(-p.yaw),
             sin: Math.sin(-p.yaw),
-            hw: spec.size[0] * 0.5 * (p.sx ?? s),
-            H: spec.size[1] * (p.sy ?? s),
-            hl: spec.size[2] * 0.5 * (p.sz ?? s),
+            hw: (onSide ? spec.size[1] * sy : spec.size[0] * sx) * 0.5,
+            H: onSide ? spec.size[0] * sx : spec.size[1] * sy,
+            hl: spec.size[2] * 0.5 * sz,
             localZ: 0,
           });
         }
@@ -345,12 +416,14 @@ export class GlbPropPool {
     }
   }
 
-  private rebuildInstances(cx: number, cz: number): void {
+  private rebuildInstances(cx: number, cz: number, hasFrustum: boolean): void {
     this.dirty = false;
     this.lastRebuildX = cx;
     this.lastRebuildZ = cz;
 
-    const grouped = new Map<GlbModelId, GlbPlacement[]>();
+    const grouped0 = new Map<GlbModelId, GlbPlacement[]>();
+    const grouped1 = new Map<GlbModelId, GlbPlacement[]>();
+
     for (const list of this.chunks.values()) {
       for (let i = 0; i < list.length; i++) {
         const p = list[i];
@@ -359,11 +432,26 @@ export class GlbPropPool {
         const maxD = spec.lodDist;
         const dx = p.x - cx;
         const dz = p.z - cz;
-        if (dx * dx + dz * dz > maxD * maxD) continue;
-        let bucket = grouped.get(p.id);
+        const d2 = dx * dx + dz * dz;
+        if (d2 > maxD * maxD) continue;
+
+        const s = p.scale ?? Math.max(p.sx ?? 1, p.sy ?? 1, p.sz ?? 1);
+        // Keep close shadow-casters within 22m even if off-screen, frustum-cull everything farther.
+        if (hasFrustum && d2 > 22 * 22) {
+          const rad = Math.max(spec.size[0], spec.size[1], spec.size[2]) * 0.65 * s + 4.5;
+          _sphere.center.set(p.x, p.y + spec.size[1] * 0.5 * s, p.z);
+          _sphere.radius = rad;
+          if (!_frustum.intersectsSphere(_sphere)) continue;
+        }
+
+        const entry = this.assets.get(p.id);
+        const switchD = lodSwitchDistOf(p.id);
+        const useLod1 = !!entry?.lodReady && d2 > switchD * switchD;
+        const targetMap = useLod1 ? grouped1 : grouped0;
+        let bucket = targetMap.get(p.id);
         if (!bucket) {
           bucket = [];
-          grouped.set(p.id, bucket);
+          targetMap.set(p.id, bucket);
         }
         bucket.push(p);
       }
@@ -371,50 +459,60 @@ export class GlbPropPool {
 
     for (const [id, entry] of this.assets) {
       if (entry.status !== 'ready' || entry.parts.length === 0) continue;
-      const list = grouped.get(id);
-      const count = list ? list.length : 0;
-
-      for (let pi = 0; pi < entry.parts.length; pi++) {
-        const part = entry.parts[pi];
-        let im = entry.meshes[pi];
-        if (count === 0) {
-          if (im) im.count = 0;
-          continue;
-        }
-        if (!im || count > entry.capacities[pi]) {
-          const cap = nextCap(count);
-          if (im) {
-            this.scene.remove(im);
-            im.dispose();
-          }
-          im = new InstancedMesh(part.geo, part.mat, cap);
-          im.instanceMatrix.setUsage(DynamicDrawUsage);
-          im.frustumCulled = false;
-          im.castShadow = part.castShadow;
-          im.receiveShadow = part.receiveShadow;
-          this.scene.add(im);
-          entry.meshes[pi] = im;
-          entry.capacities[pi] = cap;
-        }
-        for (let k = 0; k < count; k++) {
-          const p = list![k];
-          const s = p.scale ?? 1;
-          _pos.set(p.x, p.y, p.z);
-          _euler.set(p.pitch ?? 0, p.yaw, p.roll ?? 0, 'YXZ');
-          _quat.setFromEuler(_euler);
-          _scale.set(p.sx ?? s, p.sy ?? s, p.sz ?? s);
-          _instMat.compose(_pos, _quat, _scale);
-          _partMat.multiplyMatrices(_instMat, part.local);
-          im.setMatrixAt(k, _partMat);
-        }
-        im.count = count;
-        im.instanceMatrix.needsUpdate = true;
+      this.writePartBatch(entry.parts, entry.meshes, entry.capacities, grouped0.get(id), false);
+      if (entry.lodReady && entry.lodParts.length > 0) {
+        this.writePartBatch(entry.lodParts, entry.lodMeshes, entry.lodCapacities, grouped1.get(id), true);
       }
     }
   }
 
+  private writePartBatch(
+    parts: ExtractedPart[],
+    meshes: (InstancedMesh | null)[],
+    capacities: number[],
+    list: GlbPlacement[] | undefined,
+    forceNoShadow: boolean,
+  ): void {
+    const count = list ? list.length : 0;
+    for (let pi = 0; pi < parts.length; pi++) {
+      const part = parts[pi];
+      let im = meshes[pi];
+      if (count === 0) {
+        if (im) im.count = 0;
+        continue;
+      }
+      if (!im || count > capacities[pi]) {
+        const cap = nextCap(count);
+        if (im) {
+          this.scene.remove(im);
+          im.dispose();
+        }
+        im = new InstancedMesh(part.geo, part.mat, cap);
+        im.instanceMatrix.setUsage(DynamicDrawUsage);
+        im.frustumCulled = false;
+        im.castShadow = !forceNoShadow && part.castShadow;
+        im.receiveShadow = part.receiveShadow;
+        this.scene.add(im);
+        meshes[pi] = im;
+        capacities[pi] = cap;
+      }
+      for (let k = 0; k < count; k++) {
+        const p = list![k];
+        const s = p.scale ?? 1;
+        _pos.set(p.x, p.y, p.z);
+        _euler.set(p.pitch ?? 0, p.yaw, p.roll ?? 0, 'YXZ');
+        _quat.setFromEuler(_euler);
+        _scale.set(p.sx ?? s, p.sy ?? s, p.sz ?? s);
+        _instMat.compose(_pos, _quat, _scale);
+        _partMat.multiplyMatrices(_instMat, part.local);
+        im.setMatrixAt(k, _partMat);
+      }
+      im.count = count;
+      im.instanceMatrix.needsUpdate = true;
+    }
+  }
+
   private updateEffects(camPos: Vector3, paused: boolean): void {
-    // 1. Burn barrel flickering point lights + sparks/smoke
     let bi = 0;
     for (let i = 0; i < this.burnBarrels.length && bi < this.barrelLights.length; i++) {
       const b = this.burnBarrels[i];
@@ -428,7 +526,6 @@ export class GlbPropPool {
     }
     for (; bi < this.barrelLights.length; bi++) this.barrelLights[bi].intensity = 0;
 
-    // 2. Generator light tower warm floodlight glow
     let ti = 0;
     for (let i = 0; i < this.lightTowers.length && ti < this.towerLights.length; i++) {
       const t = this.lightTowers[i];
@@ -453,22 +550,27 @@ export class GlbPropPool {
     }
   }
 
+  private disposeParts(parts: ExtractedPart[], meshes: (InstancedMesh | null)[]): void {
+    for (const im of meshes) {
+      if (im) {
+        im.removeFromParent();
+        im.dispose();
+      }
+    }
+    for (const part of parts) {
+      part.geo.dispose();
+      if (Array.isArray(part.mat)) part.mat.forEach((mm) => mm.dispose());
+      else part.mat.dispose();
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const l of this.barrelLights) l.removeFromParent();
     for (const l of this.towerLights) l.removeFromParent();
     for (const entry of this.assets.values()) {
-      for (const im of entry.meshes) {
-        if (im) {
-          im.removeFromParent();
-          im.dispose();
-        }
-      }
-      for (const part of entry.parts) {
-        part.geo.dispose();
-        if (Array.isArray(part.mat)) part.mat.forEach((mm) => mm.dispose());
-        else part.mat.dispose();
-      }
+      this.disposeParts(entry.parts, entry.meshes);
+      this.disposeParts(entry.lodParts, entry.lodMeshes);
     }
     this.assets.clear();
     this.chunks.clear();

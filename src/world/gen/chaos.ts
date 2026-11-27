@@ -8,6 +8,7 @@ import * as F from './furniture';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
 import { BAND } from './layout';
+import { LIFE, spotHash } from './lifeKinds';
 import { hash3 } from './noise';
 import type { Rand } from './palette';
 import type { Builder } from './pieces';
@@ -173,6 +174,11 @@ function heliCrash(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyMo
   groundDecal(b, 'decalSoot', x, 0, z, 6, rand, 1.4);
   groundDecal(b, 'decalShards', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 3, rand);
   groundDecal(b, 'decalOil', x + (rand() - 0.5) * 4, 0, z + (rand() - 0.5) * 4, 2.4, rand);
+  b.life(LIFE.fire, x - Math.cos(yaw) * 1.4, 1.1, z + Math.sin(yaw) * 1.4, 0, 0, 1.4, 0, spotHash(x, z, 111));
+  b.life(LIFE.smoke, x, 1.8, z, 0, 0, 0, 0, spotHash(x, z, 112));
+  if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', x + 4.2, z - 2.2, yaw, 0.35, { keepClearGap: 1.5 })) {
+    b.glb('Road_Debris_Cluster_2', x + 4.2, 0.01, z - 2.2, yaw, { scale: 1.2 });
+  }
   const A = new Place(b, x, 0, z, 0);
   stripedBarrier(A, -8, -2.5, 2.4, rand() < 0.5);
   stripedBarrier(A, 8, 2.5, 2.4, rand() < 0.5);

@@ -145,6 +145,10 @@ export function hypermarket(S: Site, rand: Rand): void {
     { at: -12, w: 3, h: 3.2 },
     { at: 4, w: 3, h: 3.2 },
   ]);
+  for (const dx of [-12, 4]) {
+    const [wx, wz] = p.pt(dx, -12);
+    S.b.registerDoorClearance(wx, 0, wz, 2.0);
+  }
   // Pallet racks on the back wall: uprights, two beds of pallets.
   for (let k = 0; k < 5; k++) {
     const x = -21 + k * 6;

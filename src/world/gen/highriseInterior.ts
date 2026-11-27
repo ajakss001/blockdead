@@ -1,5 +1,5 @@
 import { mulberry32 } from '../../core/random';
-import { FACADE_BAY } from '../../render/look/surfaces';
+import { FACADE_BAY, type Surface } from '../../render/look/surfaces';
 import * as F from './furniture';
 import { Place, type Quarter, type ShopKind } from './furniture';
 import {
@@ -20,7 +20,7 @@ import {
   STEPS,
   wallDecalZ,
 } from './highrise';
-import { LIFE } from './lifeKinds';
+import { LIFE, spotHash } from './lifeKinds';
 import { hash3 } from './noise';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
@@ -85,8 +85,8 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     // Slab (top at y) around the stair opening; the near landing is part of it.
     const slabT = k === 0 ? 0.05 : 0.2;
     const sy = k === 0 ? 0 : y - 0.2;
-    const floorS = k === 0 || office ? 'tile' : 'wood';
-    const floorC = k === 0 ? 0x8a867c : office ? 0x7a7a74 : PAL.floor;
+    const floorS: Surface = k === 0 ? 'tile' : office ? 'linoleum' : 'parquet';
+    const floorC = k === 0 ? 0x8a867c : office ? 0x747670 : 0x725e48;
     b.block(floorC, L.ix0, sy, L.iz0, L.ix1 - L.ix0, slabT, L.cz0 + NEAR - L.iz0, floorS, k > 0);
     b.block(floorC, L.cx1, sy, L.cz0 + NEAR, L.ix1 - L.cx1, slabT, L.iz1 - L.cz0 - NEAR, floorS, k > 0);
 
@@ -105,7 +105,7 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     b.block(0xb0aa98, L.cx1 + 0.16, y + 1.4, L.cz0 + NEAR + 0.2, 0.02, 0.4, 0.3, 'plaster');
 
     if (k === 0) lobby(b, L, desc, h, rs, rf, paperA);
-    else corridorStorey(b, L, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, powered, lit.filter((l) => l.k === k));
+    else corridorStorey(b, L, desc.seed, k, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, powered, lit.filter((l) => l.k === k));
   }
   b.setIdBase(null);
   b.endFrame();
@@ -122,10 +122,12 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
     b.blockY(paper, sx, 2.1, gz, 0.12, h - 2.1, DOOR_W, 'plaster');
     b.door(sx + 0.06, gz, 0, -Math.PI / 2, 1, false, { open: rs() < 0.5 });
     b.blockY(paper, L.ix0, 0, L.czA - 0.12, sx - L.ix0 + 0.12, h, 0.12, 'plaster');
+    // Linoleum floor accent inside the ground shop so it looks distinct from lobby tiles.
+    b.block(0x76746c, L.ix0 + 0.05, 0.048, L.iz0 + 0.05, sx - L.ix0 - 0.1, 0.01, L.czA - L.iz0 - 0.18, 'linoleum');
     if (rf) shopInterior(b, L.ix0, L.iz0, sx, L.czA - 0.12, shop.kind, rf);
   }
   // Back units at street level: storerooms off the corridor.
-  backUnits(b, L, 0, h, PAL.wallpapers[0], 'storage', rs, rf, []);
+  backUnits(b, L, desc.seed, 0, 0, h, PAL.wallpapers[0], 'storage', rs, rf, []);
   if (!rf) return;
 
   // Concierge desk facing the doors (kept clear of elevator & side walls), mailboxes beside the elevator on the solid core wall.
@@ -141,13 +143,14 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   const bags = Math.floor(rf() * 3);
   for (let n = 0; n < bags; n++) F.suitcase(new Place(b, L.doorX + (rf() - 0.5) * 3, 0, L.iz0 + 3.0 + rf() * 1.2, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.4);
   if (rf() < 0.7) groundDecal(b, 'decalSoot', L.doorX + (rf() - 0.5) * 4, 0.05, L.iz0 + 2 + rf() * 4, 2.2, rf, 1.3);
+  if (spotHash(L.doorX, L.cz0, 77) < 0.45) wallDecalZ(b, 'decalCobweb', L.cx1 + 0.45, h - 0.35, L.cz0, 0.7, -1);
 }
 
-function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, powered: boolean, lit: LitUnit[]): void {
-  // Front units between the facade and the corridor.
-  const skins = ['plaster', 'concrete', 'facadeBrick', 'wood'] as const;
-  const wallSkinA = skins[Math.abs(paperA) % skins.length];
-  const wallSkinB = skins[Math.abs(paperB) % skins.length];
+function corridorStorey(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, _paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, powered: boolean, lit: LitUnit[]): void {
+  // Windowless interior PBR wall pool only (never exterior facadeBrick/facadeConcrete with painted black windows!).
+  const skins: readonly Surface[] = mode === 'office'
+    ? ['plaster', 'concrete', 'wood', 'wallpaper']
+    : ['wallpaper', 'plaster', 'wood', 'concrete', 'brick'];
   const width = L.ix1 - L.ix0;
   const n = Math.max(2, Math.floor(width / 6.5));
   const bounds = snapBayBounds(L.ix0, L.ix1, n);
@@ -155,30 +158,38 @@ function corridorStorey(b: Builder, L: Local, y: number, h: number, paperA: numb
     const ux0 = bounds[u];
     const ux1 = bounds[u + 1];
     const uw = ux1 - ux0;
-    if (u > 0) b.blockY(paperA, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - 0.12 - L.iz0, wallSkinA);
+    const roomSeed = hash3(buildingSeed + floorIdx * 31, u, 409);
+    const wallSkinA = skins[Math.abs(roomSeed) % skins.length];
+    const wallSkinB = skins[Math.abs(roomSeed >> 3) % skins.length];
+    const roomPaper = PAL.wallpapers[Math.abs(roomSeed >> 5) % PAL.wallpapers.length];
+    const corrPaper = mode === 'office' ? paperB : roomPaper;
+
+    if (u > 0) b.blockY(roomPaper, ux0 - 0.06, y, L.iz0, 0.12, h, L.czA - 0.12 - L.iz0, wallSkinA);
     // Someone still lives in a lit unit (the random stream advances either way).
     const light = lit.find((l) => !l.back && l.u === u);
     const st0 = unitState(rs);
     const st = light ? 'lived' : st0;
     // Corridor wall with this unit's doorway.
     const gx = ux0 + uw / 2 - DOOR_W / 2;
-    b.blockY(paperB, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, wallSkinB);
-    b.blockY(paperB, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, wallSkinB);
-    b.blockY(paperB, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
+    b.blockY(corrPaper, ux0, y, L.czA - 0.12, gx - ux0, h, 0.12, wallSkinB);
+    b.blockY(corrPaper, gx + DOOR_W, y, L.czA - 0.12, ux1 - gx - DOOR_W, h, 0.12, wallSkinB);
+    b.blockY(corrPaper, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
-      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, paperA, light);
+      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, roomPaper, roomSeed, light);
     }
   }
-  backUnits(b, L, y, h, paperB, mode, rs, rf, lit);
+  backUnits(b, L, buildingSeed, floorIdx, y, h, paperB, mode, rs, rf, lit);
   if (!rf) return;
-  // Corridor: ceiling lamps (a few flicker on the generator), bullet holes, a lost bag.
+  // Corridor: ceiling lamps (a few flicker on the generator), bullet holes, damp/cracks, a lost bag.
   const cz = L.czA + CORRIDOR / 2;
   for (let x = L.ix0 + 2.5; x < L.ix1 - 1; x += 5) {
     b.block(0xd8d8d0, x - 0.6, y + h - 0.06, cz - 0.06, 1.2, 0.05, 0.12, 'lamp');
     if (powered && rf() < 0.5) b.life(1, x, y + h - 0.07, cz, 0, 0, 1.2, h - 0.07, rf());
   }
   if (rf() < 0.2) wallDecalZ(b, 'decalBullets', L.ix0 + 0.8, y + 1.3, L.czA, 1.1, 1);
+  if (spotHash(buildingSeed + floorIdx, L.ix0, 81) < 0.5) wallDecalZ(b, 'decalCrack', L.ix0 + 1.8, y + 1.45, L.czA - 0.12, 1.1, -1);
+  if (spotHash(buildingSeed + floorIdx, L.cx1, 82) < 0.45) wallDecalZ(b, 'decalCobweb', L.ix0 + 0.5, y + h - 0.35, L.czA, 0.65, 1);
   if (rf() < 0.25) F.suitcase(new Place(b, L.ix0 + 4 + rf() * (width - 8), y, cz - 0.3, Math.floor(rf() * 4) as Quarter), rf, rf() < 0.5);
 }
 
@@ -192,7 +203,7 @@ function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, 
   b.door(gx, hz, y, 0, st === 'barricaded' ? -swing : swing, planked, { open });
 }
 
-function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[]): void {
+function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[]): void {
   let x0 = L.cx1 + 0.15;
   if (mode === 'storage') {
     // Ground floor: reserve [L.cx1 + 0.15, L.cx1 + 4.35] as a solid alcove wall for the elevator + mailboxes.
@@ -209,11 +220,17 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
   if (width < 4) return;
   const n = Math.max(1, Math.floor(width / 6.5));
   const bounds = snapBayBounds(x0, L.ix1, n);
+  const backSkins: readonly Surface[] = mode === 'office'
+    ? ['plaster', 'concrete', 'wood']
+    : ['wallpaper', 'plaster', 'wood', 'brick'];
   for (let u = 0; u < bounds.length - 1; u++) {
     const ux0 = bounds[u];
     const ux1 = bounds[u + 1];
     const uw = ux1 - ux0;
-    if (u > 0) b.blockY(paper, ux0 - 0.06, y, L.cz0 + 0.12, 0.12, h, L.iz1 - L.cz0 - 0.12, 'plaster');
+    const roomSeed = hash3(buildingSeed + floorIdx * 37, u + 19, 511);
+    const skin = backSkins[Math.abs(roomSeed) % backSkins.length];
+    const unitPaper = mode === 'storage' ? paper : PAL.wallpapers[Math.abs(roomSeed >> 4) % PAL.wallpapers.length];
+    if (u > 0) b.blockY(unitPaper, ux0 - 0.06, y, L.cz0 + 0.12, 0.12, h, L.iz1 - L.cz0 - 0.12, skin);
     const light = lit.find((l) => l.back && l.u === u);
     const st0 = mode === 'storage' ? 'lived' : unitState(rs);
     const st = light ? 'lived' : st0;
@@ -222,7 +239,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
     b.blockY(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
-    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, paper, light);
+    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, unitPaper, roomSeed, light);
   }
 }
 
@@ -230,7 +247,7 @@ function backUnits(b: Builder, L: Local, y: number, h: number, paper: number, mo
  * One apartment, office or storeroom. Authored in a unit frame: the far wall (facade, windows) at
  * z = 0, the door in the middle of the wall at z = d, x across the unit.
  */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, light?: LitUnit): void {
+function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, roomSeed: number, light?: LitUnit): void {
   const w = x1 - x0;
   const d = z1 - z0;
   const cx = (x0 + x1) / 2;
@@ -251,14 +268,23 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   }
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);
-  else apartment(U, w, d, h, st, rf, paper, cx, front);
+  else apartment(U, w, d, h, st, rf, paper, cx, front, roomSeed);
+  // Subtle abandoned interior cobwebs, ceiling dampness, and wall cracks (room-seeded).
+  if (spotHash(cx, z0 + y * 5, 91) < 0.55) {
+    U.poster(0xffffff, (spotHash(cx, y, 92) - 0.5) * (w - 0.9), h - 0.34, 0.62, 0.62, 0, 'decalCobweb');
+  }
+  if (spotHash(cx, z1 + y * 3, 93) < 0.48) {
+    U.decal('decalDamp', (spotHash(z0, y, 94) - 0.5) * w * 0.55, d * 0.55, 1.35, () => 0.4);
+  }
+  if (spotHash(x0, y * 7, 95) < 0.42) {
+    U.poster(0xffffff, (spotHash(x1, y, 96) - 0.5) * (w - 1.1), 1.45, 0.95, 0.95, 0, 'decalCrack');
+  }
   // A leak: water dripping from the ceiling somewhere in the unit.
-  // (The ground floor's slab is 5 cm thick on top of y; upper ones end at y.)
   if (U.chance(0, 0, 68) < 0.28) U.life(LIFE.drip, (U.chance(0, 0, 69) - 0.5) * w * 0.6, h, d * (0.25 + U.chance(0, 0, 70) * 0.5), 0, y === 0 ? h - 0.05 : h, U.chance(0, 0, 71));
-  if (st === 'barricaded') F.barricade(U.at(0, d, 2), rf);
+  if (st === 'barricaded') F.barricade(U.at(0, d, 2).nearDoor(), rf);
 }
 
-function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, paper: number, cx: number, front: boolean): void {
+function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf: Rand, paper: number, cx: number, front: boolean, roomSeed: number): void {
   const messy = st === 'ransacked';
   const fled = st === 'fled';
   const open = () => messy || (fled && rf() < 0.6);
@@ -286,11 +312,21 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
   if (d >= 7 && partX !== null) {
     // Bedroom (side s) behind a pier-aligned partition, living room (side −s), kitchen towards the door.
     const dz = Math.min(5.2, Math.max(4.15, d * 0.5));
-    U.box(paper, partX, 0, dz / 2, 0.12, h, dz, 'plaster', true);
+    const roomWallS: Surface = (Math.abs(roomSeed) & 1) === 0 ? 'wallpaper' : 'plaster';
+    const bedTint = PAL.wallpapers[Math.abs(roomSeed >> 2) % PAL.wallpapers.length];
+    U.box(bedTint, partX, 0, dz / 2, 0.12, h, dz, roomWallS, true);
     const sideW = w / 2 - s * partX;
     const ret = sideW - 1.06;
-    if (ret > 0.08) U.box(paper, partX + s * (0.06 + ret / 2), 0, dz, ret, h, 0.12, 'plaster', true);
-    U.box(paper, s * (w / 2 - 0.5), 2.1, dz, 1.0, h - 2.1, 0.12, 'plaster');
+    if (ret > 0.08) U.box(bedTint, partX + s * (0.06 + ret / 2), 0, dz, ret, h, 0.12, roomWallS, true);
+    U.box(bedTint, s * (w / 2 - 0.5), 2.1, dz, 1.0, h - 2.1, 0.12, roomWallS);
+    const [archX, archZ] = U.pt(s * (w / 2 - 0.5), dz);
+    U.b.registerDoorClearance(archX, U.y, archZ, 1.5);
+
+    // Kitchen zone flooring (ceramic tile / worn linoleum) vs bedroom/living parquet.
+    const kz = dz + 0.12;
+    const kd = d - kz;
+    const kSurf: Surface = (Math.abs(roomSeed) & 2) === 0 ? 'linoleum' : 'tile';
+    U.box(0x88847c, 0, 0.008, kz + kd / 2, w - 0.08, 0.012, kd - 0.08, kSurf);
 
     // Bedroom.
     const bedW = Math.min(1.5, Math.max(1.1, sideW - 1.2));
@@ -315,12 +351,11 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     if (st === 'lived' && !tvDown && U.chance(0, 0, 61) < 0.6) tvP.life(LIFE.tv, 0, 0.75, 0.49, 0.5, 0.38, U.chance(0, 0, 62));
     F.bookcase(U.at(-s * (w / 2 - 0.9), 0), rf, messy);
 
-    // Kitchen.
-    const kz = dz + 0.12;
-    const kd = d - kz;
+    // Kitchen (tiled / backsplash wall strip behind counter).
     const len = Math.min(2.6, kd - 1.4);
     if (len >= 1.4) {
       const K = U.at(-s * w / 2, kz + 0.1 + len / 2, face(s));
+      U.box(0xb6b8b0, -s * (w / 2 - 0.03), 0.78, kz + 0.1 + len / 2, 0.04, 0.85, len, 'wallTile');
       F.kitchenRun(K, rf, len, messy, radio);
       kitchenLife(K, len);
       if (kz + len + 1.0 < d - 0.6) {
@@ -333,6 +368,8 @@ function apartment(U: Place, w: number, d: number, h: number, st: UnitState, rf:
     else F.chair(U.at(s * (w / 4), kz + kd / 2, Math.floor(rf() * 4) as Quarter), rf);
   } else {
     // Studio: bed by the window, wardrobe, kitchenette by the door, a small table.
+    U.box(0x887864, 0, 0.008, d * 0.5, w - 0.08, 0.012, d - 0.12, (Math.abs(roomSeed) & 1) === 0 ? 'parquet' : 'linoleum');
+    void paper;
     F.bed(U.at(s * (w / 2 - 0.92), 0), rf, 1.4, messy);
     if (w >= 5.2) F.nightstand(U.at(s * (w / 2 - 2.22), 0), rf, open());
     F.wardrobe(U.at(-s * (w / 2 - 0.96), 0), rf, open());

@@ -64,12 +64,12 @@ export class Site {
    * A flat slab over a local rectangle (runways, aprons, yards), cut in squares of at most `cell` m so every
    * chunk of a big place gets its own pieces.
    */
-  slab(color: number, x0: number, z0: number, x1: number, z1: number, y: number, h: number, surface: Surface = 'asphalt', cell = 16): void {
+  slab(color: number, x0: number, z0: number, x1: number, z1: number, y: number, h: number, surface: Surface = 'asphalt', cell = 16, solid = false): void {
     const nx = Math.max(1, Math.ceil((x1 - x0) / cell));
     const nz = Math.max(1, Math.ceil((z1 - z0) / cell));
     const sx = (x1 - x0) / nx;
     const sz = (z1 - z0) / nz;
-    for (let a = 0; a < nx; a++) for (let c = 0; c < nz; c++) this.p.box(color, x0 + (a + 0.5) * sx, y, z0 + (c + 0.5) * sz, sx, h, sz, surface);
+    for (let a = 0; a < nx; a++) for (let c = 0; c < nz; c++) this.p.box(color, x0 + (a + 0.5) * sx, y, z0 + (c + 0.5) * sz, sx, h, sz, surface, solid);
   }
 
   /** A wall along local X at z, from x0 to x1, h high, with holes. */
@@ -128,18 +128,18 @@ export class Site {
     this.b.door(hx, hz, 0, ((this.p.r + 1) * Math.PI) / 2, 1, false, { width: w, ...opts });
   }
 
-  /** Floor, ceiling and roof over a local rectangle; registers the shelter. */
+  /** Floor, ceiling and roof over a local rectangle; registers the shelter and solid walkable/landable roof colliders. */
   roof(x0: number, z0: number, x1: number, z1: number, h: number, floor: number, ceiling = 0xb8b4a8, roofColor = 0x3a3a38): void {
     const w = x1 - x0;
     const d = z1 - z0;
     if (this.big) {
       this.slab(floor, x0, z0, x1, z1, 0, 0.04, 'tile');
-      this.slab(ceiling, x0, z0, x1, z1, h - 0.05, 0.05, 'plaster');
-      this.slab(roofColor, x0 - 0.2, z0 - 0.2, x1 + 0.2, z1 + 0.2, h, 0.25, 'roof');
+      this.slab(ceiling, x0, z0, x1, z1, h - 0.05, 0.05, 'plaster', 16, true);
+      this.slab(roofColor, x0 - 0.2, z0 - 0.2, x1 + 0.2, z1 + 0.2, h, 0.25, 'roof', 16, true);
     } else {
       this.p.box(floor, (x0 + x1) / 2, 0, (z0 + z1) / 2, w, 0.04, d, 'tile');
-      this.p.box(ceiling, (x0 + x1) / 2, h - 0.05, (z0 + z1) / 2, w, 0.05, d, 'plaster');
-      this.p.box(roofColor, (x0 + x1) / 2, h, (z0 + z1) / 2, w + 0.4, 0.25, d + 0.4, 'roof');
+      this.p.box(ceiling, (x0 + x1) / 2, h - 0.05, (z0 + z1) / 2, w, 0.05, d, 'plaster', true);
+      this.p.box(roofColor, (x0 + x1) / 2, h, (z0 + z1) / 2, w + 0.4, 0.25, d + 0.4, 'roof', true);
     }
     const [ax, az] = this.p.pt(x0, z0);
     const [bx, bz] = this.p.pt(x1, z1);

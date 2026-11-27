@@ -29,16 +29,26 @@ export function stripDecal(b: Builder, x: number, z: number, yaw: number, length
   g.dispose();
 }
 
-function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25, kind?: string, ignoreGlb?: number): boolean {
+function car(
+  b: Builder,
+  x: number,
+  z: number,
+  yaw: number,
+  rand: Rand,
+  smashed = 0.25,
+  kind?: string,
+  ignoreGlb?: number,
+  flipped?: 'roof' | 'sideL' | 'sideR',
+): boolean {
   const placed = buildCar(
     b.batch,
     b.colliders,
-    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0, kind, ignoreGlb },
+    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0, kind, ignoreGlb, flipped },
     b.containers,
   );
   if (placed) {
     b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
-    if (smashed >= 0.7 && spotHash(x, z, 94) < 0.3) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
+    if (smashed >= 0.7 && spotHash(x, z, 94) < 0.32) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
   }
   return placed;
 }
@@ -72,7 +82,9 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
       n += 2;
       continue;
     }
-    car(b, x, z, heading + askew, rand, rand() < 0.3 ? 0.7 : 0.2);
+    const flipRoll = spotHash(x, z, 91);
+    const flipped = rand() < 0.14 ? (flipRoll < 0.75 ? 'roof' : flipRoll < 0.88 ? 'sideL' : 'sideR') : undefined;
+    car(b, x, z, heading + askew, rand, rand() < 0.3 ? 0.7 : 0.2, flipped ? 'wreck' : undefined, undefined, flipped);
     if (rand() < 0.25) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 1.2, rand);
     t += 9.5 + rand() * 5.5;
     n++;
@@ -80,10 +92,12 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
   return lane;
 }
 
-/** Pile-up in an intersection: wrecked cars + emergency response (ambulance / fire truck), skid marks, oil. */
+/** Pile-up in an intersection: wrecked/flipped cars + emergency response (ambulance / fire truck), skid marks, debris & smoke. */
 export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void {
   const yaw0 = rand() * Math.PI * 2;
-  car(b, cx - Math.cos(yaw0) * 2.2, cz + Math.sin(yaw0) * 2.2, yaw0, rand, 0.85, 'wreck');
+  const fh = spotHash(cx, cz, 92);
+  const flip0 = fh < 0.45 ? (fh < 0.30 ? 'roof' : fh < 0.38 ? 'sideL' : 'sideR') : undefined;
+  car(b, cx - Math.cos(yaw0) * 2.2, cz + Math.sin(yaw0) * 2.2, yaw0, rand, 0.85, 'wreck', undefined, flip0);
   // Second car stopped near the first, kept inside the 5.8 m intersection strip.
   const a = yaw0 + Math.PI / 2 + (rand() - 0.5) * 0.4;
   const x2 = cx + Math.cos(a) * 3.8;
@@ -93,9 +107,13 @@ export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void 
   const responder = rand() < 0.5 ? 'fireTruck' : 'ambulance';
   const a3 = yaw0 + Math.PI + (rand() - 0.5) * 0.6;
   car(b, cx + Math.cos(yaw0) * 3.6, cz - Math.sin(yaw0) * 3.6, a3, rand, 0.15, responder);
+  if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', cx + 0.8, cz - 0.6, yaw0, 0.35, { keepClearGap: 1.2 })) {
+    b.glb('Road_Debris_Cluster_2', cx + 0.8, 0.01, cz - 0.6, yaw0, { scale: 1.1 });
+  }
   groundDecal(b, 'decalShards', cx, 0, cz, 3.2, rand, 1.3);
   groundDecal(b, 'decalOil', cx + (rand() - 0.5) * 4, 0, cz + (rand() - 0.5) * 4, 2.2, rand, 1.4);
   groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 3, 0, cz + (rand() - 0.5) * 3, 3.4, rand, 1.2);
+  if (spotHash(cx, cz, 93) < 0.5) b.life(LIFE.smoke, cx, 1.1, cz, 0, 0, 0, 0, spotHash(cx, cz, 96));
 }
 
 /** A car that left the road and wrapped itself round a street lamp. */

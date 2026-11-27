@@ -76,7 +76,8 @@ import { Interaction } from '../systems/Interaction';
 import { Inventory, type InventoryData } from '../systems/Inventory';
 import { SaveGame } from '../systems/SaveGame';
 import { StorySystem } from '../systems/Story';
-import { Helicopter } from '../systems/Helicopter';
+import { HELI_OWNER, Helicopter } from '../systems/Helicopter';
+import { HeliCockpit } from '../systems/HeliCockpit';
 import { Tripwires } from '../systems/Tripwires';
 import { Vehicles } from '../systems/Vehicles';
 import { CarHud } from '../ui/CarHud';
@@ -278,6 +279,7 @@ export class WorldScene implements IScene {
   private story!: StorySystem;
   private vehicles!: Vehicles;
   private helicopter!: Helicopter;
+  private heliCockpit!: HeliCockpit;
   private heliHud!: HeliHud;
   private bandits!: Bandits;
   private tripwires!: Tripwires;
@@ -633,13 +635,19 @@ export class WorldScene implements IScene {
       world: this.world,
       layout: this.layout,
       particles: this.particles,
-      groundY: (gx, gz, refY = 0) => this.interiors.surfaceY(gx, gz, refY) ?? this.layout.walkHeightAt(gx, gz),
+      groundY: (gx, gz, refY = 0) => {
+        const castTop = refY + 1.15;
+        const ray = this.world.rayHitDetail(gx, castTop, gz, 0, -1, 0, 80, true);
+        const rayY = ray && ray.owner !== HELI_OWNER ? castTop - ray.t : -Infinity;
+        return Math.max(this.interiors.surfaceY(gx, gz, refY) ?? -Infinity, rayY, this.layout.walkHeightAt(gx, gz));
+      },
       toast: (t, ms) => this.ctx.hud.toast(t, ms),
       hurtPlayer: (hp, cause) => this.hurt(hp, cause, true),
       explode: (at, spec) => this.firearms.explode(at, spec),
       onEscape: () => this.showVictoryScreen('heli'),
       onSave: () => void this.save(),
     });
+    this.heliCockpit = new HeliCockpit(this.player.viewmodel.scene);
     this.heliHud = new HeliHud(document.getElementById('ui')!);
     const origPanelOpen = this.panel.open.bind(this.panel);
     this.panel.open = (ref) => {
@@ -1152,6 +1160,7 @@ export class WorldScene implements IScene {
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
     const doorsDone = this.doors.prewarm();
+    const gunFxDone = this.firearms.fx.prewarm(this.player.viewmodel.scene);
     this.ctx.renderer.gl.compile(this.scene, this.camera);
     this.ctx.renderer.gl.compile(this.player.viewmodel.scene, this.player.viewmodel.camera);
     return () => {
@@ -1159,6 +1168,7 @@ export class WorldScene implements IScene {
       lifeDone();
       atmoDone();
       doorsDone();
+      gunFxDone();
       group.removeFromParent();
       vmGroup.removeFromParent();
       for (const f of tempFigs) f.dispose();
@@ -1197,13 +1207,18 @@ export class WorldScene implements IScene {
     const inCar = !this.dead && !!this.vehicles.activeCar;
     const inHeli = !this.dead && this.helicopter.piloting;
     if (inHeli) {
-      this.player.viewmodel.scene.visible = false;
+      const fp = !this.helicopter.chaseCam;
+      this.player.viewmodel.scene.visible = fp;
+      this.player.viewmodel.setArmsVisible(false);
+      this.heliCockpit.root.visible = fp;
       this.player.body.root.visible = false;
       this.player.suppressLight(true);
       if (this.ctx.input.consumePressed('flashlight')) {
         if (this.helicopter.tryExit(c.position, c.prevPosition) && !this.dead) {
           c.yaw = this.helicopter.yaw;
           this.player.viewmodel.scene.visible = true;
+          this.player.viewmodel.setArmsVisible(true);
+          this.heliCockpit.root.visible = false;
           this.player.body.root.visible = true;
           this.player.suppressLight(false);
         }
@@ -1213,6 +1228,8 @@ export class WorldScene implements IScene {
       }
     } else if (inCar) {
       this.player.viewmodel.scene.visible = false;
+      this.player.viewmodel.setArmsVisible(true);
+      this.heliCockpit.root.visible = false;
       this.player.body.root.visible = false;
       this.player.suppressLight(true);
       if (this.ctx.input.consumePressed('use')) {
@@ -1225,6 +1242,8 @@ export class WorldScene implements IScene {
       this.helicopter.fixedUpdate(dt, null, c.position, c.prevPosition);
     } else {
       this.player.suppressLight(false);
+      this.heliCockpit.root.visible = false;
+      this.player.viewmodel.setArmsVisible(true);
       if (!this.dead) {
         this.player.viewmodel.scene.visible = true;
         this.player.body.root.visible = true;
@@ -1240,6 +1259,7 @@ export class WorldScene implements IScene {
       this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
       this.helicopter.fixedUpdate(dt, null, c.position, c.prevPosition);
     }
+    this.doors.update(dt);
     this.hitFromT += dt;
     for (let i = this.carFires.length - 1; i >= 0; i--) {
       const f = this.carFires[i];
@@ -1448,14 +1468,19 @@ export class WorldScene implements IScene {
   /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
-    this.glbPool?.update(gameDt, this.camera.position, gameDt <= 0);
+    this.glbPool?.update(gameDt, this.camera.position, gameDt <= 0, this.camera);
     // The survivor's body, arms and light move by world time (or the active vehicle camera when driving).
     if (this.editor.active) {
       this.editor.update(frameDt);
     } else if (this.helicopter.piloting && !this.dead) {
       const look = { x: 0, y: 0 };
       this.ctx.input.consumeLook(look);
-      this.helicopter.applyCamera(this.camera, look.x);
+      this.helicopter.applyCamera(this.camera, look.x, look.y);
+      const fp = !this.helicopter.chaseCam;
+      this.player.viewmodel.scene.visible = fp;
+      this.player.viewmodel.setArmsVisible(false);
+      this.heliCockpit.root.visible = fp;
+      if (fp) this.heliCockpit.update(frameDt, this.helicopter.cockpitState());
     } else if (this.vehicles.activeCar && !this.dead) {
       this.vehicles.render(frameDt, this.camera, this.ctx.input);
     } else {
@@ -1514,8 +1539,9 @@ export class WorldScene implements IScene {
       this.player.controller.position.y,
       this.lookDir.x,
       this.lookDir.z,
+      this.camera,
     );
-    this.doors.update(gameDt);
+    this.doors.updateVisibility(this.camera.position.x, this.camera.position.z, this.camera);
     const p = this.player.controller.position;
     const zone = this.chunks.zoneAt(p.x, p.z);
     this.life.update(frameDt, this.camera, p, !this.indoors, zone === 'downtown' || zone === 'town' || zone === 'suburb', this.ctx.loop.paused);
@@ -1573,6 +1599,7 @@ export class WorldScene implements IScene {
       this.atmo.keepPrewarmVisible();
       this.life.keepPrewarmVisible();
       this.doors.keepPrewarmVisible();
+      this.firearms.fx.keepPrewarmVisible();
     }
   }
 
@@ -2757,6 +2784,7 @@ export class WorldScene implements IScene {
     this.gunHud.dispose();
     this.carHud.dispose();
     this.heliHud.dispose();
+    this.heliCockpit.dispose();
     this.helicopter.dispose();
     this.vehicles.dispose();
     this.models.dispose();

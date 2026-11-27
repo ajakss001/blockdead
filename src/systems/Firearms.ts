@@ -139,6 +139,7 @@ const _p2 = new Vector3();
 const _rayO = new Vector3();
 const _origO = new Vector3();
 const _shpD = new Vector3();
+const _n = new Vector3();
 const _q = new Quaternion();
 
 interface Rocket {
@@ -582,7 +583,9 @@ export class Firearms {
         const nom = ((lo + hi) * 0.5) * falloff(id, traveled + wall) * dmgMul;
         const dr = this.w.doorBullet(det.owner, nom);
         if (dr) {
-          _p.copy(_rayO).addScaledVector(d, wall - 0.02);
+          _p.copy(_rayO).addScaledVector(d, wall - 0.015);
+          _n.set(det.nx, det.ny, det.nz);
+          this.fx.addBulletHole(_p, _n, dr.kind === 'lab' ? 'metal' : dr.kind === 'glass' ? 'glass' : 'wood');
           if (dr.kind === 'lab') {
             this.w.particles.sparks(_p.x, _p.y, _p.z, 6);
             if (!isMulti || this.shotHitSounds < 2) {
@@ -605,7 +608,7 @@ export class Firearms {
             dmgMul *= dr.mul;
             continue;
           }
-          // Wood or barricaded plank door: splinter, damage, attenuate, and continue ray.
+          // Wood or barricaded plank door: splinter, attenuate, and continue ray (solid door collider remains intact).
           this.w.particles.burst(_p, 5, 0.55);
           if (!isMulti || this.shotHitSounds < 2) {
             sfx.bulletHit('wood', _p);
@@ -619,7 +622,7 @@ export class Firearms {
           continue;
         }
       }
-      this.hitWorld(_rayO, d, wall);
+      this.hitWorld(_rayO, d, wall, det);
       return;
     }
   }
@@ -675,14 +678,17 @@ export class Firearms {
     }
   }
 
-  /** A bullet on the world: by what it is made of — dust, sparks and a ricochet, splinters, glass, a car's tin. */
-  private hitWorld(o: Vector3, d: Vector3, dist: number): void {
+  /** A bullet on the world: by what it is made of — pooled decal, dust, sparks and a ricochet, splinters, glass, a car's tin. */
+  private hitWorld(o: Vector3, d: Vector3, dist: number, det: RayHitDetail | null = null): void {
     const isMulti = this.shotTotalPellets > 1;
-    const at = _p.copy(o).addScaledVector(d, dist - 0.03);
+    const at = _p.copy(o).addScaledVector(d, dist - 0.02);
+    if (det) _n.set(det.nx, det.ny, det.nz);
+    else _n.copy(d).negate();
     const withSound = !isMulti || this.shotHitSounds < 2;
     const vehHit = this.w.onVehicleBulletHit?.(at, d, withSound) ?? null;
     if (vehHit === 'glass') {
       if (withSound) this.shotHitSounds++;
+      this.fx.addBulletHole(at, _n, 'glass');
       this.w.particles.burst(at, isMulti && this.shotHitSounds > 1 ? 2 : 5, 0.55);
       return;
     }
@@ -693,6 +699,8 @@ export class Firearms {
       this.shotLastSurface = s;
     }
     const kind: BulletHit = vehHit === 'metal' ? 'car' : (s && BULLET[s]) ?? 'concrete';
+    const holeKind = kind === 'wood' ? 'wood' : kind === 'metal' || kind === 'car' ? 'metal' : kind === 'glass' ? 'glass' : 'stone';
+    if (!isMulti || this.shotHitSounds < 2) this.fx.addBulletHole(at, _n, holeKind);
     if (kind === 'glass' && this.w.onBreakGlass) {
       if (withSound) {
         this.w.onBreakGlass(at, d);

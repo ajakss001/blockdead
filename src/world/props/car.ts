@@ -60,6 +60,8 @@ export interface CarOptions {
   allowOverlap?: boolean;
   /** Index into `batch.glbs` to ignore during overlap check (e.g. tractor when attaching semi-trailer). */
   ignoreGlb?: number;
+  /** Roll vehicle onto its roof or side with grounded Y offset. */
+  flipped?: 'roof' | 'sideL' | 'sideR';
 }
 
 // Mid-size 90s sedan, meters. Local axes: +X nose, +Y up, +Z left side.
@@ -130,13 +132,20 @@ const _q = new Quaternion();
 const _p = new Vector3();
 const _s = new Vector3();
 
+const FLIPPABLE_MODELS: readonly GlbModelId[] = [
+  'burned_car_wreck',
+  'UAZ_Bukhanka_22k',
+  'emercom_pickup_17k',
+  'Police_Sedan_DPS_22k',
+];
+
 /**
  * Abandoned 90s sedan / world GLB vehicle, placed only if its 2D OBB clears existing vehicles/props
  * (>= 1.0 m) and highrise fire escapes / entrances (>= 3.0 m). Returns `true` when placed.
  */
 export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): boolean {
   const rand = mulberry32(o.seed ?? 1);
-  const roll = o.flatTire ? -0.022 : 0;
+  let roll = o.flatTire ? -0.022 : 0;
   const pitch = o.flatTire ? -0.012 : 0;
   let id = o.glbId ?? pickWorldVehicle(o.kind, rand(), o.smashed ?? 0);
   if (o.maxLen !== undefined && !o.glbId && GLB_WORLD_SPECS[id].size[2] > o.maxLen) {
@@ -157,29 +166,50 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
       }
     }
   }
+  if (o.flipped && !o.glbId && !FLIPPABLE_MODELS.includes(id)) {
+    id = FLIPPABLE_MODELS[Math.floor(rand() * FLIPPABLE_MODELS.length)];
+  }
   const spec = GLB_WORLD_SPECS[id];
   if (spec) {
     // World GLBs face -Z at yaw 0; rotating by (o.yaw - PI/2) points nose along +X at o.yaw = 0.
     const glbYaw = o.yaw - Math.PI / 2;
-    if (!o.allowOverlap && !isGlbClear(batch, id, o.x, o.z, glbYaw, 1.0, { keepClearGap: 3.0, ignoreGlb: o.ignoreGlb })) {
+    const W = spec.size[0];
+    const H = spec.size[1];
+    const L = spec.size[2];
+    let y = 0.01;
+    let gx = o.x;
+    let gz = o.z;
+    if (o.flipped === 'roof') {
+      roll = Math.PI;
+      y = 0.01 + H * 0.95;
+    } else if (o.flipped === 'sideL' || o.flipped === 'sideR') {
+      roll = o.flipped === 'sideL' ? 1.48 : -1.48;
+      y = 0.01 + W * 0.48;
+      // Local +Y tilts along GLB local X by -sin(roll), so shift GLB origin oppositely to keep visual mesh over collider.
+      const shift = Math.sin(roll) * (H * 0.46);
+      gx += Math.cos(glbYaw) * shift;
+      gz -= Math.sin(glbYaw) * shift;
+    }
+    if (!o.allowOverlap && !isGlbClear(batch, id, gx, gz, glbYaw, 1.0, { keepClearGap: 3.0, ignoreGlb: o.ignoreGlb })) {
       return false;
     }
     batch.glbs.push({
       id,
-      x: o.x,
-      y: 0.01,
-      z: o.z,
+      x: gx,
+      y,
+      z: gz,
       yaw: glbYaw,
       roll,
       pitch,
     });
     // spec.size = [widthX, heightY, lengthZ]
-    const W = spec.size[0];
-    const H = spec.size[1];
-    const L = spec.size[2];
     const hx = L * 0.5 + 0.02;
-    const hz = W * 0.48;
-    if (id === 'Semi_Trailer_Cargo_20') {
+    const hz = (o.flipped === 'sideL' || o.flipped === 'sideR' ? H * 0.48 : W * 0.48);
+    if (o.flipped === 'sideL' || o.flipped === 'sideR') {
+      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, W + 0.05);
+    } else if (o.flipped === 'roof') {
+      world.addOrientedBox(o.x, o.z, hx, hz, o.yaw, -0.5, H * 0.96);
+    } else if (id === 'Semi_Trailer_Cargo_20') {
       // Solid full-extent outer BoxCollider matching Box3 walls & roof so players never fall inside the trailer.
       world.addOrientedBox(o.x, o.z, hx + 0.02, W * 0.5 + 0.02, o.yaw, -0.5, H);
     } else if (id === 'Semi_Truck_Tractor_24') {

@@ -26,6 +26,11 @@ export type Surface =
   | 'facadeOffice'
   | 'concrete'
   | 'tile'
+  | 'brick'
+  | 'wallpaper'
+  | 'parquet'
+  | 'linoleum'
+  | 'wallTile'
   | 'decalSoot'
   | 'decalOil'
   | 'decalSkid'
@@ -38,10 +43,13 @@ export type Surface =
   | 'decalSheen'
   | 'decalFoam'
   | 'decalEvacuate'
-  | 'decalShadow';
+  | 'decalShadow'
+  | 'decalCobweb'
+  | 'decalDamp'
+  | 'decalCrack';
 
 /** Alpha-cut overlays drawn on top of other surfaces. */
-export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate' | 'shadow';
+export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate' | 'shadow' | 'cobweb' | 'damp' | 'crack';
 
 export interface SurfaceSpec {
   kind: GrungeKind;
@@ -90,6 +98,11 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   facadeOffice: { kind: 'facadeOffice', detail: 0xb8c0c4, noise: 0.2, roughness: 0.5, metalness: 0.3, tile: 6, tileV: 6.4, castShadow: true },
   concrete: { kind: 'concrete', detail: 0xc4c2bc, noise: 0.4, roughness: 0.95, metalness: 0, tile: 2.6, castShadow: true },
   tile: { kind: 'tile', detail: 0xccc8bc, noise: 0.3, roughness: 0.7, metalness: 0, tile: 1.6, castShadow: false },
+  brick: { kind: 'brick', detail: 0xc2a898, noise: 0.25, roughness: 0.92, metalness: 0, tile: 1.8, castShadow: true },
+  wallpaper: { kind: 'wallpaper', detail: 0xd8d2c6, noise: 0.14, roughness: 0.92, metalness: 0, tile: 1.8, bump: 0.4, castShadow: true },
+  parquet: { kind: 'parquet', detail: 0xd2c4aa, noise: 0.28, roughness: 0.72, metalness: 0, tile: 1.5, castShadow: false },
+  linoleum: { kind: 'linoleum', detail: 0xcac6bc, noise: 0.24, roughness: 0.78, metalness: 0, tile: 1.4, castShadow: false },
+  wallTile: { kind: 'wallTile', detail: 0xd4d6d2, noise: 0.16, roughness: 0.65, metalness: 0.04, tile: 1.0, castShadow: true },
   decalSoot: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'soot', castShadow: false },
   decalOil: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.3, metalness: 0.1, tile: 1, decal: 'oil', castShadow: false },
   decalSkid: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.9, metalness: 0, tile: 1, decal: 'skid', castShadow: false },
@@ -104,6 +117,9 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   decalFoam: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'foam', castShadow: false },
   decalEvacuate: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'evacuate', castShadow: false },
   decalShadow: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 1, metalness: 0, tile: 1, decal: 'shadow', castShadow: false },
+  decalCobweb: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'cobweb', castShadow: false },
+  decalDamp: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'damp', castShadow: false },
+  decalCrack: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'crack', castShadow: false },
 };
 
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];
@@ -159,6 +175,11 @@ const PBR_SURFACE_MAP: Partial<Record<Surface, PbrSurfaceMapping>> = {
   roof: { layer: 2, name: 'wood', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
   tile: { layer: 3, name: 'tile', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
   concrete: { layer: 4, name: 'concrete', uvScaleU: 1, uvScaleV: 1, normalScale: 0.95, facadeMask: 'none' },
+  brick: { layer: 0, name: 'brick', uvScaleU: 1, uvScaleV: 1, normalScale: 1.0, facadeMask: 'none' },
+  wallpaper: { layer: 1, name: 'plaster', uvScaleU: 1, uvScaleV: 1, normalScale: 0.72, facadeMask: 'none' },
+  parquet: { layer: 2, name: 'wood', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  linoleum: { layer: 3, name: 'tile', uvScaleU: 1, uvScaleV: 1, normalScale: 0.55, facadeMask: 'none' },
+  wallTile: { layer: 3, name: 'tile', uvScaleU: 1, uvScaleV: 1, normalScale: 0.72, facadeMask: 'none' },
   asphalt: { layer: 5, name: 'asphalt', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
   ground: { layer: 6, name: 'ground', uvScaleU: 1, uvScaleV: 1, normalScale: 0.78, facadeMask: 'none' },
   facadeBrick: { layer: 0, name: 'brick', uvScaleU: 6.0 / 1.8, uvScaleV: 6.4 / 1.8, normalScale: 1.05, facadeMask: 'apartment' },

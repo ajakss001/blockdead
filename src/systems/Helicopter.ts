@@ -9,6 +9,7 @@ import type { CollisionWorld } from '../world/CollisionWorld';
 import type { WorldLayout } from '../world/gen/layout';
 import { nearestPoi, siteToWorld } from '../world/gen/poi';
 import type { BlastSpec } from './Firearms';
+import type { HeliCockpitState } from './HeliCockpit';
 import type { Inventory } from './Inventory';
 
 export const PERIMETER_RADIUS = 1400;
@@ -65,23 +66,31 @@ const GRAVITY = 9.8;
 const _camPos = new Vector3();
 const _camLook = new Vector3();
 const _spark = new Vector3();
+/** Local landing gear wheel contact points relative to helicopter center (nose faces -Z at yaw = 0). */
+const GEAR_POINTS: readonly [number, number][] = [
+  [0, -4.4],
+  [-2.1, 1.5],
+  [2.1, 1.5],
+];
 
 /**
  * Flyable Mi-8 EMERCOM helicopter:
  * - Spawns damaged on the Military Base helipad `(37, 41)` (or near start with `?heli=1`).
  * - Requires 3 rare parts (`heliAvionics`, `heliFuelPump`, `heliBattery`) + `'jerrycan'` fuel.
  * - 5.5 s spool-up with procedural WebAudio rotor/turbine synth & ground wash particles.
- * - Collective/pitch/roll/yaw flight physics, autorotation at 0% fuel, hard-landing damage/crash.
+ * - 3-point downward gear support for roofs/roads/terrain, gravity & autorotation at 0% fuel.
+ * - 1st-person 3D glass cockpit with live КПИ & perimeter radar MFDs (`V` toggles camera).
  * - Crossing `PERIMETER_RADIUS = 1400 m` at `alt > 25 m` triggers the Air Evacuation secret ending.
  */
 export class Helicopter {
   readonly root = new Group();
   private mainRotor: Object3D | null = null;
   private tailRotor: Object3D | null = null;
+  private readonly fuselageMeshes: Mesh[] = [];
   private beacon: PointLight | null = null;
 
   x = 37;
-  y = 0.04;
+  y = 0.0;
   z = 41;
   yaw = Math.PI * 0.25;
   vx = 0;
@@ -101,9 +110,12 @@ export class Helicopter {
   private tailSpin = 0;
   private pitchVis = 0;
   private rollVis = 0;
+  private stickFwd = 0;
+  private stickRight = 0;
   private washT = 0;
   private smokeT = 0;
   private camYaw = 0;
+  private camPitch = -0.05;
   private colliderInstalled = false;
   private disposed = false;
 
@@ -129,7 +141,7 @@ export class Helicopter {
         this.z = wz;
       }
     }
-    this.y = Math.max(0.04, this.w.groundY(this.x, this.z, 2));
+    this.y = Math.max(0, this.w.groundY(this.x, this.z, 2));
     this.root.position.set(this.x, this.y, this.z);
     this.root.rotation.order = 'YXZ';
     this.root.rotation.y = this.yaw;
@@ -154,7 +166,7 @@ export class Helicopter {
   placeForTest(x: number, z: number, ready = false): void {
     this.x = x;
     this.z = z;
-    this.y = Math.max(0.04, this.w.groundY(x, z, 2));
+    this.y = Math.max(0, this.w.groundY(x, z, 2));
     this.vx = this.vy = this.vz = 0;
     if (ready) {
       this.parts = { avionics: true, fuelPump: true, battery: true };
@@ -176,18 +188,52 @@ export class Helicopter {
       .then((gltf) => {
         if (this.disposed) return;
         const scene = gltf.scene;
+        this.mainRotor = scene.getObjectByName('main_rotor') ?? null;
+        this.tailRotor = scene.getObjectByName('tail_rotor') ?? null;
+        const isRotorNode = (o: Object3D): boolean => {
+          let cur: Object3D | null = o;
+          while (cur) {
+            if (cur === this.mainRotor || cur === this.tailRotor || cur.name === 'main_rotor' || cur.name === 'tail_rotor') return true;
+            cur = cur.parent;
+          }
+          return false;
+        };
         scene.traverse((o) => {
           const m = o as Mesh;
           if (m.isMesh) {
             m.castShadow = true;
             m.receiveShadow = true;
+            if (!isRotorNode(m)) this.fuselageMeshes.push(m);
           }
         });
-        this.mainRotor = scene.getObjectByName('main_rotor') ?? null;
-        this.tailRotor = scene.getObjectByName('tail_rotor') ?? null;
+        this.syncVisibility();
         this.root.add(scene);
       })
       .catch((e) => console.warn('Mi-8 GLB load skipped:', e));
+  }
+
+  /** Hide opaque exterior fuselage shell in 1st-person so nothing blocks the 3D glass cockpit view. */
+  private syncVisibility(): void {
+    const hideFuselage = this.piloting && !this.chaseCam && !this.crashed;
+    for (let i = 0; i < this.fuselageMeshes.length; i++) {
+      this.fuselageMeshes[i].visible = !hideFuselage;
+    }
+  }
+
+  /** 3-point tricycle landing gear support height under helicopter (terrain, roads, helipads, and solid roofs). */
+  supportY(refY = this.y): number {
+    let best = this.w.groundY(this.x, this.z, refY);
+    const cos = Math.cos(this.yaw);
+    const sin = Math.sin(this.yaw);
+    for (let i = 0; i < GEAR_POINTS.length; i++) {
+      const [lx, lz] = GEAR_POINTS[i];
+      const wx = this.x + lx * cos + lz * sin;
+      const wz = this.z - lx * sin + lz * cos;
+      const gh = this.w.groundY(wx, wz, refY);
+      // Avoid snapping onto tall adjacent parapet lips/walls far above the fuselage bottom.
+      if (gh <= refY + 0.9 && gh > best) best = gh;
+    }
+    return best;
   }
 
   /** Context prompt when on foot looking/standing near the Mi-8. Returns null if not near. */
@@ -287,6 +333,8 @@ export class Helicopter {
     if (!this.isRepaired || this.crashed) return;
     this.piloting = true;
     this.camYaw = 0;
+    this.camPitch = -0.05;
+    this.syncVisibility();
     this.updateCollider();
     this.startAudio();
     this.w.toast(tr('Запуск турбин Ми-8… (5.5 сек)', 'Starting Mi-8 turbines… (5.5 s)'), 2200);
@@ -294,17 +342,44 @@ export class Helicopter {
 
   tryExit(outPos: Vector3, outPrev: Vector3): boolean {
     if (!this.piloting) return false;
-    const alt = this.y - this.w.groundY(this.x, this.z, this.y);
+    const surf = this.supportY();
+    const alt = this.y - surf;
     const spd = Math.hypot(this.vx, this.vy, this.vz);
     if (alt > 1.8 || spd > 3.5) {
       this.w.toast(tr('Сначала приземлитесь! (Shift — снижение)', 'Land first before exiting! (Shift — descend)'), 1500);
       return false;
     }
     this.piloting = false;
-    const lx = this.x - Math.cos(this.yaw) * 3.1;
-    const lz = this.z + Math.sin(this.yaw) * 3.1;
-    const ly = this.w.groundY(lx, lz, this.y);
-    outPos.set(lx, ly, lz);
+    this.syncVisibility();
+    const cos = Math.cos(this.yaw);
+    const sin = Math.sin(this.yaw);
+    // Test port, starboard, aft, and forward-port positions so exiting on a roof always lands cleanly on the roof slab.
+    const candidates: readonly [number, number][] = [
+      [-3.1, 0],
+      [3.1, 0],
+      [0, 6.8],
+      [-2.4, -3.2],
+    ];
+    let bestX = this.x - cos * 3.1;
+    let bestZ = this.z + sin * 3.1;
+    let bestY = this.w.groundY(bestX, bestZ, this.y);
+    for (let i = 0; i < candidates.length; i++) {
+      const [lx, lz] = candidates[i];
+      const cx = this.x + lx * cos + lz * sin;
+      const cz = this.z - lx * sin + lz * cos;
+      const cy = this.w.groundY(cx, cz, this.y);
+      if (cy < this.y - 1.5 || cy > this.y + 1.0) continue;
+      const dx = cx - this.x;
+      const dz = cz - this.z;
+      const d = Math.hypot(dx, dz);
+      const hit = d > 0.1 ? this.w.world.rayHit(this.x, cy + 1.1, this.z, dx / d, 0, dz / d, d, true) : -1;
+      if (hit >= 0 && hit < d - 0.35) continue;
+      bestX = cx;
+      bestZ = cz;
+      bestY = cy;
+      break;
+    }
+    outPos.set(bestX, bestY, bestZ);
     outPrev.copy(outPos);
     this.updateCollider();
     this.w.onSave?.();
@@ -314,6 +389,7 @@ export class Helicopter {
   fixedUpdate(dt: number, input: InputManager | null, playerPos: Vector3, playerPrev: Vector3): void {
     if (this.crashed) {
       this.spool = Math.max(0, this.spool - dt * 0.4);
+      this.syncVisibility();
       this.updateRotors(dt);
       this.updateAudio();
       return;
@@ -322,15 +398,16 @@ export class Helicopter {
     if (this.piloting && input) {
       if (input.consumePressed('inspect')) {
         this.chaseCam = !this.chaseCam;
+        this.syncVisibility();
       }
       if (this.fuel > 0) {
         this.spool = Math.min(1, this.spool + dt / HELI_SPOOL_TIME);
       } else {
-        // Autorotation rpm decays gently toward glide regime
-        this.spool = Math.max(0.55, this.spool - dt * 0.08);
+        // Autorotation rpm decays gently toward glide regime (stays >= 55% in air).
+        this.spool = Math.max(0.55, this.spool - dt * 0.065);
       }
 
-      const groundH = this.w.groundY(this.x, this.z, this.y);
+      const groundH = this.supportY();
       const alt = Math.max(0, this.y - groundH);
 
       const moveFwd = input.moveY; // W (+1), S (-1)
@@ -338,13 +415,14 @@ export class Helicopter {
       const up = input.isHeld('jump') ? 1 : 0; // Space
       const down = input.isHeld('sprint') ? 1 : 0; // Shift
       const yawInput = (input.isHeld('bash') ? 1 : 0) - (input.isHeld('use') ? 1 : 0); // Q left (+1), E right (-1)
+      this.stickFwd = moveFwd;
+      this.stickRight = moveRight;
 
-      if (this.spool > 0.72) {
+      if (this.fuel > 0 && this.spool > 0.72) {
         const power = (this.spool - 0.72) / 0.28;
         const yawRate = 1.25 * power;
         this.yaw += yawInput * yawRate * dt;
 
-        // Forward vector for nose along -Z at yaw = 0
         const fx = -Math.sin(this.yaw);
         const fz = -Math.cos(this.yaw);
         const rx = Math.cos(this.yaw);
@@ -352,21 +430,14 @@ export class Helicopter {
 
         const maxAccel = 26 * power;
         const collective = (up - down * 1.1) * power;
+        const lift = GRAVITY * (0.4 + 0.6 * power) + collective * 11.5;
+        this.vy += (lift - GRAVITY) * dt;
+        this.vy *= Math.exp(-dt * 1.6);
 
-        if (this.fuel > 0) {
-          // Hover gravity compensation + collective climb/descend + forward/lateral cyclic thrust
-          const lift = GRAVITY + collective * 11.5;
-          this.vy += (lift - GRAVITY) * dt;
-          this.vy *= Math.exp(-dt * 1.6);
-          const burnRate = (0.0042 + Math.abs(collective) * 0.0028 + Math.hypot(moveFwd, moveRight) * 0.0022) * dt;
-          this.fuel = Math.max(0, this.fuel - burnRate);
-          if (this.fuel <= 0) {
-            this.w.toast(tr('Топливо закончилось! Авторотация — держите крен ровно!', 'Fuel exhausted! Autorotating — keep level for landing!'), 2400);
-          }
-        } else {
-          // Autorotation: steady descent -6.5 m/s unless pilot flares momentarily near ground
-          const flare = up > 0 ? 3.5 : 0;
-          this.vy += (-6.2 + flare - this.vy) * Math.min(1, dt * 1.8);
+        const burnRate = (0.0042 + Math.abs(collective) * 0.0028 + Math.hypot(moveFwd, moveRight) * 0.0022) * dt;
+        this.fuel = Math.max(0, this.fuel - burnRate);
+        if (this.fuel <= 0) {
+          this.w.toast(tr('Топливо закончилось! Авторотация — держите крен ровно!', 'Fuel exhausted! Autorotating — keep level for landing!'), 2400);
         }
 
         if (alt > 0.25 || up > 0) {
@@ -375,8 +446,30 @@ export class Helicopter {
         }
         this.pitchVis = MathUtils.lerp(this.pitchVis, -moveFwd * 0.24 * power, Math.min(1, dt * 5));
         this.rollVis = MathUtils.lerp(this.rollVis, -moveRight * 0.26 * power, Math.min(1, dt * 5));
+      } else if (this.fuel <= 0 && alt > 0.02) {
+        // Autorotation descent: rotor drag limits fall speed instead of freezing vy = 0 in mid-air.
+        const power = Math.max(0.25, (this.spool - 0.45) / 0.55);
+        this.yaw += yawInput * 0.75 * power * dt;
+        const flare = up > 0 && alt < 18 ? 3.8 : up > 0 ? 1.8 : 0;
+        const targetSink = -5.2 + flare;
+        this.vy += (targetSink - this.vy) * Math.min(1, dt * 2.4);
+
+        const fx = -Math.sin(this.yaw);
+        const fz = -Math.cos(this.yaw);
+        const rx = Math.cos(this.yaw);
+        const rz = -Math.sin(this.yaw);
+        const glideAccel = 9 * power;
+        this.vx += (fx * moveFwd + rx * moveRight) * glideAccel * dt;
+        this.vz += (fz * moveFwd + rz * moveRight) * glideAccel * dt;
+        this.pitchVis = MathUtils.lerp(this.pitchVis, -moveFwd * 0.14, Math.min(1, dt * 4));
+        this.rollVis = MathUtils.lerp(this.rollVis, -moveRight * 0.16, Math.min(1, dt * 4));
       } else {
-        this.vy = 0;
+        // Low RPM spool-up / shut down on deck: gravity always pulls airborne helicopter downward.
+        if (alt > 0.02) {
+          this.vy = Math.max(-14, this.vy - GRAVITY * 0.75 * dt);
+        } else {
+          this.vy = Math.min(0, this.vy);
+        }
         this.vx *= Math.exp(-dt * 4);
         this.vz *= Math.exp(-dt * 4);
         this.pitchVis *= Math.exp(-dt * 5);
@@ -392,10 +485,10 @@ export class Helicopter {
       this.y += this.vy * dt;
       this.z += this.vz * dt;
 
-      const nextGround = this.w.groundY(this.x, this.z, this.y);
-      if (this.y <= nextGround + 0.04) {
+      const nextGround = this.supportY();
+      if (this.y <= nextGround + 0.015) {
         const impact = -this.vy;
-        this.y = nextGround + 0.04;
+        this.y = nextGround;
         this.vy = Math.max(0, this.vy);
         if (impact > 11.5) {
           this.crash();
@@ -418,22 +511,26 @@ export class Helicopter {
       playerPrev.copy(playerPos);
 
       // Secret ending trigger: crossing outer perimeter above 25 m altitude!
-      const newAlt = this.y - nextGround;
+      const newAlt = Math.max(0, this.y - nextGround);
       if (!this.escaped && newAlt > ESCAPE_ALTITUDE && Math.hypot(this.x, this.z) > PERIMETER_RADIUS) {
         this.escaped = true;
         this.w.onEscape();
       }
     } else {
       this.spool = Math.max(0, this.spool - dt / 8.0);
+      this.stickFwd *= Math.exp(-dt * 8);
+      this.stickRight *= Math.exp(-dt * 8);
       this.pitchVis *= Math.exp(-dt * 5);
       this.rollVis *= Math.exp(-dt * 5);
-      if (this.y > this.w.groundY(this.x, this.z, this.y) + 0.1) {
-        this.vy -= GRAVITY * 0.5 * dt;
-        this.y = Math.max(this.w.groundY(this.x, this.z, this.y) + 0.04, this.y + this.vy * dt);
+      const nextGround = this.supportY();
+      if (this.y > nextGround + 0.02) {
+        this.vy -= GRAVITY * 0.65 * dt;
+        this.y = Math.max(nextGround, this.y + this.vy * dt);
+        if (this.y <= nextGround + 0.005) this.vy = 0;
       }
     }
 
-    const alt = Math.max(0, this.y - this.w.groundY(this.x, this.z, this.y));
+    const alt = Math.max(0, this.y - this.supportY());
     if (this.spool > 0.45 && alt < 18) {
       this.washT -= dt;
       if (this.washT <= 0) {
@@ -460,9 +557,15 @@ export class Helicopter {
     this.updateAudio();
   }
 
-  applyCamera(camera: { position: Vector3; lookAt(v: Vector3): void; rotation: { order: string } }, lookDeltaX: number): void {
+  applyCamera(
+    camera: { position: Vector3; lookAt(v: Vector3): void; rotation: { order: string } },
+    lookDeltaX: number,
+    lookDeltaY = 0,
+  ): void {
+    this.syncVisibility();
     this.camYaw = MathUtils.clamp(this.camYaw - lookDeltaX * 0.8, -Math.PI * 0.75, Math.PI * 0.75);
-    const totalYaw = this.yaw + (this.chaseCam ? this.camYaw : 0);
+    this.camPitch = MathUtils.clamp(this.camPitch - lookDeltaY * 0.7, -0.55, 0.45);
+    const totalYaw = this.yaw + (this.chaseCam ? this.camYaw : this.camYaw * 0.65);
     const fx = -Math.sin(totalYaw);
     const fz = -Math.cos(totalYaw);
     if (this.chaseCam) {
@@ -472,15 +575,37 @@ export class Helicopter {
     } else {
       const hfx = -Math.sin(this.yaw);
       const hfz = -Math.cos(this.yaw);
-      _camPos.set(this.x + hfx * 6.5, this.y + 2.35, this.z + hfz * 6.5);
-      _camLook.set(_camPos.x + fx * 30, _camPos.y - 2.2 + this.pitchVis * 18, _camPos.z + fz * 30);
+      _camPos.set(this.x + hfx * 4.4, this.y + 2.28, this.z + hfz * 4.4);
+      const cp = Math.cos(this.camPitch + this.pitchVis * 0.7);
+      const sp = Math.sin(this.camPitch + this.pitchVis * 0.7);
+      _camLook.set(_camPos.x + fx * cp * 30, _camPos.y + sp * 30, _camPos.z + fz * cp * 30);
     }
     camera.position.copy(_camPos);
     camera.lookAt(_camLook);
   }
 
+  cockpitState(): HeliCockpitState {
+    const alt = Math.max(0, this.y - this.supportY());
+    return {
+      altitude: alt,
+      speedKmh: Math.hypot(this.vx, this.vz) * 3.6,
+      vsi: this.vy,
+      rpmPct: Math.round(this.spool * 100),
+      fuel: this.fuel,
+      hull: this.hull,
+      yaw: this.yaw,
+      pitch: this.pitchVis,
+      roll: this.rollVis,
+      x: this.x,
+      z: this.z,
+      stickFwd: this.stickFwd,
+      stickRight: this.stickRight,
+      distToPerimeter: Math.max(0, PERIMETER_RADIUS - Math.hypot(this.x, this.z)),
+    };
+  }
+
   hudState(): HeliHudSnapshot {
-    const alt = Math.max(0, this.y - this.w.groundY(this.x, this.z, this.y));
+    const alt = Math.max(0, this.y - this.supportY());
     return {
       altitude: alt,
       speedKmh: Math.hypot(this.vx, this.vz) * 3.6,
@@ -542,6 +667,7 @@ export class Helicopter {
   private crash(): void {
     this.crashed = true;
     this.piloting = false;
+    this.syncVisibility();
     this.hull = 0;
     this.vx = this.vy = this.vz = 0;
     this.w.explode(new Vector3(this.x, this.y + 1.2, this.z), {
@@ -563,7 +689,7 @@ export class Helicopter {
   }
 
   private updateCollider(): void {
-    const alt = this.y - this.w.groundY(this.x, this.z, this.y);
+    const alt = this.y - this.supportY();
     if (this.piloting || alt > 2.2) {
       if (this.colliderInstalled) {
         this.w.world.removeOwner(HELI_OWNER);

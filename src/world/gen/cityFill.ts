@@ -1,9 +1,10 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickModel } from '../models';
 import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
+import type { GlbModelId } from '../worldModels';
 import { isGlbClear } from './footprint';
 import { Place } from './furniture';
-import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
+import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal, wallDecalZ } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, pick, type Rand } from './pieces';
@@ -41,10 +42,14 @@ interface Row {
  */
 export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: number, X1: number, Z1: number, rand: Rand): BuildingDesc[] {
   b.block(0x5e5c56, X0, 0, Z0, X1 - X0, PAVE.plaza, Z1 - Z0, 'asphalt');
+  if (i === 1 && j === -1) {
+    return airlinerCrashBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  }
   const out: BuildingDesc[] = [];
   const chunkKey = (i + 32768) * 65536 + (j + 32768);
   const centrality = 1 - Math.max(Math.abs(i), Math.abs(j)) / (DOWNTOWN_RADIUS + 1);
-  const parkingLot = !(i === 0 && j === 0) && rand() < 0.25 ? Math.floor(rand() * 4) : -1;
+  let parkingLot = !(i === 0 && j === 0) && rand() < 0.25 ? Math.floor(rand() * 4) : -1;
+  if (i === 1 && j === 0 && parkingLot === 0) parkingLot = 1;
   const rows: Row[] = [];
   let n = 0;
   // Fire escapes are placed last, only where they clear every building volume of the block.
@@ -78,7 +83,8 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
         return;
       }
       built[k] = true;
-      const floors = Math.max(5, Math.min(25, 5 + Math.floor(rand() * (6 + 15 * centrality))));
+      let floors = Math.max(5, Math.min(25, 5 + Math.floor(rand() * (6 + 15 * centrality))));
+      if (i === 1 && j === 0 && south && k === 0) floors = Math.max(7, floors);
       const facade = pick(rand, FACADES);
       const desc: BuildingDesc = {
         id: chunkKey * 16 + n++,
@@ -93,6 +99,7 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
         seed: Math.floor(rand() * 1e9),
       };
       buildHighriseShell(b, desc, rand);
+      if (i === 1 && j === 0 && south && k === 0) mi8HighriseImpact(b, desc);
       out.push(desc);
     });
     sideAlley(b, xa + wW, xb, row, rand, built[1], escapes);
@@ -101,6 +108,163 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
   backCourtyard(b, X0, X1, rows[0].z1, rows[1].z0, rand);
   for (const e of escapes) if (escapeClear(e, out)) fireEscape(b, e.axis, e.wall, e.outward, e.u0, e.storeys);
   return out;
+}
+
+/** Monumental downtown catastrophe block: Boeing airliner crashed into a partially collapsed high-rise. */
+function airlinerCrashBlock(
+  b: Builder,
+  i: number,
+  j: number,
+  X0: number,
+  Z0: number,
+  X1: number,
+  Z1: number,
+  rand: Rand,
+): BuildingDesc[] {
+  const out: BuildingDesc[] = [];
+  const chunkKey = (i + 32768) * 65536 + (j + 32768);
+  // Intact standing background tower in the NW corner
+  const standing: BuildingDesc = {
+    id: chunkKey * 16,
+    cx: up3(X0 + 0.3) + 9,
+    cz: down3(Z1 - 0.3) - 9,
+    w: 18,
+    d: 18,
+    floors: 7,
+    facade: 'facadeConcrete',
+    flip: true,
+    kind: 'offices',
+    seed: Math.floor(rand() * 1e9),
+  };
+  buildHighriseShell(b, standing, rand);
+  out.push(standing);
+
+  // Partially collapsed concrete high-rise ruin in the NE/SE crash impact zone
+  const rx0 = X0 + 27;
+  const rx1 = X1 - 2.5;
+  const rz0 = Z0 + 24;
+  const rz1 = Z1 - 5.5;
+  const rw = rx1 - rx0;
+  const rd = rz1 - rz0;
+  for (let fl = 0; fl < 4; fl++) {
+    const sy = fl * FLOOR_H;
+    const stepW = fl < 2 ? rw : rw * (1 - fl * 0.14);
+    const stepD = fl < 2 ? rd : rd * (1 - fl * 0.12);
+    // Floor slab + jagged remaining concrete walls leaving the SW corner sheared open for the plane nose
+    b.block(0x6d6a64, rx0 + (rw - stepW) * 0.35, sy, rz0 + (rd - stepD) * 0.25, stepW, 0.24, stepD, 'concrete', true);
+    if (fl < 3) {
+      b.block(0x7c7870, rx1 - 0.4, sy, rz0, 0.4, FLOOR_H, stepD, 'facadeConcrete', true);
+      b.block(0x74706a, rx0 + 3.5, sy, rz1 - 0.4, stepW - 3.5, FLOOR_H, 0.4, 'facadeConcrete', true);
+      if (fl === 0) b.block(0x6a6760, rx0, sy, rz0, 0.35, FLOOR_H * 0.65, 6.5, 'concrete', true);
+    }
+  }
+  // Exposed ruined girders & concrete rubble chunks inside & in front of the breach
+  b.block(0x3a3c3e, rx0 + 4, 3.2, rz0 + 4, 0.28, 7.2, 0.28, 'metal', true);
+  b.block(0x3a3c3e, rx0 + 12, 3.2, rz0 + 8, 0.28, 8.8, 0.28, 'metal', true);
+  for (let k = 0; k < 4; k++) {
+    b.block(0x64625c, X0 + 24 + k * 5.2, PAVE.plaza, Z0 + 17 + (k % 2) * 3.5, 2.2, 0.75 + (k % 2) * 0.45, 1.8, 'concrete', true);
+  }
+
+  // Crashed passenger airliner pitched & rolled diagonally into the ruined tower
+  const ax = X0 + 21.5;
+  const az = Z0 + 21.0;
+  const ayaw = -Math.PI * 0.72;
+  b.glb('passenger_airliner_22', ax, 1.35, az, ayaw, { scale: 0.9, pitch: 0.2, roll: 0.16 });
+  // Simplified aircraft fuselage + wing colliders aligned in world space
+  const physYaw = ayaw + Math.PI / 2;
+  b.colliders.addOrientedBox(ax, az, 15.0, 2.4, physYaw, -0.5, 4.4);
+  b.colliders.addOrientedBox(ax, az, 2.8, 12.2, physYaw, -0.5, 3.1);
+
+  // Burning cars, scattered luggage, debris piles, scorch & fires around the impact site
+  const carSpots: [number, number, number, 'roof' | undefined][] = [
+    [X0 + 11.5, Z0 + 10.5, 0.55, 'roof'],
+    [X0 + 38.0, Z0 + 9.5, -0.8, undefined],
+  ];
+  for (let k = 0; k < carSpots.length; k++) {
+    const [cx, cz, cyaw, flp] = carSpots[k];
+    if (
+      buildCar(
+        b.batch,
+        b.colliders,
+        { x: cx, z: cz, yaw: cyaw, paint: CAR_PAINTS.slate, seed: 700 + k, kind: 'wreck', smashed: 0.95, flipped: flp },
+        b.containers,
+      )
+    ) {
+      b.life(LIFE.fire, cx, 0.95, cz, 0, 0, 1.2, 0, 0.3 + k * 0.4);
+    }
+  }
+  const debrisOffsets: [number, number, GlbModelId, number][] = [
+    [X0 + 15, Z0 + 13, 'Road_Debris_Cluster_2', 1.35],
+    [X0 + 28, Z0 + 13, 'Road_Debris_Cluster_2', 1.4],
+    [X0 + 10, Z0 + 22, 'abandoned_luggage_pil', 1.3],
+    [X0 + 14, Z0 + 27, 'abandoned_luggage_pil', 1.25],
+    [X0 + 19, Z0 + 8, 'garbage_cluster_1500', 1.35],
+  ];
+  for (let k = 0; k < debrisOffsets.length; k++) {
+    const [dx, dz, id, sc] = debrisOffsets[k];
+    if (isGlbClear(b.batch, id, dx, dz, k * 1.1, 0.25, { keepClearGap: 1.5, scale: sc })) {
+      b.glb(id, dx, PAVE.plaza, dz, k * 1.1, { scale: sc });
+    }
+  }
+  groundDecal(b, 'decalSoot', ax, PAVE.plaza, az, 9.0, rand, 1.6);
+  groundDecal(b, 'decalSoot', rx0 + 4, PAVE.plaza, rz0 + 4, 7.5, rand, 1.4);
+  groundDecal(b, 'decalShards', ax - 4, PAVE.plaza, az - 5, 4.5, rand, 1.4);
+  groundDecal(b, 'decalOil', ax + 3, PAVE.plaza, az - 4, 3.6, rand, 1.3);
+  b.life(LIFE.fire, ax + 5.5, 2.2, az + 5.5, 0, 0, 2.2, 0, 0.42);
+  b.life(LIFE.fire, rx0 + 3.2, 3.4, rz0 + 3.5, 0, 0, 2.0, 0, 0.87);
+  b.life(LIFE.smoke, ax - 1.5, 2.6, az + 1.0, 0, 0, 0, 0, 0.31);
+  b.life(LIFE.smoke, rx0 + 5.0, 7.2, rz0 + 4.5, 0, 0, 0, 0, 0.63);
+  return out;
+}
+
+/** Crashed Mi-8 lodged into floors 3-5 of the central downtown high-rise facing the main avenue. */
+function mi8HighriseImpact(b: Builder, desc: BuildingDesc): void {
+  const yImpact = 3.25 * FLOOR_H;
+  const zFace = desc.cz - desc.d / 2;
+  const hx = desc.cx - 1.2;
+  // Breached dark facade scar & protruding concrete floor rubble around floors 3-4
+  b.block(0x161618, hx - 2.6, yImpact - 0.6, zFace - 0.06, 5.2, 3.8, 0.08, 'concrete');
+  b.block(0x52504c, hx - 3.1, yImpact - 0.9, zFace - 0.45, 6.2, 0.35, 0.65, 'concrete');
+  wallDecalZ(b, 'decalSoot', hx, yImpact + 1.5, zFace - 0.02, 5.4, -1);
+
+  b.glb('mi8_wreck_remesh', hx, yImpact, zFace - 2.3, Math.PI + 0.18, { pitch: 0.24, roll: 0.34 });
+  b.life(LIFE.fire, hx + 0.4, yImpact + 0.9, zFace - 0.9, 0, 0, 1.9, 0, 0.55);
+  b.life(LIFE.smoke, hx - 0.6, yImpact + 1.6, zFace - 1.6, 0, 0, 0, 0, 0.77);
+
+  // Debris scattered on the sidewalk/plaza below
+  groundDecal(b, 'decalSoot', hx, PAVE.plaza, zFace - 2.8, 4.4, () => 0.4, 1.4);
+  groundDecal(b, 'decalShards', hx + 1.4, PAVE.plaza, zFace - 2.4, 3.0, () => 0.6, 1.3);
+  if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', hx + 2.8, zFace - 2.2, 0.9, 0.4, { keepClearGap: 1.5 })) {
+    b.glb('Road_Debris_Cluster_2', hx + 2.8, PAVE.plaza, zFace - 2.2, 0.9, { scale: 1.2 });
+  }
+}
+
+const TRASH_PROPS: readonly GlbModelId[] = ['garbage_cluster_1500', 'Road_Debris_Cluster_2', 'abandoned_luggage_pil'];
+
+/** Layered instanced post-apoc trash mountain along blind building walls & service alleys. */
+export function trashMound(b: Builder, x: number, z: number, seed: number, baseY: number = PAVE.plaza): void {
+  const count = 3 + Math.floor(spotHash(x, z, seed) * 2);
+  let placed = 0;
+  for (let k = 0; k < count; k++) {
+    const h1 = spotHash(x + k * 1.7, z, seed + 1);
+    const h2 = spotHash(x, z + k * 2.3, seed + 2);
+    const h3 = spotHash(x + k, z + k, seed + 3);
+    const id = TRASH_PROPS[Math.floor(h1 * TRASH_PROPS.length)];
+    const upper = k >= 2;
+    const ox = (h2 - 0.5) * (upper ? 0.65 : 1.5);
+    const oz = (h3 - 0.5) * (upper ? 0.65 : 1.5);
+    const px = x + ox;
+    const pz = z + oz;
+    const yaw = h1 * Math.PI * 2;
+    const sc = upper ? 0.9 + h2 * 0.35 : 0.95 + h2 * 0.55;
+    if (!isGlbClear(b.batch, id, px, pz, yaw, 0.15, { keepClearGap: 2.2, scale: sc })) continue;
+    const py = upper ? baseY + 0.46 + (k - 2) * 0.22 : baseY;
+    b.glb(id, px, py, pz, yaw, { scale: sc });
+    placed++;
+  }
+  if (placed > 0 && spotHash(x, z, seed + 7) < 0.4) {
+    b.life(LIFE.flies, x, baseY + 1.2, z, 0, 0, 0, 0, spotHash(x, z, seed + 8));
+  }
 }
 
 /** 3 m slot between two towers: a dumpster, litter, maybe a gate at the street, maybe walled off at the back. */
@@ -113,6 +277,7 @@ function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, esc
   const dz = mid + (rand() - 0.5) * 4;
   const wallX = rand() < 0.5 ? xL + 0.05 : xR - 1.15;
   dumpster(b, wallX, dz - 0.9, 'z');
+  trashMound(b, (xL + xR) * 0.5, mid - inward * 4.2, 201);
   if (rand() < 0.6) crates(b, rand() < 0.5 ? xL + 0.1 : xR - 1.1, mid + inward * 5, rand);
   if (rand() < 0.4) sheetFence(b, xL, streetZ + inward * 0.3, xR, streetZ + inward * 0.3, rand() < 0.6 ? (xL + xR) / 2 : undefined, 1.2);
   // Dead end: walled off at the courtyard.
@@ -128,7 +293,10 @@ function eastGap(b: Builder, x0: number, x1: number, row: Row, rand: Rand): void
   const streetZ = row.south ? row.z0 : row.z1;
   const inward = row.south ? 1 : -1;
   sheetFence(b, x0, streetZ + inward * 0.4, x1, streetZ + inward * 0.4, rand() < 0.5 ? (x0 + x1) / 2 : undefined, 1.0);
-  if (x1 - x0 > 2.2) crates(b, x0 + 0.2, (row.z0 + row.z1) / 2, rand);
+  if (x1 - x0 > 2.2) {
+    crates(b, x0 + 0.2, (row.z0 + row.z1) / 2, rand);
+    trashMound(b, (x0 + x1) * 0.5, (row.z0 + row.z1) * 0.5 + inward * 3.5, 205);
+  }
 }
 
 /** The back courtyard between the rows. */
@@ -151,6 +319,7 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
     if (dumpster(b, x, southWall ? zS + 0.1 : zN - 1.2, 'x')) {
       b.container('trash', x + 0.9, southWall ? zS + 1.6 : zN - 1.7);
     }
+    trashMound(b, x + 2.1, southWall ? zS + 0.95 : zN - 0.95, 210 + k * 7);
   }
   for (let k = 0; k < 2; k++) crates(b, clear(X0 + 2 + rand() * (X1 - X0 - 6), 0.5), rand() < 0.5 ? zS + 0.2 : zN - 1.2, rand);
   for (let k = 0; k < 4; k++) if (rand() >= 0.7) groundDecal(b, 'decalOil', X0 + rand() * (X1 - X0), PAVE.plaza, zMid + (rand() - 0.5) * (width - 2), 2, rand);

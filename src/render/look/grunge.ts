@@ -20,7 +20,12 @@ export type GrungeKind =
   | 'facadeBrick'
   | 'facadeOffice'
   | 'concrete'
-  | 'tile';
+  | 'tile'
+  | 'brick'
+  | 'wallpaper'
+  | 'parquet'
+  | 'linoleum'
+  | 'wallTile';
 
 export interface GrungeOptions {
   /** Texture side, px. 128 is the sweet spot: crisp at arm's length, 64 KB of VRAM. */
@@ -226,6 +231,36 @@ export function generateGrungeCanvas(
           shade *= 1 - drip * 0.18 - damp;
           break;
         }
+        case 'wallpaper': {
+          // Soviet patterned interior wallpaper: subtle vertical strip seams, woven motif, soft floor-line fade.
+          if (x % 32 === 0) shade *= 0.91;
+          const motif = Math.sin(u * Math.PI * 16) * Math.sin(v * Math.PI * 16);
+          shade *= 0.95 + motif * 0.05;
+          shade *= 1 - smooth(0.82, 1.0, v) * 0.14;
+          break;
+        }
+        case 'parquet': {
+          // Staggered wooden parquet slats for living rooms & bedrooms.
+          const bx = Math.floor(x / 16);
+          const by = Math.floor(y / 16);
+          const horiz = (bx + by) % 2 === 0;
+          const coord = horiz ? y % 4 === 0 : x % 4 === 0;
+          if (coord || x % 16 === 0 || y % 16 === 0) shade *= 0.78;
+          else shade *= (horiz ? 1.03 : 0.95) * (0.88 + 0.12 * Math.sin(((horiz ? x : y) * 0.35 + n * 4)));
+          break;
+        }
+        case 'linoleum': {
+          // Worn speckled interior linoleum with gentle foot-traffic wear.
+          const speck = cellHash(x >> 1, y >> 1);
+          shade *= 0.92 + (speck - 0.5) * 0.16;
+          break;
+        }
+        case 'wallTile': {
+          // Small glazed Soviet kitchen/bathroom ceramic tiles.
+          if (x % 8 === 0 || y % 8 === 0) shade *= 0.72;
+          else shade *= 0.95 + cellHash(Math.floor(y / 8), Math.floor(x / 8)) * 0.1;
+          break;
+        }
         case 'concrete':
         case 'facadeConcrete': {
           // Precast architectural concrete panels with subtle expansion seams and mineral grain.
@@ -272,6 +307,7 @@ export function generateGrungeCanvas(
           shade *= 0.88 + sheen + frost;
           break;
         }
+        case 'brick':
         case 'facadeBrick': {
           // Running bond: 6 px courses, 16 px bricks; mortar darker and greyer; per-brick tint.
           const row = Math.floor(y / 6);

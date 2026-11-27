@@ -203,6 +203,69 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       g.fillRect(0, 0, size, size);
       break;
     }
+    case 'cobweb': {
+      // Dusty corner spiderweb anchored at top-left (0,0) corner fanning into the room.
+      g.strokeStyle = 'rgba(218, 214, 204, 0.34)';
+      g.lineWidth = 1;
+      const spokes = 7;
+      for (let i = 0; i <= spokes; i++) {
+        const a = (i / spokes) * (Math.PI * 0.48);
+        const len = size * (0.72 + (i % 2) * 0.18);
+        g.beginPath();
+        g.moveTo(0, 0);
+        g.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+        g.stroke();
+      }
+      for (let r = size * 0.18; r <= size * 0.78; r += size * 0.13) {
+        g.beginPath();
+        for (let i = 0; i <= spokes; i++) {
+          const a = (i / spokes) * (Math.PI * 0.48);
+          const rr = r * (0.94 + (i % 2) * 0.08);
+          const px = Math.cos(a) * rr;
+          const py = Math.sin(a) * rr;
+          if (i === 0) g.moveTo(px, py);
+          else g.lineTo(px, py);
+        }
+        g.stroke();
+      }
+      break;
+    }
+    case 'damp': {
+      // Subtle interior water leak / mold stain for ceilings and damp wall corners.
+      for (let i = 0; i < 6; i++) {
+        const grad = g.createRadialGradient(c, c, size * 0.05, c, c, size * (0.28 + rand() * 0.18));
+        grad.addColorStop(0, 'rgba(54, 48, 38, 0.46)');
+        grad.addColorStop(0.6, 'rgba(72, 66, 52, 0.24)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.ellipse(c + (rand() - 0.5) * size * 0.25, c + (rand() - 0.5) * size * 0.25, size * (0.2 + rand() * 0.18), size * (0.14 + rand() * 0.16), rand() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'crack': {
+      // Hairline plaster/concrete wall crack branching diagonally.
+      g.strokeStyle = 'rgba(26, 25, 23, 0.74)';
+      g.lineWidth = 1.4;
+      const trace = (sx: number, sy: number, ang: number, steps: number, w: number) => {
+        g.beginPath();
+        g.moveTo(sx, sy);
+        let px = sx;
+        let py = sy;
+        let a = ang;
+        for (let i = 0; i < steps; i++) {
+          a += (rand() - 0.5) * 0.9;
+          px += Math.cos(a) * (size * 0.09);
+          py += Math.sin(a) * (size * 0.09);
+          g.lineTo(px, py);
+          if (w > 0 && rand() < 0.35) trace(px, py, a + (rand() < 0.5 ? 0.65 : -0.65), 3, 0);
+        }
+        g.stroke();
+      };
+      trace(size * 0.2, size * 0.15, 0.72, 8, 1);
+      break;
+    }
   }
   return canvas;
 }

@@ -20,9 +20,9 @@ export class HeliHud {
   constructor(parent: HTMLElement) {
     this.root.hidden = true;
     this.root.style.cssText =
-      'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:25;background:rgba(12,16,14,0.86);border:1px solid #4c6252;border-radius:6px;padding:10px 16px;color:#d6e2d0;font:600 13px/1.35 system-ui,monospace;min-width:360px;pointer-events:none;box-shadow:0 4px 18px rgba(0,0,0,0.5)';
+      'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:25;background:rgba(12,16,14,0.86);border:1px solid #4c6252;border-radius:6px;padding:10px 16px;color:#d6e2d0;font:600 13px/1.35 system-ui,monospace;min-width:410px;pointer-events:none;box-shadow:0 4px 18px rgba(0,0,0,0.5)';
     this.root.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:#8cc898;font-size:12px;letter-spacing:0.6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:18px;white-space:nowrap;margin-bottom:6px;color:#8cc898;font-size:12px;letter-spacing:0.6px">
         <span>МИ-8Т · ЭМЕРКОМ</span>
         <span data-h="perim"></span>
       </div>
@@ -51,7 +51,8 @@ export class HeliHud {
   }
 
   update(snap: HeliHudSnapshot | null): void {
-    if (!snap) {
+    // In 1st-person Mi-8 cockpit mode, all telemetry is rendered live on the 3D glass cockpit MFDs.
+    if (!snap || (snap.piloting && !snap.chaseCam)) {
       this.root.hidden = true;
       return;
     }

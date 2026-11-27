@@ -2,7 +2,10 @@ import { type BufferGeometry, Matrix4, PlaneGeometry, Quaternion, Vector3 } from
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/random';
 import { FACADE_BAY, FACADE_WINDOW, type Surface } from '../../render/look/surfaces';
+import { buildCar, CAR_PAINTS } from '../props/car';
+import { isGlbClear } from './footprint';
 import { SHOP_KINDS, SHOP_SIGN, type ShopKind } from './furniture';
+import { LIFE, spotHash } from './lifeKinds';
 import { hash3 } from './noise';
 import { type Builder, PAL, pick, type Rand } from './pieces';
 
@@ -370,11 +373,43 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.block(0x5a5852, L.cx0 - 0.1, H + hh, L.cz0 - 0.2, L.cx1 - L.cx0 + 0.35, 0.15, L.cz1 - L.cz0 + 0.25, 'concrete', true);
 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
+  let storefrontCarSpawned = false;
   for (const { x, w: pw, broken } of panes) {
     // No protruding (rust-textured) frame bars over the brick: intact glass sits flush on the facade.
     if (broken) {
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 + 1.0, 1.6, rand, 1.2);
+      const midX = x + pw / 2;
+      if (
+        !storefrontCarSpawned &&
+        pw >= 2.2 &&
+        desc.id !== 99 &&
+        desc.floors >= 5 &&
+        Math.abs(midX - L.doorX) >= 4.2 &&
+        spotHash(b.wx(midX), b.wz(L.z0), 119) < 0.015
+      ) {
+        const wx = b.wx(midX);
+        const wz = b.wz(L.z0 - 1.55);
+        const h2 = spotHash(wx, wz, 120);
+        const yaw = (desc.flip ? Math.PI / 2 : -Math.PI / 2) + (h2 - 0.5) * 0.28;
+        const kind = h2 < 0.35 ? 'wreck' : h2 < 0.65 ? 'pickup' : h2 < 0.85 ? 'van' : 'police';
+        if (
+          buildCar(
+            b.batch,
+            b.colliders,
+            { x: wx, z: wz, yaw, paint: CAR_PAINTS.slate, seed: Math.floor(h2 * 1e6), flatTire: true, smashed: 0.9, maxLen: 4.9, kind },
+            b.containers,
+          )
+        ) {
+          storefrontCarSpawned = true;
+          const bwdX = -Math.cos(yaw);
+          const bwdZ = Math.sin(yaw);
+          if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', wx + bwdX * 2.8, wz + bwdZ * 2.8, h2 * 6, 0.4)) {
+            b.glb('Road_Debris_Cluster_2', wx + bwdX * 2.8, 0.01, wz + bwdZ * 2.8, h2 * 6);
+          }
+          b.life(LIFE.smoke, midX, 1.25, L.z0 - 0.6, 0, 0, 0, 0, spotHash(wx, wz, 121));
+        }
+      }
     } else {
       b.block(PAL.window, x, 0.3, L.z0 - 0.03, pw, 2.5, 0.03, 'windowGlass', true);
     }

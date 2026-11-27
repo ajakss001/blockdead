@@ -166,25 +166,55 @@ export class PlayerController {
     const moveX = this.velocity.x * dt;
     const moveZ = this.velocity.z * dt;
     const dist = Math.hypot(moveX, moveZ);
-    const steps = Math.max(1, Math.ceil(dist / 0.1));
+    const steps = Math.max(1, Math.ceil(dist / 0.05));
     const stepX = moveX / steps;
     const stepZ = moveZ / steps;
     const stepDist = dist / steps;
     const dirX = stepDist > 1e-5 ? stepX / stepDist : 0;
     const dirZ = stepDist > 1e-5 ? stepZ / stepDist : 0;
+    const hasDetail = typeof world.rayHitDetail === 'function';
+    const hasRay = hasDetail || typeof world.rayHit === 'function';
     for (let s = 0; s < steps; s++) {
       let scale = 1;
-      if (stepDist > 1e-5 && typeof world.rayHit === 'function') {
+      if (stepDist > 1e-5 && hasRay) {
         const chestY = this.position.y + Math.min(1.35, height - 0.05);
         const waistY = this.position.y + 0.55;
-        const h1 = world.rayHit(this.position.x, waistY, this.position.z, dirX, 0, dirZ, stepDist + PLAYER_RADIUS);
-        const h2 = world.rayHit(this.position.x, chestY, this.position.z, dirX, 0, dirZ, stepDist + PLAYER_RADIUS);
+        const maxRay = stepDist + PLAYER_RADIUS + 0.02;
         let minHit = Infinity;
-        if (h1 >= 0 && h1 < minHit) minHit = h1;
-        if (h2 >= 0 && h2 < minHit) minHit = h2;
-        if (minHit < stepDist) {
-          const allowed = Math.max(0, minHit - 0.02);
-          scale = allowed / stepDist;
+        let hitNx = -dirX;
+        let hitNz = -dirZ;
+        if (hasDetail) {
+          const d1 = world.rayHitDetail(this.position.x, waistY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          const d2 = world.rayHitDetail(this.position.x, chestY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          if (d1 && d1.t < minHit) {
+            minHit = d1.t;
+            hitNx = d1.nx;
+            hitNz = d1.nz;
+          }
+          if (d2 && d2.t < minHit) {
+            minHit = d2.t;
+            hitNx = d2.nx;
+            hitNz = d2.nz;
+          }
+        } else {
+          const h1 = world.rayHit(this.position.x, waistY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          const h2 = world.rayHit(this.position.x, chestY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          if (h1 >= 0 && h1 < minHit) minHit = h1;
+          if (h2 >= 0 && h2 < minHit) minHit = h2;
+        }
+        if (minHit < stepDist + PLAYER_RADIUS) {
+          const allowed = Math.max(0, minHit - PLAYER_RADIUS - 0.005);
+          scale = Math.min(1, allowed / stepDist);
+          const nLen = Math.hypot(hitNx, hitNz);
+          if (nLen > 1e-4) {
+            const nx = hitNx / nLen;
+            const nz = hitNz / nLen;
+            const vn = this.velocity.x * nx + this.velocity.z * nz;
+            if (vn < 0) {
+              this.velocity.x -= nx * vn;
+              this.velocity.z -= nz * vn;
+            }
+          }
         }
       }
       this.position.x += stepX * scale;

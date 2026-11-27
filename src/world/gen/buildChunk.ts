@@ -4,7 +4,7 @@ import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { GLB_WORLD_SPECS, type GlbPlacement, pickRoadSign } from '../worldModels';
-import { curbParking, downtownBlock } from './cityFill';
+import { curbParking, downtownBlock, trashMound } from './cityFill';
 import { glbObb, isGlbClear, obbOverlap } from './footprint';
 import { type BuildingDesc, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
@@ -297,8 +297,8 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       } else if (ring <= 3 && ((i + j) & 3) === 2) {
         buildCar(b.batch, b.colliders, { x: x + 3.4, z: z + 2.8, yaw: -0.45, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'ambulance' }, b.containers);
         buildCar(b.batch, b.colliders, { x: x - 4.0, z: z - 2.6, yaw: 0.35, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'fireTruck' }, b.containers);
-      } else if (roll < (core ? 0.45 : 0.25)) crashSite(b, x, z, rand);
-      else if (roll < (core ? 0.65 : 0.35)) checkpoint(b, x, z, rand);
+      } else if (roll < (core ? 0.58 : 0.36)) crashSite(b, x, z, rand);
+      else if (roll < (core ? 0.72 : 0.42)) checkpoint(b, x, z, rand);
     }
   }
   // Sparse street greenery placed AFTER obstacles & traffic lights so nothing grows through signs or lamps.
@@ -384,22 +384,41 @@ function roadHasPoiApproach(layout: WorldLayout, i: number, j: number, axis: 'x'
 /** Parked cars hug the curb: lane center this far from the road's center line. */
 const CURB_LANE = ROAD_HALF - 1.05;
 
-/** Out in the country: a car that pulled over onto the shoulder and was left there. */
+/** Out in the country: a car pulled onto the shoulder, or an overturned highway crash wreck. */
 function shoulderCar(b: Builder, alongX: boolean, x: number, z: number, rand: Rand): void {
   const side = rand() < 0.5 ? -1 : 1;
   const off = side * (ROAD_HALF + 0.3);
-  const yaw = (alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() - 0.5) * 0.15;
+  const yaw = (alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() - 0.5) * 0.25;
   const cx = alongX ? x : x + off;
   const cz = alongX ? z + off : z;
+  const h = spotHash(cx, cz, 89);
+  const isWreck = h < 0.22;
+  const flipped = isWreck && h < 0.14 ? 'roof' : undefined;
   if (
     buildCar(
       b.batch,
       b.colliders,
-      { x: cx, z: cz, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.4, smashed: rand() < 0.3 ? 0.4 : 0 },
+      {
+        x: cx,
+        z: cz,
+        yaw,
+        paint: pick(rand, Object.values(CAR_PAINTS)),
+        seed: Math.floor(rand() * 1e6),
+        flatTire: rand() < 0.4 || isWreck,
+        smashed: isWreck ? 0.9 : rand() < 0.3 ? 0.4 : 0,
+        kind: flipped ? 'wreck' : undefined,
+        flipped,
+      },
       b.containers,
     )
   ) {
     b.life(LIFE.car, cx, 0, cz, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(cx, cz, 41));
+    if (isWreck) {
+      if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', cx + 1.8, cz - 1.2, yaw, 0.35, { keepClearGap: 1.2 })) {
+        b.glb('Road_Debris_Cluster_2', cx + 1.8, 0.01, cz - 1.2, yaw);
+      }
+      b.life(LIFE.smoke, cx, 1.0, cz, 0, 0, 0, 0, h);
+    }
   }
 }
 
@@ -494,6 +513,7 @@ function town(b: Builder, X0: number, Z0: number, X1: number, Z1: number, rand: 
     const dx = X0 + 2 + n * seg + rand() * Math.max(0.1, seg - 2.4);
     b.glb('Soviet_Dumpster_3000', dx + 0.9, 0, zMid - 0.25, 0, { sx: 0.9, sy: 0.72, sz: 0.58 });
     b.solid(dx, zMid - 0.8, dx + 1.8, zMid + 0.3, 0.12, 1.35);
+    trashMound(b, dx + 2.3, zMid - 0.25, 220 + n * 5, 0);
     if (spotHash(dx, zMid, 53) < 0.5) b.life(LIFE.flies, dx + 0.9, 1.5, zMid - 0.25, 0, 0, 0, 0, spotHash(dx, zMid, 54));
   }
 }

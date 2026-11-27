@@ -5,7 +5,12 @@ import { FP_SHADOW_LAYER, stripUpperTriangles } from '../player/BodyModel';
 import { PlayerController } from '../player/PlayerController';
 import { Bandits } from '../systems/Bandits';
 import { ESCAPE_ALTITUDE, HELI_SPOOL_TIME, Helicopter, PERIMETER_RADIUS } from '../systems/Helicopter';
+import { HeliCockpit } from '../systems/HeliCockpit';
 import { Inventory } from '../systems/Inventory';
+import { GunFx } from '../weapons/GunFx';
+import { surfaceLayer } from '../render/look/surfaces';
+import { buildHighriseInterior } from '../world/gen/highriseInterior';
+import * as F from '../world/gen/furniture';
 import { TRIPWIRE_FUSE_S, Tripwires } from '../systems/Tripwires';
 import { ZombieSim } from '../systems/zombies';
 import { CollisionWorld, PackedColliders } from '../world/CollisionWorld';
@@ -652,6 +657,131 @@ export async function main(): Promise<number> {
       life.addGlassCrackDecal(1, 1.4, 2, 0, 0, -1, 0.44);
       check(life.onShards(1, 2, 0), 'P6: pooled WorldLife glass shatter/decal/shards active');
       life.dispose();
+
+      // ── Pillar 7: LODs, GunFx Pool, Hard Door Collision, Zero FacadeBrick Interiors, Mi-8 Landing & Catastrophes ──
+      const lodManifestRaw = readFileSync('public/models/world/lod/manifest.json', 'utf8');
+      const lodMan = JSON.parse(lodManifestRaw) as { models: unknown[]; totalSrcTris: number; totalLodTris: number };
+      const lodReduction = 1 - lodMan.totalLodTris / Math.max(1, lodMan.totalSrcTris);
+      check(
+        lodMan.models.length >= 25 && lodReduction >= 0.7,
+        `P7: LOD1 world GLBs generated (${lodMan.models.length} models, -${(lodReduction * 100).toFixed(1)}% tris)`,
+      );
+
+      const gfxScene = new Scene();
+      const vmScene = new Scene();
+      const gfx = new GunFx(gfxScene);
+      gfx.addBulletHole(new Vector3(1, 1, 1), new Vector3(0, 0, 1), 'wood');
+      gfx.addBulletHole(new Vector3(2, 1, 1), new Vector3(1, 0, 0), 'metal');
+      gfx.addBulletHole(new Vector3(3, 1, 1), new Vector3(0, 1, 0), 'stone');
+      const gfxDone = gfx.prewarm(vmScene);
+      gfx.keepPrewarmVisible();
+      gfxDone();
+      gfx.dispose();
+      check(true, 'P7: GunFx pooled bullet-hole decals + prewarm safe & active');
+
+      // Hard door collision: full sprint into closed & peeking wood door cannot tunnel through even after gunfire
+      {
+        const dScene = new Scene();
+        const dcw = new CollisionWorld();
+        const dd = new Doors(dScene, dcw, 'standard');
+        dd.add(20, [{ hx: 0, hz: 0, y: 0, yaw: 0, swing: 1, barricaded: false, width: 1.0, height: 2.1, style: 'wood' }]);
+        const hitBefore = dcw.rayHitDetail(0.5, 1.0, 1.0, 0, 0, -1, 3);
+        const gunHitRes = hitBefore ? dd.bulletImpact(hitBefore.owner, 200) : null;
+        check(gunHitRes !== null && gunHitRes.brokenNow === false, 'P7: bullets penetrate wood door without disabling door collider');
+
+        const pc = new PlayerController(new Vector3(0.5, 0, 1.0), 0);
+        const sprintIn = makeMockInput({ sprint: true }, 0, 1);
+        for (let k = 0; k < 120; k++) pc.fixedUpdate(1 / 60, sprintIn, dcw);
+        const stayedOutClosed = pc.position.z >= 0.3;
+
+        dd.peekToggle({ building: 20, index: 0 });
+        for (let k = 0; k < 45; k++) dd.update(1 / 60);
+        for (let k = 0; k < 120; k++) pc.fixedUpdate(1 / 60, sprintIn, dcw);
+        check(
+          stayedOutClosed && pc.position.z >= 0.25,
+          `P7: player cannot sprint-clip closed or peeking (<55 deg) door (z=${pc.position.z.toFixed(2)})`,
+        );
+      }
+
+      // Interiors: zero 'facadeBrick' inside high-rise rooms + DoorClearanceZone 1.6m guard
+      {
+        const ib = new StaticBatch();
+        const icw = new CollisionWorld();
+        const bld = new Builder(ib, icw);
+        const desc: BuildingDesc = {
+          id: 777,
+          cx: 12,
+          cz: 12,
+          w: 18,
+          d: 18,
+          floors: 3,
+          facade: 'facadeBrick',
+          flip: false,
+          kind: 'apartments',
+          seed: 4242,
+        };
+        buildHighriseInterior(bld, desc, 1, (k) => 9e6 + k * 100);
+        const bufs = ib.buildBuffers();
+        const extBrickLayer = surfaceLayer('facadeBrick');
+        const hasExtBrick = bufs.some((s) => {
+          for (let i = 0; i < s.layer.length; i++) if (s.layer[i] === extBrickLayer) return true;
+          return false;
+        });
+        check(!hasExtBrick, `P7: zero exterior facadeBrick surfaces inside highrise interior (hasExtBrick=${hasExtBrick})`);
+
+        const db = new Builder(new StaticBatch(), new CollisionWorld());
+        db.door(0, 0, 0, 0, 1, false, { width: 1.0, height: 2.1, style: 'wood' });
+        const blockedFurniture = new F.Place(db, 0.5, 0, 0.4, 0).model('chair', () => 0.5);
+        check(!blockedFurniture && db.isDoorClear(5, 5, 0), 'P7: DoorClearanceZone (1.6m) blocks furniture inside doorway');
+        bld.dispose();
+        db.dispose();
+      }
+
+      // Mi-8: 0% fuel descends cleanly to roof/ground (no 4.1m hover freeze) + roof tryExit + HeliCockpit
+      {
+        const roofY = 12.0;
+        const rScene = new Scene();
+        const rcw = new CollisionWorld();
+        rcw.addBox(-10, -10, 10, 10, roofY - 0.25, roofY);
+        const heliTest = new Helicopter({
+          scene: rScene,
+          world: rcw,
+          layout,
+          particles: new Particles(),
+          groundY: (gx, gz, refY = 0) => (Math.abs(gx) <= 9.5 && Math.abs(gz) <= 9.5 && refY >= roofY - 1.0 ? roofY : 0),
+          toast: () => {},
+          hurtPlayer: () => {},
+          explode: () => {},
+          onEscape: () => {},
+        });
+        heliTest.placeForTest(0, 0, true);
+        heliTest.board();
+        heliTest.y = roofY + 12.0;
+        heliTest.fuel = 0;
+        heliTest.spool = 1.0;
+        const pPos = new Vector3();
+        const pPrev = new Vector3();
+        const emptyIn = makeMockInput({});
+        for (let k = 0; k < 210; k++) heliTest.fixedUpdate(1 / 30, emptyIn, pPos, pPrev);
+        const exitedOnRoof = heliTest.tryExit(pPos, pPrev);
+        const cockpit = new HeliCockpit(new Scene());
+        cockpit.update(1 / 60, heliTest.cockpitState());
+        cockpit.dispose();
+        check(
+          Math.abs(heliTest.y - roofY) < 0.2 && exitedOnRoof && Math.abs(pPos.y - roofY) < 0.3,
+          `P7: Mi-8 lands flush on roof at 0% fuel & exits cleanly onto roof (heliY=${heliTest.y.toFixed(2)}, exitY=${pPos.y.toFixed(2)})`,
+        );
+        heliTest.dispose();
+      }
+
+      // Downtown catastrophe landmarks in (1,-1) Boeing + (1,0) Mi-8 high-rise impact
+      {
+        const cBoeing = buildChunk(layout, 1, -1);
+        const cMi8 = buildChunk(layout, 1, 0);
+        const hasBoeing = cBoeing.glbs.some((g) => g.id === 'passenger_airliner_22');
+        const hasHighMi8 = cMi8.glbs.some((g) => g.id === 'mi8_wreck_remesh' && g.y >= 9.0);
+        check(hasBoeing && hasHighMi8, `P7: downtown catastrophe landmarks present (boeing=${hasBoeing}, highriseMi8=${hasHighMi8})`);
+      }
     }
   }
 

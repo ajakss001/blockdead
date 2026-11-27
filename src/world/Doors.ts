@@ -1,8 +1,10 @@
 import {
   BoxGeometry,
   type BufferGeometry,
+  type Camera,
   Color,
   Float32BufferAttribute,
+  Frustum,
   DoubleSide,
   DynamicDrawUsage,
   InstancedMesh,
@@ -12,6 +14,7 @@ import {
   MeshStandardMaterial,
   Quaternion,
   type Scene,
+  Sphere,
   Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -96,6 +99,11 @@ const _s = new Vector3(1, 1, 1);
 const _up = new Vector3(0, 1, 0);
 const _qz = new Quaternion();
 const _zAxis = new Vector3(0, 0, 1);
+const _frustum = new Frustum();
+const _projScreen = new Matrix4();
+const _sphere = new Sphere();
+const _camDir = new Vector3();
+const DOOR_CULL_DIST = 45;
 /** Boards: at most per door, how much beating each adds, how many fit in the instanced mesh. */
 export const MAX_PLANKS = 3;
 const PLANK_HP = 90;
@@ -135,7 +143,15 @@ export class Doors {
   private readonly plankMesh: InstancedMesh;
   private readonly pools: Record<PoolKey, Pool>;
   private readonly byOwner = new Map<number, DoorState>();
+  private readonly active = new Set<DoorState>();
   private nextOwner = 0;
+  private hasVisFilter = false;
+  private hasVisFrustum = false;
+  private lastVisX = 1e9;
+  private lastVisZ = 1e9;
+  private readonly lastVisDir = new Vector3(0, 0, -1);
+  private visDirty = false;
+  private prewarmLocked = false;
 
   constructor(
     private readonly scene: Scene,
@@ -263,6 +279,7 @@ export class Doors {
     }
     for (const pool of Object.values(this.pools)) this.writeAll(pool);
     this.writePlanks();
+    this.visDirty = true;
   }
 
   remove(key: number): void {
@@ -271,6 +288,7 @@ export class Doors {
     for (const d of doors) {
       this.world.removeOwner(d.owner);
       this.byOwner.delete(d.owner);
+      this.active.delete(d);
       const pool = this.pools[d.poolKey];
       const last = pool.doors.pop()!;
       if (last !== d) {
@@ -280,6 +298,7 @@ export class Doors {
     }
     this.sets.delete(key);
     for (const pool of Object.values(this.pools)) this.writeAll(pool);
+    this.visDirty = true;
   }
 
   /** Closest door on the player's storey within reach that the player faces. */
@@ -348,6 +367,7 @@ export class Doors {
       leaf.open = open;
       leaf.peek = false;
       leaf.slow = false;
+      this.active.add(leaf);
       if (open) {
         // Clear closed doorway blocker immediately for synchronous callers (e.g. AI LOS), while update(dt) tracks the swinging leaf OBB.
         this.world.removeOwner(leaf.owner);
@@ -369,6 +389,7 @@ export class Doors {
       leaf.open = false;
       leaf.peek = nextPeek;
       leaf.slow = true;
+      this.active.add(leaf);
       this.collide(leaf);
     }
     return true;
@@ -393,6 +414,7 @@ export class Doors {
     d.open = false;
     d.peek = false;
     d.slow = true;
+    this.active.add(d);
     this.collide(d);
     const at = this.info(ref)!;
     return { x: at.x, y: at.y, z: at.z, creaky: at.creaky, pitch: at.pitch, dur: (Math.PI * 0.48) / (SWING_SPEED * DRAFT_SPEED) };
@@ -454,6 +476,7 @@ export class Doors {
       this.boards.delete(doorKey(leaf.spot));
       leaf.open = true;
       leaf.peek = false;
+      this.active.add(leaf);
       this.world.removeOwner(leaf.owner);
       leaf.colliderAngle = leaf.angle;
     }
@@ -461,7 +484,7 @@ export class Doors {
     return true;
   }
 
-  /** Resolves bullet/blast impact against a door leaf owner: handles glass shatter, wood penetration, and lab ricochet. */
+  /** Resolves bullet/blast impact against a door leaf owner: shatters/breaks glass doors, never removes solid door colliders on gunfire. */
   bulletImpact(owner: number, damage: number): DoorBulletResult | null {
     const d = this.byOwner.get(owner);
     if (!d) return null;
@@ -471,17 +494,13 @@ export class Doors {
     if (d.style === 'glass') {
       const brokenBefore = d.glassBroken;
       if (!brokenBefore) this.shatterGlass(d);
-      return { kind: 'glass', penetrate: true, mul: brokenBefore ? 1.0 : 0.85, brokenNow: false, glassShattered: !brokenBefore };
+      const doors = this.sets.get(d.set);
+      const idx = doors?.indexOf(d) ?? -1;
+      const brokenNow = idx >= 0 ? this.damage({ building: d.set, index: idx }, damage) : false;
+      return { kind: 'glass', penetrate: true, mul: brokenBefore ? 1.0 : 0.85, brokenNow, glassShattered: !brokenBefore };
     }
     const hadPlanks = d.planks > 0 || !!d.spot.barricaded;
-    const doors = this.sets.get(d.set);
-    const idx = doors?.indexOf(d) ?? -1;
-    let brokenNow = false;
-    if (idx >= 0) {
-      if (d.planks > 0 && Math.random() < 0.35) this.removePlank({ building: d.set, index: idx });
-      brokenNow = this.damage({ building: d.set, index: idx }, damage * 0.35);
-    }
-    return { kind: d.style === 'barricaded' ? 'barricaded' : 'wood', penetrate: true, mul: hadPlanks ? 0.32 : 0.55, brokenNow, glassShattered: false };
+    return { kind: d.style === 'barricaded' ? 'barricaded' : 'wood', penetrate: true, mul: hadPlanks ? 0.32 : 0.55, brokenNow: false, glassShattered: false };
   }
 
   /** Shatters nearby glass doors (or damages nearby wood doors) within an explosion radius. */
@@ -520,6 +539,7 @@ export class Doors {
     d.slot = newPool.doors.length;
     newPool.doors.push(d);
     this.ensureCapacity(newPool);
+    this.visDirty = true;
     this.writeAll(oldPool);
     this.writeAll(newPool);
   }
@@ -647,8 +667,11 @@ export class Doors {
 
   /** Ensure all door pools and plank mesh render at least one dummy instance during boot prewarm. */
   prewarm(): () => void {
+    this.prewarmLocked = true;
     this.keepPrewarmVisible();
     return () => {
+      this.prewarmLocked = false;
+      this.visDirty = true;
       for (const pool of Object.values(this.pools)) this.writeAll(pool);
       this.writePlanks();
     };
@@ -675,29 +698,60 @@ export class Doors {
     this.plankMesh.visible = true;
   }
 
-  /** Animate swinging leaves; only pools with moving doors re-upload their matrices and OBB colliders. */
-  update(dt: number): void {
-    for (const pool of Object.values(this.pools)) {
-      for (const d of pool.doors) {
-        const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.peek ? d.spot.yaw + d.spot.swing * PEEK_ANGLE : d.spot.yaw;
-        const diff = target - d.angle;
-        if (Math.abs(diff) < 1e-3) {
-          if (Math.abs(d.colliderAngle - d.angle) > 0.005) this.collide(d);
-          continue;
-        }
-        const rate = SWING_SPEED * (d.peek ? 0.55 : d.slow ? DRAFT_SPEED : 1);
-        d.angle += Math.sign(diff) * Math.min(Math.abs(diff), rate * dt);
-        if (Math.abs(target - d.angle) < 1e-3) {
-          d.angle = target;
-          d.slow = false;
-        }
-        if (Math.abs(d.angle - d.colliderAngle) > 0.005 || d.angle === target) {
-          this.collide(d);
-        }
-        this.write(pool, d);
-        pool.dirty = true;
+  /** Distance (45 m) + frustum culling for the global door InstancedMeshes; avoids rendering 600+ far leaves/shadows. */
+  updateVisibility(camX: number, camZ: number, camera?: Camera): void {
+    if (this.prewarmLocked) return;
+    let turned = false;
+    if (camera) {
+      camera.updateMatrixWorld();
+      _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      _frustum.setFromProjectionMatrix(_projScreen);
+      this.hasVisFrustum = true;
+      camera.getWorldDirection(_camDir);
+      if (_camDir.dot(this.lastVisDir) < 0.985) {
+        turned = true;
+        this.lastVisDir.copy(_camDir);
       }
-      if (pool.dirty) this.flush(pool);
+    } else {
+      this.hasVisFrustum = false;
+    }
+    const moved = Math.hypot(camX - this.lastVisX, camZ - this.lastVisZ);
+    if (!this.visDirty && this.hasVisFilter && moved < 2.5 && !turned) return;
+
+    this.hasVisFilter = true;
+    this.lastVisX = camX;
+    this.lastVisZ = camZ;
+    this.visDirty = false;
+    for (const pool of Object.values(this.pools)) {
+      this.writeAll(pool);
+    }
+  }
+
+  /** Animate only active swinging leaves; avoids scanning all 600+ idle doors every frame. */
+  update(dt: number): void {
+    if (this.active.size === 0) return;
+    for (const d of this.active) {
+      const target = d.open ? d.spot.yaw + d.spot.swing * Math.PI * 0.48 : d.peek ? d.spot.yaw + d.spot.swing * PEEK_ANGLE : d.spot.yaw;
+      const diff = target - d.angle;
+      if (Math.abs(diff) < 1e-3) {
+        if (Math.abs(d.colliderAngle - d.angle) > 0.005) this.collide(d);
+        this.active.delete(d);
+        continue;
+      }
+      const rate = SWING_SPEED * (d.peek ? 0.55 : d.slow ? DRAFT_SPEED : 1);
+      d.angle += Math.sign(diff) * Math.min(Math.abs(diff), rate * dt);
+      if (Math.abs(target - d.angle) < 1e-3) {
+        d.angle = target;
+        d.slow = false;
+        this.active.delete(d);
+      }
+      if (Math.abs(d.angle - d.colliderAngle) > 0.005 || d.angle === target) {
+        this.collide(d);
+      }
+      this.pools[d.poolKey].dirty = true;
+    }
+    for (const pool of Object.values(this.pools)) {
+      if (pool.dirty) this.writeAll(pool);
     }
   }
 
@@ -718,7 +772,6 @@ export class Doors {
     mesh.count = 0;
     mesh.castShadow = !(m as MeshStandardMaterial).transparent;
     mesh.receiveShadow = true;
-    // Doors are spread over the whole loaded world: one bounding volume would be meaningless.
     mesh.frustumCulled = false;
     this.scene.add(mesh);
     return mesh;
@@ -735,21 +788,34 @@ export class Doors {
     });
   }
 
-  private write(pool: Pool, d: DoorState): void {
+  private writeMatrix(pool: Pool, d: DoorState, idx: number): void {
     _q.setFromAxisAngle(_up, d.angle);
     _s.set(d.width / LEAF_W, (d.spot.height ?? LEAF_H) / LEAF_H, 1);
     _m.compose(_p.set(d.spot.hx, d.spot.y, d.spot.hz), _q, _s);
-    for (const mesh of pool.meshes) mesh.setMatrixAt(d.slot, _m);
+    for (const mesh of pool.meshes) mesh.setMatrixAt(idx, _m);
   }
 
   private writeAll(pool: Pool): void {
-    for (const d of pool.doors) this.write(pool, d);
-    this.flush(pool);
-  }
-
-  private flush(pool: Pool): void {
+    if (this.prewarmLocked) return;
+    let visCount = 0;
+    const maxD2 = DOOR_CULL_DIST * DOOR_CULL_DIST;
+    for (let i = 0; i < pool.doors.length; i++) {
+      const d = pool.doors[i];
+      if (this.hasVisFilter) {
+        const dx = d.spot.hx - this.lastVisX;
+        const dz = d.spot.hz - this.lastVisZ;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > maxD2) continue;
+        if (this.hasVisFrustum && d2 > 14 * 14) {
+          _sphere.center.set(d.spot.hx, d.spot.y + 1.0, d.spot.hz);
+          _sphere.radius = 2.6;
+          if (!_frustum.intersectsSphere(_sphere)) continue;
+        }
+      }
+      this.writeMatrix(pool, d, visCount++);
+    }
     for (const mesh of pool.meshes) {
-      mesh.count = pool.doors.length;
+      mesh.count = visCount;
       mesh.instanceMatrix.needsUpdate = true;
     }
     pool.dirty = false;
@@ -762,22 +828,21 @@ export class Doors {
     const s = Math.sin(d.angle);
     const cx = d.spot.hx + c * (d.width * 0.5);
     const cz = d.spot.hz - s * (d.width * 0.5);
-    // Thin open/peeking leaf (~0.09 m) admits bullets & LOS through the crack while closed leaf keeps 0.25 m thickness.
-    const wideOpen = d.open && !d.peek;
-    const halfT = (wideOpen || d.peek) && Math.abs(d.angle - d.spot.yaw) > 0.25 ? 0.045 : 0.125;
-    this.world.addOwnedOriented(
-      d.owner,
-      cx,
-      cz,
-      d.width * 0.5 + 0.02,
-      halfT,
-      d.angle,
-      d.spot.y,
-      d.spot.y + (d.spot.height ?? LEAF_H),
-      d.style === 'glass',
-      true,
-      wideOpen,
-    );
+    const swingAbs = Math.abs(d.angle - d.spot.yaw);
+    const wideOpen = d.open && !d.peek && swingAbs >= 0.96;
+    const cracked = !wideOpen && swingAbs > 0.25;
+    const halfW = wideOpen || cracked ? d.width * 0.5 : d.width * 0.5 + 0.02;
+    const halfT = wideOpen ? 0.05 : cracked ? 0.095 : 0.14;
+    const topY = d.spot.y + (d.spot.height ?? LEAF_H);
+    // When cracked (< 55 deg), leaf OBB stays aligned for bullet/LOS crack checks while a bodyOnly frame seal blocks body pass-through.
+    this.world.addOwnedOriented(d.owner, cx, cz, halfW, halfT, d.angle, d.spot.y, topY, d.style === 'glass', true, wideOpen || cracked, false);
+    if (cracked) {
+      const fc = Math.cos(d.spot.yaw);
+      const fs = Math.sin(d.spot.yaw);
+      const fcx = d.spot.hx + fc * (d.width * 0.5);
+      const fcz = d.spot.hz - fs * (d.width * 0.5);
+      this.world.addOwnedOriented(d.owner, fcx, fcz, d.width * 0.5 + 0.02, 0.11, d.spot.yaw, d.spot.y, topY, d.style === 'glass', true, false, true);
+    }
   }
 }
 

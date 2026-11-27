@@ -1,0 +1,224 @@
+{
+  "models": [
+    {
+      "id": "gaz_tigr_4x4_17k",
+      "file": "gaz_tigr_4x4_17k.glb",
+      "srcTriangles": 17176,
+      "triangles": 2572,
+      "bytes": 60764
+    },
+    {
+      "id": "zsu_23_4_shilka_14k",
+      "file": "zsu_23_4_shilka_14k.glb",
+      "srcTriangles": 13246,
+      "triangles": 1911,
+      "bytes": 46532
+    },
+    {
+      "id": "omon_swat_van_17k",
+      "file": "omon_swat_van_17k.glb",
+      "srcTriangles": 16237,
+      "triangles": 2380,
+      "bytes": 55336
+    },
+    {
+      "id": "Police_Sedan_DPS_22k",
+      "file": "Police_Sedan_DPS_22k.glb",
+      "srcTriangles": 21822,
+      "triangles": 3271,
+      "bytes": 69064
+    },
+    {
+      "id": "gazelle_ambulance_17k",
+      "file": "gazelle_ambulance_17k.glb",
+      "srcTriangles": 16403,
+      "triangles": 2454,
+      "bytes": 63512
+    },
+    {
+      "id": "kamaz_fire_truck_20k",
+      "file": "kamaz_fire_truck_20k.glb",
+      "srcTriangles": 18892,
+      "triangles": 2782,
+      "bytes": 69640
+    },
+    {
+      "id": "emercom_pickup_17k",
+      "file": "emercom_pickup_17k.glb",
+      "srcTriangles": 16929,
+      "triangles": 2476,
+      "bytes": 63088
+    },
+    {
+      "id": "Kamaz_6x6_25k",
+      "file": "Kamaz_6x6_25k.glb",
+      "srcTriangles": 24574,
+      "triangles": 3638,
+      "bytes": 75296
+    },
+    {
+      "id": "paz_3205_bus_11000",
+      "file": "paz_3205_bus_11000.glb",
+      "srcTriangles": 10289,
+      "triangles": 1519,
+      "bytes": 48900
+    },
+    {
+      "id": "UAZ_Bukhanka_22k",
+      "file": "UAZ_Bukhanka_22k.glb",
+      "srcTriangles": 21491,
+      "triangles": 3221,
+      "bytes": 68276
+    },
+    {
+      "id": "Luxury_SUV_Gelik_22k",
+      "file": "Luxury_SUV_Gelik_22k.glb",
+      "srcTriangles": 21656,
+      "triangles": 3220,
+      "bytes": 67256
+    },
+    {
+      "id": "Sport_Sedan_22k",
+      "file": "Sport_Sedan_22k.glb",
+      "srcTriangles": 21972,
+      "triangles": 3228,
+      "bytes": 66736
+    },
+    {
+      "id": "Semi_Truck_Tractor_24",
+      "file": "Semi_Truck_Tractor_24.glb",
+      "srcTriangles": 23682,
+      "triangles": 3544,
+      "bytes": 71988
+    },
+    {
+      "id": "Semi_Trailer_Cargo_20",
+      "file": "Semi_Trailer_Cargo_20.glb",
+      "srcTriangles": 17744,
+      "triangles": 2630,
+      "bytes": 69128
+    },
+    {
+      "id": "burned_car_wreck",
+      "file": "burned_car_wreck.glb",
+      "srcTriangles": 6087,
+      "triangles": 903,
+      "bytes": 29688
+    },
+    {
+      "id": "mi8_emercom_22k",
+      "file": "mi8_emercom_22k.glb",
+      "srcTriangles": 22297,
+      "triangles": 3319,
+      "bytes": 73192
+    },
+    {
+      "id": "mi8_wreck_remesh",
+      "file": "mi8_wreck_remesh.glb",
+      "srcTriangles": 16312,
+      "triangles": 2422,
+      "bytes": 53344
+    },
+    {
+      "id": "passenger_airliner_22",
+      "file": "passenger_airliner_22.glb",
+      "srcTriangles": 22107,
+      "triangles": 3315,
+      "bytes": 64740
+    },
+    {
+      "id": "street_lamp_2000",
+      "file": "street_lamp_2000.glb",
+      "srcTriangles": 1772,
+      "triangles": 264,
+      "bytes": 29168
+    },
+    {
+      "id": "traffic_light_2500",
+      "file": "traffic_light_2500.glb",
+      "srcTriangles": 2543,
+      "triangles": 378,
+      "bytes": 32692
+    },
+    {
+      "id": "Soviet_Bus_Stop_Shelt",
+      "file": "Soviet_Bus_Stop_Shelt.glb",
+      "srcTriangles": 15601,
+      "triangles": 2290,
+      "bytes": 55672
+    },
+    {
+      "id": "Dead_Autumn_Tree_6000",
+      "file": "Dead_Autumn_Tree_6000.glb",
+      "srcTriangles": 4806,
+      "triangles": 706,
+      "bytes": 40184
+    },
+    {
+      "id": "Spruce_Pine_Tree_7000",
+      "file": "Spruce_Pine_Tree_7000.glb",
+      "srcTriangles": 5846,
+      "triangles": 813,
+      "bytes": 32700
+    },
+    {
+      "id": "Urban_Bush_2500",
+      "file": "Urban_Bush_2500.glb",
+      "srcTriangles": 1230,
+      "triangles": 280,
+      "bytes": 23796
+    },
+    {
+      "id": "Road_Debris_Cluster_2",
+      "file": "Road_Debris_Cluster_2.glb",
+      "srcTriangles": 2051,
+      "triangles": 305,
+      "bytes": 30676
+    },
+    {
+      "id": "Soviet_Dumpster_3000",
+      "file": "Soviet_Dumpster_3000.glb",
+      "srcTriangles": 2856,
+      "triangles": 426,
+      "bytes": 30960
+    },
+    {
+      "id": "abandoned_luggage_pil",
+      "file": "abandoned_luggage_pil.glb",
+      "srcTriangles": 2344,
+      "triangles": 351,
+      "bytes": 20388
+    },
+    {
+      "id": "checkpoint_barricade",
+      "file": "checkpoint_barricade.glb",
+      "srcTriangles": 4292,
+      "triangles": 643,
+      "bytes": 24800
+    },
+    {
+      "id": "quarantine_tent",
+      "file": "quarantine_tent.glb",
+      "srcTriangles": 5083,
+      "triangles": 754,
+      "bytes": 26044
+    },
+    {
+      "id": "generator_light_tower",
+      "file": "generator_light_tower.glb",
+      "srcTriangles": 4842,
+      "triangles": 724,
+      "bytes": 26984
+    },
+    {
+      "id": "fire_escape_smart_top",
+      "file": "fire_escape_smart_top.glb",
+      "srcTriangles": 15582,
+      "triangles": 2336,
+      "bytes": 46064
+    }
+  ],
+  "totalBytes": 1536608,
+  "totalSrcTris": 397764,
+  "totalLodTris": 59075
+}

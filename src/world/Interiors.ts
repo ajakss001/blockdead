@@ -1,4 +1,4 @@
-import type { Group, Scene } from 'three';
+import { Frustum, type Group, Matrix4, type Mesh, type Scene, Sphere } from 'three';
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import { setWindowCutouts } from '../render/look/worldMaterials';
 import type { Containers } from '../systems/Containers';
@@ -10,11 +10,16 @@ import { type BuildingDesc, FLOOR_H, highriseSurfaceY, insideFootprint } from '.
 import { CHUNK } from './gen/layout';
 
 const bCellKey = (ci: number, cj: number) => (ci + 32768) * 65536 + (cj + 32768);
+const _frustum = new Frustum();
+const _projScreen = new Matrix4();
+const _sphere = new Sphere();
 
 /** Start streaming a building's interior within this distance of its footprint, m. */
 const LOAD_MARGIN = 34;
 /** Drop it beyond this one (hysteresis). */
 const UNLOAD_MARGIN = 50;
+/** Cull loaded interior mesh visibility beyond this footprint distance, m. */
+const VISIBLE_MARGIN = 45;
 /** Upper bound (shader cut-out slots); the quality preset may allow fewer. */
 const MAX_LOADED = 6;
 const CHECK_INTERVAL = 0.25;
@@ -144,10 +149,47 @@ export class Interiors {
     return null;
   }
 
-  update(dt: number, x: number, z: number, y = 0, dirX = 0, dirZ = 0): void {
+  update(
+    dt: number,
+    x: number,
+    z: number,
+    y = 0,
+    dirX = 0,
+    dirZ = 0,
+    camera?: { updateMatrixWorld: () => void; projectionMatrix: Matrix4; matrixWorldInverse: Matrix4 },
+  ): void {
     // Apply at most one streamed interior per frame to avoid micro-freezes when approaching buildings.
     const next = this.readyQueue.shift();
     if (next) this.applyInterior(next);
+
+    // Per-frame distance + frustum visibility culling for all loaded interior groups.
+    if (this.loaded.size > 0) {
+      let hasFrustum = false;
+      if (camera) {
+        camera.updateMatrixWorld();
+        _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        _frustum.setFromProjectionMatrix(_projScreen);
+        hasFrustum = true;
+      }
+      for (const [id, group] of this.loaded) {
+        const b = this.buildings.get(id);
+        if (!b) continue;
+        const d = Math.max(Math.abs(x - b.cx) - b.w / 2, Math.abs(z - b.cz) - b.d / 2, 0);
+        let vis = d <= VISIBLE_MARGIN;
+        if (vis && hasFrustum && d > 10) {
+          const halfH = b.floors * FLOOR_H * 0.5;
+          _sphere.center.set(b.cx, halfH, b.cz);
+          _sphere.radius = Math.hypot(b.w * 0.5, halfH, b.d * 0.5) + 4;
+          if (!_frustum.intersectsSphere(_sphere)) vis = false;
+        }
+        group.visible = vis;
+        const allowShadows = vis && d <= 22;
+        for (let i = 0; i < group.children.length; i++) {
+          const m = group.children[i] as Mesh;
+          if (m.userData?.bucket === 'cast') m.castShadow = allowShadows;
+        }
+      }
+    }
 
     this.t -= dt;
     if (this.t > 0) return;

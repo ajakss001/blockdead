@@ -6,7 +6,9 @@ import {
   DynamicDrawUsage,
   InstancedMesh,
   Matrix4,
+  MeshBasicMaterial,
   MeshLambertMaterial,
+  PlaneGeometry,
   PointLight,
   Quaternion,
   type Scene,
@@ -17,16 +19,12 @@ import {
 import { sfx } from '../audio/Sound';
 import { grim } from '../style/palette';
 
-/**
- * What a shot leaves in the world: the muzzle flash (a sprite on the gun in the hands and a light in the
- * world, one frame), spent cases flying out of the port and tinkling on the floor, the magazines dropped
- * from empty (they stay where they fell), the RPG's flash. Cases and magazines are simple bodies: thrown,
- * falling, bouncing on the floor, at rest for good; the oldest go first past the cap. Paused: nothing moves.
- */
-
 const CASES = 60;
 const MAGS = 24;
+const MAX_HOLES = 96;
 const G = 9.8;
+
+export type BulletHoleKind = 'wood' | 'metal' | 'stone' | 'glass';
 
 interface Body {
   active: boolean;
@@ -38,6 +36,12 @@ interface Body {
   rest: boolean;
   bounced: boolean;
   shell: boolean;
+}
+
+interface HolePool {
+  mesh: InstancedMesh;
+  cursor: number;
+  filled: number;
 }
 
 function makePool(n: number): Body[] {
@@ -60,22 +64,26 @@ function makePool(n: number): Body[] {
 
 const _m = new Matrix4();
 const _q = new Quaternion();
+const _qSpin = new Quaternion();
 const _s = new Vector3(1, 1, 1);
 const _v = new Vector3();
+const _n = new Vector3();
+const _zAxis = new Vector3(0, 0, 1);
+const _tinyMat = new Matrix4().compose(new Vector3(0, -50, 0), new Quaternion(), new Vector3(0.0001, 0.0001, 0.0001));
 
-function flashTexture(): CanvasTexture {
+function flashTexture(): CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
   const c = document.createElement('canvas');
   c.width = c.height = 64;
-  const g = c.getContext('2d')!;
+  const g = c.getContext('2d');
+  if (!g) return null;
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  // Not a toy-bright yellow: a short warm flare fading to nothing.
   grad.addColorStop(0, 'rgba(255,236,200,1)');
   grad.addColorStop(0.25, 'rgba(240,190,120,0.75)');
   grad.addColorStop(0.6, 'rgba(160,110,60,0.25)');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
-  // A few prongs.
   g.globalCompositeOperation = 'lighter';
   g.strokeStyle = 'rgba(255,220,170,0.5)';
   g.lineWidth = 3;
@@ -89,12 +97,85 @@ function flashTexture(): CanvasTexture {
   return new CanvasTexture(c);
 }
 
+function holeTexture(kind: BulletHoleKind): CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  if (!g) return null;
+  g.clearRect(0, 0, 64, 64);
+
+  if (kind === 'glass') {
+    g.strokeStyle = 'rgba(215,235,245,0.78)';
+    g.lineWidth = 1.4;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + (i % 2) * 0.17;
+      const len = 14 + (i % 3) * 6;
+      g.beginPath();
+      g.moveTo(32 + Math.cos(a) * 5, 32 + Math.sin(a) * 5);
+      g.lineTo(32 + Math.cos(a) * len, 32 + Math.sin(a) * len);
+      g.stroke();
+    }
+    g.beginPath();
+    g.arc(32, 32, 11, 0, Math.PI * 2);
+    g.stroke();
+    g.fillStyle = 'rgba(12,18,22,0.85)';
+    g.beginPath();
+    g.arc(32, 32, 5.5, 0, Math.PI * 2);
+    g.fill();
+  } else if (kind === 'metal') {
+    const rim = g.createRadialGradient(32, 32, 3, 32, 32, 17);
+    rim.addColorStop(0, 'rgba(8,9,11,0.96)');
+    rim.addColorStop(0.45, 'rgba(130,136,145,0.78)');
+    rim.addColorStop(0.75, 'rgba(42,45,50,0.45)');
+    rim.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rim;
+    g.beginPath();
+    g.arc(32, 32, 17, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = 'rgba(4,5,6,0.98)';
+    g.beginPath();
+    g.arc(32, 32, 6, 0, Math.PI * 2);
+    g.fill();
+  } else if (kind === 'wood') {
+    g.fillStyle = 'rgba(72,48,28,0.65)';
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      g.beginPath();
+      g.ellipse(32 + Math.cos(a) * 8, 32 + Math.sin(a) * 4, 8, 2.2, a * 0.25, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = 'rgba(16,11,7,0.96)';
+    g.beginPath();
+    g.arc(32, 32, 6.5, 0, Math.PI * 2);
+    g.fill();
+  } else {
+    const crater = g.createRadialGradient(32, 32, 4, 32, 32, 20);
+    crater.addColorStop(0, 'rgba(14,14,15,0.96)');
+    crater.addColorStop(0.42, 'rgba(92,90,85,0.72)');
+    crater.addColorStop(0.78, 'rgba(48,46,44,0.32)');
+    crater.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = crater;
+    g.beginPath();
+    g.arc(32, 32, 20, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = 'rgba(10,10,11,0.98)';
+    g.beginPath();
+    g.arc(32, 32, 6.2, 0, Math.PI * 2);
+    g.fill();
+  }
+  return new CanvasTexture(c);
+}
+
+/**
+ * Pooled weapon effects: muzzle flash sprite + light, spent cases/shells, empty magazines,
+ * and pre-allocated bullet-hole decal pools (zero runtime shader/material/geometry allocations).
+ */
 export class GunFx {
-  /** The flash on the gun (a child of its muzzle, in the arms' scene). */
   readonly flash: Sprite;
-  /** The flash's light in the world, 0 between shots (always in the scene: no shader rebuild). */
   readonly light = new PointLight(0xffc890, 0, 9, 2);
   private flashFrames = 0;
+  private prewarming = false;
   private readonly cases: Body[] = makePool(CASES);
   private readonly mags: Body[] = makePool(MAGS);
   private caseCursor = 0;
@@ -102,12 +183,15 @@ export class GunFx {
   private readonly caseMesh: InstancedMesh;
   private readonly shellMesh: InstancedMesh;
   private readonly magMesh: InstancedMesh;
-  /** Where the floor is under a point (the scene's). */
+  private readonly holeGeo = new PlaneGeometry(0.14, 0.14);
+  private readonly holes: Record<BulletHoleKind, HolePool>;
   groundY: (x: number, y: number, z: number) => number = () => 0;
 
   constructor(scene: Scene) {
     const tex = flashTexture();
-    this.flash = new Sprite(new SpriteMaterial({ map: tex, blending: AdditiveBlending, depthWrite: false, transparent: true }));
+    this.flash = new Sprite(
+      new SpriteMaterial({ map: tex, blending: AdditiveBlending, depthWrite: false, transparent: true }),
+    );
     this.flash.scale.set(0.12, 0.12, 0.12);
     this.flash.visible = false;
     this.flash.renderOrder = 5;
@@ -124,10 +208,102 @@ export class GunFx {
       m.name = 'gunfx';
       scene.add(m);
     }
+
+    const makeHolePool = (kind: BulletHoleKind): HolePool => {
+      const mat = new MeshBasicMaterial({
+        map: holeTexture(kind),
+        transparent: true,
+        alphaTest: 0.04,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      const mesh = new InstancedMesh(this.holeGeo, mat, MAX_HOLES);
+      mesh.count = 0;
+      mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.renderOrder = 3;
+      mesh.name = `bullethole:${kind}`;
+      scene.add(mesh);
+      return { mesh, cursor: 0, filled: 0 };
+    };
+    this.holes = {
+      wood: makeHolePool('wood'),
+      metal: makeHolePool('metal'),
+      stone: makeHolePool('stone'),
+      glass: makeHolePool('glass'),
+    };
     scene.add(this.light);
   }
 
-  /** A shot this frame: the flash on the gun and in the world at `muzzleWorld`. */
+  /** Pre-compile all GunFx & bullet-hole decal shaders before gameplay begins (prevents prog spikes on first shot). */
+  prewarm(vmScene: Scene): () => void {
+    this.prewarming = true;
+    const prevParent = this.flash.parent;
+    if (!prevParent) {
+      this.flash.position.set(0, 0, -0.5);
+      vmScene.add(this.flash);
+    }
+    this.keepPrewarmVisible();
+    return () => {
+      this.prewarming = false;
+      this.flash.visible = false;
+      if (!prevParent && this.flash.parent === vmScene) vmScene.remove(this.flash);
+      this.flash.position.set(0, 0, 0);
+      this.writeCases();
+      this.writeMags();
+      for (const hp of Object.values(this.holes)) {
+        hp.mesh.count = hp.filled;
+        hp.mesh.instanceMatrix.needsUpdate = true;
+      }
+    };
+  }
+
+  /** Keep all GunFx meshes and muzzle sprite visible during boot prewarm render passes. */
+  keepPrewarmVisible(): void {
+    this.flash.visible = true;
+    for (const m of [this.caseMesh, this.shellMesh, this.magMesh]) {
+      if (m.count === 0) {
+        m.setMatrixAt(0, _tinyMat);
+        m.instanceMatrix.needsUpdate = true;
+        m.count = 1;
+      }
+      m.visible = true;
+    }
+    for (const hp of Object.values(this.holes)) {
+      if (hp.mesh.count === 0) {
+        hp.mesh.setMatrixAt(0, _tinyMat);
+        hp.mesh.instanceMatrix.needsUpdate = true;
+        hp.mesh.count = 1;
+      }
+      hp.mesh.visible = true;
+    }
+  }
+
+  /** Stamp a pooled bullet hole decal onto geometry along its surface normal (zero allocations). */
+  addBulletHole(pos: Vector3, normal: Vector3, kind: BulletHoleKind): void {
+    const pool = this.holes[kind];
+    _n.copy(normal);
+    if (_n.lengthSq() < 1e-4) _n.set(0, 0, 1);
+    else _n.normalize();
+    _q.setFromUnitVectors(_zAxis, _n);
+    _qSpin.setFromAxisAngle(_n, Math.random() * Math.PI * 2);
+    _q.premultiply(_qSpin);
+    const sc = 0.85 + Math.random() * 0.35;
+    _s.set(sc, sc, 1);
+    _v.copy(pos).addScaledVector(_n, 0.008);
+    _m.compose(_v, _q, _s);
+    pool.mesh.setMatrixAt(pool.cursor, _m);
+    pool.cursor = (pool.cursor + 1) % MAX_HOLES;
+    if (pool.filled < MAX_HOLES) pool.filled++;
+    pool.mesh.count = pool.filled;
+    pool.mesh.instanceMatrix.needsUpdate = true;
+    _s.set(1, 1, 1);
+  }
+
   muzzleFlash(muzzleWorld: Vector3, big = 1): void {
     this.flashFrames = 1;
     this.flash.visible = true;
@@ -138,14 +314,12 @@ export class GunFx {
     this.light.intensity = 2.2 * big;
   }
 
-  /** Suppressed: no flash to speak of. */
   noFlash(): void {
     this.flashFrames = 0;
-    this.flash.visible = false;
+    if (!this.prewarming) this.flash.visible = false;
     this.light.intensity = 0;
   }
 
-  /** A case thrown out of the port (world), to the right and up, spinning. */
   eject(at: Vector3, right: Vector3, up: Vector3, shell: boolean): void {
     const b = this.cases[this.caseCursor];
     this.caseCursor = (this.caseCursor + 1) % CASES;
@@ -160,7 +334,6 @@ export class GunFx {
     b.shell = shell;
   }
 
-  /** The empty magazine let go: it falls straight down out of the well. */
   dropMag(at: Vector3, q: Quaternion, vel: Vector3): void {
     const b = this.mags[this.magCursor];
     this.magCursor = (this.magCursor + 1) % MAGS;
@@ -176,17 +349,20 @@ export class GunFx {
   }
 
   update(dt: number): void {
-    // The flash lasts one frame.
-    if (this.flashFrames > 0) this.flashFrames--;
-    else if (this.flash.visible || this.light.intensity > 0) {
-      this.flash.visible = false;
-      this.light.intensity = 0;
+    if (!this.prewarming) {
+      if (this.flashFrames > 0) this.flashFrames--;
+      else if (this.flash.visible || this.light.intensity > 0) {
+        this.flash.visible = false;
+        this.light.intensity = 0;
+      }
     }
     if (dt <= 0) return;
     this.step(this.cases, dt, 0.005, () => {});
     this.step(this.mags, dt, 0.015, (b) => sfx.magDrop(b.pos));
-    this.writeCases();
-    this.writeMags();
+    if (!this.prewarming) {
+      this.writeCases();
+      this.writeMags();
+    }
   }
 
   private step(list: Body[], dt: number, lift: number, land: (b: Body) => void): void {
@@ -202,7 +378,6 @@ export class GunFx {
         if (!b.bounced) land(b);
         b.bounced = true;
         if (Math.abs(b.vel.y) < 0.6) {
-          // At rest, lying on its side.
           b.rest = true;
           b.vel.set(0, 0, 0);
           const yaw = Math.random() * Math.PI * 2;
@@ -248,6 +423,13 @@ export class GunFx {
       m.geometry.dispose();
       (m.material as MeshLambertMaterial).dispose();
       m.removeFromParent();
+    }
+    this.holeGeo.dispose();
+    for (const hp of Object.values(this.holes)) {
+      const mat = hp.mesh.material as MeshBasicMaterial;
+      mat.map?.dispose();
+      mat.dispose();
+      hp.mesh.removeFromParent();
     }
     this.flash.material.map?.dispose();
     this.flash.material.dispose();
