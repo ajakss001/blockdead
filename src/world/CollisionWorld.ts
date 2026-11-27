@@ -541,6 +541,13 @@ export class CollisionWorld implements ColliderSink {
       top = b.maxY;
     }
     if (top < 0) return -1;
+    // Block mantling through intact window panes or solid upper obstructions on the ledge.
+    if (
+      this.rayHitDetail(x, top + 0.25, z, dirX, 0, dirZ, reach + 0.2, false) ||
+      this.rayHitDetail(x, top + 0.95, z, dirX, 0, dirZ, reach + 0.2, false)
+    ) {
+      return -1;
+    }
     return this.ceilingAt(lx, lz, 0.25, top + 0.01) > top + 1.2 ? top : -1;
   }
 

@@ -1,8 +1,11 @@
 import {
   Box3,
   BoxGeometry,
+  BufferAttribute,
+  BufferGeometry,
   DoubleSide,
   Group,
+  Matrix3,
   Mesh,
   MeshLambertMaterial,
   MeshStandardMaterial,
@@ -29,6 +32,163 @@ import type { Inventory } from './Inventory';
 import type { Zombie, ZombieSim } from './zombies';
 
 export type VehicleKind = 'sedan' | 'suv';
+
+type RigPartName = 'body' | 'wheelFL' | 'wheelFR' | 'wheelRL' | 'wheelRR';
+
+const WHEEL_HUB_SPECS: Record<
+  VehicleKind,
+  { innerX: number; maxY: number; radius: number; hubs: Record<Exclude<RigPartName, 'body'>, readonly [number, number, number]> }
+> = {
+  sedan: {
+    innerX: 0.50,
+    maxY: 0.72,
+    radius: 0.37,
+    hubs: {
+      wheelFL: [-0.761, 0.34, -1.487],
+      wheelFR: [0.766, 0.34, -1.447],
+      wheelRL: [-0.779, 0.34, 1.290],
+      wheelRR: [0.778, 0.34, 1.295],
+    },
+  },
+  suv: {
+    innerX: 0.52,
+    maxY: 0.96,
+    radius: 0.49,
+    hubs: {
+      wheelFL: [-0.810, 0.45, -1.477],
+      wheelFR: [0.826, 0.45, -1.481],
+      wheelRL: [-0.841, 0.45, 1.445],
+      wheelRR: [0.835, 0.45, 1.420],
+    },
+  },
+};
+
+/** Splits a single-mesh car GLB (centered & grounded at y=0) into body + 4 centered wheel meshes. */
+export function splitCarMeshIntoRig(root: Object3D, kind: VehicleKind): Group | null {
+  root.updateMatrixWorld(true);
+  const spec = WHEEL_HUB_SPECS[kind];
+  const buckets: Record<RigPartName, { pos: number[]; norm: number[]; uv: number[] }> = {
+    body: { pos: [], norm: [], uv: [] },
+    wheelFL: { pos: [], norm: [], uv: [] },
+    wheelFR: { pos: [], norm: [], uv: [] },
+    wheelRL: { pos: [], norm: [], uv: [] },
+    wheelRR: { pos: [], norm: [], uv: [] },
+  };
+  let sharedMat: Mesh['material'] | null = null;
+  const v0 = new Vector3();
+  const v1 = new Vector3();
+  const v2 = new Vector3();
+  const n0 = new Vector3();
+  const n1 = new Vector3();
+  const n2 = new Vector3();
+  const nMat = new Matrix3();
+
+  root.traverse((obj) => {
+    const mesh = obj as Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    if (!sharedMat) sharedMat = mesh.material;
+    const geo = mesh.geometry;
+    const posAttr = geo.getAttribute('position');
+    if (!posAttr) return;
+    const normAttr = geo.getAttribute('normal');
+    const uvAttr = geo.getAttribute('uv');
+    const idx = geo.getIndex();
+    const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(posAttr.count / 3);
+    nMat.getNormalMatrix(mesh.matrixWorld);
+
+    for (let t = 0; t < triCount; t++) {
+      const i0 = idx ? idx.getX(t * 3) : t * 3;
+      const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+      const i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+      v0.fromBufferAttribute(posAttr, i0).applyMatrix4(mesh.matrixWorld);
+      v1.fromBufferAttribute(posAttr, i1).applyMatrix4(mesh.matrixWorld);
+      v2.fromBufferAttribute(posAttr, i2).applyMatrix4(mesh.matrixWorld);
+      const cx = (v0.x + v1.x + v2.x) / 3;
+      const cy = (v0.y + v1.y + v2.y) / 3;
+      const cz = (v0.z + v1.z + v2.z) / 3;
+
+      let part: RigPartName = 'body';
+      if (cy <= spec.maxY && Math.abs(cx) >= spec.innerX) {
+        for (const name of ['wheelFL', 'wheelFR', 'wheelRL', 'wheelRR'] as const) {
+          const hub = spec.hubs[name];
+          if (Math.sign(cx) === Math.sign(hub[0]) && Math.hypot(cy - hub[1], cz - hub[2]) <= spec.radius) {
+            part = name;
+            break;
+          }
+        }
+      }
+      const b = buckets[part];
+      b.pos.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
+      if (normAttr) {
+        n0.fromBufferAttribute(normAttr, i0).applyMatrix3(nMat).normalize();
+        n1.fromBufferAttribute(normAttr, i1).applyMatrix3(nMat).normalize();
+        n2.fromBufferAttribute(normAttr, i2).applyMatrix3(nMat).normalize();
+        b.norm.push(n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y, n2.z);
+      }
+      if (uvAttr) {
+        b.uv.push(uvAttr.getX(i0), uvAttr.getY(i0), uvAttr.getX(i1), uvAttr.getY(i1), uvAttr.getX(i2), uvAttr.getY(i2));
+      }
+    }
+  });
+
+  if (
+    !sharedMat ||
+    buckets.body.pos.length === 0 ||
+    buckets.wheelFL.pos.length === 0 ||
+    buckets.wheelFR.pos.length === 0 ||
+    buckets.wheelRL.pos.length === 0 ||
+    buckets.wheelRR.pos.length === 0
+  ) {
+    return null;
+  }
+
+  const rigGroup = new Group();
+  for (const name of ['body', 'wheelFL', 'wheelFR', 'wheelRL', 'wheelRR'] as const) {
+    const b = buckets[name];
+    let ox = 0;
+    let oy = 0;
+    let oz = 0;
+    if (name !== 'body') {
+      let minX = Infinity,
+        maxX = -Infinity,
+        minY = Infinity,
+        maxY = -Infinity,
+        minZ = Infinity,
+        maxZ = -Infinity;
+      for (let i = 0; i < b.pos.length; i += 3) {
+        const px = b.pos[i],
+          py = b.pos[i + 1],
+          pz = b.pos[i + 2];
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        if (pz < minZ) minZ = pz;
+        if (pz > maxZ) maxZ = pz;
+      }
+      ox = (minX + maxX) * 0.5;
+      oy = (minY + maxY) * 0.5;
+      oz = (minZ + maxZ) * 0.5;
+      for (let i = 0; i < b.pos.length; i += 3) {
+        b.pos[i] -= ox;
+        b.pos[i + 1] -= oy;
+        b.pos[i + 2] -= oz;
+      }
+    }
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(new Float32Array(b.pos), 3));
+    if (b.norm.length === b.pos.length) g.setAttribute('normal', new BufferAttribute(new Float32Array(b.norm), 3));
+    else g.computeVertexNormals();
+    if (b.uv.length === (b.pos.length / 3) * 2) g.setAttribute('uv', new BufferAttribute(new Float32Array(b.uv), 2));
+    const mesh = new Mesh(g, sharedMat);
+    mesh.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (name !== 'body') mesh.position.set(ox, oy, oz);
+    rigGroup.add(mesh);
+  }
+  return rigGroup;
+}
 
 export interface CarState {
   id: number;
@@ -256,6 +416,7 @@ export class Vehicles {
         if (Number.isFinite(box.min.y)) {
           root.position.set(-(box.min.x + box.max.x) * 0.5, -box.min.y, -(box.min.z + box.max.z) * 0.5);
         }
+        root.updateMatrixWorld(true);
         root.traverse((obj) => {
           if ((obj as Mesh).isMesh) {
             const m = obj as Mesh;
@@ -268,8 +429,9 @@ export class Vehicles {
             }
           }
         });
+        const rigSplit = !root.getObjectByName('wheelFL') ? splitCarMeshIntoRig(root, kind) : null;
         const holder = new Group();
-        holder.add(root);
+        holder.add(rigSplit ?? root);
         if (kind === 'sedan') {
           // Compact matte baffle recessed strictly inside the rear trunk well (never protruding through hood/glass).
           const blocker = new Mesh(
@@ -279,7 +441,8 @@ export class Vehicles {
           blocker.position.set(0, 0.58, 1.38);
           blocker.castShadow = false;
           blocker.receiveShadow = false;
-          holder.add(blocker);
+          const bodyObj = holder.getObjectByName('body');
+          (bodyObj ?? holder).add(blocker);
         }
         this.templates.set(kind, holder);
         for (const car of this.cars) {

@@ -33,7 +33,7 @@ function placeProp(b: Builder, id: GlbModelId, x: number, z: number, yaw: number
   b.glb(id, x, PAVE.plaza, z, yaw, { scale: sc });
   if (solid) {
     const sp = GLB_WORLD_SPECS[id];
-    b.colliders.addOrientedBox(x, z, sp.size[0] * 0.45 * sc, sp.size[2] * 0.45 * sc, yaw, PAVE.plaza, PAVE.plaza + sp.size[1] * 0.92 * sc);
+    b.colliders.addOrientedBox(x, z, sp.size[0] * 0.48 * sc, sp.size[2] * 0.48 * sc, yaw, PAVE.plaza, PAVE.plaza + sp.size[1] * 0.95 * sc);
   }
   return true;
 }
@@ -76,7 +76,7 @@ export function lastStandCheckpointBlock(b: Builder, _i: number, _j: number, X0:
   // Fortified defensive arc leaving two exact tripwire choke gaps (-38.8..-36.4 @ -37.2 & -26.8..-24.4 @ -38.6)
   const addBarrier = (bx: number, bz: number, yaw = 0) => {
     b.glb('military_barbed_barrier', bx, PAVE.plaza, bz, yaw);
-    b.colliders.addOrientedBox(bx, bz, 2.2, 0.95, yaw, PAVE.plaza, PAVE.plaza + 1.85);
+    b.colliders.addOrientedBox(bx, bz, 2.3, 1.1, yaw, PAVE.plaza, PAVE.plaza + 1.95);
   };
   addBarrier(cx - 9.2, cz - 5.2, 0.08);
   addBarrier(cx - 2.0, cz - 5.2, -0.05);
@@ -156,9 +156,10 @@ export function quarantineEvacBlock(b: Builder, i: number, j: number, X0: number
   };
   buildHighriseShell(b, clinic, rand);
 
-  // Red Cross hospital badge above the South clinic entrance + survivor triage graffiti on solid concrete fence
-  b.block(0xb63232, bCx - 0.14, 3.6, bZ0 - 0.16, 0.28, 1.15, 0.04, 'lamp');
-  b.block(0xb63232, bCx - 0.58, 4.04, bZ0 - 0.16, 1.16, 0.28, 0.04, 'lamp');
+  // Red Cross hospital badge centered cleanly on the solid fascia board below the 2nd-floor window
+  b.block(0xe2ded4, bCx - 0.34, 3.04, bZ0 - 0.13, 0.68, 0.52, 0.03, 'plaster');
+  b.block(0xb63232, bCx - 0.08, 3.08, bZ0 - 0.16, 0.16, 0.44, 0.04, 'lamp');
+  b.block(0xb63232, bCx - 0.22, 3.22, bZ0 - 0.16, 0.44, 0.16, 0.04, 'lamp');
 
   const cx = (X0 + X1) * 0.5; // -32
   const fenceZ = Z0 + 5.2;

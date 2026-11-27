@@ -109,7 +109,7 @@ export function sandbags(p: Place, lx: number, lz: number, len: number, rand: Ra
       model(p.b, 'sandbag', x, z, yawOf(p) + (rand() - 0.5) * 0.25, rand, { lift: layer * 0.22, collide: false });
     }
   }
-  p.solid(lx, lz, len, 0.5, 0.45);
+  p.solid(lx, lz, len, 0.85, 0.72);
 }
 
 /** Concrete road barrier along local X (3D model only). */
@@ -133,7 +133,7 @@ export function stripedBarrier(p: Place, lx: number, lz: number, len: number, do
     sx,
     roll: down ? Math.PI / 2 - 0.1 : 0,
   });
-  if (!down) p.solid(lx, lz, len, 0.45, 1.4);
+  if (!down) p.solid(lx, lz, Math.max(len, 2.38), 1.2, 1.8);
 }
 
 /** Field tent (GLB quarantine_tent). */

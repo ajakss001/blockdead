@@ -5,7 +5,6 @@ import {
   type Camera,
   CanvasTexture,
   Color,
-  ConeGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Euler,
@@ -16,15 +15,18 @@ import {
   Matrix4,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Object3D,
   PlaneGeometry,
   PointLight,
   Quaternion,
   type Scene,
   ShaderMaterial,
+  SpotLight,
   Vector3,
 } from 'three';
 import { AmbientAudio } from '../audio/AmbientAudio';
 import type { AnxietyAudio } from '../audio/AnxietyAudio';
+import { beamMask } from '../items/flashlight';
 import { generateDecalCanvas } from '../render/look/decals';
 import { LIFE } from './gen/lifeKinds';
 
@@ -40,6 +42,8 @@ const GLOW_CAP = 320;
 const FIRE_LIGHT_RANGE = 45;
 const MAX_ROOM_LIGHTS = 2;
 const MAX_FIRE_LIGHTS = 4;
+const MAX_SEARCH_LIGHTS = 2;
+const SEARCH_LIGHT_RANGE = 95;
 const DYN_SHARD_CAP = 64;
 const FLY_SHARD_CAP = 192;
 const GLASS_DECAL_CAP = 64;
@@ -108,6 +112,9 @@ export class WorldLife {
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
   private lights: PointLight[] = [];
+  private readonly searchLights: SpotLight[] = [];
+  private readonly searchTargets: Object3D[] = [];
+  private readonly searchNearTmp: [number, number][] = [];
   private roomLightCap = 0;
   private roomSortT = 0;
   private readonly roomPicks: { isLamp: boolean; idx: number }[] = [];
@@ -169,18 +176,40 @@ export class WorldLife {
       this.scene.add(l);
       this.fireLightList.push(l);
     }
-    // Pre-create spinner/searchlight meshes at boot so first POI approach never compiles new programs.
+    // Pre-create spinner/searchlight pools at boot (headlight-style SpotLights + soft beam cookie + small emitter lens flare).
     this.spinMesh = new InstancedMesh(new BoxGeometry(1, 0.5, 0.12).translate(0, 0, 0.1), new MeshStandardMaterial({ color: 0x8a8e90, roughness: 0.6, metalness: 0.4 }), 16);
     this.spinMesh.frustumCulled = false;
     this.spinMesh.castShadow = true;
     this.spinMesh.count = 0;
     this.spinMesh.visible = false;
-    const cone = new ConeGeometry(1, 1, 12, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2);
-    this.beamMesh = new InstancedMesh(cone, new MeshBasicMaterial({ color: 0xfff2c8, transparent: true, opacity: 0.08, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }), 16);
-    this.beamMesh.frustumCulled = false;
-    this.beamMesh.count = 0;
-    this.beamMesh.visible = false;
-    this.scene.add(this.spinMesh, this.beamMesh);
+    const beamCookie = beamMask();
+    for (let i = 0; i < MAX_SEARCH_LIGHTS; i++) {
+      const sl = new SpotLight(0xfff0cc, 0, 62, 0.52, 0.72, 1.35);
+      sl.map = beamCookie;
+      sl.castShadow = false;
+      const target = new Object3D();
+      sl.target = target;
+      this.scene.add(sl, target);
+      this.searchLights.push(sl);
+      this.searchTargets.push(target);
+    }
+    this.flareMesh = new InstancedMesh(
+      new PlaneGeometry(0.75, 0.75),
+      new MeshBasicMaterial({
+        color: 0xfff2cc,
+        map: beamCookie,
+        transparent: true,
+        opacity: 0.72,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        side: DoubleSide,
+      }),
+      16,
+    );
+    this.flareMesh.frustumCulled = false;
+    this.flareMesh.count = 0;
+    this.flareMesh.visible = false;
+    this.scene.add(this.spinMesh, this.flareMesh);
 
     // Pre-allocate and add glass shatter/crack pools at boot so breaking windows/windshields
     // performs ZERO GPU allocations and ZERO shader compilations in shot frames.
@@ -455,7 +484,7 @@ export class WorldLife {
     if (fog) this.glowMat.uniforms.uFog.value.set(fog.near, fog.far, this.daylight);
     this.updateRoomLights(player, dt);
     this.updateFireLights(player, dt);
-    this.updateSpinners();
+    this.updateSpinners(player);
     this.syncFlyShards(dt);
 
     // Nearest radio: a storey apart counts as far; pan from the camera's facing.
@@ -540,47 +569,85 @@ export class WorldLife {
     }
   }
 
-  /** Things still turning (a radar dish, a searchlight's beam). */
+  /** Things still turning (a radar dish, a searchlight's SpotLight beam + lens flare). */
   private readonly spinners: { x: number; y: number; z: number; w: number; tag: number; phase: number }[] = [];
   private spinMesh: InstancedMesh | null = null;
-  private beamMesh: InstancedMesh | null = null;
+  private flareMesh: InstancedMesh | null = null;
 
-  private updateSpinners(): void {
+  private updateSpinners(player: Vector3): void {
     if (this.spinners.length === 0) {
       if (this.spinMesh) this.spinMesh.visible = false;
-      if (this.beamMesh) this.beamMesh.visible = false;
+      if (this.flareMesh) this.flareMesh.visible = false;
+      for (const l of this.searchLights) l.intensity = 0;
       return;
     }
     if (!this.spinMesh) {
-      // A dish on its head (turns about Y), a searchlight beam: a long soft cone, additive.
       this.spinMesh = new InstancedMesh(new BoxGeometry(1, 0.5, 0.12).translate(0, 0, 0.1), new MeshStandardMaterial({ color: 0x8a8e90, roughness: 0.6, metalness: 0.4 }), 16);
       this.spinMesh.frustumCulled = false;
       this.spinMesh.castShadow = true;
-      const cone = new ConeGeometry(1, 1, 12, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2);
-      this.beamMesh = new InstancedMesh(cone, new MeshBasicMaterial({ color: 0xfff2c8, transparent: true, opacity: 0.08, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }), 16);
-      this.beamMesh.frustumCulled = false;
-      this.scene.add(this.spinMesh, this.beamMesh);
+      this.flareMesh = new InstancedMesh(
+        new PlaneGeometry(0.75, 0.75),
+        new MeshBasicMaterial({
+          color: 0xfff2cc,
+          map: beamMask(),
+          transparent: true,
+          opacity: 0.72,
+          blending: AdditiveBlending,
+          depthWrite: false,
+          side: DoubleSide,
+        }),
+        16,
+      );
+      this.flareMesh.frustumCulled = false;
+      this.scene.add(this.spinMesh, this.flareMesh);
     }
     let d = 0;
     let b = 0;
-    for (const sp of this.spinners) {
-      const yaw = sp.phase + this.time * (sp.tag ? 0.6 : 0.9);
+    this.searchNearTmp.length = 0;
+    for (let i = 0; i < this.spinners.length; i++) {
+      const sp = this.spinners[i];
+      const yaw = sp.phase + this.time * (sp.tag ? 0.55 : 0.9);
       if (sp.tag === 0 && d < 16) {
         _m.compose(_p.set(sp.x, sp.y, sp.z), _q.setFromAxisAngle(_y, yaw), _s.set(sp.w, sp.w, sp.w));
         this.spinMesh.setMatrixAt(d++, _m);
-      } else if (sp.tag === 1 && b < 16) {
-        // Tilted a little down, 30 m long, widening to 3 m.
-        _q.setFromEuler(_e.set(-0.12, yaw, 0, 'YXZ'));
-        _m.compose(_p.set(sp.x, sp.y, sp.z), _q, _s.set(1.6 * sp.w, 1.6 * sp.w, 30));
-        this.beamMesh!.setMatrixAt(b++, _m);
+      } else if (sp.tag === 1) {
+        const dx = Math.sin(yaw);
+        const dz = Math.cos(yaw);
+        if (b < 16 && this.flareMesh) {
+          const fSize = Math.min(0.95, Math.max(0.45, sp.w * 0.2));
+          _n.set(dx * 0.97, -0.24, dz * 0.97).normalize();
+          _q.setFromUnitVectors(_z, _n);
+          _m.compose(_p.set(sp.x + dx * 0.18, sp.y, sp.z + dz * 0.18), _q, _s.set(fSize, fSize, fSize));
+          this.flareMesh.setMatrixAt(b++, _m);
+        }
+        const dist = Math.hypot(sp.x - player.x, sp.z - player.z);
+        if (dist < SEARCH_LIGHT_RANGE) this.searchNearTmp.push([dist, i]);
+      }
+    }
+    this.searchNearTmp.sort((u, v) => u[0] - v[0]);
+    const power = 46 * (1 - 0.35 * this.daylight);
+    for (let i = 0; i < this.searchLights.length; i++) {
+      const sl = this.searchLights[i];
+      if (i < this.searchNearTmp.length) {
+        const sp = this.spinners[this.searchNearTmp[i][1]];
+        const yaw = sp.phase + this.time * 0.55;
+        sl.position.set(sp.x, sp.y, sp.z);
+        const target = this.searchTargets[i];
+        target.position.set(sp.x + Math.sin(yaw) * 20, Math.max(0.1, sp.y - 4.2), sp.z + Math.cos(yaw) * 20);
+        target.updateMatrixWorld();
+        sl.intensity = power;
+      } else {
+        sl.intensity = 0;
       }
     }
     this.spinMesh.count = d;
     this.spinMesh.visible = d > 0;
-    this.beamMesh!.count = b;
-    this.beamMesh!.visible = b > 0;
+    if (this.flareMesh) {
+      this.flareMesh.count = b;
+      this.flareMesh.visible = b > 0;
+      if (b > 0) this.flareMesh.instanceMatrix.needsUpdate = true;
+    }
     if (d > 0) this.spinMesh.instanceMatrix.needsUpdate = true;
-    if (b > 0) this.beamMesh!.instanceMatrix.needsUpdate = true;
   }
 
   /** The real lights go to the nearest lit rooms; they flicker with their room. Powered lamps win nearby. */
@@ -757,7 +824,7 @@ export class WorldLife {
     this.keepPrewarmVisible();
     return () => {
       this.dirty = true;
-      for (const m of [this.spinMesh, this.beamMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
+      for (const m of [this.spinMesh, this.flareMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
         if (m) {
           m.count = 0;
           m.visible = false;
@@ -774,7 +841,7 @@ export class WorldLife {
       this.glow.count = 1;
     }
     this.glow.visible = true;
-    for (const m of [this.spinMesh, this.beamMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
+    for (const m of [this.spinMesh, this.flareMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
       if (!m) continue;
       if (m.count === 0) {
         m.setMatrixAt(0, _m.identity());
@@ -791,8 +858,10 @@ export class WorldLife {
     this.glowMat.dispose();
     for (const l of this.lights) l.removeFromParent();
     for (const l of this.fireLightList) l.removeFromParent();
+    for (const l of this.searchLights) l.removeFromParent();
+    for (const t of this.searchTargets) t.removeFromParent();
     this.spinMesh?.removeFromParent();
-    this.beamMesh?.removeFromParent();
+    this.flareMesh?.removeFromParent();
     for (const m of [this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
       if (m) {
         this.scene.remove(m);

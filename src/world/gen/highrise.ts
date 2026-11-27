@@ -658,14 +658,6 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
     } else {
       b.solid(wx0, zStart, wx1, zEnd, H, top);
     }
-    if (desc.floors > 1) {
-      // Physical upper-floor body seal: stops actors from walking/being pushed out broken windows while staying invisible to rays.
-      b.solid(wx0, zStart, wx1, zEnd, FLOOR_H, H, true);
-    }
-  }
-  if (desc.floors > 1) {
-    addFrontRect(x0, x1, FLOOR_H, H, frontMinZ, frontMinZ + WALL, true);
-    b.solid(x0, backMinZ, x1, backMinZ + WALL, FLOOR_H, H, true);
   }
 }
 

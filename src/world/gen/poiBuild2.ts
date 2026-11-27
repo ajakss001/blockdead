@@ -311,12 +311,21 @@ export function mall(S: Site, rand: Rand): void {
 export function waterPlant(S: Site, rand: Rand): void {
   const p = S.p;
   p.box(0x5a5a54, 0, 0, 0, LOT * 2, 0.03, LOT * 2, 'concrete');
-  // Chain-link fence round the lot, the gate open.
+  // Chain-link fence round the lot (military_chainlink_fence GLB + full solid collider), the gate open.
   const fenceRun = (x0: number, z0: number, x1: number, z1: number) => {
     const len = Math.hypot(x1 - x0, z1 - z0);
     const alongX = Math.abs(z1 - z0) < 1e-6;
-    p.box(0x8a8c8a, (x0 + x1) / 2, 0, (z0 + z1) / 2, alongX ? len : 0.04, 2.2, alongX ? 0.04 : len, 'metal', true);
-    for (let t = 0; t <= len; t += 3) p.box(0x5a5a5a, alongX ? Math.min(x0, x1) + t : x0, 0, alongX ? z0 : Math.min(z0, z1) + t, 0.08, 2.3, 0.08, 'metal');
+    const n = Math.max(1, Math.round(len / 5));
+    const seg = len / n;
+    const yaw = ((p.r + (alongX ? 0 : 1)) * Math.PI) / 2;
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) / n;
+      const mx = x0 + (x1 - x0) * t;
+      const mz = z0 + (z1 - z0) * t;
+      const [wx, wz] = p.pt(mx, mz);
+      if (S.here(mx, mz)) S.b.glb('military_chainlink_fence', wx, 0, wz, yaw, { sx: seg / 5.0 });
+      S.solid(mx, mz, alongX ? seg : 0.45, alongX ? 0.45 : seg, 0, 2.55);
+    }
   };
   const E = LOT - 0.5;
   fenceRun(-E, -E, E, -E);
@@ -420,35 +429,20 @@ export function checkpoint(S: Site, rand: Rand): void {
   p.box(0x6a6a66, -2, 0, rz - 3.4, 0.3, 1.1, 0.3, 'metal', true);
   if (!S.has('breached')) {
     for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xd8d4c8 : 0xb02a20, -2 + 0.15 + k * 0.6 + 0.3, 1.0, rz - 3.4 + 0.0, 0.6, 0.1, 0.1, 'metal');
-    p.solid(0, rz - 3.4, 3.6, 0.2, 1.1);
+    p.solid(-0.05, rz - 3.4, 3.8, 0.45, 1.35);
   }
   // Sandbag nests by the road (3D models).
   sandbags(p, 6, rz - 4.2, 5, rand);
   sandbags(p.at(8.5, rz - 6.5, 1), 0, 0, 4, rand);
   sandbags(p, -20, rz - 4.2, 4, rand);
-  // Watchtower: four legs, a platform with walls and a roof, a ladder.
+  // Watchtower (GLB military_watchtower + solid collider) + accessible supply crate beside it.
   const tx = 12;
   const tz = 20;
-  for (const [dx, dz] of [
-    [-1.2, -1.2],
-    [1.2, -1.2],
-    [-1.2, 1.2],
-    [1.2, 1.2],
-  ] as const) p.box(0x5a4a34, tx + dx, 0, tz + dz, 0.2, 5.5, 0.2, 'wood', true);
-  p.box(0x6a5a40, tx, 5.5, tz, 3, 0.15, 3, 'wood', true);
-  for (const s of [-1, 1]) {
-    p.box(0x6a5a40, tx + s * 1.45, 5.65, tz, 0.1, 1.1, 3, 'wood', true);
-    p.box(0x6a5a40, tx, 5.65, tz + s * 1.45, 3, 1.1, 0.1, 'wood', true);
-  }
-  p.box(0x4a4f36, tx, 7.6, tz, 3.4, 0.12, 3.4, 'rubber', true);
-  for (const [dx, dz] of [
-    [-1.5, -1.5],
-    [1.5, -1.5],
-    [-1.5, 1.5],
-    [1.5, 1.5],
-  ] as const) p.box(0x5a4a34, tx + dx, 6.75, tz + dz, 0.12, 0.85, 0.12, 'wood');
-  for (let k = 0; k < 14; k++) p.box(0x5a4a34, tx - 1.5, 0.3 + k * 0.4, tz + 1.7, 0.6, 0.05, 0.06, 'wood');
-  S.container('militaryCrate', tx, tz);
+  const [twx, twz] = p.pt(tx, tz);
+  if (S.here(tx, tz)) S.b.glb('military_watchtower', twx, 0, twz, (p.r * Math.PI) / 2);
+  S.solid(tx, tz, 3.2, 3.2, 0, 8.2);
+  p.model('supplyCrate', rand, tx - 2.4, 0, tz, 0, 1.0, 0.78, 0.15, true);
+  S.container('militaryCrate', tx - 2.4, tz);
   // Field tents (3D models) + supply crate.
   const tent = (x: number, z: number) => {
     const [wx, wz] = p.pt(x, z);
@@ -576,7 +570,9 @@ export function helipad(S: Site, rand: Rand): void {
     p.life(LIFE.beacon, cx, 0.95, cz, 0.45, 5, spotHash(cx, cz, 91), 1);
   }
   const [lx, lz] = p.pt(18, -19);
-  if (S.here(18, -19)) S.b.glb('generator_light_tower', lx, 0, lz, (p.r * Math.PI) / 2 - Math.PI * 0.75);
+  const lightYaw = (p.r * Math.PI) / 2 - Math.PI * 0.75;
+  if (S.here(18, -19)) S.b.glb('generator_light_tower', lx, 0, lz, lightYaw);
+  if (S.here(18, -19)) S.b.colliders.addOrientedBox(lx, lz, 1.75, 0.9, lightYaw, 0, 4.2);
   // Supply crates at NW apron edge with guaranteed fuel jerrycans.
   p.model('supplyCrate', rand, -16.5, 0, -18, 0, 1.15, 0.78, 0.15, true);
   S.container('militaryCrate', -16.5, -17.3, ['jerrycan']);

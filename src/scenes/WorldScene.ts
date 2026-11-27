@@ -1436,6 +1436,21 @@ export class WorldScene implements IScene {
           this.world.resolveCircle(c.position, 0.3);
         }
       }
+      // Living bandits are also solid to the on-foot player (walls still win).
+      for (const b of this.bandits.list) {
+        if (b.isDead || b.state === 'dead' || Math.abs(b.pos.y - c.position.y) > 1.2) continue;
+        const dx = c.position.x - b.pos.x;
+        const dz = c.position.z - b.pos.z;
+        const d = Math.hypot(dx, dz);
+        const min = 0.3 + 0.34;
+        if (d < min) {
+          const nx = d > 1e-4 ? dx / d : 1;
+          const nz = d > 1e-4 ? dz / d : 0;
+          c.position.x += nx * (min - d);
+          c.position.z += nz * (min - d);
+          this.world.resolveCircle(c.position, 0.3);
+        }
+      }
     }
     this.twinsNear(c.position);
     if (c.fallDamage > 0) this.hurt(c.fallDamage * 100, tr('Разбились при падении', 'Fell to your death'), true);
@@ -1716,11 +1731,42 @@ export class WorldScene implements IScene {
     }
     const site = this.layout.poi(bi, bj);
     if (site) {
-      if (site.kind !== 'park') return Ground.Paved;
-      // Park: lawns inside the four quadrants only; keep crossing paths & central fountain paved.
-      const lx = Math.abs(x - (site.i + 0.5) * CHUNK);
-      const lz = Math.abs(z - (site.j + 0.5) * CHUNK);
-      return lx < 1.4 || lz < 1.4 || Math.hypot(lx, lz) < 3.2 ? Ground.Paved : Ground.Grass;
+      const dx = x - (site.i + (site.bw ?? 1) / 2) * CHUNK;
+      const dz = z - (site.j + (site.bd ?? 1) / 2) * CHUNK;
+      const lx = site.r === 0 ? dx : site.r === 1 ? -dz : site.r === 2 ? -dx : dz;
+      const lz = site.r === 0 ? dz : site.r === 1 ? dx : site.r === 2 ? -dz : -dx;
+      if (site.kind === 'park') {
+        return Math.abs(lx) < 1.4 || Math.abs(lz) < 1.4 || Math.hypot(lx, lz) < 3.2 ? Ground.Paved : Ground.Grass;
+      }
+      if (site.kind === 'base') {
+        const onRoad = (Math.abs(lx) <= 4.5 && lz >= -6.5) || (Math.abs(lx) <= 56.5 && lz >= -6.5 && lz <= 2.5);
+        const onParade = lx >= -48.5 && lx <= -15.5 && lz >= -8.5 && lz <= 8.5;
+        const onHelipad = lx >= 23.5 && lx <= 50.5 && lz >= 27.5 && lz <= 54.5;
+        const onBarracks = lx >= -53 && lx <= -11 && lz >= 11 && lz <= 43;
+        const onCanteen = lx >= -53 && lx <= -21 && lz >= -41 && lz <= -11;
+        const onWarehouse = lx >= -21 && lx <= -5 && lz >= -55 && lz <= -23;
+        const onHangars = lx >= 7 && lx <= 54 && lz >= -57 && lz <= -38;
+        return onRoad || onParade || onHelipad || onBarracks || onCanteen || onWarehouse || onHangars ? Ground.Paved : Ground.Grass;
+      }
+      if (site.kind === 'airport') {
+        const onRunway = lz >= -49 && lz <= -27;
+        const onTaxi = Math.abs(lx) <= 8 && lz >= -29 && lz <= -13;
+        const onApron = lx >= -73 && lx <= 41 && lz >= -15 && lz <= 7;
+        const onParking = lx >= -71 && lx <= -11 && lz >= 33 && lz <= 53;
+        const onTerminal = lx >= -49 && lx <= -7 && lz >= 7 && lz <= 31;
+        const onHangar = lx >= 47 && lx <= 87 && lz >= -9 && lz <= 27;
+        const onControl = lx >= 6 && lx <= 30 && lz >= 8 && lz <= 22;
+        return onRunway || onTaxi || onApron || onParking || onTerminal || onHangar || onControl ? Ground.Paved : Ground.Grass;
+      }
+      if (site.kind === 'checkpoint') {
+        return lz >= 25 ? Ground.Paved : Ground.Grass;
+      }
+      if (site.kind === 'helipad') {
+        const onPad = Math.abs(lx) <= 23.5 && Math.abs(lz) <= 23.5;
+        const onDrive = Math.abs(lx) <= 5.5 && lz >= 23;
+        return onPad || onDrive ? Ground.Paved : Ground.Grass;
+      }
+      return Ground.Paved;
     }
     const zone = this.chunks.zoneAt(x, z);
     if (zone === 'downtown' || zone === 'town') return Ground.Paved;

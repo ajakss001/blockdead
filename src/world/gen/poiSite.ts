@@ -107,11 +107,19 @@ export class Site {
 
   /** A glass pane in a window hole of a wall along local X (z) or Z (x). */
   paneX(x: number, z: number, w: number, y0: number, y1: number): void {
-    this.p.box(0x6a7a84, x, y0, z, w, y1 - y0, 0.04, 'windowGlass', true);
+    const [cx, cz] = this.p.pt(x, z);
+    const odd = this.p.r & 1;
+    const sx = odd ? 0.04 : w;
+    const sz = odd ? w : 0.04;
+    this.b.block(0x6a7a84, cx - sx / 2, this.p.y + y0, cz - sz / 2, sx, y1 - y0, sz, 'windowGlass', true);
   }
 
   paneZ(x: number, z: number, w: number, y0: number, y1: number): void {
-    this.p.box(0x6a7a84, x, y0, z, 0.04, y1 - y0, w, 'windowGlass', true);
+    const [cx, cz] = this.p.pt(x, z);
+    const odd = this.p.r & 1;
+    const sx = odd ? w : 0.04;
+    const sz = odd ? 0.04 : w;
+    this.b.block(0x6a7a84, cx - sx / 2, this.p.y + y0, cz - sz / 2, sx, y1 - y0, sz, 'windowGlass', true);
   }
 
   /** A door in a wall along local X at z, centred at x. */

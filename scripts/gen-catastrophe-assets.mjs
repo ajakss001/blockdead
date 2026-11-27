@@ -124,6 +124,30 @@ const ASSETS = [
     prompt:
       'Abandoned rooftop apartment sniper nest setup on floor: dirty rolled military mattress, green metal ammo crate, scattered brass rifle shell casings, spare magazines and binoculars on sandbag rest, gritty realistic post-apocalyptic PBR game asset',
   },
+  {
+    file: 'military_watchtower.glb',
+    polycount: 6500,
+    prompt:
+      'Post-Soviet weathered steel and timber military guard watchtower on four cross-braced metal legs with access ladder, armored observation cabin with sandbag parapet, sloped metal roof, upright architectural structure, gritty realistic PBR game asset',
+  },
+  {
+    file: 'airfield_radar_tower.glb',
+    polycount: 6500,
+    prompt:
+      'Industrial steel lattice airfield radar and floodlight tower with upper grated catwalk platform, floodlight lamp bank and radar scanner housing on top, upright structure, weathered post-apocalyptic PBR game asset',
+  },
+  {
+    file: 'military_chainlink_fence.glb',
+    polycount: 5500,
+    prompt:
+      'Single straight horizontal military perimeter security fence segment oriented along X axis with weathered concrete curb base, dark steel vertical H-posts and opaque rusted welded wire steel mesh panel, flat straight wall panel, no glass, gritty post-apocalyptic PBR game asset',
+  },
+  {
+    file: 'razor_wire_coil.glb',
+    polycount: 5500,
+    prompt:
+      'Straight horizontal strip of tightly coiled steel concertina razor barbed wire mounted on angled steel Y-support brackets oriented along X axis, rusted industrial security obstacle, gritty realistic post-apocalyptic PBR game asset',
+  },
 ];
 
 function loadMeshyKey() {

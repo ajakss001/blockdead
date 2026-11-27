@@ -73,7 +73,11 @@ export const GLB_WORLD_SPECS = {
   tower_crane_cab: { file: 'tower_crane_cab.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.2, 5.4, 4.8] as const, minY: 0, lodDist: 140, castShadow: true },
   road_sinkhole_crater: { file: 'road_sinkhole_crater.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [14.0, 0.55, 10.5] as const, minY: 0, lodDist: 130, castShadow: false },
   fuel_barrel_cluster: { file: 'fuel_barrel_cluster.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [2.2, 1.15, 2.0] as const, minY: 0, lodDist: 95, castShadow: false },
-  military_barbed_barrier: { file: 'military_barbed_barrier.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.6, 1.9, 2.2] as const, minY: 0, lodDist: 105, castShadow: false },
+  military_barbed_barrier: { file: 'military_barbed_barrier.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.6, 1.95, 2.2] as const, minY: 0, lodDist: 105, castShadow: false },
+  military_watchtower: { file: 'military_watchtower.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [3.2, 8.2, 3.2] as const, minY: 0, lodDist: 135, castShadow: true },
+  airfield_radar_tower: { file: 'airfield_radar_tower.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [3.2, 11.5, 3.2] as const, minY: 0, lodDist: 145, castShadow: true },
+  military_chainlink_fence: { file: 'military_chainlink_fence.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [5.0, 2.55, 0.45] as const, minY: 0, lodDist: 85, castShadow: false },
+  razor_wire_coil: { file: 'razor_wire_coil.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.2, 0.95, 0.95] as const, minY: 0, lodDist: 55, castShadow: false },
   sniper_nest_camp: { file: 'sniper_nest_camp.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [2.4, 0.85, 2.0] as const, minY: 0, lodDist: 38, castShadow: false },
 } as const satisfies Record<string, GlbSpec>;
 

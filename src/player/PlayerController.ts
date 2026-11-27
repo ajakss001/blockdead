@@ -236,8 +236,15 @@ export class PlayerController {
       const fz = -cos;
       const top = this.canJump ? world.ledgeAhead(this.position.x, this.position.z, fx, fz, this.position.y, MANTLE_MIN, MANTLE_MAX) : -1;
       if (top > 0 && (jump || my > 0.3)) {
+        const farX = this.position.x + fx * 1.05;
+        const farZ = this.position.z + fz * 1.05;
+        const thinVault =
+          ground !== undefined &&
+          ground(farX, farZ, top + 0.1) < top - 0.25 &&
+          !world.rayHitDetail(this.position.x, top + 0.25, this.position.z, fx, 0, fz, 1.35, false) &&
+          !world.rayHitDetail(this.position.x, top + 0.95, this.position.z, fx, 0, fz, 1.35, false);
         this.mantleFrom.copy(this.position);
-        this.mantleTo.set(this.position.x + fx * 0.6, top, this.position.z + fz * 0.6);
+        this.mantleTo.set(thinVault ? farX : this.position.x + fx * 0.6, top, thinVault ? farZ : this.position.z + fz * 0.6);
         this.mantleT = 0;
         this.crouched = world.ceilingAt(this.mantleTo.x, this.mantleTo.z, PLAYER_RADIUS * 0.9, top + 0.05) <= top + HEIGHT_STAND;
         this.jumped = jump;

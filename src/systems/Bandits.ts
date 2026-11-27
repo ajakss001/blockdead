@@ -382,6 +382,7 @@ export interface Bandit extends BanditTarget {
   blockedSpots: BlockedSpot[];
   glassFlank: boolean;
   maxTurnRate: number;
+  turnRate: number;
   lockedKind: 'none' | 'player' | 'bot' | 'zombie';
   lockedBotId: number | null;
   lockedZombie: Zombie | null;
@@ -915,6 +916,7 @@ export class Bandits {
 
       const prevX = b.pos.x;
       const prevZ = b.pos.z;
+      const prevYaw = b.yaw;
       const prevMoveMode = b.moveMode;
       b.moveMode = 'idle';
       let moveSpeed = 0;
@@ -1044,12 +1046,15 @@ export class Bandits {
       } else {
         b.actualSpeed = 0;
       }
+      const instTurn = dt > 1e-4 ? Math.abs(angleDiff(prevYaw, b.yaw)) / dt : 0;
+      b.turnRate += (instTurn - b.turnRate) * (1 - Math.exp(-dt * 12));
       void moveSpeed;
 
       b.root.position.copy(b.pos);
       b.root.rotation.set(0, b.yaw, 0);
       this.animateRig(b, dt, b.actualSpeed);
     }
+    this.resolveActorOverlaps(px, py, pz, playerDead, inCar);
   }
 
   private engageZombie(b: Bandit, nearZombie: Zombie, dt: number, setSpd: (s: number) => void): void {
@@ -2416,6 +2421,7 @@ export class Bandits {
       blockedSpots: [],
       glassFlank: Math.random() < 0.35,
       maxTurnRate: (maxTurnDeg * Math.PI) / 180,
+      turnRate: 0,
       lockedKind: 'none',
       lockedBotId: null,
       lockedZombie: null,
@@ -2601,9 +2607,11 @@ export class Bandits {
 
     b.crouchBlend += ((b.crouching ? 1 : 0) - b.crouchBlend) * (1 - Math.exp(-dt * 9));
     const standW = Math.max(0, 1 - b.crouchBlend);
-    const targetIdle = (speed < 0.18 ? 1 : 0) * standW;
+    const turningInPlace = speed < 0.18 && b.turnRate > 0.35;
+    const turnFootW = turningInPlace ? Math.min(0.75, (b.turnRate - 0.35) / 1.4) : 0;
+    const targetIdle = (speed < 0.18 ? 1 - turnFootW : 0) * standW;
     const targetRun = (speed > 2.6 ? 1 : 0) * standW;
-    const targetWalk = (speed >= 0.18 && speed <= 2.6 ? 1 : 0) * standW;
+    const targetWalk = (speed >= 0.18 && speed <= 2.6 ? 1 : turnFootW) * standW;
     const targetCrouch = b.crouchBlend;
 
     const k = 1 - Math.exp(-dt * 9);
@@ -2616,9 +2624,13 @@ export class Bandits {
     v.gaits.walk.setEffectiveWeight(v.weights.walk);
     v.gaits.run.setEffectiveWeight(v.weights.run);
     v.gaits.crouch.setEffectiveWeight(v.weights.crouch);
-    v.gaits.walk.setEffectiveTimeScale(speed > 0.18 ? Math.max(0.42, speed / 1.8) : 1);
+    v.gaits.walk.setEffectiveTimeScale(
+      speed > 0.18 ? Math.max(0.42, speed / 1.8) : turningInPlace ? Math.min(1.05, Math.max(0.45, b.turnRate * 0.45)) : 1,
+    );
     v.gaits.run.setEffectiveTimeScale(speed > 2.6 ? Math.max(0.82, speed / 4.2) : 1);
-    v.gaits.crouch.setEffectiveTimeScale(speed > 0.16 ? Math.max(0.65, speed / 1.2) : 0);
+    v.gaits.crouch.setEffectiveTimeScale(
+      speed > 0.16 ? Math.max(0.65, speed / 1.2) : turningInPlace ? Math.min(0.9, Math.max(0.45, b.turnRate * 0.4)) : 0,
+    );
 
     v.rig.mixer.update(dt);
 
@@ -3174,6 +3186,57 @@ export class Bandits {
     }
     for (const [key, ownerId] of this.coverClaims) {
       if (!aliveIds.has(ownerId)) this.coverClaims.delete(key);
+    }
+  }
+
+  /** Hard cylinder anti-overlap across bots, zombies, and on-foot player after movement. */
+  private resolveActorOverlaps(px: number, py: number, pz: number, playerDead: boolean, inCar: boolean): void {
+    const n = this.list.length;
+    for (let i = 0; i < n; i++) {
+      const a = this.list[i];
+      if (a.isDead || a.state === 'dead') continue;
+      for (let j = i + 1; j < n; j++) {
+        const b = this.list[j];
+        if (b.isDead || b.state === 'dead' || Math.abs(a.pos.y - b.pos.y) > 1.4) continue;
+        const dx = a.pos.x - b.pos.x;
+        const dz = a.pos.z - b.pos.z;
+        const d = Math.hypot(dx, dz);
+        const minSep = 0.68;
+        if (d < minSep) {
+          const nx = d > 1e-4 ? dx / d : i % 2 === 0 ? 1 : 0;
+          const nz = d > 1e-4 ? dz / d : i % 2 === 0 ? 0 : 1;
+          const half = (minSep - d) * 0.5;
+          this.stepBandit(a, nx, nz, half);
+          this.stepBandit(b, -nx, -nz, half);
+          a.root.position.copy(a.pos);
+          b.root.position.copy(b.pos);
+        }
+      }
+      for (const zmb of this.w.zombies.list) {
+        if (zmb.state === 'dead' || Math.abs(a.pos.y - zmb.pos.y) > 1.4) continue;
+        const dx = a.pos.x - zmb.pos.x;
+        const dz = a.pos.z - zmb.pos.z;
+        const d = Math.hypot(dx, dz);
+        const minSep = 0.64;
+        if (d < minSep) {
+          const nx = d > 1e-4 ? dx / d : 1;
+          const nz = d > 1e-4 ? dz / d : 0;
+          this.stepBandit(a, nx, nz, minSep - d);
+          a.root.position.copy(a.pos);
+        }
+      }
+      if (!playerDead && !inCar && Math.abs(a.pos.y - py) <= 1.2) {
+        const dx = a.pos.x - px;
+        const dz = a.pos.z - pz;
+        const d = Math.hypot(dx, dz);
+        const minSep = 0.64;
+        if (d < minSep) {
+          const nx = d > 1e-4 ? dx / d : 1;
+          const nz = d > 1e-4 ? dz / d : 0;
+          this.stepBandit(a, nx, nz, (minSep - d) * 0.65);
+          a.root.position.copy(a.pos);
+        }
+      }
     }
   }
 

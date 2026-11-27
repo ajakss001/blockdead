@@ -20,52 +20,32 @@ import type { Site } from './poiSite';
 function fence(S: Site, x0: number, z0: number, x1: number, z1: number, barbed: boolean): void {
   const p = S.p;
   const len = Math.hypot(x1 - x0, z1 - z0);
-  const n = Math.max(1, Math.round(len / 6));
+  const n = Math.max(1, Math.round(len / 6.5));
   const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+  const yaw = ((p.r + (alongX ? 0 : 1)) * Math.PI) / 2;
+  const seg = len / n;
   for (let k = 0; k < n; k++) {
-    const t0 = k / n;
-    const t1 = (k + 1) / n;
-    const ax = x0 + (x1 - x0) * t0;
-    const az = z0 + (z1 - z0) * t0;
-    const mx = x0 + (x1 - x0) * ((t0 + t1) / 2);
-    const mz = z0 + (z1 - z0) * ((t0 + t1) / 2);
-    const seg = len / n;
-    p.box(0x5a5e60, ax, 0, az, 0.12, 2.5, 0.12, 'metal', true);
-    for (const y of [0.15, 1.2, 2.3]) p.box(0x6a6e70, mx, y, mz, alongX ? seg : 0.05, 0.05, alongX ? 0.05 : seg, 'metal');
-    // The mesh: a see-through grey sheet.
-    p.box(0x7a8086, mx, 0.22, mz, alongX ? seg - 0.14 : 0.02, 2.04, alongX ? 0.02 : seg - 0.14, 'windowGlass');
-    S.solid(mx, mz, alongX ? seg : 0.15, alongX ? 0.15 : seg, 0, 2.5);
-    if (barbed) {
-      for (let c = 0; c < 6; c++) {
-        const u = (c + 0.5) / 6 - 0.5;
-        p.rbox(0x3a3c3e, mx + (alongX ? u * seg : 0), 2.62, mz + (alongX ? 0 : u * seg), alongX ? seg / 6 : 0.04, 0.22, alongX ? 0.04 : seg / 6, 0, c % 2 ? 0.6 : -0.6, 0, 'metal');
+    const t = (k + 0.5) / n;
+    const mx = x0 + (x1 - x0) * t;
+    const mz = z0 + (z1 - z0) * t;
+    const [wx, wz] = p.pt(mx, mz);
+    if (S.here(mx, mz)) {
+      S.b.glb('military_chainlink_fence', wx, 0, wz, yaw, { sx: seg / 5.0 });
+      if (barbed) {
+        S.b.glb('razor_wire_coil', wx, 2.38, wz, yaw, { sx: seg / 4.2, sy: 0.65, sz: 0.65 });
       }
     }
+    S.solid(mx, mz, alongX ? seg : 0.45, alongX ? 0.45 : seg, 0, barbed ? 2.95 : 2.55);
   }
 }
 
-/** A watchtower: four legs, a cabin with windows, a roof, a ladder. */
+/** Watchtower (GLB military_watchtower) with full solid structure collider. */
 function watchtower(S: Site, lx: number, lz: number): void {
-  const q = S.p.at(lx, lz);
-  for (const [a, b] of [
-    [-1.1, -1.1],
-    [1.1, -1.1],
-    [-1.1, 1.1],
-    [1.1, 1.1],
-  ]) q.box(0x4a4c40, a, 0, b, 0.2, 6, 0.2, 'wood', true);
-  q.box(0x5a5c48, 0, 6, 0, 3, 0.15, 3, 'wood', true);
-  q.box(0x5a5c48, 0, 6.15, -1.45, 3, 1.0, 0.1, 'wood', true);
-  q.box(0x5a5c48, 0, 6.15, 1.45, 3, 1.0, 0.1, 'wood', true);
-  q.box(0x5a5c48, -1.45, 6.15, 0, 0.1, 1.0, 3, 'wood', true);
-  q.box(0x5a5c48, 1.45, 6.15, 0, 0.1, 1.0, 3, 'wood', true);
-  q.box(0x3a3c30, 0, 8.1, 0, 3.6, 0.2, 3.6, 'roof', true);
-  for (const [a, b] of [
-    [-1.4, -1.4],
-    [1.4, -1.4],
-    [-1.4, 1.4],
-    [1.4, 1.4],
-  ]) q.box(0x4a4c40, a, 6.15, b, 0.12, 1.95, 0.12, 'wood');
-  for (let y = 0.4; y < 6; y += 0.45) q.box(0x3a3c30, 0, y, 1.7, 0.6, 0.05, 0.05, 'wood');
+  const p = S.p;
+  const [wx, wz] = p.pt(lx, lz);
+  const yaw = (p.r * Math.PI) / 2;
+  if (S.here(lx, lz)) S.b.glb('military_watchtower', wx, 0, wz, yaw);
+  S.solid(lx, lz, 3.2, 3.2, 0, 8.2);
 }
 
 /** A model of a group (tank, apc, truck, heli), nose along local yaw; a searchable cabin over all of it (trucks: the bed). */
@@ -222,12 +202,15 @@ export function airport(S: Site, rand: Rand): void {
     [-18, 12.4, 0],
   ] as const) F.suitcase(p.at(x, z, r as Quarter), rand, rand() < 0.3);
 
-  // Control tower.
+  // Control tower + airfield radar tower.
   p.box(0xa8a8a2, 12, 0, 14, 4, 20, 4, 'concrete', true);
   p.box(0x8a8a84, 12, 20, 14, 7, 0.4, 7, 'concrete', true);
   p.box(0x2a3036, 12, 20.4, 14, 6.6, 2.6, 6.6, 'glass', true);
   p.box(0x5a5c5e, 12, 23, 14, 7.6, 0.4, 7.6, 'roof', true);
   p.box(0x3a3c3e, 12, 23.4, 14, 0.2, 2.5, 0.2, 'metal');
+  const [rx, rz] = p.pt(26, 18);
+  if (S.here(26, 18)) S.b.glb('airfield_radar_tower', rx, 0, rz, (p.r * Math.PI) / 2);
+  S.solid(26, 18, 3.2, 3.2, 0, 11.5);
 
   // Hangar with light planes and workbench.
   hangar(S, 48, -8, 86, 26, 11, 'z0');
@@ -271,8 +254,13 @@ export function militaryBase(S: Site, rand: Rand): void {
     [L - 3, L - 3],
   ]) watchtower(S, x, z);
   p.model('guardBooth', rand, 9, 0, L - 4, 0, 1, 0.72, 0.25, true);
+  p.box(0x5a5e62, -5.9, 0, L + 0.4, 0.38, 1.35, 0.38, 'metal', true);
   for (let k = 0; k < 6; k++) p.box(k % 2 ? 0xc8c4b8 : 0x9a2a22, -5 + k * 1.75, 1.0, L + 0.4, 1.75, 0.14, 0.14, 'metal');
+  S.solid(-0.625, L + 0.4, 10.6, 0.45, 0, 1.45);
   for (const x of [-9, 12]) sandbags(p, x, L - 1.2, 1.6, rand);
+  const [rx, rz] = p.pt(0, -40);
+  if (S.here(0, -40)) S.b.glb('airfield_radar_tower', rx, 0, rz, (p.r * Math.PI) / 2);
+  S.solid(0, -40, 3.2, 3.2, 0, 11.5);
   // Roads inside: from the gate to the hangar apron.
   S.slab(0x4a4c4e, -4, -6, 4, L, 0, 0.03, 'concrete');
   S.slab(0x4a4c4e, -56, -6, 56, 2, 0, 0.03, 'concrete');
