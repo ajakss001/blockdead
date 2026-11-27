@@ -147,37 +147,102 @@ function airlinerCrashBlock(
   buildHighriseShell(b, standing, rand);
   out.push(standing);
 
-  // Partially collapsed concrete high-rise ruin in the NE/SE crash impact zone
+  // Partially collapsed Soviet brick & concrete high-rise ruin in the NE/SE crash impact zone
   const rx0 = X0 + 27;
   const rx1 = X1 - 2.5;
   const rz0 = Z0 + 24;
   const rz1 = Z1 - 5.5;
   const rw = rx1 - rx0;
   const rd = rz1 - rz0;
+  const wallT = 0.45;
+  const slabT = 0.24;
+
+  // Ground-to-upper-floor slabs stepping back jaggedly away from the SW aircraft nose impact
   for (let fl = 0; fl < 4; fl++) {
     const sy = fl * FLOOR_H;
-    const stepW = fl < 2 ? rw : rw * (1 - fl * 0.14);
-    const stepD = fl < 2 ? rd : rd * (1 - fl * 0.12);
-    // Floor slab + jagged remaining concrete walls leaving the SW corner sheared open for the plane nose
-    b.block(0x6d6a64, rx0 + (rw - stepW) * 0.35, sy, rz0 + (rd - stepD) * 0.25, stepW, 0.24, stepD, 'concrete', true);
+    const cutX = Math.min(rx1 - 6.0, fl < 2 ? rx0 + fl * 1.8 : rx0 + 2.2 + (fl - 1) * 3.0);
+    const cutZ = Math.min(rz1 - 5.5, fl < 2 ? rz0 + fl * 1.4 : rz0 + 1.8 + (fl - 1) * 2.4);
+    const sW = rx1 - cutX;
+    const sD = rz1 - cutZ;
+    if (fl === 0) {
+      b.block(0x5c5953, cutX, 0, cutZ, sW, PAVE.plaza + 0.12, sD, 'concrete', true);
+    } else {
+      b.block(0x6d6a64, cutX, sy, cutZ, sW, slabT, sD, 'concrete', true);
+    }
+
+    // Thick structural concrete columns supporting every corner & midpoint grid (no floating slabs)
+    if (fl > 0) {
+      const colW = 0.55;
+      const xCols = [cutX, cutX + sW * 0.5 - colW * 0.5, rx1 - colW];
+      const zCols = [cutZ, cutZ + sD * 0.5 - colW * 0.5, rz1 - colW];
+      for (const cx of xCols) {
+        for (const cz of zCols) {
+          if (Math.abs(cx - cutX) < 0.2 || Math.abs(cz - cutZ) < 0.2 || Math.abs(cx - (rx1 - colW)) < 0.2 || Math.abs(cz - (rz1 - colW)) < 0.2) {
+            b.block(0x52504c, cx, (fl - 1) * FLOOR_H, cz, colW, FLOOR_H, colW, 'concrete', true);
+          }
+        }
+      }
+    }
+
+    // Standing Soviet brick exterior walls along East (rx1) and North (rz1) with recessed window bays
+    if (fl < 3 || spotHash(rx1, sy, 401) > 0.1) {
+      const bay = 3.0;
+      const sillH = 0.85;
+      const headY = 2.65;
+      // North wall (rz1 - wallT) spanning East -> NW partial stub
+      const nStart = fl === 0 ? rx0 + 3.0 : cutX + 1.2;
+      for (let bx = nStart; bx + 1.8 <= rx1 - wallT; bx += bay) {
+        const bw = Math.min(bay, rx1 - wallT - bx);
+        if (bw < 2.2) {
+          b.block(0xb68a74, bx, sy, rz1 - wallT, bw, FLOOR_H, wallT, 'facadeBrick', true);
+        } else {
+          const pier = 0.55;
+          const winW = bw - pier * 2;
+          b.block(0xb68a74, bx, sy, rz1 - wallT, pier, FLOOR_H, wallT, 'facadeBrick', true);
+          b.block(0xb68a74, bx + bw - pier, sy, rz1 - wallT, pier, FLOOR_H, wallT, 'facadeBrick', true);
+          b.block(0xb68a74, bx + pier, sy, rz1 - wallT, winW, sillH, wallT, 'facadeBrick', true);
+          b.block(0xb68a74, bx + pier, sy + headY, rz1 - wallT, winW, FLOOR_H - headY, wallT, 'facadeBrick', true);
+          b.block(0x282725, bx + pier, sy + sillH, rz1 - wallT * 0.6, winW, headY - sillH, 0.06, 'concrete');
+        }
+      }
+      // East wall (rx1 - wallT) spanning North -> SE partial stub
+      const eStart = fl === 0 ? rz0 + 2.5 : cutZ + 1.2;
+      for (let bz = eStart; bz + 1.8 <= rz1 - wallT; bz += bay) {
+        const bd = Math.min(bay, rz1 - wallT - bz);
+        if (bd < 2.2) {
+          b.block(0xb68a74, rx1 - wallT, sy, bz, wallT, FLOOR_H, bd, 'facadeBrick', true);
+        } else {
+          const pier = 0.55;
+          const winD = bd - pier * 2;
+          b.block(0xb68a74, rx1 - wallT, sy, bz, wallT, FLOOR_H, pier, 'facadeBrick', true);
+          b.block(0xb68a74, rx1 - wallT, sy, bz + bd - pier, wallT, FLOOR_H, pier, 'facadeBrick', true);
+          b.block(0xb68a74, rx1 - wallT, sy, bz + pier, wallT, sillH, winD, 'facadeBrick', true);
+          b.block(0xb68a74, rx1 - wallT, sy + headY, bz + pier, wallT, FLOOR_H - headY, winD, 'facadeBrick', true);
+          b.block(0x282725, rx1 - wallT * 0.6, sy + sillH, bz + pier, 0.06, headY - sillH, winD, 'concrete');
+        }
+      }
+    }
+
+    // Broken interior apartment/office partition walls visible inside the cutaway (floors 0..2)
     if (fl < 3) {
-      b.block(0x7c7870, rx1 - 0.4, sy, rz0, 0.4, FLOOR_H, stepD, 'facadeConcrete', true);
-      b.block(0x74706a, rx0 + 3.5, sy, rz1 - 0.4, stepW - 3.5, FLOOR_H, 0.4, 'facadeConcrete', true);
-      if (fl === 0) b.block(0x6a6760, rx0, sy, rz0, 0.35, FLOOR_H * 0.65, 6.5, 'concrete', true);
+      const partX = Math.max(cutX + 3.2, rx0 + rw * 0.52);
+      const partZ = Math.max(cutZ + 2.6, rz0 + rd * 0.52);
+      if (partZ + 2.2 < rz1 - wallT) {
+        b.block(0xc8c0ae, partX, sy, partZ + 1.1, 0.18, FLOOR_H - 0.1, rz1 - wallT - (partZ + 1.1), 'wallpaper', true);
+      }
+      if (partX + 2.0 < rx1 - wallT) {
+        b.block(0xbdb4a0, partX + 1.1, sy, partZ, rx1 - wallT - (partX + 1.1), FLOOR_H - 0.1, 0.18, 'plaster', true);
+      }
     }
   }
-  // Exposed ruined girders & concrete rubble chunks inside & in front of the breach
-  b.block(0x3a3c3e, rx0 + 4, 3.2, rz0 + 4, 0.28, 7.2, 0.28, 'metal', true);
-  b.block(0x3a3c3e, rx0 + 12, 3.2, rz0 + 8, 0.28, 8.8, 0.28, 'metal', true);
-  for (let k = 0; k < 4; k++) {
-    b.block(0x64625c, X0 + 24 + k * 5.2, PAVE.plaza, Z0 + 17 + (k % 2) * 3.5, 2.2, 0.75 + (k % 2) * 0.45, 1.8, 'concrete', true);
-  }
+  // Partial standing corner piers framing the torn SW breach on ground floor
+  b.block(0xb68a74, rx0 + 1.2, 0, rz1 - wallT, 3.2, FLOOR_H * 1.4, wallT, 'facadeBrick', true);
+  b.block(0xb68a74, rx1 - wallT, 0, rz0 + 1.2, wallT, FLOOR_H * 1.4, 3.0, 'facadeBrick', true);
 
   // 15 x 40 m dark scorched impact trench & asphalt skid scar running diagonally into the collapsed tower.
   const ax = X0 + 22.0;
   const az = Z0 + 20.5;
   const ayaw = -Math.PI * 0.72;
-  const physYaw = ayaw + Math.PI / 2;
   _m.compose(_p.set(ax - 3.5, PAVE.plaza + 0.012, az - 4.0), _q.setFromAxisAngle(_axis.set(0, 1, 0), ayaw), _s.set(15.0, 0.018, 40.0));
   b.geo(b.box, 0x161514, _m, 'asphalt');
   for (let sIdx = 0; sIdx < 4; sIdx++) {
@@ -188,7 +253,7 @@ function airlinerCrashBlock(
 
   // Torn, charred airliner fuselage (NO landing gear) buried nose-first into massive concrete rubble inside the breach.
   b.glb('crashed_boeing_fuselage', ax, PAVE.plaza - 0.08, az, ayaw, { pitch: 0.05, roll: 0.16 });
-  b.colliders.addOrientedBox(ax, az, 11.2, 2.9, physYaw, -0.5, 4.8);
+  b.colliders.addOrientedBox(ax, az, 10.2, 3.2, ayaw, -0.5, 4.8);
   b.glb('building_breach_frame', rx0 + 1.2, 0.15, rz0 + 1.1, -Math.PI * 0.25, { scale: 1.38 });
 
   // Massive collapsed concrete rubble mounds piled around fuselage & sheared building corner.
@@ -200,7 +265,7 @@ function airlinerCrashBlock(
   ];
   for (const [rx, rz, ryaw, rsc] of rubbleSpots) {
     b.glb('concrete_rubble_mound', rx, PAVE.plaza, rz, ryaw, { scale: rsc });
-    b.solid(rx - 2.1 * rsc, rz - 2.0 * rsc, rx + 2.1 * rsc, rz + 2.0 * rsc, PAVE.plaza, PAVE.plaza + 1.75 * rsc);
+    b.solid(rx - 1.75 * rsc, rz - 1.75 * rsc, rx + 1.75 * rsc, rz + 1.75 * rsc, PAVE.plaza, PAVE.plaza + 1.2 * rsc);
   }
 
   // Detached broken airliner wing + damaged jet engine ~13.5 m away on the scorched plaza.
@@ -208,7 +273,7 @@ function airlinerCrashBlock(
   const wz = az - 7.8;
   const wyaw = ayaw + 1.9;
   b.glb('crashed_plane_wing', wx, PAVE.plaza - 0.04, wz, wyaw, { pitch: -0.06, roll: 0.14 });
-  b.colliders.addOrientedBox(wx, wz, 6.0, 2.4, wyaw, -0.5, 2.4);
+  b.colliders.addOrientedBox(wx, wz, 5.8, 4.4, wyaw, -0.5, 3.2);
   groundDecal(b, 'decalSoot', wx, PAVE.plaza + 0.015, wz, 6.2, rand, 1.3);
   groundDecal(b, 'decalOil', wx + 1.2, PAVE.plaza + 0.016, wz - 0.8, 4.0, rand, 1.3);
 

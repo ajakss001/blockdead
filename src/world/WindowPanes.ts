@@ -13,7 +13,7 @@ import {
 import type { CollisionWorld } from './CollisionWorld';
 
 export const WINDOW_OWNER_BASE = 5e15;
-const MAX_PANES = 4096;
+const MAX_PANES = 12288;
 
 export interface WindowPaneSpot {
   cx: number;

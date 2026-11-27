@@ -340,10 +340,10 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     const bx1 = Math.min(L.x1 - 0.6, bx0 + desc.breach.w);
     const by0 = Math.max(FLOOR_H + 0.2, desc.breach.y);
     const by1 = Math.min(H - 0.8, desc.breach.y + desc.breach.h);
-    if (bx0 > L.x0 + 0.05) b.blockY(tint, L.x0, FLOOR_H, L.z0, bx0 - L.x0, top - FLOOR_H, WALL, f);
-    if (L.x1 > bx1 + 0.05) b.blockY(tint, bx1, FLOOR_H, L.z0, L.x1 - bx1, top - FLOOR_H, WALL, f);
-    if (by0 > FLOOR_H + 0.05) b.blockY(tint, bx0, FLOOR_H, L.z0, bx1 - bx0, by0 - FLOOR_H, WALL, f);
-    if (top > by1 + 0.05) b.blockY(tint, bx0, by1, L.z0, bx1 - bx0, top - by1, WALL, f);
+    if (bx0 > L.x0 + 0.05) b.block(tint, L.x0, FLOOR_H, L.z0, bx0 - L.x0, top - FLOOR_H, WALL, f, false);
+    if (L.x1 > bx1 + 0.05) b.block(tint, bx1, FLOOR_H, L.z0, L.x1 - bx1, top - FLOOR_H, WALL, f, false);
+    if (by0 > FLOOR_H + 0.05) b.block(tint, bx0, FLOOR_H, L.z0, bx1 - bx0, by0 - FLOOR_H, WALL, f, false);
+    if (top > by1 + 0.05) b.block(tint, bx0, by1, L.z0, bx1 - bx0, top - by1, WALL, f, false);
     // Destroyed charred interior cavity behind the breach (floor, soot ceiling/back/side walls & bent rebar).
     const cavD = Math.min(4.6, desc.d * 0.35);
     b.block(0x1e1d1c, bx0, by0 - 0.22, L.z0 + WALL, bx1 - bx0, 0.22, cavD, 'concrete', true);
@@ -355,7 +355,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     b.block(0x3a2820, bx0 + 0.6, by0, L.z0 + 0.5, 0.14, (by1 - by0) * 0.72, 0.14, 'metal');
     b.block(0x3a2820, bx1 - 0.8, by0 + 0.3, L.z0 + 0.4, 0.14, (by1 - by0) * 0.65, 0.14, 'metal');
   } else {
-    b.blockY(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f);
+    b.block(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f, false);
   }
   const openings = [{ x0: d0, x1: d1, sill: 0, head: ENTRANCE_H }, ...panes.map((p) => ({ x0: p.x, x1: p.x + p.w, sill: 0.3, head: 2.8 }))].sort((a, c) => a.x0 - c.x0);
   let wx = L.x0;
@@ -374,7 +374,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   if (desc.floors >= 2) {
     const feCx = (feX0 + feX1) * 0.5;
     b.batch.keepClear.push({ x: b.wx(feCx), z: b.wz(L.z1 + FE_DEPTH * 0.5), r: 0, kind: 'fireEscape' });
-    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, true);
+    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, false);
     // Open parapet exit always sits directly at the top flight arrival (feX1 - FE_ROOF_GAP .. feX1), clear of head-house.
     const gap0 = feX1 - FE_ROOF_GAP;
     const gap1 = feX1;
@@ -407,10 +407,10 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     b.solid(feX0 - 0.27, L.z1, feX0 - 0.02, L.z1 + FE_DEPTH, FLOOR_H, H + 1.0);
     b.solid(feX1 + 0.02, L.z1, feX1 + 0.27, L.z1 + FE_DEPTH, FLOOR_H, H + 1.0);
   } else {
-    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, true);
+    b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, top, WALL, f, false);
   }
-  b.block(tint, L.x0, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
-  b.block(tint, L.x1 - WALL, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, true);
+  b.block(tint, L.x0, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, false);
+  b.block(tint, L.x1 - WALL, 0, L.z0 + WALL, WALL, top, L.z1 - L.z0 - 2 * WALL, f, false);
 
   // Roof slab with the stair opening, and the head-house over the core.
   const roofY = H - 0.2;
@@ -496,6 +496,101 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   }
   shellLife(b, desc, L);
   b.endFrame();
+  addPiercedFacadeColliders(b, desc, top);
+}
+
+/** Add pierced solid colliders for facade piers, spandrels & parapets so every window opening stays shootable/passable. */
+function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number): void {
+  const spec = desc.kind === 'offices' ? FACADE_WINDOW.offices : FACADE_WINDOW.apartments;
+  const x0 = desc.cx - desc.w / 2;
+  const z0 = desc.cz - desc.d / 2;
+  const x1 = x0 + desc.w;
+  const z1 = z0 + desc.d;
+  const H = desc.floors * FLOOR_H;
+  const frontMinZ = desc.flip ? z1 - WALL : z0;
+  const backMinZ = desc.flip ? z0 : z1 - WALL;
+
+  let breach: { x0: number; x1: number; y0: number; y1: number } | null = null;
+  if (desc.breach) {
+    const rawX = desc.flip ? 2 * desc.cx - desc.breach.x : desc.breach.x;
+    const bx0 = Math.max(x0 + 0.6, Math.min(x1 - 2.0, rawX - desc.breach.w * 0.5));
+    const bx1 = Math.min(x1 - 0.6, bx0 + desc.breach.w);
+    const by0 = Math.max(FLOOR_H + 0.2, desc.breach.y);
+    const by1 = Math.min(H - 0.8, desc.breach.y + desc.breach.h);
+    breach = { x0: bx0, x1: bx1, y0: by0, y1: by1 };
+  }
+
+  const addFrontRect = (ax0: number, ax1: number, ay0: number, ay1: number, wz0: number, wz1: number) => {
+    if (ax1 - ax0 <= 0.01 || ay1 - ay0 <= 0.01) return;
+    if (!breach || ax1 <= breach.x0 || ax0 >= breach.x1 || ay1 <= breach.y0 || ay0 >= breach.y1) {
+      b.solid(ax0, wz0, ax1, wz1, ay0, ay1);
+      return;
+    }
+    if (ax0 < breach.x0) b.solid(ax0, wz0, breach.x0, wz1, ay0, ay1);
+    if (ax1 > breach.x1) b.solid(breach.x1, wz0, ax1, wz1, ay0, ay1);
+    const ox0 = Math.max(ax0, breach.x0);
+    const ox1 = Math.min(ax1, breach.x1);
+    if (ay0 < breach.y0) b.solid(ox0, wz0, ox1, wz1, ay0, breach.y0);
+    if (ay1 > breach.y1) b.solid(ox0, wz0, ox1, wz1, breach.y1, ay1);
+  };
+
+  const winXs: [number, number][] = [];
+  for (let u = Math.ceil(x0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= x1 + 1e-6; u += FACADE_BAY) {
+    winXs.push([u + spec.inset, u + spec.inset + spec.width]);
+  }
+  const addWallAlongX = (wz0: number, wz1: number, isFront: boolean) => {
+    const startFloor = isFront ? 1 : 0;
+    const put = isFront
+      ? addFrontRect
+      : (ax0: number, ax1: number, ay0: number, ay1: number, az0: number, az1: number) => {
+          if (ax1 - ax0 > 0.01 && ay1 - ay0 > 0.01) b.solid(ax0, az0, ax1, az1, ay0, ay1);
+        };
+    for (let k = startFloor; k < desc.floors; k++) {
+      const y0 = k * FLOOR_H;
+      const ySill = y0 + spec.sill;
+      const yHead = y0 + spec.head;
+      const y1 = y0 + FLOOR_H;
+      put(x0, x1, y0, ySill, wz0, wz1);
+      put(x0, x1, yHead, y1, wz0, wz1);
+      let curX = x0;
+      for (const [wx0, wx1] of winXs) {
+        put(curX, Math.min(x1, wx0), ySill, yHead, wz0, wz1);
+        curX = Math.max(curX, wx1);
+      }
+      put(curX, x1, ySill, yHead, wz0, wz1);
+    }
+    if (isFront || desc.floors < 2) {
+      put(x0, x1, H, top, wz0, wz1);
+    }
+  };
+  addWallAlongX(frontMinZ, frontMinZ + WALL, true);
+  addWallAlongX(backMinZ, backMinZ + WALL, false);
+
+  const winZs: [number, number][] = [];
+  for (let u = Math.ceil(z0 / FACADE_BAY) * FACADE_BAY; u + FACADE_BAY <= z1 + 1e-6; u += FACADE_BAY) {
+    winZs.push([u + spec.inset, u + spec.inset + spec.width]);
+  }
+  const zStart = z0 + WALL;
+  const zEnd = z1 - WALL;
+  for (const wx0 of [x0, x1 - WALL]) {
+    const wx1 = wx0 + WALL;
+    for (let k = 0; k < desc.floors; k++) {
+      const y0 = k * FLOOR_H;
+      const ySill = y0 + spec.sill;
+      const yHead = y0 + spec.head;
+      const y1 = y0 + FLOOR_H;
+      b.solid(wx0, zStart, wx1, zEnd, y0, ySill);
+      b.solid(wx0, zStart, wx1, zEnd, yHead, y1);
+      let curZ = zStart;
+      for (const [wz0, wz1] of winZs) {
+        const clamped0 = Math.min(zEnd, wz0);
+        if (clamped0 - curZ > 0.01) b.solid(wx0, curZ, wx1, clamped0, ySill, yHead);
+        curZ = Math.max(curZ, wz1);
+      }
+      if (zEnd - curZ > 0.01) b.solid(wx0, curZ, wx1, zEnd, ySill, yHead);
+    }
+    b.solid(wx0, zStart, wx1, zEnd, H, top);
+  }
 }
 
 /**
@@ -539,7 +634,6 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
   const x1 = x0 + desc.w;
   const z1 = z0 + desc.d;
   const h = spec.head - spec.sill;
-  const pane = new PlaneGeometry(spec.width, h);
   // Frames: the reveal of every opening, so looking in at an angle never shows a slit through the wall.
   const reveal = revealGeometry(spec.width, h, WALL);
   const mid = WALL / 2;
@@ -557,7 +651,7 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
           if (cx >= bx0 && cx <= bx1 && y >= desc.breach.y - 0.5 && y <= desc.breach.y + desc.breach.h + 0.5) continue;
         }
         _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1));
-        b.geo(pane, 0x6c7a84, _m, 'windowGlass');
+        b.windows.push({ cx, cy: y, cz: z, sx: spec.width, sy: h, sz: 0.03 });
         b.geo(reveal, 0x8a867c, _m, 'concrete');
       }
     }
@@ -566,13 +660,12 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
       const cz = u + spec.inset + spec.width / 2;
       for (const x of [x0 + mid, x1 - mid]) {
         _m.compose(_p.set(x, y, cz), _q, _s.set(1, 1, 1));
-        b.geo(pane, 0x6c7a84, _m, 'windowGlass');
+        b.windows.push({ cx: x, cy: y, cz, sx: 0.03, sy: h, sz: spec.width });
         b.geo(reveal, 0x8a867c, _m, 'concrete');
       }
     }
     _q.identity();
   }
-  pane.dispose();
   reveal.dispose();
 }
 
