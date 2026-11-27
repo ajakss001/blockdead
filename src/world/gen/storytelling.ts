@@ -4,7 +4,7 @@ import { PAVE } from './layout';
 import { sandbags, stripedBarrier } from './chaos';
 import { isGlbClear } from './footprint';
 import { Place } from './furniture';
-import { groundDecal, wallDecalZ } from './highrise';
+import { groundDecal } from './highrise';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, pick, type Rand } from './pieces';
 
@@ -94,7 +94,7 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
 }
 
 /**
- * Dense city-exit gridlock: 8–11 staggered abandoned cars/vans/buses snaking across both lanes,
+ * Dense city-exit gridlock: up to 6 staggered abandoned cars/vans/buses snaking across both lanes,
  * scattered evacuation luggage, oil/skid marks, and a concrete rubble barricade blocking the exit.
  */
 export function exitTrafficJam(b: Builder, cx: number, cz: number, alongX: boolean, from: number, to: number, rand: Rand): number {
@@ -104,13 +104,13 @@ export function exitTrafficJam(b: Builder, cx: number, cz: number, alongX: boole
   const stop = dirOut > 0 ? to - 10.5 : from + 10.5;
   let k = 0;
   let cursor = start;
-  while ((dirOut > 0 ? cursor < stop : cursor > stop) && k < 11) {
+  while ((dirOut > 0 ? cursor < stop : cursor > stop) && k < 6) {
     const side = k % 2 === 0 ? -1.8 : 1.8;
     const wobble = (rand() - 0.5) * 0.28 + Math.sin(k * 1.3) * 0.14;
     const x = alongX ? cursor : cx + side + (rand() - 0.5) * 0.35;
     const z = alongX ? cz + side + (rand() - 0.5) * 0.35 : cursor;
     const flipRoll = spotHash(x, z, 322);
-    const kind = k % 5 === 3 ? 'van' : k % 7 === 5 ? 'bus' : rand() < 0.22 ? 'wreck' : undefined;
+    const kind = k % 4 === 2 ? 'bus' : rand() < 0.45 ? 'wreck' : k % 5 === 3 ? 'van' : undefined;
     const flipped = kind === 'wreck' && flipRoll < 0.35 ? 'sideL' : undefined;
     const placed = buildCar(
       b.batch,
@@ -140,10 +140,10 @@ export function exitTrafficJam(b: Builder, cx: number, cz: number, alongX: boole
       }
       if (k % 4 === 2) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 1.8, PAVE.asphalt, z + (rand() - 0.5) * 1.8, 1.5, rand);
     }
-    cursor += dirOut * (3.9 + rand() * 0.6);
+    cursor += dirOut * (4.8 + rand() * 0.9);
     k++;
   }
-  // Exit blockade at the front of the gridlock: concrete rubble mound + barricade + evacuation cardboard sign
+  // Exit blockade at the front of the gridlock: concrete rubble mound + barricade
   const blkU = dirOut > 0 ? to - 5.2 : from + 5.2;
   const bx = alongX ? blkU : cx;
   const bz = alongX ? cz : blkU;
@@ -163,7 +163,6 @@ export function exitTrafficJam(b: Builder, cx: number, cz: number, alongX: boole
   }
   stripDecal(b, bx - Math.cos(heading) * 3.5, bz + Math.sin(heading) * 3.5, heading, 7, 2.6, 'decalSkid');
   groundDecal(b, 'decalSoot', bx, PAVE.asphalt, bz, 4.0, rand, 1.3);
-  wallDecalZ(b, 'decalEvacuate', bx, 1.15, bz, 1.2, dirOut > 0 ? -1 : 1);
   return 2;
 }
 

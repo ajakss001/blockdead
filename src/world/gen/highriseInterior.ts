@@ -176,7 +176,7 @@ function corridorStorey(b: Builder, L: Local, buildingSeed: number, floorIdx: nu
     b.blockY(corrPaper, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
-      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, roomPaper, roomSeed, floorIdx, breach, light);
+      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, roomPaper, roomSeed, floorIdx, u, breach, light);
     }
   }
   backUnits(b, L, buildingSeed, floorIdx, y, h, paperB, mode, rs, rf, lit, breach);
@@ -239,7 +239,7 @@ function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number,
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
     b.blockY(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
-    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, unitPaper, roomSeed, floorIdx, breach, light);
+    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, unitPaper, roomSeed, floorIdx, u, breach, light);
   }
 }
 
@@ -247,7 +247,7 @@ function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number,
  * One apartment, office or storeroom. Authored in a unit frame: the far wall (facade, windows) at
  * z = 0, the door in the middle of the wall at z = d, x across the unit.
  */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, roomSeed: number, floorIdx: number, breach?: BuildingDesc['breach'], light?: LitUnit): void {
+function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, roomSeed: number, floorIdx: number, unitIdx: number, breach?: BuildingDesc['breach'], light?: LitUnit): void {
   const w = x1 - x0;
   const d = z1 - z0;
   const cx = (x0 + x1) / 2;
@@ -277,7 +277,7 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   else if (mode === 'storage') storageUnit(U, w, d, rf);
   else apartment(U, w, d, h, st, rf, paper, cx, front, roomSeed);
   // Upper-floor sniper overwatch nests (broken glass, brass casings, mattress + ammo stash by the window).
-  const isSniperNest = atCraneBreach || (mode !== 'storage' && floorIdx >= 2 && spotHash(cx, y + z0, 417) < 0.18);
+  const isSniperNest = atCraneBreach || (mode !== 'storage' && floorIdx >= 2 && unitIdx === 0 && spotHash(cx, y + z0, 417) < 0.04);
   if (isSniperNest && w >= 3.0 && d >= 3.0) {
     const [nx, nz] = U.pt(0, 1.35);
     b.glb('sniper_nest_camp', nx, y, nz, front ? 0 : Math.PI);

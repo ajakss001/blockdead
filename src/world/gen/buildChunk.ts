@@ -193,9 +193,9 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
           buildCar(b.batch, b.colliders, { x: x + CURB_LANE, z: bsz + 0.6, yaw: Math.PI / 2 + (rand() - 0.5) * 0.15, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'bus' }, b.containers);
         }
       }
-      // Downtown: the queue that never got out (plus dense rim-exit gridlocks); elsewhere curb parking.
+      // Downtown: the queue that never got out (plus sparse rim-exit gridlocks on ring 2); elsewhere curb parking.
       const rimX = Math.max(Math.abs(i), Math.abs(j));
-      const useExitJamX = (rimX === 2 || rimX === 3) && (Math.abs(i) === 2 || Math.abs(j) === 2) && spotHash(i, j, 319) < 0.65;
+      const useExitJamX = rimX === 2 && spotHash(i, j, 319) < 0.32;
       const jam = useExitJamX
         ? exitTrafficJam(b, x, 0, false, za, za + len, rand)
         : (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8
@@ -252,7 +252,7 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
         }
       }
       const rimZ = Math.max(Math.abs(i), Math.abs(j));
-      const useExitJamZ = (rimZ === 2 || rimZ === 3) && (Math.abs(i) === 2 || Math.abs(j) === 2) && spotHash(i, j, 323) < 0.65;
+      const useExitJamZ = rimZ === 2 && spotHash(i, j, 323) < 0.32;
       const jam = useExitJamZ
         ? exitTrafficJam(b, 0, z, true, xa, xa + len, rand)
         : (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8

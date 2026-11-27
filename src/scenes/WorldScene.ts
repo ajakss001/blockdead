@@ -843,7 +843,7 @@ export class WorldScene implements IScene {
       else this.windowPanes.removeChunk(owner);
     };
     this.interiors.onGlbs = (owner, glbs) => {
-      if (glbs) this.glbPool.addChunk(owner, glbs);
+      if (glbs && glbs.length > 0) this.glbPool.addChunk(owner, glbs);
       else this.glbPool.removeChunk(owner);
     };
     this.interiors.onAmbient = (owner, spots) => {
@@ -1533,7 +1533,9 @@ export class WorldScene implements IScene {
   /** gameDt: the world's time this frame, 0 while paused (GameLoop: the one pause check) — the world moves by it. */
   render(alpha: number, frameDt: number, gameDt: number): void {
     this.particles.update(gameDt);
-    this.glbPool?.update(gameDt, this.camera.position, gameDt <= 0, this.camera);
+    const glbQp = this.ctx.quality.preset;
+    const glbShadows = this.player.lightOn && glbQp.level === 'high' && glbQp.shadowMapSize > 0;
+    this.glbPool?.update(gameDt, this.camera.position, gameDt <= 0, this.camera, (this.scene.fog as Fog).far, glbShadows);
     // The survivor's body, arms and light move by world time (or the active vehicle camera when driving).
     if (this.editor.active) {
       this.editor.update(frameDt);

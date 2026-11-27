@@ -502,8 +502,8 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
       parkedCar(b, lo + rand() * (hi - lo), zN - 2.0, rand() < 0.5 ? 0 : Math.PI, rand, 5.2);
     }
   }
-  // Makeshift resident barricades in ~45% of courtyards: wrecked car, dumpsters, stacked crates, burn barrel & campStash.
-  if (spotHash(X0, zMid, 333) < 0.45 && X1 - X0 >= 14) {
+  // Makeshift resident barricades in ~22% of courtyards: wrecked car, dumpsters, stacked crates, burn barrel & campStash.
+  if (spotHash(X0, zMid, 333) < 0.22 && X1 - X0 >= 14) {
     const westSide = spotHash(X0, zN, 334) < 0.5;
     const bx = westSide ? X0 + 2.8 : X1 - 2.8;
     const inX = westSide ? 1 : -1;
@@ -515,7 +515,6 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
     );
     dumpster(b, bx + inX * 1.3 - 0.9, zMid + 0.8, 'x');
     crates(b, bx + inX * 1.1, zMid - 1.4, rand);
-    wallDecalZ(b, spotHash(bx, zMid, 336) < 0.5 ? 'decalInfected' : 'decalNoWater', bx + inX * 1.6, 1.85, zS + 0.02, 1.35, 1);
     const barrelX = bx + inX * 2.8;
     if (isGlbClear(b.batch, 'burn_barrel', barrelX, zMid, 0, 0.5, { keepClearGap: 0.9 })) {
       b.glb('burn_barrel', barrelX, PAVE.plaza, zMid, 0);

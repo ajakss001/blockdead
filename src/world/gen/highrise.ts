@@ -553,7 +553,7 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     if (spotHash(desc.cx, desc.cz, 317) < 0.24) {
       const rTag = spotHash(desc.cx, desc.cz, 318);
       const surf = rTag < 0.34 ? 'decalEvacuate' : rTag < 0.67 ? 'decalNoWater' : 'decalInfected';
-      wallDecalZ(b, surf, L.doorX, 3.65, L.z0, 1.7, -1);
+      wallDecalZ(b, surf, L.x0 + 0.31, 1.65, L.z0, 0.56, -1);
     }
   }
   shellLife(b, desc, L);

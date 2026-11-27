@@ -92,7 +92,7 @@ const _rayProbe = new Vector3();
 const _rayHits: Intersection[] = [];
 
 const nextCap = (need: number) => {
-  let c = 8;
+  let c = 16;
   while (c < need) c *= 2;
   return c;
 };
@@ -120,6 +120,8 @@ export class GlbPropPool {
   private lastRebuildX = 1e9;
   private lastRebuildZ = 1e9;
   private readonly lastRebuildDir = new Vector3(0, 0, -1);
+  private lastRebuildFog = -1;
+  private lastAllowShadows = true;
   private time = 0;
   private fxTimer = 0;
   private disposed = false;
@@ -149,6 +151,10 @@ export class GlbPropPool {
   }
 
   addChunk(key: number, placements: GlbPlacement[]): void {
+    if (placements.length === 0) {
+      this.removeChunk(key);
+      return;
+    }
     this.chunks.set(key, placements);
     for (let i = 0; i < placements.length; i++) {
       this.ensureModel(placements[i].id);
@@ -281,7 +287,7 @@ export class GlbPropPool {
     return { point: _hitPoint.clone(), normal: _hitNormal.clone(), vehicle: v };
   }
 
-  update(dt: number, camPos: Vector3, paused: boolean, camera?: Camera): void {
+  update(dt: number, camPos: Vector3, paused: boolean, camera?: Camera, fogFar = 250, allowShadows = true): void {
     if (this.disposed) return;
     if (this.indexesDirty) this.rebuildSpatialLists();
 
@@ -293,15 +299,16 @@ export class GlbPropPool {
       _frustum.setFromProjectionMatrix(_projScreen);
       hasFrustum = true;
       camera.getWorldDirection(_camForward);
-      if (_camForward.dot(this.lastRebuildDir) < 0.985) {
+      if (_camForward.dot(this.lastRebuildDir) < 0.95) {
         turned = true;
       }
     }
 
     const moved = Math.hypot(camPos.x - this.lastRebuildX, camPos.z - this.lastRebuildZ);
-    if (this.dirty || moved > 3.0 || turned) {
+    const envChanged = Math.abs(fogFar - this.lastRebuildFog) > 8 || allowShadows !== this.lastAllowShadows;
+    if (this.dirty || moved > 4.5 || turned || envChanged) {
       if (camera) this.lastRebuildDir.copy(_camForward);
-      this.rebuildInstances(camPos.x, camPos.z, hasFrustum);
+      this.rebuildInstances(camPos.x, camPos.z, hasFrustum, fogFar, allowShadows);
     }
 
     if (!paused) {
@@ -530,10 +537,12 @@ export class GlbPropPool {
     }
   }
 
-  private rebuildInstances(cx: number, cz: number, hasFrustum: boolean): void {
+  private rebuildInstances(cx: number, cz: number, hasFrustum: boolean, fogFar: number, allowShadows: boolean): void {
     this.dirty = false;
     this.lastRebuildX = cx;
     this.lastRebuildZ = cz;
+    this.lastRebuildFog = fogFar;
+    this.lastAllowShadows = allowShadows;
 
     const grouped0 = new Map<GlbModelId, GlbPlacement[]>();
     const grouped1 = new Map<GlbModelId, GlbPlacement[]>();
@@ -543,7 +552,7 @@ export class GlbPropPool {
         const p = list[i];
         const spec = GLB_WORLD_SPECS[p.id];
         if (!spec) continue;
-        const maxD = spec.lodDist;
+        const maxD = Math.min(spec.lodDist, fogFar + 12);
         const dx = p.x - cx;
         const dz = p.z - cz;
         const d2 = dx * dx + dz * dz;
@@ -552,7 +561,7 @@ export class GlbPropPool {
         const s = p.scale ?? Math.max(p.sx ?? 1, p.sy ?? 1, p.sz ?? 1);
         // Keep close shadow-casters within 22m even if off-screen, frustum-cull everything farther.
         if (hasFrustum && d2 > 22 * 22) {
-          const rad = Math.max(spec.size[0], spec.size[1], spec.size[2]) * 0.65 * s + 4.5;
+          const rad = Math.max(spec.size[0], spec.size[1], spec.size[2]) * 0.75 * s + 7.0;
           _sphere.center.set(p.x, p.y + spec.size[1] * 0.5 * s, p.z);
           _sphere.radius = rad;
           if (!_frustum.intersectsSphere(_sphere)) continue;
@@ -573,9 +582,9 @@ export class GlbPropPool {
 
     for (const [id, entry] of this.assets) {
       if (entry.status !== 'ready' || entry.parts.length === 0) continue;
-      this.writePartBatch(entry.parts, entry.meshes, entry.capacities, grouped0.get(id), false);
+      this.writePartBatch(entry.parts, entry.meshes, entry.capacities, grouped0.get(id), false, allowShadows);
       if (entry.lodReady && entry.lodParts.length > 0) {
-        this.writePartBatch(entry.lodParts, entry.lodMeshes, entry.lodCapacities, grouped1.get(id), true);
+        this.writePartBatch(entry.lodParts, entry.lodMeshes, entry.lodCapacities, grouped1.get(id), true, allowShadows);
       }
     }
   }
@@ -586,10 +595,12 @@ export class GlbPropPool {
     capacities: number[],
     list: GlbPlacement[] | undefined,
     forceNoShadow: boolean,
+    allowShadows: boolean,
   ): void {
     const count = list ? list.length : 0;
     for (let pi = 0; pi < parts.length; pi++) {
       const part = parts[pi];
+      const wantShadow = allowShadows && !forceNoShadow && part.castShadow;
       let im = meshes[pi];
       if (count === 0) {
         if (im) im.count = 0;
@@ -604,11 +615,13 @@ export class GlbPropPool {
         im = new InstancedMesh(part.geo, part.mat, cap);
         im.instanceMatrix.setUsage(DynamicDrawUsage);
         im.frustumCulled = false;
-        im.castShadow = !forceNoShadow && part.castShadow;
+        im.castShadow = wantShadow;
         im.receiveShadow = part.receiveShadow;
         this.scene.add(im);
         meshes[pi] = im;
         capacities[pi] = cap;
+      } else if (im.castShadow !== wantShadow) {
+        im.castShadow = wantShadow;
       }
       for (let k = 0; k < count; k++) {
         const p = list![k];

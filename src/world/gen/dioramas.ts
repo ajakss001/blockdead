@@ -156,19 +156,19 @@ export function quarantineEvacBlock(b: Builder, i: number, j: number, X0: number
   };
   buildHighriseShell(b, clinic, rand);
 
-  // Red Cross hospital badge above the South clinic entrance + survivor triage graffiti
+  // Red Cross hospital badge above the South clinic entrance + survivor triage graffiti on solid concrete fence
   b.block(0xb63232, bCx - 0.14, 3.6, bZ0 - 0.16, 0.28, 1.15, 0.04, 'lamp');
   b.block(0xb63232, bCx - 0.58, 4.04, bZ0 - 0.16, 1.16, 0.28, 0.04, 'lamp');
-  wallDecalZ(b, 'decalEvacuate', bCx - 4.2, 2.0, bZ0, 1.55, -1);
-  wallDecalZ(b, 'decalInfected', bCx + 4.4, 2.0, bZ0, 1.6, -1);
 
   const cx = (X0 + X1) * 0.5; // -32
   const fenceZ = Z0 + 5.2;
-  // Breached quarantine perimeter wall along South approach with biohazard tape & rubble breach
+  // Breached quarantine perimeter wall along South approach with biohazard tape, graffiti & rubble breach
   b.block(0x747068, X0 + 1.5, PAVE.plaza, fenceZ, 17.5, 2.1, 0.28, 'concrete', true);
   b.block(0x747068, cx + 4.5, PAVE.plaza, fenceZ, X1 - (cx + 4.5) - 1.5, 2.1, 0.28, 'concrete', true);
+  wallDecalZ(b, 'decalEvacuate', X0 + 5.5, 1.35, fenceZ, 1.45, -1);
   wallDecalZ(b, 'decalBiohazard', X0 + 10.0, 1.35, fenceZ, 3.2, -1);
   wallDecalZ(b, 'decalBiohazard', cx + 10.5, 1.35, fenceZ, 3.2, -1);
+  wallDecalZ(b, 'decalInfected', cx + 15.5, 1.35, fenceZ, 1.45, -1);
   placeProp(b, 'concrete_rubble_mound', cx - 1.5, fenceZ + 0.5, 0.4, 0.78, true, 0.3);
 
   // Tight corridor layout of 3 quarantine tents + sandbags + scattered gurneys/trauma kits
@@ -230,7 +230,7 @@ export function collapsedCraneBlock(b: Builder, i: number, j: number, X0: number
   const z0S = Math.ceil((Z0 + 1.0) / 3) * 3;
   const cxS = x0S + wS * 0.5;
   const bridgeH = 4 * FLOOR_H; // 12.8 m
-  const bridgeX = cxS - 5.5;
+  const bridgeX = cxS + 6.5;
   const z1S = z0S + dS; // -42
   const southTower: BuildingDesc = {
     id: chunkKey * 16,
@@ -267,21 +267,25 @@ export function collapsedCraneBlock(b: Builder, i: number, j: number, X0: number
   };
   buildHighriseShell(b, northTower, rand);
 
-  // Rooftop crane operator cab anchored right beside the parapet gap on South Tower roof
-  b.glb('tower_crane_cab', bridgeX - 2.6, bridgeH, z1S - 6.2, 0);
-  b.solid(bridgeX - 4.5, z1S - 8.2, bridgeX - 0.7, z1S - 4.2, bridgeH, bridgeH + 4.8);
-  b.life(LIFE.beacon, bridgeX - 2.6, bridgeH + 5.2, z1S - 6.2, 0, 0, 0.45, 5, 0.4, 0);
+  // Rooftop crane operator cab mounted on a solid concrete counterweight plinth on open East roof (clear of head-house)
+  const cabX = bridgeX - 0.3;
+  const cabZ = z1S - 7.8;
+  b.block(0x525458, cabX - 1.6, bridgeH, cabZ - 1.6, 3.2, 0.45, 3.2, 'concrete', true);
+  b.glb('tower_crane_cab', cabX, bridgeH + 0.42, cabZ, Math.PI * 0.5);
+  b.solid(cabX - 1.9, cabZ - 1.9, cabX + 1.9, cabZ + 1.9, bridgeH, bridgeH + 5.6);
+  b.life(LIFE.beacon, cabX, bridgeH + 5.75, cabZ, 0, 0, 0.45, 5, 0.4, 0);
 
   // Walkable collapsed crane boom bridging South roof (z1S - 0.5) across the alley into North 4th-floor breach (z0N + 1.5)
   const bridgeZ = (z1S + z0N) * 0.5; // -33.0
-  b.glb('collapsed_crane_boom', bridgeX, bridgeH - 0.42, bridgeZ, Math.PI / 2);
+  b.glb('collapsed_crane_boom', bridgeX, bridgeH - 0.16, bridgeZ, Math.PI / 2);
   // Thin 0.26m continuous walkable deck slab so supportAt tracks smoothly with real edge risk (no railings)
   b.solid(bridgeX - 0.92, z1S - 0.6, bridgeX + 0.92, z0N + 2.2, bridgeH - 0.26, bridgeH);
 
   // Breach framing, dangling concrete slab & sparks on North Tower 4th floor
   b.glb('building_breach_frame', bridgeX, bridgeH - 0.35, z0N - 0.25, 0, { scale: 0.95 });
   b.glb('collapsed_concrete_slab', bridgeX + 2.2, bridgeH - 0.85, z0N + 0.6, -0.3, { pitch: 0.45, roll: 0.22, scale: 0.78 });
-  wallDecalZ(b, 'decalSoot', bridgeX, bridgeH + 3.2, z0N, 4.5, -1);
+  wallDecalZ(b, 'decalSoot', bridgeX - 3.6, bridgeH + 2.1, z0N, 2.2, -1);
+  wallDecalZ(b, 'decalSoot', bridgeX + 3.6, bridgeH + 2.1, z0N, 2.2, -1);
   b.life(LIFE.sparks, bridgeX - 2.1, bridgeH + 2.8, z0N - 0.1, 0, 0, 0, 0, 0.37);
 
   // Street-level courtyard devastation beneath the fallen boom: crushed Kamaz & fallen slabs
@@ -414,7 +418,6 @@ export function sinkholeCollapseBlock(b: Builder, _i: number, _j: number, X0: nu
   placeProp(b, 'checkpoint_barricade', cx - 2.5, cz - 10.2, 0.08, 1.0, true, 0.4);
   placeProp(b, 'checkpoint_barricade', cx + 4.5, cz - 10.0, -0.15, 1.0, true, 0.4);
   placeProp(b, 'checkpoint_barricade', cx, cz + 10.5, 0.05, 1.0, true, 0.4);
-  wallDecalZ(b, 'decalNoWater', cx + 8.0, 1.2, cz - 9.8, 1.35, -1);
 
   // Sheltered collector maintenance pocket / firing trench on North edge with secret stashes
   const tx0 = cx - 4.5;
@@ -424,6 +427,7 @@ export function sinkholeCollapseBlock(b: Builder, _i: number, _j: number, X0: nu
   b.blockY(0x5a5c60, tx0, PAVE.plaza, tz0, 0.3, 2.3, 6.2, 'concrete');
   b.blockY(0x5a5c60, tx0 + 8.7, PAVE.plaza, tz0, 0.3, 2.3, 6.2, 'concrete');
   b.block(0x424448, tx0, PAVE.plaza + 2.3, tz0, 9.0, 0.25, 6.5, 'concrete', true);
+  wallDecalZ(b, 'decalNoWater', cx - 2.6, 1.5, tz0 + 6.18, 1.35, -1);
   wallDecalZ(b, 'decalEvacuate', cx, 1.5, tz0 + 6.18, 1.4, -1);
 
   const st1 = new Place(b, cx - 2.2, PAVE.plaza + 0.1, tz0 + 4.8, 2);
