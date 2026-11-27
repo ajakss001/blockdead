@@ -185,6 +185,8 @@ export class GunFx {
   private readonly magMesh: InstancedMesh;
   private readonly holeGeo = new PlaneGeometry(0.14, 0.14);
   private readonly holes: Record<BulletHoleKind, HolePool>;
+  private readonly glassHolePos = new Float32Array(MAX_HOLES * 3);
+  private readonly glassHoleActive = new Uint8Array(MAX_HOLES);
   groundY: (x: number, y: number, z: number) => number = () => 0;
 
   constructor(scene: Scene) {
@@ -296,12 +298,39 @@ export class GunFx {
     _s.set(sc, sc, 1);
     _v.copy(pos).addScaledVector(_n, 0.008);
     _m.compose(_v, _q, _s);
-    pool.mesh.setMatrixAt(pool.cursor, _m);
-    pool.cursor = (pool.cursor + 1) % MAX_HOLES;
+    const idx = pool.cursor;
+    if (kind === 'glass') {
+      this.glassHolePos[idx * 3] = _v.x;
+      this.glassHolePos[idx * 3 + 1] = _v.y;
+      this.glassHolePos[idx * 3 + 2] = _v.z;
+      this.glassHoleActive[idx] = 1;
+    }
+    pool.mesh.setMatrixAt(idx, _m);
+    pool.cursor = (idx + 1) % MAX_HOLES;
     if (pool.filled < MAX_HOLES) pool.filled++;
     pool.mesh.count = pool.filled;
     pool.mesh.instanceMatrix.needsUpdate = true;
     _s.set(1, 1, 1);
+  }
+
+  /** Hide pooled glass bullet-hole decals inside a shattered window/door box so decals never float in open air. */
+  clearGlassHolesInBox(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number): void {
+    const pool = this.holes.glass;
+    let changed = false;
+    for (let i = 0; i < pool.filled; i++) {
+      if (!this.glassHoleActive[i]) continue;
+      const i3 = i * 3;
+      if (
+        Math.abs(this.glassHolePos[i3] - cx) <= hx &&
+        Math.abs(this.glassHolePos[i3 + 1] - cy) <= hy &&
+        Math.abs(this.glassHolePos[i3 + 2] - cz) <= hz
+      ) {
+        this.glassHoleActive[i] = 0;
+        pool.mesh.setMatrixAt(i, _tinyMat);
+        changed = true;
+      }
+    }
+    if (changed) pool.mesh.instanceMatrix.needsUpdate = true;
   }
 
   muzzleFlash(muzzleWorld: Vector3, big = 1): void {

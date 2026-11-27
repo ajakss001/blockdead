@@ -100,6 +100,7 @@ export class Viewmodel {
   readonly rig = new HandsRig();
 
   private readonly root = new Group();
+  private readonly armsGroup = new Group();
   private readonly armR = new Group();
   private readonly armL = new Group();
   private readonly handR = new Group();
@@ -202,12 +203,13 @@ export class Viewmodel {
     this.handL.add(this.shell);
 
     this.root.add(this.armR, this.armL, ...this.uppers);
-    this.scene.add(this.root);
+    this.scene.add(this.root, this.armsGroup);
   }
 
   /** Show/hide the first-person arms & held items without hiding sibling scene groups (e.g. Mi-8 cockpit). */
   setArmsVisible(visible: boolean): void {
     this.root.visible = visible;
+    this.armsGroup.visible = visible;
   }
 
   /** Swing timing of what is in hand. */
@@ -275,7 +277,7 @@ export class Viewmodel {
 
   /** The arms of the survivor's model (a man, a woman, the SWAT officer), `scale` their height's. */
   setBody(body: BodyId, scale: number): void {
-    this.arms.setBody(body, scale, this.scene);
+    this.arms.setBody(body, scale, this.armsGroup);
   }
 
   equip(item: HandItem): void {

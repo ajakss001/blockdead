@@ -37,76 +37,178 @@ const _q = new Quaternion();
 const _s = new Vector3();
 const _m = new Matrix4();
 
-/** Build full-pane spiderweb fracture texture with pure transparent background (no dark backdrop). */
+/** Build realistic jagged glass fracture texture (angular impact hole, sharp splinters, no concentric cobweb rings). */
 function buildFullPaneCrackCanvas(): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null;
   const cv = document.createElement('canvas');
-  cv.width = cv.height = 256;
+  const S = 512;
+  cv.width = cv.height = S;
   const g = cv.getContext('2d');
   if (!g) return null;
-  const S = 256;
   const cx = S * 0.5;
   const cy = S * 0.5;
   g.clearRect(0, 0, S, S);
 
-  // Subtle corner frost accents along edges without any dark backing disc
-  g.strokeStyle = 'rgba(238, 246, 255, 0.90)';
-  const rays = 18;
-  for (let i = 0; i < rays; i++) {
-    const baseA = (i / rays) * Math.PI * 2 + Math.sin(i * 5.7) * 0.14;
-    const maxLen = S * (0.44 + ((i * 29) % 7) * 0.025);
-    g.lineWidth = i % 3 === 0 ? 2.1 : 1.3;
-    g.beginPath();
-    let px = cx + Math.cos(baseA) * 3;
-    let py = cy + Math.sin(baseA) * 3;
-    g.moveTo(px, py);
-    for (let seg = 1; seg <= 4; seg++) {
-      const t = seg / 4;
-      const jit = Math.sin(i * 11.3 + seg * 4.1) * 0.12;
-      const nx = cx + Math.cos(baseA + jit) * maxLen * t;
-      const ny = cy + Math.sin(baseA + jit) * maxLen * t;
-      g.lineTo(nx, ny);
-      px = nx;
-      py = ny;
-    }
-    g.stroke();
+  const hash = (k: number) => {
+    const v = Math.sin(k * 127.1 + 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
 
-    // Secondary branching split near outer third
-    if (i % 2 === 0) {
+  const rays = 22;
+  const angles: number[] = [];
+  const holeR: number[] = [];
+  const reaches: number[] = [];
+  for (let i = 0; i < rays; i++) {
+    const step = (Math.PI * 2) / rays;
+    angles.push(i * step + (hash(i * 3.1 + 1) - 0.5) * step * 0.58);
+    holeR.push(14 + hash(i * 7.7 + 2) * 18);
+    reaches.push(S * (0.34 + hash(i * 11.3 + 3) * 0.16));
+  }
+
+  // Translucent jagged shard facets clustered near the central impact zone (~30% radius).
+  for (let i = 0; i < rays; i++) {
+    const j = (i + 1) % rays;
+    const rOutA = holeR[i] + 38 + hash(i * 13.7 + 4) * (S * 0.18);
+    const rOutB = holeR[j] + 38 + hash(j * 13.7 + 4) * (S * 0.18);
+    const alpha = 0.14 + hash(i * 17.9 + 5) * 0.12;
+    g.fillStyle = `rgba(195, 225, 238, ${alpha.toFixed(3)})`;
+    g.beginPath();
+    g.moveTo(cx + Math.cos(angles[i]) * holeR[i], cy + Math.sin(angles[i]) * holeR[i]);
+    g.lineTo(cx + Math.cos(angles[i]) * rOutA, cy + Math.sin(angles[i]) * rOutA);
+    g.lineTo(cx + Math.cos(angles[j]) * rOutB, cy + Math.sin(angles[j]) * rOutB);
+    g.lineTo(cx + Math.cos(angles[j]) * holeR[j], cy + Math.sin(angles[j]) * holeR[j]);
+    g.closePath();
+    g.fill();
+  }
+
+  // Only 1-2 short broken angular cross-fractures between adjacent rays near the impact (no circular rings).
+  g.lineCap = 'butt';
+  g.lineJoin = 'miter';
+  for (let i = 0; i < rays; i++) {
+    const j = (i + 1) % rays;
+    if (hash(i * 19.3 + 6) < 0.45) {
+      const rA = holeR[i] + 28 + hash(i * 23.1) * 58;
+      const rB = holeR[j] + 24 + hash(i * 29.7) * 62;
+      const midA = (angles[i] + angles[j]) * 0.5 + (j === 0 ? Math.PI : 0);
+      const rM = (rA + rB) * 0.5 + (hash(i * 31.3) - 0.5) * 14;
+      const x1 = cx + Math.cos(angles[i]) * rA;
+      const y1 = cy + Math.sin(angles[i]) * rA;
+      const xm = cx + Math.cos(midA) * rM;
+      const ym = cy + Math.sin(midA) * rM;
+      const x2 = cx + Math.cos(angles[j]) * rB;
+      const y2 = cy + Math.sin(angles[j]) * rB;
+      g.strokeStyle = 'rgba(30, 45, 55, 0.34)';
+      g.lineWidth = 1.2;
+      g.beginPath();
+      g.moveTo(x1 + 1, y1 + 1);
+      g.lineTo(xm + 1, ym + 1);
+      g.lineTo(x2 + 1, y2 + 1);
+      g.stroke();
+      g.strokeStyle = 'rgba(232, 245, 255, 0.84)';
       g.lineWidth = 1.0;
       g.beginPath();
-      const bx = cx + Math.cos(baseA) * maxLen * 0.56;
-      const by = cy + Math.sin(baseA) * maxLen * 0.56;
-      g.moveTo(bx, by);
-      const bAng = baseA + (i % 4 === 0 ? 0.28 : -0.26);
-      g.lineTo(bx + Math.cos(bAng) * (S * 0.18), by + Math.sin(bAng) * (S * 0.18));
+      g.moveTo(x1, y1);
+      g.lineTo(xm, ym);
+      g.lineTo(x2, y2);
       g.stroke();
     }
   }
 
-  // Polygonal web rings spanning entire glass pane
-  g.strokeStyle = 'rgba(220, 236, 248, 0.68)';
-  for (const rad of [18, 38, 64, 94, 118]) {
-    g.lineWidth = rad > 70 ? 1.0 : 1.25;
-    g.beginPath();
-    for (let i = 0; i <= rays; i++) {
-      const idx = i % rays;
-      const a = (idx / rays) * Math.PI * 2 + Math.sin(idx * 5.7) * 0.14;
-      const rJit = rad * (0.9 + ((idx * 17 + rad) % 5) * 0.045);
-      const x = cx + Math.cos(a) * rJit;
-      const y = cy + Math.sin(a) * rJit;
-      if (i === 0) g.moveTo(x, y);
-      else g.lineTo(x, y);
+  // Sharp angular radial fracture lines + dark glass-edge bevel + forked secondary splinters.
+  const drawJaggedRay = (pts: [number, number][], baseWidth: number) => {
+    for (let s = 0; s < pts.length - 1; s++) {
+      const w = Math.max(0.65, baseWidth * (1 - (s / pts.length) * 0.55));
+      g.strokeStyle = 'rgba(30, 45, 55, 0.36)';
+      g.lineWidth = w + 0.4;
+      g.beginPath();
+      g.moveTo(pts[s][0] + 1, pts[s][1] + 1);
+      g.lineTo(pts[s + 1][0] + 1, pts[s + 1][1] + 1);
+      g.stroke();
+
+      g.strokeStyle = 'rgba(238, 248, 255, 0.92)';
+      g.lineWidth = w;
+      g.beginPath();
+      g.moveTo(pts[s][0], pts[s][1]);
+      g.lineTo(pts[s + 1][0], pts[s + 1][1]);
+      g.stroke();
     }
-    g.stroke();
+  };
+
+  for (let i = 0; i < rays; i++) {
+    const a0 = angles[i];
+    const rStart = holeR[i];
+    const rEnd = reaches[i];
+    const segs = 5;
+    const pts: [number, number][] = [[cx + Math.cos(a0) * rStart, cy + Math.sin(a0) * rStart]];
+    let curA = a0;
+    for (let seg = 1; seg <= segs; seg++) {
+      const t = seg / segs;
+      curA += (hash(i * 41.3 + seg * 7.1) - 0.5) * 0.22;
+      const rad = rStart + (rEnd - rStart) * t;
+      pts.push([cx + Math.cos(curA) * rad, cy + Math.sin(curA) * rad]);
+    }
+    drawJaggedRay(pts, i % 3 === 0 ? 1.8 : 1.25);
+
+    // Forked secondary splinters splitting at sharp angles.
+    if (hash(i * 53.7 + 9) < 0.65) {
+      const anchor = pts[2];
+      const fAng = curA + (hash(i * 61.1) < 0.5 ? 1 : -1) * (0.28 + hash(i * 67.3) * 0.30);
+      const fLen = S * (0.10 + hash(i * 71.9) * 0.14);
+      const midPt: [number, number] = [
+        anchor[0] + Math.cos(fAng) * fLen * 0.52,
+        anchor[1] + Math.sin(fAng) * fLen * 0.52,
+      ];
+      const endPt: [number, number] = [
+        midPt[0] + Math.cos(fAng + (hash(i * 73.1) - 0.5) * 0.24) * fLen * 0.48,
+        midPt[1] + Math.sin(fAng + (hash(i * 73.1) - 0.5) * 0.24) * fLen * 0.48,
+      ];
+      drawJaggedRay([anchor, midPt, endPt], 1.0);
+    }
+
+    // Extra dense hairline stress splinters close to the jagged central hole.
+    if (hash(i * 79.3) < 0.7) {
+      const sAng = angles[i] + (hash(i * 83.9) - 0.5) * 0.28;
+      const sLen = holeR[i] + 24 + hash(i * 89.7) * 44;
+      drawJaggedRay(
+        [
+          [cx + Math.cos(sAng) * holeR[i], cy + Math.sin(sAng) * holeR[i]],
+          [cx + Math.cos(sAng + 0.08) * sLen, cy + Math.sin(sAng + 0.08) * sLen],
+        ],
+        0.85,
+      );
+    }
   }
 
-  // Tiny center perforation without any large halo
-  g.strokeStyle = 'rgba(245, 250, 255, 0.95)';
-  g.lineWidth = 1.6;
+  // Punch clean irregular transparent central impact hole and stroke crisp broken glass rim.
+  g.save();
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = '#000';
   g.beginPath();
-  g.arc(cx, cy, 5, 0, Math.PI * 2);
+  for (let i = 0; i < rays; i++) {
+    const x = cx + Math.cos(angles[i]) * holeR[i];
+    const y = cy + Math.sin(angles[i]) * holeR[i];
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.fill();
+  g.restore();
+
+  g.beginPath();
+  for (let i = 0; i < rays; i++) {
+    const x = cx + Math.cos(angles[i]) * holeR[i];
+    const y = cy + Math.sin(angles[i]) * holeR[i];
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.strokeStyle = 'rgba(28, 42, 52, 0.55)';
+  g.lineWidth = 2.6;
   g.stroke();
+  g.strokeStyle = 'rgba(242, 250, 255, 0.96)';
+  g.lineWidth = 1.4;
+  g.stroke();
+
   return cv;
 }
 

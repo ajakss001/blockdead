@@ -190,6 +190,7 @@ export class WorldLife {
         const mat = new MeshStandardMaterial({
           map: tex,
           transparent: true,
+          alphaTest: 0.04,
           depthWrite: false,
           roughness: 0.25,
           metalness: 0.2,
@@ -199,6 +200,8 @@ export class WorldLife {
         const quadFloor = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
         const dMesh = new InstancedMesh(quadFloor, mat, DYN_SHARD_CAP);
         dMesh.name = 'life:dynShards';
+        dMesh.castShadow = false;
+        dMesh.receiveShadow = false;
         dMesh.frustumCulled = false;
         dMesh.renderOrder = 1;
         dMesh.count = 0;
@@ -935,39 +938,136 @@ void main() {
   gl_FragColor = vec4(col * a * vI * (1.0 - fog) * (1.0 - 0.75 * uFog.z), 1.0);
 }`;
 
-/** Procedural spiderweb crack texture on pure transparent background (no dark backdrop). */
+/** Realistic jagged shattered car glass decal texture (angular impact hole, sharp splinters, no cobweb rings). */
 function buildGlassCrackCanvas(): HTMLCanvasElement {
-  const S = 128;
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const g = cv.getContext('2d')!;
   const cx = S / 2;
   const cy = S / 2;
   g.clearRect(0, 0, S, S);
-  // Crisp radial crack lines (bright ice-white on fully transparent background)
-  g.strokeStyle = 'rgba(238, 246, 255, 0.90)';
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * Math.PI * 2 + Math.sin(i * 7.3) * 0.20;
-    const len = S * (0.30 + ((i * 37) % 10) * 0.018);
-    g.lineWidth = i % 2 === 0 ? 1.5 : 1.0;
-    g.beginPath();
-    g.moveTo(cx + Math.cos(a) * 3, cy + Math.sin(a) * 3);
-    g.quadraticCurveTo(cx + Math.cos(a + 0.12) * len * 0.55, cy + Math.sin(a + 0.12) * len * 0.55, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
-    g.stroke();
+
+  const hash = (k: number) => {
+    const v = Math.sin(k * 127.1 + 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
+
+  const rays = 18;
+  const angles: number[] = [];
+  const holeR: number[] = [];
+  const reaches: number[] = [];
+  for (let i = 0; i < rays; i++) {
+    const step = (Math.PI * 2) / rays;
+    angles.push(i * step + (hash(i * 4.3 + 2) - 0.5) * step * 0.56);
+    holeR.push(7 + hash(i * 8.1 + 3) * 8);
+    reaches.push(S * (0.28 + hash(i * 12.7 + 5) * 0.19));
   }
-  // Concentric spiderweb rings
-  g.strokeStyle = 'rgba(220, 236, 248, 0.65)';
-  g.lineWidth = 1.0;
-  for (const r of [11, 21, 33, 46]) {
+
+  // Subtle translucent triangular shard facets around the impact perforation.
+  for (let i = 0; i < rays; i++) {
+    const j = (i + 1) % rays;
+    const rA = holeR[i] + 18 + hash(i * 15.1) * 42;
+    const rB = holeR[j] + 18 + hash(j * 15.1) * 42;
+    const alpha = 0.16 + hash(i * 19.7) * 0.12;
+    g.fillStyle = `rgba(195, 225, 238, ${alpha.toFixed(3)})`;
     g.beginPath();
-    g.arc(cx, cy, r, 0, Math.PI * 2);
-    g.stroke();
+    g.moveTo(cx + Math.cos(angles[i]) * holeR[i], cy + Math.sin(angles[i]) * holeR[i]);
+    g.lineTo(cx + Math.cos(angles[i]) * rA, cy + Math.sin(angles[i]) * rA);
+    g.lineTo(cx + Math.cos(angles[j]) * rB, cy + Math.sin(angles[j]) * rB);
+    g.lineTo(cx + Math.cos(angles[j]) * holeR[j], cy + Math.sin(angles[j]) * holeR[j]);
+    g.closePath();
+    g.fill();
   }
-  // Tiny light-scattering bullet perforation ring (no dark smudge)
-  g.strokeStyle = 'rgba(245, 250, 255, 0.95)';
-  g.lineWidth = 1.4;
+
+  // Only sparse broken angular cross-cracks between a few neighboring rays near center.
+  for (let i = 0; i < rays; i++) {
+    const j = (i + 1) % rays;
+    if (hash(i * 23.3 + 7) < 0.35) {
+      const rA = holeR[i] + 14 + hash(i * 27.1) * 28;
+      const rB = holeR[j] + 14 + hash(i * 31.9) * 28;
+      g.strokeStyle = 'rgba(30, 45, 55, 0.34)';
+      g.lineWidth = 1.1;
+      g.beginPath();
+      g.moveTo(cx + Math.cos(angles[i]) * rA + 0.8, cy + Math.sin(angles[i]) * rA + 0.8);
+      g.lineTo(cx + Math.cos(angles[j]) * rB + 0.8, cy + Math.sin(angles[j]) * rB + 0.8);
+      g.stroke();
+      g.strokeStyle = 'rgba(232, 245, 255, 0.85)';
+      g.lineWidth = 0.9;
+      g.beginPath();
+      g.moveTo(cx + Math.cos(angles[i]) * rA, cy + Math.sin(angles[i]) * rA);
+      g.lineTo(cx + Math.cos(angles[j]) * rB, cy + Math.sin(angles[j]) * rB);
+      g.stroke();
+    }
+  }
+
+  // Sharp jagged radial fracture rays + secondary forked splinters.
+  for (let i = 0; i < rays; i++) {
+    let curA = angles[i];
+    let px = cx + Math.cos(curA) * holeR[i];
+    let py = cy + Math.sin(curA) * holeR[i];
+    for (let seg = 1; seg <= 4; seg++) {
+      const t = seg / 4;
+      curA += (hash(i * 37.3 + seg * 5.9) - 0.5) * 0.24;
+      const r = holeR[i] + (reaches[i] - holeR[i]) * t;
+      const nx = cx + Math.cos(curA) * r;
+      const ny = cy + Math.sin(curA) * r;
+      const w = Math.max(0.65, (i % 2 === 0 ? 1.55 : 1.05) * (1 - t * 0.45));
+      g.strokeStyle = 'rgba(30, 45, 55, 0.36)';
+      g.lineWidth = w + 0.35;
+      g.beginPath();
+      g.moveTo(px + 0.8, py + 0.8);
+      g.lineTo(nx + 0.8, ny + 0.8);
+      g.stroke();
+      g.strokeStyle = 'rgba(238, 248, 255, 0.92)';
+      g.lineWidth = w;
+      g.beginPath();
+      g.moveTo(px, py);
+      g.lineTo(nx, ny);
+      g.stroke();
+      if (seg === 2 && hash(i * 43.1) < 0.55) {
+        const fAng = curA + (hash(i * 47.9) < 0.5 ? 1 : -1) * 0.36;
+        const fLen = 14 + hash(i * 53.3) * 24;
+        g.strokeStyle = 'rgba(232, 245, 255, 0.82)';
+        g.lineWidth = 0.85;
+        g.beginPath();
+        g.moveTo(nx, ny);
+        g.lineTo(nx + Math.cos(fAng) * fLen, ny + Math.sin(fAng) * fLen);
+        g.stroke();
+      }
+      px = nx;
+      py = ny;
+    }
+  }
+
+  // Punch irregular jagged central bullet hole and stroke beveled rim.
+  g.save();
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = '#000';
   g.beginPath();
-  g.arc(cx, cy, 3.5, 0, Math.PI * 2);
+  for (let i = 0; i < rays; i++) {
+    const x = cx + Math.cos(angles[i]) * holeR[i];
+    const y = cy + Math.sin(angles[i]) * holeR[i];
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.fill();
+  g.restore();
+
+  g.beginPath();
+  for (let i = 0; i < rays; i++) {
+    const x = cx + Math.cos(angles[i]) * holeR[i];
+    const y = cy + Math.sin(angles[i]) * holeR[i];
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.strokeStyle = 'rgba(28, 42, 52, 0.55)';
+  g.lineWidth = 2.0;
+  g.stroke();
+  g.strokeStyle = 'rgba(242, 250, 255, 0.96)';
+  g.lineWidth = 1.1;
   g.stroke();
   return cv;
 }

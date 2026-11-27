@@ -89,7 +89,8 @@ async function meshyPost(apiKey, body) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`Meshy POST ${res.status} ${res.statusText}`);
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Meshy POST ${res.status} ${res.statusText}: ${errText}`);
   }
   const data = await res.json();
   if (!data?.result) throw new Error('Meshy POST missing task result id');
@@ -102,7 +103,10 @@ async function meshyPoll(apiKey, taskId, label) {
     const res = await fetch(`${MESHY_ENDPOINT}/${taskId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!res.ok) throw new Error(`Meshy GET ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Meshy GET ${res.status} ${res.statusText}: ${errText}`);
+    }
     const data = await res.json();
     if (data.status === 'SUCCEEDED') return data;
     if (data.status === 'FAILED' || data.status === 'EXPIRED') {
@@ -213,9 +217,9 @@ async function main() {
     console.log(`[generate] ${spec.file} (preview -> refine, PBR, target=${spec.polycount})...`);
     const previewId = await meshyPost(apiKey, {
       mode: 'preview',
-      ai_model: 'meshy-5',
+      ai_model: 'latest',
       prompt: spec.prompt,
-      art_style: 'realistic',
+      should_remesh: true,
       topology: 'triangle',
       target_polycount: spec.polycount,
     });
@@ -224,7 +228,6 @@ async function main() {
 
     const refineId = await meshyPost(apiKey, {
       mode: 'refine',
-      ai_model: 'meshy-5',
       preview_task_id: previewId,
       enable_pbr: true,
     });

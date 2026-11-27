@@ -91,10 +91,10 @@ export class HeliCockpit {
     };
 
     // Main angled dashboard housing & hooded glare shield
-    addPart(new BoxGeometry(1.16, 0.28, 0.36), consoleMat, 0, -0.35, -0.86, -0.36, 0, 0);
-    addPart(new BoxGeometry(1.22, 0.045, 0.42), frameMat, 0, -0.19, -0.84, -0.18, 0, 0);
+    addPart(new BoxGeometry(1.16, 0.28, 0.22), consoleMat, 0, -0.35, -0.95, -0.22, 0, 0);
+    addPart(new BoxGeometry(1.18, 0.032, 0.24), frameMat, 0, -0.175, -0.88, -0.06, 0, 0);
     // Center switch pedestal below dash
-    addPart(new BoxGeometry(0.24, 0.24, 0.44), frameMat, 0, -0.52, -0.74, -0.12, 0, 0);
+    addPart(new BoxGeometry(0.24, 0.20, 0.30), frameMat, 0, -0.52, -0.84, -0.12, 0, 0);
 
     // Slim cockpit windshield struts (pillars kept thin & high/wide for maximum street & rooftop visibility)
     addPart(new BoxGeometry(0.026, 0.86, 0.036), frameMat, 0, 0.21, -0.96, -0.32, 0, 0);
@@ -106,7 +106,7 @@ export class HeliCockpit {
     addPart(new PlaneGeometry(1.14, 0.72), glassMat, 0, 0.16, -0.88, -0.32, 0, 0);
 
     // Animated Cyclic Stick (РУС) mounted lower-center
-    this.stickPivot.position.set(0, -0.60, -0.55);
+    this.stickPivot.position.set(0, -0.64, -0.58);
     this.root.add(this.stickPivot);
     const addStickPart = (g: BufferGeometry, m: Material, x: number, y: number, z: number, rx = 0) => {
       const mesh = new Mesh(regG(g), m);
@@ -129,25 +129,25 @@ export class HeliCockpit {
         const tex = new CanvasTexture(canvas);
         tex.colorSpace = SRGBColorSpace;
         this.textures.push(tex);
-        const bezel = new Mesh(regG(new BoxGeometry(0.32, 0.24, 0.03)), trimMat);
-        bezel.position.set(xPos, -0.255, -0.735);
-        bezel.rotation.set(-0.34, rotY, 0, 'YXZ');
+        const bezel = new Mesh(regG(new BoxGeometry(0.32, 0.22, 0.024)), trimMat);
+        bezel.position.set(xPos, -0.315, -0.78);
+        bezel.rotation.set(-0.22, rotY, 0, 'YXZ');
         this.root.add(bezel);
 
         const screen = new Mesh(
-          regG(new PlaneGeometry(0.285, 0.214)),
+          regG(new PlaneGeometry(0.292, 0.196)),
           regM(new MeshBasicMaterial({ map: tex, fog: false, toneMapped: false })),
         );
-        screen.position.set(0, 0, 0.017);
+        screen.position.set(0, 0, 0.013);
         bezel.add(screen);
         return { canvas, ctx, tex };
       };
 
-      const left = makeMfd(-0.205, 0.11);
+      const left = makeMfd(-0.205, 0.10);
       this.kpiCtx = left.ctx;
       this.kpiTex = left.tex;
 
-      const right = makeMfd(0.205, -0.11);
+      const right = makeMfd(0.205, -0.10);
       this.mapCtx = right.ctx;
       this.mapTex = right.tex;
     }

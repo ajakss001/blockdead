@@ -587,7 +587,8 @@ export function buildShop(b: Builder, s: HouseSpec): HouseResult {
       b.solid(xa, z1 - WALL_T, xa + 0.15, z1);
       b.solid(xb - 0.15, z1 - WALL_T, xb, z1);
     } else {
-      wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.7, true);
+      wallAlongX(b, front, paper, xa, xb, z1 - WALL_T, true, 0, 0.7, false);
+      b.solid(xa, z1 - WALL_T, xb, z1, 0, 0.7);
       b.block(PAL.window, xa + 0.15, 0.7, z1 - 0.12, xb - xa - 0.3, 1.9, 0.04, 'windowGlass', true);
     }
     b.block(PAL.trim, xa, 0.3, z1 - WALL_T, 0.15, 2.3, WALL_T, 'metal');

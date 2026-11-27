@@ -1278,16 +1278,19 @@ export class WorldScene implements IScene {
       // Tired: the swing is slower.
       this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
       if (!this.dead) {
-        this.player.fixedUpdate(dt);
         const h = c.crouched ? 1.15 : 1.75;
-        const broken = this.windowPanes.shatterCrackedNear(c.position.x, c.position.y, c.position.z, 0.52, h);
+        const broken = this.windowPanes.shatterCrackedNear(c.position.x, c.position.y, c.position.z, 0.65, h);
         if (broken.length > 0) {
           const mvx = c.position.x - c.prevPosition.x;
           const mvz = c.position.z - c.prevPosition.z;
           const fx = Math.hypot(mvx, mvz) > 1e-4 ? mvx : -Math.sin(c.yaw);
           const fz = Math.hypot(mvx, mvz) > 1e-4 ? mvz : -Math.cos(c.yaw);
-          for (const s of broken) this.emitWindowShatterFx(s.cx, s.cy, s.cz, fx, fz);
+          for (const s of broken) {
+            this.emitWindowShatterFx(s.cx, s.cy, s.cz, fx, fz);
+            this.firearms.fx.clearGlassHolesInBox(s.cx, s.cy, s.cz, s.sx * 0.5 + 0.35, s.sy * 0.5 + 0.35, s.sz * 0.5 + 0.35);
+          }
         }
+        this.player.fixedUpdate(dt);
       }
       const consumedByWire = !this.dead && this.tripwires.handlePlacementInput(c.position.x, c.position.y, c.position.z, c.yaw, this.ctx.input, this.inventory);
       if (!this.dead && !consumedByWire && !this.tripwires.isPlacing) this.firearms.fixedUpdate(dt);
@@ -1947,6 +1950,7 @@ export class WorldScene implements IScene {
   }
 
   private breakGlassAt(at: Vector3, dir: Vector3): void {
+    this.firearms.fx.clearGlassHolesInBox(at.x, at.y, at.z, 1.2, 1.5, 1.2);
     this.world.breakGlassAt(at.x, at.y, at.z, 0.65);
     const floorAt = (gx: number, gz: number) => this.interiors.surfaceY(gx, gz, at.y) ?? this.layout.walkHeightAt(gx, gz);
     const floorY = floorAt(at.x, at.z);
@@ -1997,6 +2001,7 @@ export class WorldScene implements IScene {
     const spot = this.windowPanes.shatter(owner);
     if (!spot) return false;
     this.emitWindowShatterFx(spot.cx, spot.cy, spot.cz, dirX, dirZ);
+    this.firearms.fx.clearGlassHolesInBox(spot.cx, spot.cy, spot.cz, spot.sx * 0.5 + 0.35, spot.sy * 0.5 + 0.35, spot.sz * 0.5 + 0.35);
     return true;
   }
 
