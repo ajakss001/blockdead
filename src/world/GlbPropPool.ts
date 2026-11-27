@@ -296,8 +296,10 @@ export class GlbPropPool {
 
     const baseUrl = typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL ? import.meta.env.BASE_URL : '/';
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    const subDir = 'dir' in spec && spec.dir ? spec.dir : 'world';
+    const isOptional = 'optional' in spec && spec.optional === true;
 
-    void this.loadGltfParts(loader, `${baseUrl}models/world/${spec.file}`, id, spec, false)
+    void this.loadGltfParts(loader, `${baseUrl}models/${subDir}/${spec.file}`, id, spec, false)
       .then((parts) => {
         if (this.disposed) return;
         entry.parts = parts;
@@ -308,7 +310,7 @@ export class GlbPropPool {
       })
       .catch((err) => {
         entry.status = 'error';
-        console.warn(`[GlbPropPool] failed to load ${spec.file}:`, err);
+        if (!isOptional) console.warn(`[GlbPropPool] failed to load ${spec.file}:`, err);
       });
 
     if (LOD1_WORLD_MODELS.has(id)) {
@@ -369,6 +371,17 @@ export class GlbPropPool {
     } else if (BASE_SCALE[id]) {
       const [sx, sy, sz] = BASE_SCALE[id]!;
       assetMat = new Matrix4().makeScale(sx, sy, sz).multiply(baseMat);
+    } else if ('dir' in spec && spec.dir === 'catastrophe') {
+      // Normalize generated Meshy assets to exact world meter target dimensions, centered in XZ & grounded at y=0.
+      const rawSize = box.getSize(_camForward);
+      const rawMax = Math.max(0.01, rawSize.x, rawSize.y, rawSize.z);
+      const targetMax = Math.max(spec.size[0], spec.size[1], spec.size[2]);
+      const uScale = targetMax / rawMax;
+      const cxOff = -(box.min.x + box.max.x) * 0.5;
+      const czOff = -(box.min.z + box.max.z) * 0.5;
+      assetMat = new Matrix4()
+        .makeScale(uScale, uScale, uScale)
+        .multiply(new Matrix4().makeTranslation(cxOff, minYOffset, czOff));
     } else if (!isLod && id === 'Sport_Sedan_22k') {
       extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
       extraMat = new MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.96, metalness: 0.05 });

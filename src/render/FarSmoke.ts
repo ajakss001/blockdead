@@ -186,6 +186,13 @@ export class FarSmoke {
     const seen = new Set<string>();
     for (let i = ci - REACH; i <= ci + REACH; i++) {
       for (let j = cj - REACH; j <= cj + REACH; j++) {
+        if (i === 1 && j === -1 && !seen.has('boeing')) {
+          seen.add('boeing');
+          this.columns.push({ x: CHUNK + 27.1, z: -CHUNK + 26.6, size: 6.8, seed: 0.31 });
+        } else if (i === 1 && j === 0 && !seen.has('mi8')) {
+          seen.add('mi8');
+          this.columns.push({ x: CHUNK + 14.0, z: 10.0, size: 3.6, seed: 0.77 });
+        }
         const site = this.layout.poi(i, j);
         if (!site) continue;
         const key = `${site.i},${site.j}`;

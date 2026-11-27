@@ -340,7 +340,10 @@ export async function main(): Promise<number> {
     const manifest = JSON.parse(readFileSync('public/models/world/manifest.json', 'utf8')) as {
       models: { file: string }[];
     };
-    const specKeys = Object.keys(GLB_WORLD_SPECS) as GlbModelId[];
+    const specKeys = (Object.keys(GLB_WORLD_SPECS) as GlbModelId[]).filter((id) => {
+      const sp = GLB_WORLD_SPECS[id];
+      return !('optional' in sp && sp.optional);
+    });
     check(specKeys.length === 40 && manifest.models.length === 40, `P5: catalog & manifest both declare all 40 world GLBs (${specKeys.length}/${manifest.models.length})`);
 
     let missing = 0;
@@ -793,13 +796,27 @@ export async function main(): Promise<number> {
         heliTest.dispose();
       }
 
-      // Downtown catastrophe landmarks in (1,-1) Boeing + (1,0) Mi-8 high-rise impact
+      // Downtown catastrophe landmarks in (1,-1) Boeing diorama + (1,0) Mi-8 breached high-rise + giant trash mounds
       {
         const cBoeing = buildChunk(layout, 1, -1);
         const cMi8 = buildChunk(layout, 1, 0);
-        const hasBoeing = cBoeing.glbs.some((g) => g.id === 'passenger_airliner_22');
-        const hasHighMi8 = cMi8.glbs.some((g) => g.id === 'mi8_wreck_remesh' && g.y >= 9.0);
-        check(hasBoeing && hasHighMi8, `P7: downtown catastrophe landmarks present (boeing=${hasBoeing}, highriseMi8=${hasHighMi8})`);
+        const noIntactPlane = !cBoeing.glbs.some((g) => g.id === 'passenger_airliner_22');
+        const hasFuselage = cBoeing.glbs.some((g) => g.id === 'crashed_boeing_fuselage');
+        const hasWing = cBoeing.glbs.some((g) => g.id === 'crashed_plane_wing');
+        const rubbleBoeing = cBoeing.glbs.filter((g) => g.id === 'concrete_rubble_mound').length;
+        const hasBreachBoeing = cBoeing.glbs.some((g) => g.id === 'building_breach_frame');
+
+        const breachBldg = cMi8.buildings.find((b) => !!b.breach);
+        const hasHighMi8 = cMi8.glbs.some((g) => g.id === 'mi8_wreck_remesh' && g.y >= 9.0 && (g.pitch ?? 0) < -0.35);
+        const hasHeliBreach = cMi8.glbs.some((g) => g.id === 'building_breach_frame');
+        const rubbleMi8 = cMi8.glbs.filter((g) => g.id === 'concrete_rubble_mound').length;
+        const wrecksMi8 = cMi8.glbs.filter((g) => g.id === 'burned_car_wreck').length;
+        const hasGiantTrash = cMi8.glbs.some((g) => g.id === 'giant_trash_mound');
+
+        check(
+          noIntactPlane && hasFuselage && hasWing && rubbleBoeing >= 3 && hasBreachBoeing && !!breachBldg && hasHighMi8 && hasHeliBreach && rubbleMi8 >= 2 && wrecksMi8 >= 1 && hasGiantTrash,
+          `P7: downtown catastrophe dioramas rebuilt (boeing=${hasFuselage}, wing=${hasWing}, rubble=${rubbleBoeing}, heliBreach=${!!breachBldg}, mi8Rubble=${rubbleMi8}, mi8Wrecks=${wrecksMi8}, trash=${hasGiantTrash})`,
+        );
       }
 
       // ── P8 Regression Checks ──

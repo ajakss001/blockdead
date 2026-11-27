@@ -61,6 +61,8 @@ export interface BuildingDesc {
   flip: boolean;
   kind: 'apartments' | 'offices';
   seed: number;
+  /** Optional structural wall breach carved into the front facade (e.g. Mi-8 helicopter crash). */
+  breach?: { x: number; y: number; w: number; h: number };
 }
 
 export interface Local {
@@ -331,9 +333,30 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   const roll = rand();
   const entrance: 'doors' | 'smashed' = roll < 0.7 ? 'doors' : 'smashed';
 
-  // Front wall: storeys 1+ in one slab; the ground floor in segments between the openings
-  // (entrance: full height to the lintel; smashed shop windows: over a low sill you can step across).
-  b.blockY(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f);
+  // Front wall: storeys 1+ in one slab (or split cleanly around a structural wall breach),
+  // plus the ground floor in segments between the openings.
+  if (desc.breach) {
+    const bx0 = Math.max(L.x0 + 0.6, Math.min(L.x1 - 2.0, desc.breach.x - desc.breach.w * 0.5));
+    const bx1 = Math.min(L.x1 - 0.6, bx0 + desc.breach.w);
+    const by0 = Math.max(FLOOR_H + 0.2, desc.breach.y);
+    const by1 = Math.min(H - 0.8, desc.breach.y + desc.breach.h);
+    if (bx0 > L.x0 + 0.05) b.blockY(tint, L.x0, FLOOR_H, L.z0, bx0 - L.x0, top - FLOOR_H, WALL, f);
+    if (L.x1 > bx1 + 0.05) b.blockY(tint, bx1, FLOOR_H, L.z0, L.x1 - bx1, top - FLOOR_H, WALL, f);
+    if (by0 > FLOOR_H + 0.05) b.blockY(tint, bx0, FLOOR_H, L.z0, bx1 - bx0, by0 - FLOOR_H, WALL, f);
+    if (top > by1 + 0.05) b.blockY(tint, bx0, by1, L.z0, bx1 - bx0, top - by1, WALL, f);
+    // Destroyed charred interior cavity behind the breach (floor, soot ceiling/back/side walls & bent rebar).
+    const cavD = Math.min(4.6, desc.d * 0.35);
+    b.block(0x1e1d1c, bx0, by0 - 0.22, L.z0 + WALL, bx1 - bx0, 0.22, cavD, 'concrete', true);
+    b.block(0x161515, bx0, by1 - 0.18, L.z0 + WALL, bx1 - bx0, 0.18, cavD, 'concrete', true);
+    b.block(0x141416, bx0, by0, L.z0 + WALL + cavD - 0.2, bx1 - bx0, by1 - by0, 0.2, 'concrete', true);
+    b.block(0x1a1919, bx0 - 0.15, by0, L.z0 + WALL, 0.2, by1 - by0, cavD, 'concrete', true);
+    b.block(0x1a1919, bx1 - 0.05, by0, L.z0 + WALL, 0.2, by1 - by0, cavD, 'concrete', true);
+    // Twisted exposed interior girders & hanging ceiling rubble around the breached edges.
+    b.block(0x3a2820, bx0 + 0.6, by0, L.z0 + 0.5, 0.14, (by1 - by0) * 0.72, 0.14, 'metal');
+    b.block(0x3a2820, bx1 - 0.8, by0 + 0.3, L.z0 + 0.4, 0.14, (by1 - by0) * 0.65, 0.14, 'metal');
+  } else {
+    b.blockY(tint, L.x0, FLOOR_H, L.z0, L.x1 - L.x0, top - FLOOR_H, WALL, f);
+  }
   const openings = [{ x0: d0, x1: d1, sill: 0, head: ENTRANCE_H }, ...panes.map((p) => ({ x0: p.x, x1: p.x + p.w, sill: 0.3, head: 2.8 }))].sort((a, c) => a.x0 - c.x0);
   let wx = L.x0;
   for (const o of openings) {
@@ -490,7 +513,14 @@ function shellLife(b: Builder, desc: BuildingDesc, L: Local): void {
   for (const lu of litUnits(desc)) {
     const span = unitSpans(L, lu.back)[lu.u];
     const y = lu.k * FLOOR_H + (spec.sill + spec.head) / 2;
-    for (const x of wins) if (x > span.x0 + 0.3 && x < span.x1 - 0.3) b.life(0, x, y, lu.back ? L.z1 + 0.03 : L.z0 - 0.03, 0, lu.back ? 1 : -1, ww, wh, lu.mode, lu.tag);
+    for (const x of wins) {
+      if (desc.breach && !lu.back) {
+        const bx0 = desc.breach.x - desc.breach.w * 0.5 - 0.6;
+        const bx1 = desc.breach.x + desc.breach.w * 0.5 + 0.6;
+        if (x >= bx0 && x <= bx1 && y >= desc.breach.y - 0.5 && y <= desc.breach.y + desc.breach.h + 0.5) continue;
+      }
+      if (x > span.x0 + 0.3 && x < span.x1 - 0.3) b.life(0, x, y, lu.back ? L.z1 + 0.03 : L.z0 - 0.03, 0, lu.back ? 1 : -1, ww, wh, lu.mode, lu.tag);
+    }
     const corner = span.x0 - L.ix0 < 0.5 ? -1 : L.ix1 - span.x1 < 0.5 ? 1 : 0;
     if (corner) for (const z of side) if (z > span.z0 + 0.3 && z < span.z1 - 0.3) b.life(0, corner < 0 ? L.x0 - 0.03 : L.x1 + 0.03, y, z, corner, 0, ww, wh, lu.mode, lu.tag);
   }
@@ -521,6 +551,11 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
       const cx = u + spec.inset + spec.width / 2;
       for (const z of [z0 + mid, z1 - mid]) {
         if (k === 0 && z === front) continue;
+        if (desc.breach && z === front) {
+          const bx0 = desc.breach.x - desc.breach.w * 0.5 - 0.6;
+          const bx1 = desc.breach.x + desc.breach.w * 0.5 + 0.6;
+          if (cx >= bx0 && cx <= bx1 && y >= desc.breach.y - 0.5 && y <= desc.breach.y + desc.breach.h + 0.5) continue;
+        }
         _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1));
         b.geo(pane, 0x6c7a84, _m, 'windowGlass');
         b.geo(reveal, 0x8a867c, _m, 'concrete');

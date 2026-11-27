@@ -1,5 +1,16 @@
 export type GlbCategory = 'vehicle' | 'aviation' | 'sign' | 'infra' | 'nature' | 'prop' | 'structure';
 
+export interface GlbSpec {
+  file: string;
+  category: GlbCategory;
+  size: readonly [number, number, number];
+  minY: number;
+  lodDist: number;
+  castShadow: boolean;
+  dir?: 'world' | 'catastrophe';
+  optional?: boolean;
+}
+
 export const GLB_WORLD_SPECS = {
   gaz_tigr_4x4_17k: { file: 'gaz_tigr_4x4_17k.glb', category: 'vehicle' as GlbCategory, size: [2.951, 3.337, 5.7] as const, minY: 0, lodDist: 170, castShadow: true },
   zsu_23_4_shilka_14k: { file: 'zsu_23_4_shilka_14k.glb', category: 'vehicle' as GlbCategory, size: [3.223, 3.88, 6.5] as const, minY: 0, lodDist: 175, castShadow: true },
@@ -47,7 +58,13 @@ export const GLB_WORLD_SPECS = {
   burn_barrel: { file: 'burn_barrel.glb', category: 'prop' as GlbCategory, size: [0.658, 0.95, 0.656] as const, minY: 0, lodDist: 90, castShadow: false },
 
   fire_escape_smart_top: { file: 'fire_escape_smart_top.glb', category: 'structure' as GlbCategory, size: [3.179, 3.2, 1.509] as const, minY: 0, lodDist: 105, castShadow: false },
-} as const;
+
+  crashed_boeing_fuselage: { file: 'crashed_boeing_fuselage.glb', dir: 'catastrophe' as const, optional: true as const, category: 'aviation' as GlbCategory, size: [5.8, 5.2, 22.0] as const, minY: 0, lodDist: 240, castShadow: true },
+  crashed_plane_wing: { file: 'crashed_plane_wing.glb', dir: 'catastrophe' as const, optional: true as const, category: 'aviation' as GlbCategory, size: [12.5, 2.8, 5.2] as const, minY: 0, lodDist: 210, castShadow: true },
+  concrete_rubble_mound: { file: 'concrete_rubble_mound.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [5.2, 2.4, 4.8] as const, minY: 0, lodDist: 165, castShadow: true },
+  building_breach_frame: { file: 'building_breach_frame.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [6.4, 6.2, 1.4] as const, minY: 0, lodDist: 170, castShadow: true },
+  giant_trash_mound: { file: 'giant_trash_mound.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [3.6, 1.75, 2.8] as const, minY: 0, lodDist: 120, castShadow: false },
+} as const satisfies Record<string, GlbSpec>;
 
 export type GlbModelId = keyof typeof GLB_WORLD_SPECS;
 
