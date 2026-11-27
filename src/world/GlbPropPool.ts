@@ -19,7 +19,7 @@ import {
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { Particles } from '../render/Particles';
-import { GLB_WORLD_SPECS, type GlbModelId, type GlbPlacement } from './worldModels';
+import { GLB_BASE_SCALE as BASE_SCALE, GLB_WORLD_SPECS, TRAFFIC_LIGHT_SCALE, type GlbModelId, type GlbPlacement } from './worldModels';
 
 interface ExtractedPart {
   geo: BufferGeometry;
@@ -43,6 +43,19 @@ interface BushSphere {
   r: number;
 }
 
+export interface VehicleObb {
+  id: GlbModelId;
+  x: number;
+  y: number;
+  z: number;
+  cos: number;
+  sin: number;
+  hw: number;
+  H: number;
+  hl: number;
+  localZ: number;
+}
+
 const _pos = new Vector3();
 const _quat = new Quaternion();
 const _scale = new Vector3();
@@ -64,6 +77,7 @@ export class GlbPropPool {
   private readonly chunks = new Map<number, GlbPlacement[]>();
   private readonly assets = new Map<GlbModelId, AssetEntry>();
   private readonly bushes: BushSphere[] = [];
+  private readonly vehicles: VehicleObb[] = [];
   private readonly lightTowers: { x: number; y: number; z: number }[] = [];
   private readonly burnBarrels: { x: number; y: number; z: number }[] = [];
   private readonly heliWrecks: { x: number; y: number; z: number }[] = [];
@@ -142,6 +156,24 @@ export class GlbPropPool {
     return false;
   }
 
+  /** Fast local-space OBB lookup for static GLB vehicles at world point (wx, wy, wz). */
+  findVehicleAt(wx: number, wy: number, wz: number, margin = 0.25): VehicleObb | null {
+    if (this.indexesDirty) this.rebuildSpatialLists();
+    for (let i = 0; i < this.vehicles.length; i++) {
+      const v = this.vehicles[i];
+      if (wy < v.y - 0.15 || wy > v.y + v.H + 0.35) continue;
+      const dx = wx - v.x;
+      const dz = wz - v.z;
+      const lx = dx * v.cos - dz * v.sin;
+      if (Math.abs(lx) > v.hw + margin) continue;
+      const lz = dx * v.sin + dz * v.cos;
+      if (Math.abs(lz) > v.hl + margin) continue;
+      v.localZ = lz;
+      return v;
+    }
+    return null;
+  }
+
   update(dt: number, camPos: Vector3, paused: boolean): void {
     if (this.disposed) return;
     if (this.indexesDirty) this.rebuildSpatialLists();
@@ -199,16 +231,16 @@ export class GlbPropPool {
           extraMat = new MeshStandardMaterial({ color: 0x5c6066, roughness: 0.78, metalness: 0.35 });
           extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
         } else if (id === 'traffic_light_2500') {
-          const s = 0.56;
-          const lift = 0.95;
+          // Own GLB pole only (no procedural stand): base plate seated on the sidewalk (min.y = 0),
+          // pole (z ≈ -0.25 in the GLB) shifted onto the local origin so it matches the collider.
+          const s = TRAFFIC_LIGHT_SCALE;
           assetMat = new Matrix4()
-            .makeTranslation(0, lift, 0)
-            .multiply(new Matrix4().makeScale(s, s, s))
+            .makeScale(s, s, s)
+            .multiply(new Matrix4().makeTranslation(0, 0, 0.25))
             .multiply(baseMat);
-          const poleH = lift + 0.2;
-          extraGeo = new CylinderGeometry(0.06, 0.075, poleH, 8);
-          extraMat = new MeshStandardMaterial({ color: 0x4c5056, roughness: 0.75, metalness: 0.4 });
-          extraLocal = new Matrix4().makeTranslation(0, poleH * 0.5, 0);
+        } else if (BASE_SCALE[id]) {
+          const [sx, sy, sz] = BASE_SCALE[id]!;
+          assetMat = new Matrix4().makeScale(sx, sy, sz).multiply(baseMat);
         } else if (id === 'Sport_Sedan_22k') {
           // Small matte baffle tucked inside the rear trunk well (<=35% H, <=18% L, <=65% W) so nothing clips hood/windows.
           extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
@@ -216,20 +248,29 @@ export class GlbPropPool {
           extraLocal = new Matrix4().makeTranslation(0, spec.size[1] * 0.40, spec.size[2] * 0.30);
         }
 
+        let partIdx = 0;
         root.traverse((obj) => {
           const m = obj as Mesh;
           if (!m.isMesh || !m.geometry) return;
-          if (spec.category === 'vehicle') {
-            if (Array.isArray(m.material)) {
-              for (const mm of m.material) mm.side = DoubleSide;
-            } else if (m.material) {
-              m.material.side = DoubleSide;
+          // Materials are owned per model file: never shared/reused by name ("Material", "material_0")
+          // across GLBs, and glTF maps keep flipY = false.
+          const isolate = (mm: Material): Material => {
+            const c = mm.clone();
+            c.name = `${spec.file}::${mm.name || partIdx}`;
+            const map = (c as MeshStandardMaterial).map;
+            if (map && map.flipY) {
+              map.flipY = false;
+              map.needsUpdate = true;
             }
-          }
+            if (spec.category === 'vehicle') c.side = DoubleSide;
+            return c;
+          };
+          const mat = Array.isArray(m.material) ? m.material.map(isolate) : isolate(m.material);
+          partIdx++;
           const local = assetMat.clone().multiply(m.matrixWorld);
           entry.parts.push({
             geo: m.geometry,
-            mat: m.material,
+            mat,
             local,
             castShadow: spec.castShadow,
             receiveShadow: true,
@@ -260,6 +301,7 @@ export class GlbPropPool {
   private rebuildSpatialLists(): void {
     this.indexesDirty = false;
     this.bushes.length = 0;
+    this.vehicles.length = 0;
     this.lightTowers.length = 0;
     this.burnBarrels.length = 0;
     this.heliWrecks.length = 0;
@@ -267,6 +309,22 @@ export class GlbPropPool {
     for (const list of this.chunks.values()) {
       for (let i = 0; i < list.length; i++) {
         const p = list[i];
+        const spec = GLB_WORLD_SPECS[p.id];
+        if (spec?.category === 'vehicle') {
+          const s = p.scale ?? 1;
+          this.vehicles.push({
+            id: p.id,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            cos: Math.cos(-p.yaw),
+            sin: Math.sin(-p.yaw),
+            hw: spec.size[0] * 0.5 * (p.sx ?? s),
+            H: spec.size[1] * (p.sy ?? s),
+            hl: spec.size[2] * 0.5 * (p.sz ?? s),
+            localZ: 0,
+          });
+        }
         switch (p.id) {
           case 'Urban_Bush_2500': {
             const sc = p.scale ?? Math.max(p.sx ?? 1, p.sy ?? 1, p.sz ?? 1);

@@ -44,6 +44,8 @@ export interface HeliHudSnapshot {
   escaped: boolean;
   crashed: boolean;
   chaseCam: boolean;
+  piloting: boolean;
+  parts: HeliPartsState;
 }
 
 export interface HelicopterWorld {
@@ -113,11 +115,19 @@ export class Helicopter {
   } | null = null;
 
   constructor(private readonly w: HelicopterWorld) {
-    const base = nearestPoi(w.layout, 'base', 0, 0, 120);
-    if (base) {
-      const [wx, wz] = siteToWorld(base, 37, 41);
+    const helipad = nearestPoi(w.layout, 'helipad', 0, 0, 120);
+    if (helipad) {
+      const [wx, wz] = siteToWorld(helipad, 0, 0);
       this.x = wx;
       this.z = wz;
+      this.yaw = (helipad.r * Math.PI) / 2;
+    } else {
+      const base = nearestPoi(w.layout, 'base', 0, 0, 120);
+      if (base) {
+        const [wx, wz] = siteToWorld(base, 37, 41);
+        this.x = wx;
+        this.z = wz;
+      }
     }
     this.y = Math.max(0.04, this.w.groundY(this.x, this.z, 2));
     this.root.position.set(this.x, this.y, this.z);
@@ -482,7 +492,17 @@ export class Helicopter {
       escaped: this.escaped,
       crashed: this.crashed,
       chaseCam: this.chaseCam,
+      piloting: this.piloting,
+      parts: { ...this.parts },
     };
+  }
+
+  /** Returns dashboard snapshot while piloting OR within 9 m on foot (for cockpit checklist updates). */
+  nearbyHudState(px: number, py: number, pz: number): HeliHudSnapshot | null {
+    if (this.piloting) return this.hudState();
+    if (this.crashed) return null;
+    if (Math.hypot(px - this.x, pz - this.z) <= 9.0 && Math.abs(py - this.y) <= 4.5) return this.hudState();
+    return null;
   }
 
   serialize(): HeliSave {

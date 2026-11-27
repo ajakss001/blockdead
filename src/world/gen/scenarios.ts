@@ -113,6 +113,7 @@ export const SCENARIOS: Record<PoiKind, ScenarioDef[]> = {
     { id: 'quarantine' },
   ],
   park: [],
+  helipad: [],
 };
 
 export interface Picked {

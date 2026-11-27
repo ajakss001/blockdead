@@ -28,6 +28,7 @@ export const POI = {
   lab: { id: 8, name: 'НИИ «Гелиос»' as string, chance: 0.45, size: 1, minDist: 20, zones: ['field', 'forest'] as Zone[], road: 'any', risk: 10, downtown: false, near: null },
   airport: { id: 9, name: 'Аэропорт' as string, chance: 0.55, size: 1, blocks: [3, 2], minDist: 30, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 18, downtown: false, near: null },
   base: { id: 10, name: 'Военная база' as string, chance: 0.55, size: 1, blocks: [2, 2], minDist: 26, zones: ['field', 'forest'] as Zone[], road: 'major', risk: 24, downtown: false, near: null },
+  helipad: { id: 11, name: 'Вертолётная площадка · Ми-8' as string, chance: 0.75, size: 1, minDist: 14, zones: ['suburb', 'field', 'forest'] as Zone[], road: 'any', risk: 6, downtown: false, near: null },
 } as const;
 
 export type PoiKind = keyof typeof POI;
@@ -43,6 +44,7 @@ const POI_NAMES: Readonly<Record<PoiKind, [string, string]>> = {
   lab: ['НИИ «Гелиос»', 'Helios Research Institute'],
   airport: ['Аэропорт', 'Airport'],
   base: ['Военная база', 'Military base'],
+  helipad: ['Вертолётная площадка · Ми-8', 'EMERCOM Helipad · Mi-8'],
 };
 
 registerDataLocalizer((lang) => {
@@ -51,8 +53,8 @@ registerDataLocalizer((lang) => {
     (POI[k] as { name: string }).name = names[idx];
   }
 });
-/** Placement order: earlier types win a contested block. */
-const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab', 'airport', 'base'];
+/** Placement order: earlier types win a contested block (append new types at the end so existing ones stay put). */
+const ORDER: PoiKind[] = ['police', 'mall', 'hyper', 'plant', 'checkpoint', 'gas', 'park', 'lab', 'airport', 'base', 'helipad'];
 /** The country road grid runs along every 4th chunk line (see layout). */
 const MAJOR_EVERY = 4;
 
@@ -233,6 +235,7 @@ export function poiSpawnPoints(kind: PoiKind): { outside: [number, number][]; in
   if (kind === 'mall') return { outside: grid(-20, 20, 13, 24, 5), inside: [...grid(-7, 7, -9, 1, 5), ...grid(-22, -13, -20, 8, 4), ...grid(10, 20, -16, 4, 5)] };
   if (kind === 'plant') return { outside: grid(-20, 20, -2, 20, 4), inside: [[8, 9], [15, 4], [-14, 8]] };
   if (kind === 'park') return { outside: [[-12, 12], [10, -14]], inside: [] };
+  if (kind === 'helipad') return { outside: [[-15, 16], [16, 15], [16, -15], [-15, -15]], inside: [] };
   if (kind === 'lab') return { outside: grid(-20, 20, 12, 22, 3), inside: [[0, 4], [-14, 4], [13, 3], [-10, -1.5], [-12, -7], [1, -8], [13, -6], [-10, -18], [10, -18]] };
   if (kind === 'airport') return { outside: [...grid(-80, 80, -50, -26, 6), ...grid(-70, -14, 34, 52, 3), ...grid(-70, 40, -14, 6, 4)], inside: [...grid(-46, -10, 10, 28, 5), ...grid(50, 84, -6, 24, 2)] };
   if (kind === 'base') return { outside: [...grid(-50, 50, -6, 2, 5), ...grid(10, 52, -12, 22, 4), ...grid(-48, -16, -8, 8, 3), ...grid(24, 50, 28, 54, 2)], inside: [...grid(-50, -14, 31, 41, 3), ...grid(-50, -14, 13, 23, 3), ...grid(-50, -24, -38, -14, 3), ...grid(10, 52, -34, -14, 3)] };

@@ -1,6 +1,7 @@
 import { Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import { buildCar, CAR_PAINTS } from '../props/car';
 import { sandbags, stripedBarrier } from './chaos';
+import { isGlbClear } from './footprint';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
 import { LIFE, spotHash } from './lifeKinds';
@@ -28,15 +29,18 @@ export function stripDecal(b: Builder, x: number, z: number, yaw: number, length
   g.dispose();
 }
 
-function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25, kind?: string): void {
-  b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
-  if (smashed >= 0.7 && spotHash(x, z, 94) < 0.3) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
-  buildCar(
+function car(b: Builder, x: number, z: number, yaw: number, rand: Rand, smashed = 0.25, kind?: string, ignoreGlb?: number): boolean {
+  const placed = buildCar(
     b.batch,
     b.colliders,
-    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0, kind },
+    { x, z, yaw, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.5 ? smashed : 0, kind, ignoreGlb },
     b.containers,
   );
+  if (placed) {
+    b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
+    if (smashed >= 0.7 && spotHash(x, z, 94) < 0.3) b.life(LIFE.fire, x, 0.95, z, 0, 0, 1.1, 0, spotHash(x, z, 95));
+  }
+  return placed;
 }
 
 /**
@@ -57,11 +61,13 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
     const rigFits = trailSign < 0 ? t >= from + 13.2 && t <= to - 4.0 : t >= from + 4.0 && t <= to - 13.2;
     if (rand() < 0.24 && rigFits) {
       const yaw = heading + (rand() - 0.5) * 0.14;
-      car(b, x, z, yaw, rand, 0.2, 'semi');
-      // Couple trailer 6.75 m behind tractor so trailer nose sits squarely over the fifth-wheel saddle.
-      const tx = x - Math.cos(yaw) * 6.75;
-      const tz = z + Math.sin(yaw) * 6.75;
-      car(b, tx, tz, yaw, rand, 0.1, 'trailer');
+      const tractorIdx = b.batch.glbs.length;
+      if (car(b, x, z, yaw, rand, 0.2, 'semi')) {
+        // Couple trailer 6.75 m behind tractor so trailer nose sits squarely over the fifth-wheel saddle.
+        const tx = x - Math.cos(yaw) * 6.75;
+        const tz = z + Math.sin(yaw) * 6.75;
+        car(b, tx, tz, yaw, rand, 0.1, 'trailer', tractorIdx);
+      }
       t += (trailSign > 0 ? 15.5 : 9.5) + rand() * 3.0;
       n += 2;
       continue;
@@ -77,16 +83,16 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
 /** Pile-up in an intersection: wrecked cars + emergency response (ambulance / fire truck), skid marks, oil. */
 export function crashSite(b: Builder, cx: number, cz: number, rand: Rand): void {
   const yaw0 = rand() * Math.PI * 2;
-  car(b, cx + (rand() - 0.5) * 2, cz + (rand() - 0.5) * 2, yaw0, rand, 0.85, 'wreck');
-  // Second car T-boned into the first one's side.
-  const a = yaw0 + Math.PI / 2 + (rand() - 0.5) * 0.5;
-  const x2 = cx + Math.cos(a) * 3.2;
-  const z2 = cz - Math.sin(a) * 3.2;
+  car(b, cx - Math.cos(yaw0) * 2.2, cz + Math.sin(yaw0) * 2.2, yaw0, rand, 0.85, 'wreck');
+  // Second car stopped near the first, kept inside the 5.8 m intersection strip.
+  const a = yaw0 + Math.PI / 2 + (rand() - 0.5) * 0.4;
+  const x2 = cx + Math.cos(a) * 3.8;
+  const z2 = cz - Math.sin(a) * 3.8;
   car(b, x2, z2, a + Math.PI, rand, 0.7);
   stripDecal(b, x2 + Math.cos(a) * 7, z2 - Math.sin(a) * 7, a, 9, 2.4, 'decalSkid');
   const responder = rand() < 0.5 ? 'fireTruck' : 'ambulance';
   const a3 = yaw0 + Math.PI + (rand() - 0.5) * 0.6;
-  car(b, cx + Math.cos(yaw0) * 4.2, cz - Math.sin(yaw0) * 4.2, a3, rand, 0.15, responder);
+  car(b, cx + Math.cos(yaw0) * 3.6, cz - Math.sin(yaw0) * 3.6, a3, rand, 0.15, responder);
   groundDecal(b, 'decalShards', cx, 0, cz, 3.2, rand, 1.3);
   groundDecal(b, 'decalOil', cx + (rand() - 0.5) * 4, 0, cz + (rand() - 0.5) * 4, 2.2, rand, 1.4);
   groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 3, 0, cz + (rand() - 0.5) * 3, 3.4, rand, 1.2);
@@ -97,7 +103,7 @@ export function carIntoPole(b: Builder, px: number, pz: number, toward: number, 
   // Nose (car local +X) just short of the pole.
   const cx = px - Math.cos(toward) * 2.5;
   const cz = pz + Math.sin(toward) * 2.5;
-  car(b, cx, cz, toward + (rand() - 0.5) * 0.3, rand, 0.9);
+  if (!car(b, cx, cz, toward + (rand() - 0.5) * 0.3, rand, 0.9)) return;
   stripDecal(b, cx - Math.cos(toward) * 6, cz + Math.sin(toward) * 6, toward, 8, 2.2, 'decalSkid');
   groundDecal(b, 'decalShards', px - Math.cos(toward) * 0.6, 0, pz + Math.sin(toward) * 0.6, 2, rand);
 }
@@ -114,17 +120,22 @@ export function checkpoint(b: Builder, cx: number, cz: number, rand: Rand): void
   stripedBarrier(A, 3.6, 2.2, 2.0);
   const milRoll = spotHash(cx, cz, 87);
   const milKind = milRoll < 0.34 ? 'apc' : milRoll < 0.68 ? 'truck' : 'tank';
-  car(b, cx + 2.6, cz - 3.8, (rand() - 0.5) * 0.3, rand, 0.1, milKind);
+  car(b, cx + 3.4, cz - 4.2, (rand() - 0.5) * 0.3, rand, 0.1, milKind);
   if (spotHash(cx, cz, 89) < 0.45) {
-    car(b, cx - 1.0, cz + 4.1, Math.PI + (rand() - 0.5) * 0.2, rand, 0.1, milKind === 'tank' ? 'truck' : 'apc');
+    car(b, cx - 3.2, cz + 4.2, Math.PI + (rand() - 0.5) * 0.2, rand, 0.1, milKind === 'tank' ? 'truck' : 'apc');
   }
   const cp = new Place(b, cx - 0.1, 0, cz - 2.3, 0);
   cp.resetBounds();
   cp.model('supplyCrate', rand, 0, 0, 0, 0, 1, 0.78, 0.15, true);
   cp.container('militaryCrate', 0, 0.55);
-  b.glb('generator_light_tower', cx + 4.4, 0, cz - 1.6, rand() * 0.4 - 0.2);
-  b.glb('burn_barrel', cx - 3.8, 0, cz - 2.4, 0);
-  b.solid(cx - 4.15, cz - 2.75, cx - 3.45, cz - 2.05, 0, 0.95);
-  b.life(LIFE.fire, cx - 3.8, 0.92, cz - 2.4, 0, 0, 0.55, 0, spotHash(cx, cz, 88));
+  const towYaw = rand() * 0.4 - 0.2;
+  if (isGlbClear(b.batch, 'generator_light_tower', cx + 4.8, cz + 0.8, towYaw, 0.8)) {
+    b.glb('generator_light_tower', cx + 4.8, 0, cz + 0.8, towYaw);
+  }
+  if (isGlbClear(b.batch, 'burn_barrel', cx - 3.8, cz - 2.4, 0, 0.5)) {
+    b.glb('burn_barrel', cx - 3.8, 0, cz - 2.4, 0);
+    b.solid(cx - 4.15, cz - 2.75, cx - 3.45, cz - 2.05, 0, 0.95);
+    b.life(LIFE.fire, cx - 3.8, 0.92, cz - 2.4, 0, 0, 0.55, 0, spotHash(cx, cz, 88));
+  }
   for (let i = 0; i < 2; i++) groundDecal(b, 'decalSoot', cx + (rand() - 0.5) * 7, 0, cz + (rand() - 0.5) * 7, 2, rand, 1.3);
 }

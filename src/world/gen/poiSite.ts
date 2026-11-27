@@ -180,7 +180,8 @@ export class Site {
       return;
     }
     const wyaw = yaw + (this.p.r * Math.PI) / 2;
-    buildCar(this.b.batch, this.b.colliders, { x, z, yaw: wyaw, paint: paint ?? pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.3 ? 0.3 : 0, kind }, this.b.containers);
-    this.b.life(LIFE.car, x, 0, z, Math.sin(wyaw), Math.cos(wyaw), 4.3, 1.8, spotHash(x, z, 41));
+    if (buildCar(this.b.batch, this.b.colliders, { x, z, yaw: wyaw, paint: paint ?? pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.3, smashed: rand() < 0.3 ? 0.3 : 0, kind }, this.b.containers)) {
+      this.b.life(LIFE.car, x, 0, z, Math.sin(wyaw), Math.cos(wyaw), 4.3, 1.8, spotHash(x, z, 41));
+    }
   }
 }

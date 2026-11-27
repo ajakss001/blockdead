@@ -73,8 +73,11 @@ export class BodyModel {
     this.gearShadow.clear();
     coverBody(body);
     const r = new CharacterRig(body, 0, { cover: true, hide: this.hide, near: NEAR }, fpBodyGeometry(body));
-    // Layer 0 renders only pelvis/legs/boots in first person; layer 2 casts the full unstripped body shadow.
+    // First person: the whole 3rd-person mesh (head, torso, arms AND legs) is hidden from the camera —
+    // looking straight down never cuts into trousers or shows the ground through them. Layer 2 still
+    // casts the full unstripped body shadow (the skeleton is updated by hand in update()).
     r.mesh.castShadow = false;
+    r.mesh.visible = false;
     const sm = new SkinnedMesh(bodyAsset(body).lod0.geometry, r.mesh.material);
     sm.bind(r.mesh.skeleton, r.mesh.bindMatrix);
     sm.frustumCulled = false;
@@ -221,6 +224,9 @@ export class BodyModel {
     // Air: the hips at the controller's height (the clip's own rise taken out).
     if (air) r.bone('Hips').position.y = this.hipsY();
     this.root.updateMatrixWorld(true);
+    // The camera-visible mesh is hidden, so the renderer never refreshes the shared skeleton: do it here
+    // for the layer-2 shadow casters.
+    r.mesh.skeleton.update();
   }
 
   /** The hips' height standing at ease (model frame). */

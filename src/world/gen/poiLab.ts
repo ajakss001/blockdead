@@ -198,7 +198,7 @@ export function lab(S: Site, rand: Rand): void {
   S.container('generator', 13, -8.4);
   p.box(0x2a2c2e, 8, 2.9, -9, 0.1, 0.1, 6, 'metal');
   p.model('locker', rand, 19.4, 0, -5, Math.PI * 1.5, 1, 0.55, 0.45, true);
-  S.container('labTools', 18.6, -5, ['fuse']);
+  S.container('labTools', 18.6, -5, ['fuse', 'heliBattery']);
 
   // Isolation ward (z −22…−12): a corridor along the door, four cells behind glass, beds; the
   // medicine cabinets at the ends — the serum and the last record in one.

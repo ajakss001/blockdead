@@ -61,6 +61,8 @@ export interface FirearmsWorld {
   carHit(x: number, y: number, z: number): void;
   /** Glass pane struck by bullet or melee: plays 3D shatter + settle and spawns floor shard zones. */
   onBreakGlass?(at: Vector3, dir: Vector3): void;
+  /** Vehicle hit callback returning `'glass'` (already handled) or `'metal'`, else null for generic surfaces. */
+  onVehicleBulletHit?(at: Vector3, dir: Vector3, playSound: boolean): 'glass' | 'metal' | null;
   /** The class's handling of firearms (1 none, 1.3 military, 1.5 SWAT). */
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
@@ -676,20 +678,27 @@ export class Firearms {
   /** A bullet on the world: by what it is made of — dust, sparks and a ricochet, splinters, glass, a car's tin. */
   private hitWorld(o: Vector3, d: Vector3, dist: number): void {
     const isMulti = this.shotTotalPellets > 1;
+    const at = _p.copy(o).addScaledVector(d, dist - 0.03);
+    const withSound = !isMulti || this.shotHitSounds < 2;
+    const vehHit = this.w.onVehicleBulletHit?.(at, d, withSound) ?? null;
+    if (vehHit === 'glass') {
+      if (withSound) this.shotHitSounds++;
+      this.w.particles.burst(at, isMulti && this.shotHitSounds > 1 ? 2 : 5, 0.55);
+      return;
+    }
     let s = this.shotLastSurface;
-    if (!isMulti || this.shotSurfaceLookups < 2) {
+    if (!vehHit && (!isMulti || this.shotSurfaceLookups < 2)) {
       s = this.w.surface(o, d, dist);
       this.shotSurfaceLookups++;
       this.shotLastSurface = s;
     }
-    const kind: BulletHit = (s && BULLET[s]) ?? 'concrete';
-    const at = _p.copy(o).addScaledVector(d, dist - 0.03);
+    const kind: BulletHit = vehHit === 'metal' ? 'car' : (s && BULLET[s]) ?? 'concrete';
     if (kind === 'glass' && this.w.onBreakGlass) {
-      if (!isMulti || this.shotHitSounds < 2) {
+      if (withSound) {
         this.w.onBreakGlass(at, d);
         this.shotHitSounds++;
       }
-    } else if (!isMulti || this.shotHitSounds < 2) {
+    } else if (withSound) {
       sfx.bulletHit(kind, at);
       this.shotHitSounds++;
     }

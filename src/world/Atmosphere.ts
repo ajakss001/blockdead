@@ -235,6 +235,11 @@ export class Atmosphere {
   private tapSpots: { x: number; y: number; z: number }[] = [];
   private bedSpots: { x: number; y: number; z: number }[] = [];
 
+  /** Snow cover 0..1 blended onto 3D grass tips and fallen leaf litter. */
+  setSnow(v: number): void {
+    this.foliage.setSnow(v);
+  }
+
   /** A blow landed on the world at (x, y, z) (a car's alarm may go off). */
   strikeAt(x: number, y: number, z: number): void {
     this.street.strikeAt(x, y, z);

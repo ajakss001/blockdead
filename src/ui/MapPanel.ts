@@ -384,6 +384,14 @@ export class MapPanel {
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText('H', hx, hy + 0.5);
+      const label = tr('Ми-8 МЧС', 'Mi-8');
+      g.font = '600 10px system-ui, sans-serif';
+      g.textAlign = 'left';
+      const tw = g.measureText(label).width;
+      g.fillStyle = 'rgba(14, 18, 16, 0.82)';
+      g.fillRect(hx + 11, hy - 8, tw + 8, 15);
+      g.fillStyle = heli.repaired ? '#88e8a6' : '#8ad4f0';
+      g.fillText(label, hx + 15, hy);
       g.restore();
     }
 

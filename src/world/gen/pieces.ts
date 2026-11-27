@@ -769,8 +769,8 @@ export function mailbox(_b: Builder, _x: number, _z: number): void {}
 
 export function trashBins(b: Builder, x: number, z: number): void {
   const cx = x + 0.35;
-  b.glb('garbage_cluster_1500', cx, 0, z, spotHash(x, z, 50) * Math.PI * 2, { scale: 0.62 });
-  b.solid(cx - 0.62, z - 0.52, cx + 0.62, z + 0.52, 0, 1.05);
-  b.container('trash', cx, z, 0, [cx - 0.62, 0, z - 0.52, cx + 0.62, 1.05, z + 0.52]);
+  b.glb('garbage_cluster_1500', cx, 0, z, spotHash(x, z, 50) * Math.PI * 2);
+  b.solid(cx - 0.55, z - 0.46, cx + 0.55, z + 0.46, 0, 0.82);
+  b.container('trash', cx, z, 0, [cx - 0.55, 0, z - 0.46, cx + 0.55, 0.82, z + 0.46]);
   if (spotHash(x, z, 51) < 0.5) b.life(LIFE.flies, cx, 1.0, z, 0, 0, 0, 0, spotHash(x, z, 52));
 }

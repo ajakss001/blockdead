@@ -41,6 +41,11 @@ async function main() {
   const tile = meta.atlas;
   const oldCols = meta.atlasCols ?? 10;
   const kept = meta.models.filter((m) => !DROP.has(m.name));
+  if (kept.length === meta.models.length) {
+    // Re-running on an already-pruned set would remap layers against the wrong atlas tiles.
+    console.log('Already pruned — skipping to preserve atlas.jpg');
+    return;
+  }
   console.log(`Pruning models.bin: ${meta.models.length} -> ${kept.length} models`);
 
   const chunks = [];

@@ -187,7 +187,8 @@ export class GunState {
   private fire(ev: GunEvent[]): void {
     const g = this.cfg;
     const inst = this.inst;
-    this.cooldown = 60 / g.rpm;
+    const interval = 60 / g.rpm;
+    this.cooldown = this.burst > 0 && this.cooldown < 0 && this.cooldown > -interval ? interval + this.cooldown : interval;
     if (!inst.chamber || inst.jammed) {
       // Dry: one click a pull.
       if (this.burst === 0) ev.push({ kind: inst.jammed ? 'jam' : 'dry' });

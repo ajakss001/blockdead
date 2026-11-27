@@ -3,8 +3,9 @@ import { mulberry32 } from '../../core/random';
 import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
-import { type GlbPlacement, pickRoadSign } from '../worldModels';
+import { GLB_WORLD_SPECS, type GlbPlacement, pickRoadSign } from '../worldModels';
 import { curbParking, downtownBlock } from './cityFill';
+import { glbObb, isGlbClear, obbOverlap } from './footprint';
 import { type BuildingDesc, windowPanes } from './highrise';
 import { buildHighriseInterior } from './highriseInterior';
 import { BAND, CHUNK, DOWNTOWN_RADIUS, PAVE, ROAD_HALF, type WorldLayout, type Zone } from './layout';
@@ -132,8 +133,8 @@ function ground(batch: StaticBatch, layout: WorldLayout, i: number, j: number, z
     const x = pos.getX(k);
     const z = pos.getZ(k);
     pos.setY(k, layout.heightAt(x, z) - 0.01);
-    c.copy(ca).lerp(cb, rand() * rand());
-    c.multiplyScalar(0.88 + rand() * 0.18);
+    c.copy(ca).lerp(cb, rand() * 0.65);
+    c.multiplyScalar(0.94 + rand() * 0.10);
     colors[k * 3] = c.r;
     colors[k * 3 + 1] = c.g;
     colors[k * 3 + 2] = c.b;
@@ -170,10 +171,13 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       const signX = x + ROAD_HALF + 1.0;
       const signZ = z + BAND + 2.5;
-      b.glb(pickRoadSign(rand()), signX, SIDEWALK_H, signZ, 0);
+      const signXId = pickRoadSign(rand());
+      b.glb(signXId, signX, SIDEWALK_H, signZ, 0);
       obstacles.push([signX, signZ]);
+      let busStopZ: number | null = null;
       if (spotHash(i, j, 71) < 0.28) {
         const bsz = z + CHUNK * 0.52;
+        busStopZ = bsz;
         const bsx = x + ROAD_HALF + 2.0;
         b.glb('Soviet_Bus_Stop_Shelt', bsx, SIDEWALK_H, bsz, -Math.PI / 2);
         b.glb('Sign_Bus_Stop_1500', x + ROAD_HALF + 1.0, SIDEWALK_H, bsz - 4.75, 0);
@@ -183,20 +187,25 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
           buildCar(b.batch, b.colliders, { x: x + CURB_LANE, z: bsz + 0.6, yaw: Math.PI / 2 + (rand() - 0.5) * 0.15, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'bus' }, b.containers);
         }
       }
-      if (!layout.isDowntown(i, j) && spotHash(i, j, 72) < 0.22) {
-        b.glb('speed_bump_1000', x, 0.02, z + CHUNK * 0.5, 0);
-      }
-    }
-    // Downtown: the queue that never got out; elsewhere cars sit where people left them.
-    const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
-    const pole = layout.urbanX(i, j) && rand() < 0.12;
-    if (pole) carIntoPole(b, x + ROAD_HALF + 1.2, z + CHUNK * 0.25, 0, rand);
-    if (layout.urbanX(i, j)) {
+      // Downtown: the queue that never got out; elsewhere cars sit where people left them.
+      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
+      const pole = layout.urbanX(i, j) && rand() < 0.12;
+      if (pole) carIntoPole(b, x + ROAD_HALF + 1.2, z + CHUNK * 0.25, 0, rand);
       for (const side of [-1, 1]) {
         if (Math.sign(jam) !== side) curbParking(b, false, x + side * CURB_LANE, side, za + 5, za + len - 5, rand, side > 0 && pole ? z + CHUNK * 0.25 : undefined);
       }
-    } else if (rand() < 0.2) {
-      shoulderCar(b, false, x, za + 6 + rand() * (len - 12), rand);
+      // Speed bumps INSIDE the city (downtown + town): anchored on asphalt, perpendicular to road axis,
+      // at crosswalk signs, bus stops, city POIs, and mid-block crossings/exits.
+      if (signXId === 'crosswalk_sign_1500') trySpeedBump(b, x, signZ + 2.4, 0);
+      if (busStopZ !== null) trySpeedBump(b, x, busStopZ - 8.2, 0);
+      if (roadHasPoiApproach(layout, i, j, 'x') || spotHash(i, j, 72) < 0.34) {
+        trySpeedBump(b, x, z + CHUNK * 0.5, 0);
+      }
+    } else {
+      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
+      if (jam === 0 && rand() < 0.2) {
+        shoulderCar(b, false, x, za + 6 + rand() * (len - 12), rand);
+      }
     }
   }
   // Road along z = Z (runs east-west).
@@ -219,17 +228,28 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       }
       const signX = x + BAND + 2.5;
       const signZ = z + ROAD_HALF + 1.0;
-      b.glb(pickRoadSign(rand()), signX, SIDEWALK_H, signZ, Math.PI / 2);
+      const signZId = pickRoadSign(rand());
+      b.glb(signZId, signX, SIDEWALK_H, signZ, Math.PI / 2);
       obstacles.push([signX, signZ]);
       if (spotHash(i, j, 73) < 0.16) {
-        b.glb('Road_Debris_Cluster_2', x + CHUNK * 0.65, 0.01, z + (spotHash(i, j, 74) < 0.5 ? -2.2 : 2.2), spotHash(i, j, 75) * Math.PI * 2);
+        const dx = x + CHUNK * 0.65;
+        const dz = z + (spotHash(i, j, 74) < 0.5 ? -2.2 : 2.2);
+        const dyaw = spotHash(i, j, 75) * Math.PI * 2;
+        if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', dx, dz, dyaw, 1.0)) {
+          b.glb('Road_Debris_Cluster_2', dx, 0.01, dz, dyaw);
+        }
       }
-    }
-    const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
-    if (layout.urbanZ(i, j)) {
+      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
       for (const side of [-1, 1]) if (Math.sign(jam) !== side) curbParking(b, true, z + side * CURB_LANE, side, xa + 5, xa + len - 5, rand);
-    } else if (rand() < 0.2) {
-      shoulderCar(b, true, xa + 6 + rand() * (len - 12), z, rand);
+      if (signZId === 'crosswalk_sign_1500') trySpeedBump(b, signX + 2.4, z, Math.PI / 2);
+      if (roadHasPoiApproach(layout, i, j, 'z') || spotHash(i, j, 77) < 0.32) {
+        trySpeedBump(b, x + CHUNK * 0.5, z, Math.PI / 2);
+      }
+    } else {
+      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
+      if (jam === 0 && rand() < 0.2) {
+        shoulderCar(b, true, xa + 6 + rand() * (len - 12), z, rand);
+      }
     }
   }
   // South-west intersection.
@@ -268,13 +288,15 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
       else if (ring >= 3 && ring <= 5) {
         checkpoint(b, x, z, rand);
       } else if (ring <= 3 && ((i + j) & 3) === 0) {
-        buildCar(b.batch, b.colliders, { x: x - 2.2, z: z + 2.4, yaw: 0.4, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'police' }, b.containers);
-        buildCar(b.batch, b.colliders, { x: x + 2.8, z: z - 2.6, yaw: Math.PI * 0.65, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'swat' }, b.containers);
-        b.glb('checkpoint_barricade', x, 0, z + 5.2, 0);
-        b.solid(x - 1.7, z + 4.4, x + 1.7, z + 6.0, 0, 1.4);
+        buildCar(b.batch, b.colliders, { x: x - 2.8, z: z + 2.6, yaw: 0.4, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'police' }, b.containers);
+        buildCar(b.batch, b.colliders, { x: x + 3.2, z: z - 2.6, yaw: Math.PI * 0.65, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'swat' }, b.containers);
+        if (isGlbClear(b.batch, 'checkpoint_barricade', x, z + 5.2, 0, 0.6)) {
+          b.glb('checkpoint_barricade', x, 0, z + 5.2, 0);
+          b.solid(x - 1.7, z + 4.4, x + 1.7, z + 6.0, 0, 1.4);
+        }
       } else if (ring <= 3 && ((i + j) & 3) === 2) {
-        buildCar(b.batch, b.colliders, { x: x + 2.6, z: z + 2.2, yaw: -0.45, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'ambulance' }, b.containers);
-        buildCar(b.batch, b.colliders, { x: x - 3.2, z: z - 2.4, yaw: 0.35, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'fireTruck' }, b.containers);
+        buildCar(b.batch, b.colliders, { x: x + 3.4, z: z + 2.8, yaw: -0.45, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'ambulance' }, b.containers);
+        buildCar(b.batch, b.colliders, { x: x - 4.0, z: z - 2.6, yaw: 0.35, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'fireTruck' }, b.containers);
       } else if (roll < (core ? 0.45 : 0.25)) crashSite(b, x, z, rand);
       else if (roll < (core ? 0.65 : 0.35)) checkpoint(b, x, z, rand);
     }
@@ -333,6 +355,32 @@ function tryStreetGreenery(
   void rand;
 }
 
+/** Places a speed bump flush onto city asphalt if no vehicle/debris/other speed bump occupies the strip. */
+function trySpeedBump(b: Builder, x: number, z: number, yaw: number): void {
+  const hx = GLB_WORLD_SPECS.speed_bump_1000.size[0] * 0.5;
+  const hz = GLB_WORLD_SPECS.speed_bump_1000.size[2] * 0.5;
+  for (let k = 0; k < b.batch.glbs.length; k++) {
+    const g = b.batch.glbs[k];
+    const cat = GLB_WORLD_SPECS[g.id].category;
+    if (cat !== 'vehicle' && g.id !== 'Road_Debris_Cluster_2' && g.id !== 'speed_bump_1000' && g.id !== 'checkpoint_barricade') continue;
+    const pad = g.id === 'speed_bump_1000' ? 2.5 : 0.4;
+    const ob = glbObb(g);
+    if (obbOverlap(x, z, hx, hz + pad, yaw, ob.x, ob.z, ob.hx, ob.hz, ob.yaw)) return;
+  }
+  b.glb('speed_bump_1000', x, PAVE.asphalt + 0.005, z, yaw);
+}
+
+function roadHasPoiApproach(layout: WorldLayout, i: number, j: number, axis: 'x' | 'z'): boolean {
+  if (axis === 'x') {
+    const a = layout.poi(i, j);
+    const b = layout.poi(i - 1, j);
+    return (a !== null && a.r === 3) || (b !== null && b.r === 1);
+  }
+  const a = layout.poi(i, j);
+  const b = layout.poi(i, j - 1);
+  return (a !== null && a.r === 2) || (b !== null && b.r === 0);
+}
+
 /** Parked cars hug the curb: lane center this far from the road's center line. */
 const CURB_LANE = ROAD_HALF - 1.05;
 
@@ -343,13 +391,16 @@ function shoulderCar(b: Builder, alongX: boolean, x: number, z: number, rand: Ra
   const yaw = (alongX ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2) + (rand() - 0.5) * 0.15;
   const cx = alongX ? x : x + off;
   const cz = alongX ? z + off : z;
-  b.life(LIFE.car, cx, 0, cz, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(cx, cz, 41));
-  buildCar(
-    b.batch,
-    b.colliders,
-    { x: alongX ? x : x + off, z: alongX ? z + off : z, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.4, smashed: rand() < 0.3 ? 0.4 : 0 },
-    b.containers,
-  );
+  if (
+    buildCar(
+      b.batch,
+      b.colliders,
+      { x: cx, z: cz, yaw, paint: pick(rand, Object.values(CAR_PAINTS)), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.4, smashed: rand() < 0.3 ? 0.4 : 0 },
+      b.containers,
+    )
+  ) {
+    b.life(LIFE.car, cx, 0, cz, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(cx, cz, 41));
+  }
 }
 
 /** Interior of one high-rise (worker side, on demand), furnished around storey `focus`. */

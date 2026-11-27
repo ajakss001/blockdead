@@ -407,10 +407,13 @@ if (pbrActive > 0.5) {
   pbrNrmRough = texture(uPbrNrmRough, vec3(pbrUv, pbrLayer));
   float vLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
   vec3 vTint = diffuseColor.rgb / max(vLum, 0.001);
-  if (pbrLayer > 4.5 && vLum > 0.14) {
+  if (abs(pbrLayer - 5.0) < 0.5 && vLum > 0.14) {
     // Sidewalks, curbs and road dashes keep bright paint/concrete luminance with 1K asphalt/aggregate relief
     float grit = clamp(dot(pbrAlb.rgb, vec3(0.299, 0.587, 0.114)) / 0.085, 0.68, 1.42);
     diffuseColor.rgb *= grit;
+  } else if (pbrLayer > 5.5) {
+    // Countryside meadow / park ground keeps zone vertex color with 1K organic soil/turf relief (no camo blotches).
+    diffuseColor.rgb *= clamp(pbrAlb.rgb / 0.65, vec3(0.72), vec3(1.28));
   } else {
     float targetGain = mix(0.64, 1.18, smoothstep(0.03, 0.55, vLum));
     diffuseColor.rgb = pbrAlb.rgb * mix(vec3(1.0), vTint * targetGain, 0.48);

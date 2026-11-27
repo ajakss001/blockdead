@@ -120,7 +120,7 @@ import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { giveLoadout } from '../weapons/give';
 import { routeHighrise } from '../world/gen/highrise';
 import type { DoorRef } from '../world/Doors';
-import { type ContainerRef, searchBox } from '../systems/Containers';
+import type { ContainerRef } from '../systems/Containers';
 import type { TwinRecord } from '../systems/SaveGame';
 import { GrimFog } from '../render/GrimFog';
 import { DAY, NIGHT } from '../style/stage';
@@ -241,7 +241,7 @@ const HELD: Partial<Record<ItemId, RightItem>> = { knife: 'knife', axe: 'axe', b
 export class WorldScene implements IScene {
   readonly scene = new Scene();
   // Near 0.1 m (the body keeps the eye 0.3 m off walls): twice the depth precision of 0.05 on phones.
-  readonly camera = new PerspectiveCamera(BASE_VFOV, 1, 0.1, 120);
+  readonly camera = new PerspectiveCamera(BASE_VFOV, 1, 0.08, 120);
   overlay?: { scene: Scene; camera: PerspectiveCamera };
 
   private ctx!: GameContext;
@@ -777,6 +777,7 @@ export class WorldScene implements IScene {
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
+      onVehicleBulletHit: (at, dir, playSound) => this.handleVehicleBulletHit(at, dir, playSound),
       onReloadStart: () => this.bandits.onPlayerReloading(this.player.controller.position),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
@@ -962,6 +963,19 @@ export class WorldScene implements IScene {
         c.yaw = Math.atan2(10, 10);
       }
     }
+    const spInit = new URLSearchParams(location.search);
+    if (spInit.get('heli') === 'test') {
+      const hx = this.helicopter.x;
+      const hz = this.helicopter.z;
+      c.position.set(hx - 7, 0.05, hz + 7);
+      c.prevPosition.copy(c.position);
+      c.yaw = Math.atan2(-(hx - c.position.x), -(hz - c.position.z));
+      this.helicopter.placeForTest(hx, hz, false);
+      for (const id of ['heliAvionics', 'heliFuelPump', 'heliBattery', 'jerrycan', 'jerrycan'] as const) {
+        this.inventory.add(id, 1);
+      }
+      this.ctx.hud.toast(tr('ТЕСТ МИ-8: подойдите к вертолёту [E] для установки деталей и заправки', 'MI-8 TEST: approach chopper [E] to install parts & refuel'), 4200);
+    }
     const { x, z } = c.position;
     this.story.init(x, z, save?.story);
     const done = this.chunks.whenLoaded(x, z, 1);
@@ -973,9 +987,20 @@ export class WorldScene implements IScene {
     if (sp.get('poi') === 'cars' || sp.has('car') || sp.has('cars')) {
       this.vehicles.spawnTestCars(x, z, c.yaw);
     }
-    if (sp.has('heli')) {
+    if (sp.has('heli') && sp.get('heli') !== 'test') {
       const ready = sp.get('heli') === 'ready';
       this.helicopter.placeForTest(x + 22, z - 18, ready);
+    }
+    if (import.meta.env.DEV) {
+      (window as unknown as { __heliTest?: () => void }).__heliTest = () => {
+        const hx = this.helicopter.x;
+        const hz = this.helicopter.z;
+        c.position.set(hx - 7, 0.05, hz + 7);
+        c.prevPosition.copy(c.position);
+        for (const id of ['heliAvionics', 'heliFuelPump', 'heliBattery', 'jerrycan', 'jerrycan'] as const) {
+          this.inventory.add(id, 1);
+        }
+      };
     }
     if (sp.has('goons')) {
       this.bandits.spawnGoonsNear(x, z, 28);
@@ -1440,7 +1465,8 @@ export class WorldScene implements IScene {
     const inVehicle = !this.dead && (Boolean(this.vehicles.activeCar) || this.helicopter.piloting);
     document.body.classList.toggle('in-vehicle', inVehicle);
     this.carHud.update();
-    this.heliHud.update(this.helicopter.piloting && !this.dead ? this.helicopter.hudState() : null);
+    const gp = this.player.controller.position;
+    this.heliHud.update(this.dead ? null : this.helicopter.nearbyHudState(gp.x, gp.y, gp.z));
     this.firearms.render(gameDt);
     {
       const fa = this.firearms;
@@ -1499,6 +1525,7 @@ export class WorldScene implements IScene {
     this.weather.update(frameDt, this.camera.position, Math.cos(wa) * wind, Math.sin(wa) * wind, !this.indoors, this.lookDir.y, paused);
     this.life.rain = this.weather.rain;
     this.life.hour = this.clock.hour;
+    this.atmo.setSnow(this.weather.snowAccum);
     this.atmo.update(gameDt, p, this.indoors, wa, this.life.windGust, {
       eye: this.camera.position,
       look: this.lookDir,
@@ -1577,16 +1604,33 @@ export class WorldScene implements IScene {
   private groundKind(x: number, z: number): Ground {
     const y = this.layout.walkHeightAt(x, z);
     if (this.shelters.covers(x, z, y + 0.6) || this.interiors.buildingAt(x, z)) return Ground.None;
-    // A POI's lot is paved (only weeds in the cracks); a square is all lawn.
-    const site = this.layout.poi(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
-    if (site) return site.kind === 'park' ? Ground.Grass : Ground.Paved;
+    const li = Math.round(x / CHUNK);
+    const lj = Math.round(z / CHUNK);
+    const rx = Math.abs(x - li * CHUNK);
+    const rz = Math.abs(z - lj * CHUNK);
+    const bi = Math.floor(x / CHUNK);
+    const bj = Math.floor(z / CHUNK);
+    const hasRoadX = this.layout.roadX(li, bj) || (rz <= BAND && (this.layout.roadX(li, lj) || this.layout.roadX(li, lj - 1)));
+    const hasRoadZ = this.layout.roadZ(bi, lj) || (rx <= BAND && (this.layout.roadZ(li, lj) || this.layout.roadZ(li - 1, lj)));
+    const onCurbX = hasRoadX && rx >= ROAD_HALF - 0.1 && rx <= ROAD_HALF + 0.22;
+    const onCurbZ = hasRoadZ && rz >= ROAD_HALF - 0.1 && rz <= ROAD_HALF + 0.22;
+    if ((hasRoadX && rx < ROAD_HALF - 0.1) || (hasRoadZ && rz < ROAD_HALF - 0.1)) return Ground.Paved;
+    if (onCurbX || onCurbZ) return Ground.Curb;
+    if ((hasRoadX && rx <= BAND) || (hasRoadZ && rz <= BAND)) {
+      const urban = this.layout.isUrban(bi, bj) || this.layout.isUrban(li, lj) || this.layout.isUrban(li - 1, lj) || this.layout.isUrban(li, lj - 1);
+      return urban ? Ground.Paved : Ground.Grass;
+    }
+    const site = this.layout.poi(bi, bj);
+    if (site) {
+      if (site.kind !== 'park') return Ground.Paved;
+      // Park: lawns inside the four quadrants only; keep crossing paths & central fountain paved.
+      const lx = Math.abs(x - (site.i + 0.5) * CHUNK);
+      const lz = Math.abs(z - (site.j + 0.5) * CHUNK);
+      return lx < 1.4 || lz < 1.4 || Math.hypot(lx, lz) < 3.2 ? Ground.Paved : Ground.Grass;
+    }
     const zone = this.chunks.zoneAt(x, z);
-    const rx = Math.abs(x - Math.round(x / CHUNK) * CHUNK);
-    const rz = Math.abs(z - Math.round(z / CHUNK) * CHUNK);
-    const curb = Math.abs(rx - ROAD_HALF) < 0.35 || Math.abs(rz - ROAD_HALF) < 0.35;
-    if (zone === 'downtown' || zone === 'town') return curb ? Ground.Curb : Ground.Paved;
-    if (rx < ROAD_HALF || rz < ROAD_HALF) return curb ? Ground.Curb : Ground.Paved;
-    return (zone === 'suburb' && y > 0.05) ? Ground.Paved : Ground.Grass;
+    if (zone === 'downtown' || zone === 'town') return Ground.Paved;
+    return zone === 'suburb' && y > 0.05 ? Ground.Paved : Ground.Grass;
   }
 
   /** What the feet are on: glass shards, a building's floor or stairs, pavement, road, grass (with fallback to last valid surface). */
@@ -1844,6 +1888,7 @@ export class WorldScene implements IScene {
     const floorY = floorAt(at.x, at.z);
     sfx.glassBreak(at, { x: at.x, y: floorY + 0.05, z: at.z });
     this.particles.burst(at, 10, 0.7);
+    this.life.burstGlassShards(at.x, at.y, at.z, dir.x, dir.y, dir.z, 18, floorY);
     const hLen = Math.hypot(dir.x, dir.z);
     const hx = hLen > 1e-4 ? dir.x / hLen : 0;
     const hz = hLen > 1e-4 ? dir.z / hLen : 1;
@@ -1854,6 +1899,27 @@ export class WorldScene implements IScene {
       const sy = floorAt(sx, sz);
       this.life.addDynamicShards(sx, sy, sz, 2.2);
     }
+  }
+
+  /** Shatters car windshields/side/rear glass on upper-cabin hits with zero allocations, else triggers metal car hit. */
+  private handleVehicleBulletHit(at: Vector3, dir: Vector3, playSound: boolean): 'glass' | 'metal' | null {
+    const v = this.glbPool.findVehicleAt(at.x, at.y, at.z);
+    if (!v) return null;
+    const noGlass = v.id === 'Semi_Trailer_Cargo_20' || v.id === 'zsu_23_4_shilka_14k' || v.id === 'burned_car_wreck';
+    const inGlassZone =
+      !noGlass &&
+      (v.id === 'Semi_Truck_Tractor_24'
+        ? v.localZ < v.hl * 0.12 && at.y > v.y + 1.95 && at.y < v.y + 3.2
+        : at.y > v.y + v.H * 0.55);
+    if (inGlassZone) {
+      if (playSound) sfx.glassBreak(at, { x: at.x, y: v.y + 0.05, z: at.z });
+      this.life.burstGlassShards(at.x, at.y, at.z, -dir.x, 0.25, -dir.z, 16, v.y);
+      this.life.addDynamicShards(at.x - dir.x * 0.55, v.y, at.z - dir.z * 0.55, 1.4);
+      this.life.addGlassCrackDecal(at.x, at.y, at.z, -dir.x, -dir.y, -dir.z, 0.44);
+      this.atmo.carHit(at.x, at.y, at.z);
+      return 'glass';
+    }
+    return 'metal';
   }
 
   /** A blow of the weapon in hand landed: it wears, and at the end of its blows it breaks. */
@@ -2155,21 +2221,9 @@ export class WorldScene implements IScene {
   }
 
   private drawSearchZones(dt: number): void {
-    const f = this.dead ? null : this.interaction.focus;
-    const hideSearchOutline =
-      !!f &&
-      (f.type === 'trunk' ||
-        f.type === 'vehicleCabin' ||
-        f.type === 'cargoHold' ||
-        f.type === 'planeCabin' ||
-        f.type.startsWith('body'));
-    this.searchOutline.visible = !!f && !hideSearchOutline;
-    if (f && !hideSearchOutline) {
-      const b = searchBox(f);
-      this.searchOutline.position.set(b[0], b[1], b[2]);
-      this.searchOutline.scale.set(b[3] * 2, b[4] * 2, b[5] * 2);
-      this.searchOutline.rotation.set(0, b[6], 0);
-    }
+    // No wireframe box on anything searchable (furniture, desks, containers, vehicles, bodies): the [E]
+    // prompt alone marks the focus. ?interactdebug=1 still draws the zones below.
+    this.searchOutline.visible = false;
     if (this.zoneDebug && (this.zoneDebugT -= dt) <= 0) {
       this.zoneDebugT = 0.5;
       const c = this.player.controller.position;

@@ -16,6 +16,7 @@ import { mulberry32 } from '../../core/random';
 import type { Surface } from '../../render/look/materials';
 import type { StaticBatch, VertexTint } from '../../render/StaticBatch';
 import type { ColliderSink } from '../CollisionWorld';
+import { isGlbClear } from '../gen/footprint';
 import type { ContainerSpot } from '../gen/pieces';
 import { type ModelInfo, type ModelLibrary, modelGeometry, modelGlass, modelLod1Indices } from '../models';
 import { CIVILIAN_FALLBACK_POOL, GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
@@ -53,6 +54,12 @@ export interface CarOptions {
   kind?: string;
   /** Optional explicit world GLB vehicle override. */
   glbId?: GlbModelId;
+  /** Restrict picked vehicle length <= maxLen (e.g. tight surface parking stalls). */
+  maxLen?: number;
+  /** Skip mandatory OBB/fire-escape overlap check (for controlled couplings/tests). */
+  allowOverlap?: boolean;
+  /** Index into `batch.glbs` to ignore during overlap check (e.g. tractor when attaching semi-trailer). */
+  ignoreGlb?: number;
 }
 
 // Mid-size 90s sedan, meters. Local axes: +X nose, +Y up, +Z left side.
@@ -124,16 +131,20 @@ const _p = new Vector3();
 const _s = new Vector3();
 
 /**
- * Abandoned 90s sedan, ~1.4k triangles, built from logical parts that go into the static batch
- * under their own surfaces: rusted paint, dirty rubber, murky cracked glass, old chrome, dead lamps.
+ * Abandoned 90s sedan / world GLB vehicle, placed only if its 2D OBB clears existing vehicles/props
+ * (>= 1.0 m) and highrise fire escapes / entrances (>= 3.0 m). Returns `true` when placed.
  */
-export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): void {
+export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions, containers?: ContainerSpot[]): boolean {
   const rand = mulberry32(o.seed ?? 1);
   const roll = o.flatTire ? -0.022 : 0;
   const pitch = o.flatTire ? -0.012 : 0;
   let id = o.glbId ?? pickWorldVehicle(o.kind, rand(), o.smashed ?? 0);
+  if (o.maxLen !== undefined && !o.glbId && GLB_WORLD_SPECS[id].size[2] > o.maxLen) {
+    id = rand() < 0.5 ? 'Sport_Sedan_22k' : 'UAZ_Bukhanka_22k';
+  }
   if (!o.glbId && !o.kind) {
     const tooClose = (cand: GlbModelId) =>
+      (o.maxLen !== undefined && GLB_WORLD_SPECS[cand].size[2] > o.maxLen) ||
       batch.glbs.some((g) => g.id === cand && (g.x - o.x) * (g.x - o.x) + (g.z - o.z) * (g.z - o.z) < 1600);
     if (tooClose(id)) {
       const start = Math.floor(rand() * CIVILIAN_FALLBACK_POOL.length);
@@ -149,12 +160,16 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
   const spec = GLB_WORLD_SPECS[id];
   if (spec) {
     // World GLBs face -Z at yaw 0; rotating by (o.yaw - PI/2) points nose along +X at o.yaw = 0.
+    const glbYaw = o.yaw - Math.PI / 2;
+    if (!o.allowOverlap && !isGlbClear(batch, id, o.x, o.z, glbYaw, 1.0, { keepClearGap: 3.0, ignoreGlb: o.ignoreGlb })) {
+      return false;
+    }
     batch.glbs.push({
       id,
       x: o.x,
       y: 0.01,
       z: o.z,
-      yaw: o.yaw - Math.PI / 2,
+      yaw: glbYaw,
       roll,
       pitch,
     });
@@ -202,7 +217,7 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
         box: [cx, (y0 + y1) * 0.5, cz, depth * 0.5 + 0.06, (y1 - y0) * 0.5, W * 0.5 - 0.14, o.yaw],
       });
     }
-    return;
+    return true;
   }
 
   // Fallback procedural sedan only if spec lookup ever failed (all 40 GLBs are always in GLB_WORLD_SPECS).
@@ -324,6 +339,7 @@ export function buildCar(batch: StaticBatch, world: ColliderSink, o: CarOptions,
   // Full footprint + tall cabin so player cannot clip into trunk and bandits cannot shoot through cars.
   world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH + 0.04, WIDTH * 0.48, o.yaw, -0.5, 0.96);
   world.addOrientedBox(o.x, o.z, BODY_HALF_LENGTH * 0.66, WIDTH * 0.44, o.yaw, 0.96, 1.58);
+  return true;
 }
 
 /** A model into the batch: vehicle metal by default, slightly rough; its glass as murky translucent car glass. */

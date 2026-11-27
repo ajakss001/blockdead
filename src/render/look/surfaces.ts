@@ -63,7 +63,7 @@ export interface SurfaceSpec {
 }
 
 export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
-  ground: { kind: 'ground', detail: 0xd6d6cc, noise: 0.55, roughness: 1, metalness: 0, tile: 4, castShadow: false },
+  ground: { kind: 'ground', detail: 0xe6e8de, noise: 0.28, roughness: 1, metalness: 0, tile: 4, castShadow: false },
   asphalt: { kind: 'asphalt', detail: 0xd0d0cc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 3.0, castShadow: false },
   plaster: { kind: 'plaster', detail: 0xd8d3c8, noise: 0.16, roughness: 0.9, metalness: 0.04, tile: 2.4, bump: 0.5, castShadow: true },
   roof: { kind: 'wood', detail: 0xc8c4bc, noise: 0.5, roughness: 0.95, metalness: 0, tile: 1.8, castShadow: true },
@@ -141,7 +141,7 @@ export const MODEL_LAYER_BASE = 64;
 export const surfaceLayer = (surface: Surface): number => SURFACE_LIST.indexOf(surface);
 
 /** Seamless 1024x1024 PBR texture array layers loaded from public/textures/pbr/. */
-export const PBR_LAYERS = ['brick', 'plaster', 'wood', 'tile', 'concrete', 'asphalt'] as const;
+export const PBR_LAYERS = ['brick', 'plaster', 'wood', 'tile', 'concrete', 'asphalt', 'ground'] as const;
 export type PbrLayerName = (typeof PBR_LAYERS)[number];
 
 export interface PbrSurfaceMapping {
@@ -160,6 +160,7 @@ const PBR_SURFACE_MAP: Partial<Record<Surface, PbrSurfaceMapping>> = {
   tile: { layer: 3, name: 'tile', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
   concrete: { layer: 4, name: 'concrete', uvScaleU: 1, uvScaleV: 1, normalScale: 0.95, facadeMask: 'none' },
   asphalt: { layer: 5, name: 'asphalt', uvScaleU: 1, uvScaleV: 1, normalScale: 0.85, facadeMask: 'none' },
+  ground: { layer: 6, name: 'ground', uvScaleU: 1, uvScaleV: 1, normalScale: 0.78, facadeMask: 'none' },
   facadeBrick: { layer: 0, name: 'brick', uvScaleU: 6.0 / 1.8, uvScaleV: 6.4 / 1.8, normalScale: 1.05, facadeMask: 'apartment' },
   facadeConcrete: { layer: 4, name: 'concrete', uvScaleU: 6.0 / 2.6, uvScaleV: 6.4 / 2.6, normalScale: 0.95, facadeMask: 'apartment' },
   facadeOffice: { layer: 4, name: 'concrete', uvScaleU: 6.0 / 2.6, uvScaleV: 6.4 / 2.6, normalScale: 0.85, facadeMask: 'office' },

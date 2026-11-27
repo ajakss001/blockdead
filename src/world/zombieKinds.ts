@@ -23,6 +23,7 @@ const SITE: Record<PoiKind, Mix> = {
   gas: [['worker', 0.4], ['courier', 0.35], ['builder', 0.25]],
   plant: [['worker', 0.55], ['builder', 0.45]],
   park: [['jogger', 0.35], ['grandma', 0.35], ['tourist', 0.3]],
+  helipad: [['worker', 0.35], ['medic', 0.35], ['soldier', 0.3]],
 };
 
 /** A place's scenario adds its own people. */

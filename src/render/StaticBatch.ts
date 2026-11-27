@@ -141,8 +141,16 @@ const qByte = (v: number) => (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255 + 0.5) | 0);
  * typed-array buckets — optionally split into 2×2 spatial sub-cells (32×32 m) for tight frustum
  * and shadow culling. Runs inside the chunk worker; GPU meshes are created by `meshesFromBuffers`.
  */
+export interface KeepClearZone {
+  x: number;
+  z: number;
+  r: number;
+  kind: 'entrance' | 'fireEscape';
+}
+
 export class StaticBatch {
   readonly glbs: GlbPlacement[] = [];
+  readonly keepClear: KeepClearZone[] = [];
   private readonly accs = new Map<Bucket, BucketAcc>();
   private readonly color = new Color();
   private readonly tmpColor = new Color();

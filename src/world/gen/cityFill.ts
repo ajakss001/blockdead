@@ -1,6 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickModel } from '../models';
 import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
+import { isGlbClear } from './footprint';
 import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
@@ -103,7 +104,7 @@ export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: 
 }
 
 /** 3 m slot between two towers: a dumpster, litter, maybe a gate at the street, maybe walled off at the back. */
-function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, escape: boolean, escapes: EscapeSpec[]): void {
+function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, escape: boolean, _escapes: EscapeSpec[]): void {
   const streetZ = row.south ? row.z0 : row.z1;
   const courtZ = row.south ? row.z1 : row.z0;
   const inward = row.south ? 1 : -1;
@@ -116,7 +117,9 @@ function sideAlley(b: Builder, xL: number, xR: number, row: Row, rand: Rand, esc
   if (rand() < 0.4) sheetFence(b, xL, streetZ + inward * 0.3, xR, streetZ + inward * 0.3, rand() < 0.6 ? (xL + xR) / 2 : undefined, 1.2);
   // Dead end: walled off at the courtyard.
   if (rand() < 0.3) brickWall(b, xL, courtZ - inward * 0.3, xR, courtZ - inward * 0.3);
-  if (escape && rand() < 0.6) escapes.push({ axis: 'x', wall: xR, outward: -1, u0: row.z0 + 3, storeys: 4 });
+  // Decorative side-alley fire escapes removed (crooked rusty grates over 1st-floor alleys); the roll is kept so the
+  // rest of the block stays as it was. Highrises keep their climbable back-wall fire escape (highrise.ts).
+  if (escape) rand();
 }
 
 /** The strip left at the east end of a row: a service gap behind a gate. */
@@ -145,12 +148,13 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
   for (let k = 0; k < 3; k++) {
     const x = clear(X0 + 2 + rand() * (X1 - X0 - 7), 0.9);
     const southWall = rand() < 0.5;
-    dumpster(b, x, southWall ? zS + 0.1 : zN - 1.2, 'x');
-    b.container('trash', x + 0.9, southWall ? zS + 1.6 : zN - 1.7);
+    if (dumpster(b, x, southWall ? zS + 0.1 : zN - 1.2, 'x')) {
+      b.container('trash', x + 0.9, southWall ? zS + 1.6 : zN - 1.7);
+    }
   }
   for (let k = 0; k < 2; k++) crates(b, clear(X0 + 2 + rand() * (X1 - X0 - 6), 0.5), rand() < 0.5 ? zS + 0.2 : zN - 1.2, rand);
   for (let k = 0; k < 4; k++) if (rand() >= 0.7) groundDecal(b, 'decalOil', X0 + rand() * (X1 - X0), PAVE.plaza, zMid + (rand() - 0.5) * (width - 2), 2, rand);
-  // Wide enough for the residents' cars: parked along the north wall.
+  // Wide enough for the residents' cars: parked along the north wall (clear of fire escapes & dumpsters).
   if (width >= 7.5) {
     const lanes = rand() < 0.5 ? 1 : 0;
     for (let k = 0; k < lanes; k++) {
@@ -158,20 +162,21 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
       const lo = k === 0 ? X0 + 3.5 : split + 3.2;
       const hi = k === 0 ? split - 3.2 : X1 - 3.5;
       if (hi - lo < 0.5) continue;
-      parkedCar(b, lo + rand() * (hi - lo), zN - 1.25, rand() < 0.5 ? 0 : Math.PI, rand);
+      parkedCar(b, lo + rand() * (hi - lo), zN - 2.0, rand() < 0.5 ? 0 : Math.PI, rand, 5.2);
     }
   }
 }
 
-/** Parked, not crashed: straight, rarely smashed. */
-function parkedCar(b: Builder, x: number, z: number, yaw: number, rand: Rand): void {
-  b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
-  buildCar(
+/** Parked, not crashed: straight, rarely smashed. Returns true when placed without overlapping. */
+function parkedCar(b: Builder, x: number, z: number, yaw: number, rand: Rand, maxLen?: number): boolean {
+  const placed = buildCar(
     b.batch,
     b.colliders,
-    { x, z, yaw: yaw + (rand() - 0.5) * 0.06, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.2, smashed: rand() < 0.15 ? 0.3 : 0 },
+    { x, z, yaw: yaw + (rand() - 0.5) * 0.06, paint: pick(rand, paints), seed: Math.floor(rand() * 1e6), flatTire: rand() < 0.2, smashed: rand() < 0.15 ? 0.3 : 0, maxLen },
     b.containers,
   );
+  if (placed) b.life(LIFE.car, x, 0, z, Math.sin(yaw), Math.cos(yaw), 4.3, 1.8, spotHash(x, z, 41));
+  return placed;
 }
 
 /**
@@ -199,7 +204,7 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
     const rowZ = edge === z0 ? z0 + 0.3 : z1 - 0.3 - STALL_D;
     for (let x = x0 + 0.5; x + STALL_W <= x1 - 0.5; x += STALL_W) {
       b.block(0xa8a490, x - 0.05, 0, rowZ, 0.1, PAVE.plaza + 0.032, STALL_D, 'asphalt');
-      if (rand() < 0.35) parkedCar(b, x + STALL_W / 2, rowZ + STALL_D / 2, nose < 0 ? Math.PI / 2 : -Math.PI / 2, rand);
+      if (rand() < 0.35) parkedCar(b, x + STALL_W / 2, rowZ + STALL_D / 2, nose < 0 ? Math.PI / 2 : -Math.PI / 2, rand, 5.0);
     }
   }
   // Pay booth by the entrance (street side).
@@ -211,26 +216,37 @@ function surfaceParking(b: Builder, x0: number, z0: number, x1: number, z1: numb
 }
 
 /** Wheeled steel dumpster (GLB Soviet_Dumpster_3000); `along` is the long axis. */
-function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): void {
+function dumpster(b: Builder, x: number, z: number, along: 'x' | 'z'): boolean {
   const sx = along === 'x' ? 1.8 : 1.1;
   const sz = along === 'x' ? 1.1 : 1.8;
   const cx = x + sx / 2;
   const cz = z + sz / 2;
-  b.glb('Soviet_Dumpster_3000', cx, 0, cz, along === 'x' ? 0 : Math.PI / 2, {
-    sx: sx / 2.0,
+  const yaw = along === 'x' ? 0 : Math.PI / 2;
+  const optSx = sx / 2.0;
+  const optSz = sz / 1.896;
+  if (!isGlbClear(b.batch, 'Soviet_Dumpster_3000', cx, cz, yaw, 0.6, { keepClearGap: 1.2, sx: optSx, sz: optSz })) {
+    return false;
+  }
+  b.glb('Soviet_Dumpster_3000', cx, 0, cz, yaw, {
+    sx: optSx,
     sy: 0.72,
-    sz: sz / 1.896,
+    sz: optSz,
   });
   b.solid(x, z, x + sx, z + sz, 0.12, 1.35);
+  return true;
 }
 
 /** A pallet with crates on it (3D model, sometimes searchable). */
 function crates(b: Builder, x: number, z: number, rand: Rand): void {
-  const cp = new Place(b, x + 0.5, 0, z + 0.5, Math.floor(rand() * 4) as 0 | 1 | 2 | 3);
-  if (cp.model(rand() < 0.5 ? 'palletCrates' : 'woodenCrate', rand, 0, 0, 0, 0, 1, 0.82, 0.08)) {
+  const rot = Math.floor(rand() * 4) as 0 | 1 | 2 | 3;
+  const rModel = rand();
+  const isSearch = rand() < 0.35;
+  if (!isGlbClear(b.batch, 'abandoned_luggage_pil', x + 0.5, z + 0.5, 0, 0.5, { keepClearGap: 1.0 })) return;
+  const cp = new Place(b, x + 0.5, 0, z + 0.5, rot);
+  if (cp.model(rModel < 0.5 ? 'palletCrates' : 'woodenCrate', rand, 0, 0, 0, 0, 1, 0.82, 0.08)) {
     b.solid(x, z, x + 1.0, z + 1.0, 0, 0.9);
   }
-  if (rand() < 0.35) b.container('crate', x + 0.5, z + 0.5);
+  if (isSearch) b.container('crate', x + 0.5, z + 0.5);
 }
 
 /** Corrugated sheet fence, 2.2 m, along X or Z, with an optional gap. */

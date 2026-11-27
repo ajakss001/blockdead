@@ -361,7 +361,7 @@ export function waterPlant(S: Site, rand: Rand): void {
     S.b.life(LIFE.drip, wx, 4.95, wz, 0, 0, 0, 4.91, spotHash(wx, wz, 71));
   }
   p.model('locker', rand, 19.3, 0, 3, 0, 1, 0.55, 0.45, true);
-  S.container('plantStore', 19.3, 3);
+  S.container('plantStore', 19.3, 3, ['heliBattery']);
   p.model('locker', rand, 4.7, 0, 10.5, 0, 1, 0.55, 0.45, true);
   S.container('plantStore', 4.7, 10.5);
 
@@ -462,7 +462,7 @@ export function checkpoint(S: Site, rand: Rand): void {
   for (let k = 0; k < 4; k++) {
     const cx = -8 + k * 1.1;
     p.model('supplyCrate', rand, cx, 0, 14.35, 0, 1, 0.78, 0.15, true);
-    S.container('militaryCrate', cx, 14.8);
+    S.container('militaryCrate', cx, 14.8, k === 0 ? ['heliFuelPump'] : k === 1 ? ['jerrycan'] : undefined);
   }
   S.container('bodyMilitary', 3, 18);
   if (rand() < 0.6) S.container('bodyMilitary', -18, 22);
@@ -541,4 +541,41 @@ export function park(S: Site, _rand: Rand): void {
     const [mx, mz] = [(ax + bx) / 2, (az + bz) / 2];
     hedge(b, ax, az, bx, bz, Math.abs(bz - az) < 1e-6 ? mx : mz, 3.2);
   }
+}
+
+/**
+ * EMERCOM Helipad POI («Вертолётная площадка · Ми-8 МЧС»): clean flat obstacle-free concrete pad (±14 m)
+ * with non-overlapping 'H' markings, perimeter lighting tower, and supply crates with fuel jerrycans.
+ */
+export function helipad(S: Site, rand: Rand): void {
+  const p = S.p;
+  S.slab(0x4f5357, -23, -23, 23, 23, 0, 0.036, 'concrete');
+  S.slab(0x46484b, -5, 23, 5, LOT, 0, 0.034, 'asphalt');
+  // Non-overlapping landing perimeter box + bold 'H' (each bar strictly separated in XZ).
+  const my = 0.04;
+  p.box(0xc8a438, 0, my, -11.5, 23.6, 0.008, 0.6, 'asphalt');
+  p.box(0xc8a438, 0, my, 11.5, 23.6, 0.008, 0.6, 'asphalt');
+  p.box(0xc8a438, -11.5, my, 0, 0.6, 0.008, 22.0, 'asphalt');
+  p.box(0xc8a438, 11.5, my, 0, 0.6, 0.008, 22.0, 'asphalt');
+  p.box(0xd8d4c8, -4.4, my, 0, 0.9, 0.008, 8.6, 'asphalt');
+  p.box(0xd8d4c8, 4.4, my, 0, 0.9, 0.008, 8.6, 'asphalt');
+  p.box(0xd8d4c8, 0, my, 0, 7.6, 0.008, 0.9, 'asphalt');
+  // Perimeter safety corner bollards well clear of the 14 m takeoff zone.
+  for (const [cx, cz] of [
+    [-21, -21],
+    [21, -21],
+    [-21, 21],
+    [21, 21],
+  ] as const) {
+    p.box(0x888476, cx, 0, cz, 0.45, 0.75, 0.45, 'concrete', true);
+    p.box(0xd05a28, cx, 0.75, cz, 0.35, 0.16, 0.35, 'lamp');
+    p.life(LIFE.beacon, cx, 0.95, cz, 0.45, 5, spotHash(cx, cz, 91), 1);
+  }
+  const [lx, lz] = p.pt(18, -19);
+  if (S.here(18, -19)) S.b.glb('generator_light_tower', lx, 0, lz, (p.r * Math.PI) / 2 - Math.PI * 0.75);
+  // Supply crates at NW apron edge with guaranteed fuel jerrycans.
+  p.model('supplyCrate', rand, -16.5, 0, -18, 0, 1.15, 0.78, 0.15, true);
+  S.container('militaryCrate', -16.5, -17.3, ['jerrycan']);
+  p.model('woodenCrate', rand, -19.2, 0, -14.8, Math.PI / 2, 1.1, 0.8, 0.1, true);
+  S.container('crate', -18.5, -14.8, ['jerrycan']);
 }

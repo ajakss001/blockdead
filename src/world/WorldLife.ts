@@ -1,19 +1,21 @@
 import {
-  BoxGeometry,
-  CanvasTexture,
-  ConeGeometry,
-  MeshBasicMaterial,
-  MeshStandardMaterial,
   AdditiveBlending,
+  BoxGeometry,
+  BufferGeometry,
   type Camera,
+  CanvasTexture,
   Color,
+  ConeGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Euler,
+  Float32BufferAttribute,
   type Fog,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   PointLight,
   Quaternion,
@@ -38,14 +40,20 @@ const GLOW_CAP = 320;
 const FIRE_LIGHT_RANGE = 45;
 const MAX_ROOM_LIGHTS = 2;
 const MAX_FIRE_LIGHTS = 4;
+const DYN_SHARD_CAP = 64;
+const FLY_SHARD_CAP = 192;
+const GLASS_DECAL_CAP = 64;
 
 const _m = new Matrix4();
 const _q = new Quaternion();
+const _q2 = new Quaternion();
 const _e = new Euler();
 const _p = new Vector3();
 const _s = new Vector3();
+const _n = new Vector3();
 const _x = new Vector3(1, 0, 0);
 const _y = new Vector3(0, 1, 0);
+const _z = new Vector3(0, 0, 1);
 
 /** Same light curve as the glow shader (mode 0 steady with a slight wobble, 1 flickering). */
 function flicker(t: number, phase: number, mode: number): number {
@@ -80,6 +88,22 @@ export class WorldLife {
   private dynShardMesh: InstancedMesh | null = null;
   private dynShardTex: CanvasTexture | null = null;
   private dynShardMat: MeshStandardMaterial | null = null;
+  private flyShardMesh: InstancedMesh | null = null;
+  private flyShardMat: MeshStandardMaterial | null = null;
+  private readonly flyPos = new Float32Array(FLY_SHARD_CAP * 3);
+  private readonly flyVel = new Float32Array(FLY_SHARD_CAP * 3);
+  private readonly flyRot = new Float32Array(FLY_SHARD_CAP * 3);
+  private readonly flyAng = new Float32Array(FLY_SHARD_CAP * 3);
+  private readonly flyFloor = new Float32Array(FLY_SHARD_CAP);
+  private readonly flyScale = new Float32Array(FLY_SHARD_CAP);
+  private readonly flyLife = new Float32Array(FLY_SHARD_CAP);
+  private flyCursor = 0;
+  private glassDecalMesh: InstancedMesh | null = null;
+  private glassDecalTex: CanvasTexture | null = null;
+  private glassDecalMat: MeshStandardMaterial | null = null;
+  private readonly glassDecalMats = new Float32Array(GLASS_DECAL_CAP * 16);
+  private glassDecalCount = 0;
+  private glassDecalCursor = 0;
   /** Lit rooms of the loaded interiors: x, y (lamp), z, flicker mode, phase. */
   private readonly rooms: number[] = [];
   /** A few real point lights (quality preset) given to the nearest lit rooms. */
@@ -157,6 +181,85 @@ export class WorldLife {
     this.beamMesh.count = 0;
     this.beamMesh.visible = false;
     this.scene.add(this.spinMesh, this.beamMesh);
+
+    // Pre-allocate and add glass shatter/crack pools at boot so breaking windows/windshields
+    // performs ZERO GPU allocations and ZERO shader compilations in shot frames.
+    if (typeof document !== 'undefined') {
+      try {
+        const tex = new CanvasTexture(generateDecalCanvas('shards', 128, 17));
+        const mat = new MeshStandardMaterial({
+          map: tex,
+          transparent: true,
+          depthWrite: false,
+          roughness: 0.25,
+          metalness: 0.2,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+        });
+        const quadFloor = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+        const dMesh = new InstancedMesh(quadFloor, mat, DYN_SHARD_CAP);
+        dMesh.name = 'life:dynShards';
+        dMesh.frustumCulled = false;
+        dMesh.renderOrder = 1;
+        dMesh.count = 0;
+        dMesh.visible = false;
+        this.dynShardTex = tex;
+        this.dynShardMat = mat;
+        this.dynShardMesh = dMesh;
+
+        const shardGeo = new BufferGeometry();
+        shardGeo.setAttribute(
+          'position',
+          new Float32BufferAttribute(
+            [-0.045, 0, 0, 0.05, 0.015, 0, 0.01, 0.11, 0, -0.045, 0, 0, 0.01, 0.11, 0, -0.025, 0.08, 0.008],
+            3,
+          ),
+        );
+        shardGeo.computeVertexNormals();
+        const flyMat = new MeshStandardMaterial({
+          color: 0xcbe2ee,
+          roughness: 0.12,
+          metalness: 0.35,
+          transparent: true,
+          opacity: 0.78,
+          side: DoubleSide,
+        });
+        const fMesh = new InstancedMesh(shardGeo, flyMat, FLY_SHARD_CAP);
+        fMesh.name = 'life:flyShards';
+        fMesh.frustumCulled = false;
+        fMesh.instanceMatrix.setUsage(DynamicDrawUsage);
+        fMesh.count = 0;
+        fMesh.visible = false;
+        this.flyShardMat = flyMat;
+        this.flyShardMesh = fMesh;
+
+        const crackTex = new CanvasTexture(buildGlassCrackCanvas());
+        const crackMat = new MeshStandardMaterial({
+          map: crackTex,
+          transparent: true,
+          depthWrite: false,
+          roughness: 0.18,
+          metalness: 0.2,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+          side: DoubleSide,
+        });
+        const cMesh = new InstancedMesh(new PlaneGeometry(1, 1), crackMat, GLASS_DECAL_CAP);
+        cMesh.name = 'life:glassCracks';
+        cMesh.frustumCulled = false;
+        cMesh.renderOrder = 2;
+        cMesh.count = 0;
+        cMesh.visible = false;
+        this.glassDecalTex = crackTex;
+        this.glassDecalMat = crackMat;
+        this.glassDecalMesh = cMesh;
+
+        this.scene.add(dMesh, fMesh, cMesh);
+      } catch {
+        // Node headless test DOM stub without 2D canvas context skips visual meshes cleanly.
+      }
+    }
   }
 
   /** Number of real point lights for lit rooms (0 on weak phones: the fake glow does it alone). */
@@ -181,46 +284,117 @@ export class WorldLife {
       const s = this.dynamicShards[i];
       if (Math.abs(s.y - y) < 0.7 && (s.x - x) ** 2 + (s.z - z) ** 2 < 1.2 * 1.2) return;
     }
-    if (this.dynamicShards.length >= 64) this.dynamicShards.shift();
+    if (this.dynamicShards.length >= DYN_SHARD_CAP) this.dynamicShards.shift();
     this.dynamicShards.push({ x, y, z, r: radius });
-    if (typeof document !== 'undefined') {
-      if (!this.dynShardMesh) {
-        try {
-          const canvas = generateDecalCanvas('shards', 128, 17);
-          const tex = new CanvasTexture(canvas);
-          const mat = new MeshStandardMaterial({
-            map: tex,
-            transparent: true,
-            depthWrite: false,
-            roughness: 0.25,
-            metalness: 0.2,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-          });
-          const quad = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-          const mesh = new InstancedMesh(quad, mat, 64);
-          mesh.name = 'life:dynShards';
-          mesh.frustumCulled = false;
-          mesh.renderOrder = 1;
-          mesh.count = 0;
-          this.scene.add(mesh);
-          this.dynShardTex = tex;
-          this.dynShardMat = mat;
-          this.dynShardMesh = mesh;
-        } catch {
-          // Node headless test DOM stub without 2D canvas context skips visual mesh cleanly.
-        }
+    if (this.dynShardMesh) {
+      for (let i = 0; i < this.dynamicShards.length; i++) {
+        const s = this.dynamicShards[i];
+        const diam = s.r * 1.1;
+        _m.compose(_p.set(s.x, s.y + 0.025, s.z), _q.setFromAxisAngle(_y, (s.x * 1.3 + s.z * 0.7) % 6.28), _s.set(diam, 1, diam));
+        this.dynShardMesh.setMatrixAt(i, _m);
       }
-      if (this.dynShardMesh) {
-        for (let i = 0; i < this.dynamicShards.length; i++) {
-          const s = this.dynamicShards[i];
-          const diam = s.r * 1.1;
-          _m.compose(_p.set(s.x, s.y + 0.025, s.z), _q.setFromAxisAngle(_y, ((s.x * 1.3 + s.z * 0.7) % 6.28)), _s.set(diam, 1, diam));
-          this.dynShardMesh.setMatrixAt(i, _m);
+      this.dynShardMesh.count = this.dynamicShards.length;
+      this.dynShardMesh.visible = true;
+      this.dynShardMesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** Pooled zero-allocation 3D flying glass shard burst when a window or car windshield shatters. */
+  burstGlassShards(x: number, y: number, z: number, nx: number, ny: number, nz: number, count = 16, floorY = 0): void {
+    const nLen = Math.hypot(nx, ny, nz) || 1;
+    const dx = nx / nLen;
+    const dy = ny / nLen;
+    const dz = nz / nLen;
+    for (let i = 0; i < count; i++) {
+      const slot = this.flyCursor;
+      this.flyCursor = (this.flyCursor + 1) % FLY_SHARD_CAP;
+      const i3 = slot * 3;
+      this.flyPos[i3] = x + (Math.random() - 0.5) * 0.28;
+      this.flyPos[i3 + 1] = y + (Math.random() - 0.5) * 0.24;
+      this.flyPos[i3 + 2] = z + (Math.random() - 0.5) * 0.28;
+      const spd = 1.6 + Math.random() * 3.8;
+      this.flyVel[i3] = dx * spd * 0.65 + (Math.random() - 0.5) * 2.8;
+      this.flyVel[i3 + 1] = dy * spd * 0.4 + 0.6 + Math.random() * 2.2;
+      this.flyVel[i3 + 2] = dz * spd * 0.65 + (Math.random() - 0.5) * 2.8;
+      this.flyRot[i3] = Math.random() * 6.28;
+      this.flyRot[i3 + 1] = Math.random() * 6.28;
+      this.flyRot[i3 + 2] = Math.random() * 6.28;
+      this.flyAng[i3] = (Math.random() - 0.5) * 18;
+      this.flyAng[i3 + 1] = (Math.random() - 0.5) * 18;
+      this.flyAng[i3 + 2] = (Math.random() - 0.5) * 18;
+      this.flyFloor[slot] = floorY;
+      this.flyScale[slot] = 0.75 + Math.random() * 1.15;
+      this.flyLife[slot] = 1.2 + Math.random() * 0.65;
+    }
+    this.syncFlyShards(0);
+  }
+
+  /** Pooled zero-allocation crack/bullet-hole decal for shattered car windows. */
+  addGlassCrackDecal(x: number, y: number, z: number, nx: number, ny: number, nz: number, size = 0.48): void {
+    if (!this.glassDecalMesh) return;
+    _n.set(nx, ny, nz);
+    if (_n.lengthSq() < 1e-6) _n.set(0, 0, 1);
+    else _n.normalize();
+    _q.setFromUnitVectors(_z, _n).multiply(_q2.setFromAxisAngle(_z, Math.random() * Math.PI * 2));
+    _m.compose(_p.set(x, y, z).addScaledVector(_n, 0.015), _q, _s.set(size, size, 1));
+    const slot = this.glassDecalCursor;
+    this.glassDecalCursor = (this.glassDecalCursor + 1) % GLASS_DECAL_CAP;
+    if (this.glassDecalCount < GLASS_DECAL_CAP) this.glassDecalCount++;
+    _m.toArray(this.glassDecalMats, slot * 16);
+    this.glassDecalMesh.setMatrixAt(slot, _m);
+    this.glassDecalMesh.count = this.glassDecalCount;
+    this.glassDecalMesh.visible = this.glassDecalCount > 0;
+    this.glassDecalMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private syncFlyShards(dt: number): void {
+    const mesh = this.flyShardMesh;
+    let active = 0;
+    for (let i = 0; i < FLY_SHARD_CAP; i++) {
+      let life = this.flyLife[i];
+      if (life <= 0) continue;
+      if (dt > 0) {
+        life -= dt;
+        if (life <= 0) {
+          this.flyLife[i] = 0;
+          continue;
         }
-        this.dynShardMesh.count = this.dynamicShards.length;
-        this.dynShardMesh.instanceMatrix.needsUpdate = true;
+        this.flyLife[i] = life;
+        const i3 = i * 3;
+        this.flyVel[i3 + 1] -= 14 * dt;
+        this.flyPos[i3] += this.flyVel[i3] * dt;
+        this.flyPos[i3 + 1] += this.flyVel[i3 + 1] * dt;
+        this.flyPos[i3 + 2] += this.flyVel[i3 + 2] * dt;
+        const fy = this.flyFloor[i] + 0.015;
+        if (this.flyPos[i3 + 1] <= fy) {
+          this.flyPos[i3 + 1] = fy;
+          if (Math.abs(this.flyVel[i3 + 1]) > 0.6) {
+            this.flyVel[i3 + 1] = -this.flyVel[i3 + 1] * 0.22;
+            this.flyVel[i3] *= 0.45;
+            this.flyVel[i3 + 2] *= 0.45;
+          } else {
+            this.flyVel[i3] = this.flyVel[i3 + 1] = this.flyVel[i3 + 2] = 0;
+            this.flyAng[i3] = this.flyAng[i3 + 1] = this.flyAng[i3 + 2] = 0;
+          }
+        }
+        this.flyRot[i3] += this.flyAng[i3] * dt;
+        this.flyRot[i3 + 1] += this.flyAng[i3 + 1] * dt;
+        this.flyRot[i3 + 2] += this.flyAng[i3 + 2] * dt;
       }
+      if (mesh) {
+        const i3 = i * 3;
+        const s = this.flyScale[i] * Math.min(1, life * 4);
+        _e.set(this.flyRot[i3], this.flyRot[i3 + 1], this.flyRot[i3 + 2], 'XYZ');
+        _q.setFromEuler(_e);
+        _m.compose(_p.set(this.flyPos[i3], this.flyPos[i3 + 1], this.flyPos[i3 + 2]), _q, _s.set(s, s, s));
+        mesh.setMatrixAt(active, _m);
+      }
+      active++;
+    }
+    if (mesh) {
+      mesh.count = active;
+      mesh.visible = active > 0;
+      if (active > 0) mesh.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -276,6 +450,7 @@ export class WorldLife {
     this.updateRoomLights(player, dt);
     this.updateFireLights(player, dt);
     this.updateSpinners();
+    this.syncFlyShards(dt);
 
     // Nearest radio: a storey apart counts as far; pan from the camera's facing.
     let best = Infinity;
@@ -576,13 +751,11 @@ export class WorldLife {
     this.keepPrewarmVisible();
     return () => {
       this.dirty = true;
-      if (this.spinMesh) {
-        this.spinMesh.count = 0;
-        this.spinMesh.visible = false;
-      }
-      if (this.beamMesh) {
-        this.beamMesh.count = 0;
-        this.beamMesh.visible = false;
+      for (const m of [this.spinMesh, this.beamMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
+        if (m) {
+          m.count = 0;
+          m.visible = false;
+        }
       }
     };
   }
@@ -595,7 +768,7 @@ export class WorldLife {
       this.glow.count = 1;
     }
     this.glow.visible = true;
-    for (const m of [this.spinMesh, this.beamMesh]) {
+    for (const m of [this.spinMesh, this.beamMesh, this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
       if (!m) continue;
       if (m.count === 0) {
         m.setMatrixAt(0, _m.identity());
@@ -614,12 +787,17 @@ export class WorldLife {
     for (const l of this.fireLightList) l.removeFromParent();
     this.spinMesh?.removeFromParent();
     this.beamMesh?.removeFromParent();
-    if (this.dynShardMesh) {
-      this.scene.remove(this.dynShardMesh);
-      this.dynShardMesh.geometry.dispose();
+    for (const m of [this.dynShardMesh, this.flyShardMesh, this.glassDecalMesh]) {
+      if (m) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+      }
     }
     this.dynShardMat?.dispose();
     this.dynShardTex?.dispose();
+    this.flyShardMat?.dispose();
+    this.glassDecalMat?.dispose();
+    this.glassDecalTex?.dispose();
   }
 }
 
@@ -753,3 +931,45 @@ void main() {
   // uFog.z = daylight: lamps and lit windows read far weaker by day.
   gl_FragColor = vec4(col * a * vI * (1.0 - fog) * (1.0 - 0.75 * uFog.z), 1.0);
 }`;
+
+/** Procedural spiderweb crack + bullet hole texture (built once at boot). */
+function buildGlassCrackCanvas(): HTMLCanvasElement {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d')!;
+  const cx = S / 2;
+  const cy = S / 2;
+  // Shatter frost halo
+  const halo = g.createRadialGradient(cx, cy, 4, cx, cy, S * 0.44);
+  halo.addColorStop(0, 'rgba(210, 230, 240, 0.72)');
+  halo.addColorStop(0.22, 'rgba(220, 236, 245, 0.36)');
+  halo.addColorStop(1, 'rgba(220, 236, 245, 0)');
+  g.fillStyle = halo;
+  g.fillRect(0, 0, S, S);
+  // Radial crack lines
+  g.strokeStyle = 'rgba(235, 244, 250, 0.85)';
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + Math.sin(i * 7.3) * 0.22;
+    const len = S * (0.28 + ((i * 37) % 10) * 0.018);
+    g.lineWidth = i % 2 === 0 ? 1.5 : 1.0;
+    g.beginPath();
+    g.moveTo(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4);
+    g.quadraticCurveTo(cx + Math.cos(a + 0.12) * len * 0.55, cy + Math.sin(a + 0.12) * len * 0.55, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+    g.stroke();
+  }
+  // Concentric spiderweb rings
+  g.strokeStyle = 'rgba(225, 238, 246, 0.58)';
+  g.lineWidth = 1.0;
+  for (const r of [11, 20, 31]) {
+    g.beginPath();
+    g.arc(cx, cy, r, 0, Math.PI * 2);
+    g.stroke();
+  }
+  // Dark bullet entry hole at center
+  g.fillStyle = 'rgba(12, 16, 20, 0.92)';
+  g.beginPath();
+  g.arc(cx, cy, 4.5, 0, Math.PI * 2);
+  g.fill();
+  return cv;
+}

@@ -3,6 +3,7 @@ import { Color, Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { type ModelInfo, pickModel } from '../models';
 import { buildCar, modelLibrary, placeModel } from '../props/car';
 import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
+import { isGlbClear } from './footprint';
 import * as F from './furniture';
 import { Place } from './furniture';
 import { groundDecal } from './highrise';
@@ -64,7 +65,11 @@ function model(b: Builder, group: string, x: number, z: number, yaw: number, ran
     const spec = GLB_WORLD_SPECS[glbId];
     const y = (o.lift ?? 0) + 0.01;
     const isBarrier = glbId === 'checkpoint_barricade' || glbId === 'quarantine_tent';
-    b.glb(glbId, x, y, z, isBarrier ? yaw : yaw - Math.PI / 2, { roll: o.roll, pitch: o.pitch });
+    const glbYaw = isBarrier ? yaw : yaw - Math.PI / 2;
+    if (o.collide !== false && !isGlbClear(b.batch, glbId, x, z, glbYaw, 0.9, { keepClearGap: 2.5 })) {
+      return null;
+    }
+    b.glb(glbId, x, y, z, glbYaw, { roll: o.roll, pitch: o.pitch });
     if (o.collide !== false) {
       const hx = isBarrier ? spec.size[0] / 2 : spec.size[2] / 2;
       const hz = isBarrier ? spec.size[2] / 2 : spec.size[0] / 2;
@@ -120,8 +125,11 @@ export function jersey(p: Place, lx: number, lz: number, len: number): void {
 /** Road barrier (GLB checkpoint_barricade). */
 export function stripedBarrier(p: Place, lx: number, lz: number, len: number, down = false): void {
   const [x, z] = p.pt(lx, lz);
-  p.b.glb('checkpoint_barricade', x, down ? 0.12 : 0, z, yawOf(p), {
-    sx: Math.max(0.7, len / 3.4),
+  const yaw = yawOf(p);
+  const sx = Math.max(0.7, len / 3.4);
+  if (!isGlbClear(p.b.batch, 'checkpoint_barricade', x, z, yaw, 0.35, { keepClearGap: 0.6, sx })) return;
+  p.b.glb('checkpoint_barricade', x, down ? 0.12 : 0, z, yaw, {
+    sx,
     roll: down ? Math.PI / 2 - 0.1 : 0,
   });
   if (!down) p.solid(lx, lz, len, 0.45, 1.4);
@@ -129,8 +137,10 @@ export function stripedBarrier(p: Place, lx: number, lz: number, len: number, do
 
 /** Field tent (GLB quarantine_tent). */
 export function tent(b: Builder, x: number, z: number, yaw: number, _rand: Rand, _color?: number): Place {
-  b.glb('quarantine_tent', x, 0, z, yaw);
-  b.colliders.addOrientedBox(x, z, 3.1, 2.06, yaw, -0.5, 3.05);
+  if (isGlbClear(b.batch, 'quarantine_tent', x, z, yaw, 0.8, { keepClearGap: 1.5 })) {
+    b.glb('quarantine_tent', x, 0, z, yaw);
+    b.colliders.addOrientedBox(x, z, 3.1, 2.06, yaw, -0.5, 3.05);
+  }
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
@@ -148,11 +158,17 @@ function bus(b: Builder, x: number, z: number, yaw: number, rand: Rand): Place {
   return new Place(b, x, 0, z, 0).tipped(yaw);
 }
 
-/** Crashed helicopter (GLB mi8_wreck_remesh with ground decals & road barriers). */
+/** Crashed helicopter (GLB mi8_wreck_remesh with cockpit container carrying guaranteed avionics). */
 function heliCrash(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyMode): void {
   const yaw = rand() * Math.PI * 2;
   b.glb('mi8_wreck_remesh', x, 0.05, z, yaw - Math.PI / 2, { pitch: -0.14, roll: 0.16 });
   b.colliders.addOrientedBox(x, z, 7.6, 2.6, yaw, -0.5, 4.1);
+  // Searchable flight deck holding guaranteed Mi-8 avionics / ignition unit.
+  const cx = x + Math.cos(yaw) * 1.8;
+  const cz = z - Math.sin(yaw) * 1.8;
+  if (b.inClip(cx, cz)) {
+    b.containers.push({ type: 'vehicleCabin', x: cx, z: cz, box: [cx, 1.4, cz, 2.1, 1.35, 1.35, yaw], fixed: ['heliAvionics'] });
+  }
   stripDecal(b, x - Math.cos(yaw) * 6, z + Math.sin(yaw) * 6, yaw, 10, 1.6, 'decalSkid');
   groundDecal(b, 'decalSoot', x, 0, z, 6, rand, 1.4);
   groundDecal(b, 'decalShards', x + (rand() - 0.5) * 3, 0, z + (rand() - 0.5) * 3, 3, rand);
@@ -226,16 +242,16 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyM
   const alongX = rand() < 0.5;
   const base = alongX ? 0 : Math.PI / 2;
   const off = (u: number, v: number): [number, number] => (alongX ? [x + u, z + v] : [x + v, z + u]);
-  let [vx, vz] = off(-10, -1.8);
+  let [vx, vz] = off(-10, -2.0);
   bus(b, vx, vz, base + (rand() - 0.5) * 0.08, rand);
   if (rand() < 0.6) {
-    [vx, vz] = off(11, 1.8);
+    [vx, vz] = off(11, 2.2);
     bus(b, vx, vz, base + Math.PI + (rand() - 0.5) * 0.1, rand);
   }
-  [vx, vz] = off(3, -1.8);
+  [vx, vz] = off(3.2, -2.0);
   van(b, vx, vz, base + (rand() - 0.5) * 0.4, 0xc8c4b8, 0x8a2a22, [0x2a3a8a, 0x2a3a8a]);
   if (rand() < 0.6) {
-    [vx, vz] = off(-2, 2.2);
+    [vx, vz] = off(-2.8, 2.4);
     van(b, vx, vz, base + Math.PI + (rand() - 0.5) * 0.5, 0xc8c4b8, 0x8a2a22, [0x2a3a8a, 0x8a2a2a]);
   }
   // The fire truck and the medical tent stand on the cross street's arm, never in the corners (the buildings).
@@ -247,7 +263,14 @@ function evacuation(b: Builder, x: number, z: number, rand: Rand, _bodies: BodyM
   // Stretchers, luggage, boxes, barriers.
   const A = new Place(b, x, 0, z, alongX ? 0 : 1);
   for (let k = 0; k < 2; k++) stretcher(A, (rand() - 0.5) * 6, 4 + rand() * 2, rand);
-  for (let k = 0; k < 4; k++) b.glb('abandoned_luggage_pil', x + (rand() - 0.5) * 12, 0, z + (rand() - 0.5) * 9, rand() * 6.28);
+  for (let k = 0; k < 4; k++) {
+    const lx = x + (rand() - 0.5) * 12;
+    const lz = z + (rand() - 0.5) * 9;
+    const lyaw = rand() * 6.28;
+    if (isGlbClear(b.batch, 'abandoned_luggage_pil', lx, lz, lyaw, 0.5, { keepClearGap: 0.8 })) {
+      b.glb('abandoned_luggage_pil', lx, 0, lz, lyaw);
+    }
+  }
   for (let k = 0; k < 2; k++) F.boxes(A.at((rand() - 0.5) * 10, (rand() - 0.5) * 8, Math.floor(rand() * 4)), rand, 2);
   stripedBarrier(A, 0, BAND + 1.0, 2.6, rand() < 0.5);
 }

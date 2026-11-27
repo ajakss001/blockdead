@@ -1,4 +1,5 @@
 import { Matrix4, Vector3 } from 'three';
+import type { ItemId } from '../../data/items';
 import type { ContainerType } from '../../data/loot';
 import { GLB_WORLD_SPECS, type GlbModelId, pickWorldVehicle } from '../worldModels';
 import { sandbags } from './chaos';
@@ -112,7 +113,7 @@ const CRAFT: Record<'airliner' | 'lightplane' | 'fighter' | 'heliMil', Craft> = 
  * An installed aircraft GLB model on a place (its nose along the place's local +Z, tipped if the place is),
  * collider over the fuselage, its cabin / hold zones.
  */
-export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, _rand: Rand, _charred = false): boolean {
+export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, _rand: Rand, _charred = false, fixedFirst?: ItemId[]): boolean {
   const c = CRAFT[kind];
   const spec = GLB_WORLD_SPECS[c.glbId];
   const M = q.frame(new Matrix4()).multiply(new Matrix4().makeRotationY(-Math.PI / 2)).multiply(new Matrix4().makeTranslation(0, 0.01, 0));
@@ -124,11 +125,17 @@ export function aircraft(S: Site, kind: keyof typeof CRAFT, q: Place, _rand: Ran
   const H = spec.size[1] * c.scale;
   S.b.glb(c.glbId, at.x, at.y, at.z, yaw - Math.PI / 2, { scale: c.scale });
   S.b.colliders.addOrientedBox(at.x, at.z, L / 2, c.body / 2, yaw, -0.5, at.y + H);
-  for (const [type, mid, half, y0, y1, w] of c.zones) {
+  c.zones.forEach(([type, mid, half, y0, y1, w], idx) => {
     const x = at.x + nose.x * mid * L;
     const z = at.z + nose.z * mid * L;
-    S.b.containers.push({ type, x, z, box: [x, at.y + ((y0 + y1) / 2) * H, z, half * L, ((y1 - y0) / 2) * H, w, yaw] });
-  }
+    S.b.containers.push({
+      type,
+      x,
+      z,
+      box: [x, at.y + ((y0 + y1) / 2) * H, z, half * L, ((y1 - y0) / 2) * H, w, yaw],
+      ...(idx === 0 && fixedFirst ? { fixed: fixedFirst } : {}),
+    });
+  });
   return true;
 }
 
@@ -234,7 +241,7 @@ export function airport(S: Site, rand: Rand): void {
   aircraft(S, 'airliner', p.at(-28, -10, 0), rand);
   aircraft(S, 'airliner', p.at(-64, -4, 1), rand);
   const crash = p.at(42, -38).tipped(0.35, 0, 0.22, 0);
-  aircraft(S, 'airliner', crash, rand);
+  aircraft(S, 'airliner', crash, rand, false, ['heliAvionics']);
   for (const [x, z, s] of [
     [42, -38, 10],
     [58, -40, 7],
@@ -315,8 +322,10 @@ export function militaryBase(S: Site, rand: Rand): void {
   for (const z of [-50, -44, -38, -32]) {
     for (const x of [-17, -9]) {
       p.model('supplyCrate', rand, x, 0, z, 0, 1.35, 0.78, 0.15, true);
-      // The front row is the base's armoury: rifles, rounds, the only RPGs.
-      S.container(z === -50 ? 'baseArmory' : 'militaryCrate', x, z + 0.9);
+      // The front row is the base's armoury: rifles, rounds, the only RPGs (+ guaranteed fuel pump & jerrycans).
+      const fixed: ItemId[] | undefined =
+        z === -50 && x === -17 ? ['heliFuelPump'] : z === -38 ? ['jerrycan'] : undefined;
+      S.container(z === -50 ? 'baseArmory' : 'militaryCrate', x, z + 0.9, fixed);
     }
   }
 

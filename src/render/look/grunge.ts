@@ -301,25 +301,28 @@ export function generateGrungeCanvas(
           shade *= 0.7 + 0.6 * smooth(0.3, 0.7, n);
           break;
         case 'ground': {
-          const dirt = smooth(0.45, 0.65, blotch(u, v));
-          r = r + (78 - r) * dirt;
-          gg = gg + (66 - gg) * dirt;
-          b = b + (48 - b) * dirt;
+          // Subtle organic loam warmth without harsh dark camouflage blotches.
+          const loam = (blotch(u, v) - 0.5) * 0.14;
+          r = r * (1 + loam * 0.6);
+          gg = gg * (1 + loam * 0.4);
+          b = b * (1 - loam * 0.4);
           break;
         }
         default:
           break;
       }
 
-      // Grime: low-frequency dark-brown patches (gentle on interior plaster, facades, fabric and glass).
+      // Grime: low-frequency dark-brown patches (gentle on interior plaster, facades, fabric, glass and countryside ground).
       const surfGrime =
         kind === 'glass'
           ? 0.1
-          : kind === 'plaster' || kind === 'fabric'
-            ? 0.24
-            : kind === 'facadeBrick' || kind === 'facadeConcrete' || kind === 'facadeOffice'
-              ? 0.32
-              : 0.75;
+          : kind === 'ground'
+            ? 0.12
+            : kind === 'plaster' || kind === 'fabric'
+              ? 0.24
+              : kind === 'facadeBrick' || kind === 'facadeConcrete' || kind === 'facadeOffice'
+                ? 0.32
+                : 0.75;
       const dirt = smooth(0.5 - 0.14 * Math.max(0, grimeK - 1), 0.72, grime(u, v)) * Math.min(1, grimeK) * surfGrime;
       shade *= 1 - dirt * 0.45;
       r = r + (52 - r) * dirt * 0.35;

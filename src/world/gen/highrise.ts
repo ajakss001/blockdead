@@ -322,9 +322,13 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   }
   if (L.x1 - wx > 0.01) b.block(tint, wx, 0, L.z0, L.x1 - wx, FLOOR_H, WALL, f, true);
   // Back wall up to roof, plus parapet with a doorway gap for the exterior fire escape top exit.
+  // Keep vehicles clear of street-level building entrances and back fire-escape landings (>= 3 m).
+  b.batch.keepClear.push({ x: b.wx(L.doorX), z: b.wz(L.z0), r: 0, kind: 'entrance' });
   const feX0 = (L.x0 + L.x1) / 2 - FE_HALF_W;
   const feX1 = feX0 + FE_HALF_W * 2;
   if (desc.floors >= 2) {
+    const feCx = (feX0 + feX1) * 0.5;
+    b.batch.keepClear.push({ x: b.wx(feCx), z: b.wz(L.z1 + FE_DEPTH * 0.5), r: 0, kind: 'fireEscape' });
     b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, true);
     // Open parapet exit always sits directly at the top flight arrival (feX1 - FE_ROOF_GAP .. feX1), clear of head-house.
     const gap0 = feX1 - FE_ROOF_GAP;
@@ -334,7 +338,6 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     // Flush metal roof threshold bridge joining the top fire-escape landing straight onto the roof slab.
     b.block(0x52565c, gap0, H - 0.06, L.z1 - WALL, FE_ROOF_GAP, 0.06, WALL + FE_DEPTH * 0.52, 'metal', false);
     // Exterior working fire escape (ground to roof) along L.z1: scaled so GLB platform (y_local=0.65 -> 3.20) spans FLOOR_H per flight.
-    const feCx = (feX0 + feX1) * 0.5;
     const feSy = FLOOR_H / 2.55;
     for (let k = 0; k < desc.floors; k++) {
       b.glb('fire_escape_smart_top', feCx, k * FLOOR_H - 0.65 * feSy, L.z1 + FE_DEPTH * 0.5, Math.PI, {
@@ -368,16 +371,12 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
   for (const { x, w: pw, broken } of panes) {
-    // Frame: four bars round the pane.
-    b.block(PAL.trim, x - 0.08, 0.3, L.z0 - 0.06, 0.08, 2.6, 0.06, 'metal');
-    b.block(PAL.trim, x + pw, 0.3, L.z0 - 0.06, 0.08, 2.6, 0.06, 'metal');
-    b.block(PAL.trim, x, 2.8, L.z0 - 0.06, pw, 0.1, 0.06, 'metal');
+    // No protruding (rust-textured) frame bars over the brick: intact glass sits flush on the facade.
     if (broken) {
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 - 1.0, 1.8, rand, 1.4);
       groundDecal(b, 'decalShards', x + pw / 2, 0, L.z0 + 1.0, 1.6, rand, 1.2);
     } else {
-      b.block(PAL.trim, x, 0.3, L.z0 - 0.06, pw, 0.15, 0.06, 'metal');
-      b.block(PAL.window, x, 0.45, L.z0 - 0.08, pw, 2.35, 0.03, 'windowGlass', true);
+      b.block(PAL.window, x, 0.3, L.z0 - 0.03, pw, 2.5, 0.03, 'windowGlass', true);
     }
   }
   if (entrance === 'doors') {
@@ -393,14 +392,14 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 - 0.8, 2.2, rand, 1.3);
     groundDecal(b, 'decalShards', L.doorX, 0, L.z0 + 1.2, 2.0, rand, 1.3);
   }
-  b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
-  b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'metal');
-  b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'metal');
-  b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'metal');
+  b.block(PAL.trim, d0 - 0.12, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
+  b.block(PAL.trim, d1, 0, L.z0 - 0.08, 0.12, ENTRANCE_H + 0.12, 0.08, 'concrete');
+  b.block(0x2a2c2e, d0 - 0.8, ENTRANCE_H + 0.3, L.z0 - 1.4, ENTRANCE_W + 1.6, 0.12, 1.4, 'concrete');
+  b.block(0x1c1e20, L.x0 + 1, 3.0, L.z0 - 0.1, desc.w - 2, 0.6, 0.08, 'concrete');
   const shop = groundShop(desc);
   if (shop) {
     // The shop's own sign panel (a color per trade, no names); a pale cross for the pharmacy.
-    b.block(SHOP_SIGN[shop.kind], L.x0 + 1.2, 3.05, L.z0 - 0.13, shop.x1 - L.x0 - 1.4, 0.5, 0.03, 'metal');
+    b.block(SHOP_SIGN[shop.kind], L.x0 + 1.2, 3.05, L.z0 - 0.13, shop.x1 - L.x0 - 1.4, 0.5, 0.03, 'concrete');
     if (shop.kind === 'pharmacy') {
       const sx = (L.x0 + shop.x1) / 2;
       b.block(0x9ad0a8, sx - 0.06, 3.1, L.z0 - 0.15, 0.12, 0.4, 0.02, 'lamp');
@@ -447,7 +446,7 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
   const h = spec.head - spec.sill;
   const pane = new PlaneGeometry(spec.width, h);
   // Frames: the reveal of every opening, so looking in at an angle never shows a slit through the wall.
-  const reveal = revealGeometry(spec.width, h, WALL + 0.02);
+  const reveal = revealGeometry(spec.width, h, WALL);
   const mid = WALL / 2;
   // The street front's ground floor is shop windows and the entrance: no panes in that wall.
   const front = desc.flip ? z1 - mid : z0 + mid;
@@ -459,7 +458,7 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
         if (k === 0 && z === front) continue;
         _m.compose(_p.set(cx, y, z), _q.identity(), _s.set(1, 1, 1));
         b.geo(pane, 0x6c7a84, _m, 'windowGlass');
-        b.geo(reveal, 0x3b3e42, _m, 'metal');
+        b.geo(reveal, 0x8a867c, _m, 'concrete');
       }
     }
     _q.setFromAxisAngle(_yAxis, Math.PI / 2);
@@ -468,7 +467,7 @@ export function windowPanes(b: Builder, desc: BuildingDesc): void {
       for (const x of [x0 + mid, x1 - mid]) {
         _m.compose(_p.set(x, y, cz), _q, _s.set(1, 1, 1));
         b.geo(pane, 0x6c7a84, _m, 'windowGlass');
-        b.geo(reveal, 0x3b3e42, _m, 'metal');
+        b.geo(reveal, 0x8a867c, _m, 'concrete');
       }
     }
     _q.identity();

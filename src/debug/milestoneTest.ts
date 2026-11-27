@@ -23,12 +23,17 @@ import {
   local as highriseLocal,
   type BuildingDesc,
 } from '../world/gen/highrise';
-import { WorldLayout } from '../world/gen/layout';
+import { glbObb, obbOverlap } from '../world/gen/footprint';
+import { WorldLayout, PAVE } from '../world/gen/layout';
+import { nearestPoi, siteToWorld, type PoiKind } from '../world/gen/poi';
 import { Builder, lampPost } from '../world/gen/pieces';
 import { trafficJam } from '../world/gen/storytelling';
 import { buildCar } from '../world/props/car';
-import { LIFE_STRIDE } from '../world/WorldLife';
+import { LIFE_STRIDE, WorldLife } from '../world/WorldLife';
 import { GLB_WORLD_SPECS, type GlbModelId } from '../world/worldModels';
+import { AnxietyAudio } from '../audio/AnxietyAudio';
+import { GUNS } from '../weapons/guns';
+import { GunState, newInst, type GunInput } from '../weapons/gunState';
 import { Particles } from '../render/Particles';
 import { StaticBatch } from '../render/StaticBatch';
 import type { InputManager } from '../input/InputManager';
@@ -369,8 +374,9 @@ export async function main(): Promise<number> {
       const cw2 = new PackedColliders();
       const spawned = new Set<GlbModelId>();
       for (let k = 0; k < 6; k++) {
-        buildCar(batch, cw2, { x: k * 6, z: 0, yaw: 0, paint: 0x808080, seed: 42 });
-        spawned.add(batch.glbs[batch.glbs.length - 1].id);
+        if (buildCar(batch, cw2, { x: k * 6, z: 0, yaw: Math.PI / 2, paint: 0x808080, seed: 42 })) {
+          spawned.add(batch.glbs[batch.glbs.length - 1].id);
+        }
       }
       check(spawned.size === 6, `P5: 40m anti-repeat prevents identical cars nearby (${spawned.size}/6 unique)`);
     }
@@ -532,6 +538,120 @@ export async function main(): Promise<number> {
         `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & climbs smoothly to roof (${curY.toFixed(1)} m, headroom=${headroomOk}, roofExit=${roofExitOk})`,
       );
       void LIFE_STRIDE;
+    }
+
+    // Regression checks for recent fixes (M4A1 1.25x RPM, downtown speed bumps, debris scale, 0 vehicle overlaps,
+    // helipad POI + guaranteed parts & fuel, pooled WorldLife glass shards).
+    {
+      check(
+        GUNS.rifle_m4a1.rpm === GUNS.rifle_ak.rpm * 1.25,
+        `P6: M4A1 RPM (${GUNS.rifle_m4a1.rpm}) is 1.25x AK RPM (${GUNS.rifle_ak.rpm})`,
+      );
+      const countAutoShots = (id: 'rifle_ak' | 'rifle_m4a1') => {
+        const st = newInst(id, 31);
+        st.mode = 'auto';
+        const ammo = { count: () => 120, take: () => 0, give: () => {}, spareMags: () => 2, takeMag: () => true };
+        const gs = new GunState(id, st, ammo);
+        const inp: GunInput = { trigger: true, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true };
+        for (let f = 0; f < 40; f++) gs.update(1 / 60, { ...inp, trigger: false });
+        let shots = 0;
+        for (let f = 0; f < 72; f++) {
+          const ev = gs.update(1 / 60, inp);
+          if (ev.some((e) => e.kind === 'shot')) shots++;
+        }
+        return shots;
+      };
+      const akShots = countAutoShots('rifle_ak');
+      const m4Shots = countAutoShots('rifle_m4a1');
+      check(
+        akShots === 12 && m4Shots === 15,
+        `P6: 60Hz 1.2s sustained auto matches exact 1.25x rate (AK=${akShots} vs M4A1=${m4Shots})`,
+      );
+
+      check(
+        GLB_WORLD_SPECS.Road_Debris_Cluster_2.size[1] <= 0.85,
+        `P6: Road_Debris_Cluster_2 scaled down to realistic height (${GLB_WORLD_SPECS.Road_Debris_Cluster_2.size[1]} m)`,
+      );
+
+      const layout = new WorldLayout(1993);
+      let cityBumps = 0;
+      let bumpYOk = 0;
+      let overlapCount = 0;
+      for (let ci = -3; ci <= 3; ci++) {
+        for (let cj = -3; cj <= 3; cj++) {
+          const ch = buildChunk(layout, ci, cj);
+          for (const g of ch.glbs) {
+            if (g.id === 'speed_bump_1000' && (layout.urbanX(ci, cj) || layout.urbanZ(ci, cj))) {
+              cityBumps++;
+              if (Math.abs(g.y - (PAVE.asphalt + 0.005)) < 1e-4) bumpYOk++;
+            }
+          }
+          const vehs = ch.glbs.filter((g) => GLB_WORLD_SPECS[g.id].category === 'vehicle');
+          for (let a = 0; a < vehs.length; a++) {
+            for (let b = a + 1; b < vehs.length; b++) {
+              const va = vehs[a];
+              const vb = vehs[b];
+              const coupled =
+                ((va.id === 'Semi_Truck_Tractor_24' && vb.id === 'Semi_Trailer_Cargo_20') ||
+                  (vb.id === 'Semi_Truck_Tractor_24' && va.id === 'Semi_Trailer_Cargo_20')) &&
+                Math.hypot(va.x - vb.x, va.z - vb.z) < 7.2;
+              if (coupled) continue;
+              const oa = glbObb(va);
+              const ob = glbObb(vb);
+              if (obbOverlap(oa.x, oa.z, oa.hx, oa.hz, oa.yaw, ob.x, ob.z, ob.hx, ob.hz, ob.yaw)) overlapCount++;
+            }
+          }
+        }
+      }
+      check(cityBumps >= 3 && bumpYOk === cityBumps, `P6: downtown/town speed bumps seated at asphalt+0.005 (${bumpYOk}/${cityBumps})`);
+      check(overlapCount === 0, `P6: zero overlapping street vehicle OBBs across 7x7 city grid (overlaps=${overlapCount})`);
+
+      const hp = nearestPoi(layout, 'helipad', 0, 0, 120);
+      const [hpx, hpz] = hp ? siteToWorld(hp, 0, 0) : [0, 0];
+      const worldHeli = new Helicopter({
+        scene: new Scene(),
+        world: new CollisionWorld(),
+        layout,
+        particles: new Particles(),
+        groundY: () => 0,
+        toast: () => {},
+        hurtPlayer: () => {},
+        explode: () => {},
+        onEscape: () => {},
+      });
+      check(
+        !!hp && Math.hypot(worldHeli.x - hpx, worldHeli.z - hpz) < 0.1,
+        `P6: Mi-8 spawns on dedicated helipad POI (dist=${hp ? Math.hypot(worldHeli.x - hpx, worldHeli.z - hpz).toFixed(2) : 'none'})`,
+      );
+      worldHeli.dispose();
+
+      const fixedCounts = new Map<string, number>();
+      for (const kind of ['police', 'gas', 'checkpoint', 'plant', 'lab', 'helipad', 'airport', 'base'] as PoiKind[]) {
+        const s = nearestPoi(layout, kind, 0, 0, 120);
+        if (!s) continue;
+        for (let i = s.i; i < s.i + (s.bw ?? 1); i++) {
+          for (let j = s.j; j < s.j + (s.bd ?? 1); j++) {
+            for (const c of buildChunk(layout, i, j).containers) {
+              for (const fid of c.fixed ?? []) fixedCounts.set(fid, (fixedCounts.get(fid) ?? 0) + 1);
+            }
+          }
+        }
+      }
+      check(
+        (fixedCounts.get('heliAvionics') ?? 0) >= 1 &&
+          (fixedCounts.get('heliFuelPump') ?? 0) >= 1 &&
+          (fixedCounts.get('heliBattery') ?? 0) >= 1 &&
+          (fixedCounts.get('jerrycan') ?? 0) >= 6,
+        `P6: guaranteed POI parts & >=6 jerrycans (av=${fixedCounts.get('heliAvionics') ?? 0}, pump=${fixedCounts.get('heliFuelPump') ?? 0}, bat=${fixedCounts.get('heliBattery') ?? 0}, fuel=${fixedCounts.get('jerrycan') ?? 0})`,
+      );
+
+      const lifeScene = new Scene();
+      const life = new WorldLife(lifeScene, { context: null } as unknown as AnxietyAudio, () => 0);
+      life.burstGlassShards(1, 1.4, 2, 0, 0, -1, 16, 0);
+      life.addDynamicShards(1, 0, 2, 1.4);
+      life.addGlassCrackDecal(1, 1.4, 2, 0, 0, -1, 0.44);
+      check(life.onShards(1, 2, 0), 'P6: pooled WorldLife glass shatter/decal/shards active');
+      life.dispose();
     }
   }
 

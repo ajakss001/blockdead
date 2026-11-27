@@ -6,9 +6,9 @@ import {
   Euler,
   InstancedBufferAttribute,
   InstancedMesh,
+  LinearFilter,
   Matrix4,
   MeshLambertMaterial,
-  NearestFilter,
   PlaneGeometry,
   Quaternion,
   type Scene,
@@ -64,7 +64,14 @@ const _y = new Vector3(0, 1, 0);
 export class Foliage {
   readonly mesh: InstancedMesh;
   private readonly data: InstancedBufferAttribute;
-  private readonly uniforms = { uTime: { value: 0 }, uWind: { value: 0.3 } };
+  private readonly uniforms = {
+    uTime: { value: 0 },
+    uWind: { value: 0.3 },
+    uSnow: { value: 0.15 },
+    uCamPos: { value: new Vector3() },
+    uFadeStart: { value: 18 },
+    uFadeEnd: { value: 30 },
+  };
   private readonly tiles = new Map<number, Grown>();
   /** Tiles grown from old sources: still shown, regrown nearest first (no grass popping out). */
   private readonly stale = new Set<number>();
@@ -89,10 +96,11 @@ export class Foliage {
     quad.setAttribute('aFol', this.data);
     const tex = new CanvasTexture(atlas());
     tex.colorSpace = SRGBColorSpace;
-    tex.magFilter = NearestFilter;
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearFilter;
     const mat = new MeshLambertMaterial({
       map: tex,
-      alphaTest: 0.5,
+      alphaTest: 0.45,
       side: DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: -1,
@@ -101,20 +109,56 @@ export class Foliage {
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec4 aFol;\nuniform float uTime;\nuniform float uWind;')
+        .replace(
+          '#include <common>',
+          `#include <common>
+attribute vec4 aFol;
+uniform float uTime;
+uniform float uWind;
+uniform vec3 uCamPos;
+uniform float uFadeStart;
+uniform float uFadeEnd;
+varying float vBladeY;
+varying float vDistFade;
+varying float vIsLitter;`,
+        )
         .replace('#include <uv_vertex>', '#include <uv_vertex>\nvMapUv = (vMapUv + vec2(mod(aFol.x, 2.0), 1.0 - floor(aFol.x / 2.0))) * 0.5;')
         // Tufts are lit like the ground under them (up), not like a card.
         .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nif (aFol.x < 1.5) objectNormal = vec3(0.0, 1.0, 0.0);')
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-float bend = position.y * position.y * aFol.y;
+float camDist = length(instanceMatrix[3].xz - uCamPos.xz);
+float distFade = 1.0 - smoothstep(uFadeStart, uFadeEnd, camDist);
+vDistFade = distFade;
+vBladeY = clamp(position.y, 0.0, 1.0);
+vIsLitter = step(2.5, aFol.x);
+transformed.y *= mix(0.15, 1.0, distFade);
+float bend = position.y * position.y * aFol.y * distFade;
 float wt = uTime * (1.6 + aFol.z) + aFol.z * 40.0 + instanceMatrix[3].x * 0.35 + instanceMatrix[3].z * 0.27;
 transformed.x += bend * (0.05 + 0.16 * uWind) * sin(wt);
 transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
         );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+uniform float uSnow;
+varying float vBladeY;
+varying float vDistFade;
+varying float vIsLitter;`,
+        )
+        .replace(
+          '#include <map_fragment>',
+          `if (vDistFade < 0.04) discard;
+#include <map_fragment>
+if (uSnow > 0.01) {
+  float snowMix = clamp(uSnow * mix(0.2 + 0.95 * vBladeY, 0.85, vIsLitter), 0.0, 0.92);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.90, 0.96), snowMix);
+}`,
+        );
     };
-    mat.customProgramCacheKey = () => 'foliage';
+    mat.customProgramCacheKey = () => 'foliage-snow-fade-v1';
     this.mesh = new InstancedMesh(quad, mat, maxCap);
     this.mesh.name = 'foliage';
     this.mesh.count = 0;
@@ -141,9 +185,17 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
     for (const k of this.tiles.keys()) this.stale.add(k);
   }
 
+  /** Snow cover 0..1 blended onto blade tips & fallen litter. */
+  setSnow(v: number): void {
+    this.uniforms.uSnow.value = Math.max(0, Math.min(1, v));
+  }
+
   update(time: number, wind: number, px: number, pz: number, dirX = 0, dirZ = 0): void {
     this.uniforms.uTime.value = time;
     this.uniforms.uWind.value = wind;
+    this.uniforms.uCamPos.value.set(px, 0, pz);
+    this.uniforms.uFadeStart.value = this.radius * 0.65;
+    this.uniforms.uFadeEnd.value = this.radius * 0.98;
     const r = this.radius;
     const t0x = Math.floor((px - r) / TILE_M);
     const t1x = Math.floor((px + r) / TILE_M);
@@ -271,7 +323,7 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
         const roll = spotHash(jx, jz, 8);
         const kind = this.ground(jx, jz);
         if (kind === Ground.None) continue;
-        // Round a tree: grass even through paving, leaves on the ground.
+        // Round a tree: fallen leaves everywhere; bonus grass only on soil/curb (never across asphalt lanes).
         let near = 0;
         let leafy = false;
         for (let i = 0; i < trees.length; i += 5) {
@@ -282,15 +334,16 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
           }
         }
         if (leafy && spotHash(jx, jz, 9) < 0.35) flat(jx, jz, 0.55 + spotHash(jx, jz, 10) * 0.35);
-        const p = kind === Ground.Grass ? 0.62 : kind === Ground.Curb ? 0.3 : 0.025;
-        if (roll < Math.max(p, near * 0.75)) {
-          const weed = spotHash(jx, jz, 11) < (kind === Ground.Grass ? 0.12 : 0.35);
-          const small = kind === Ground.Paved && near === 0 ? 0.55 : 1;
-          tuft(jx, jz, (weed ? 0.42 : 0.5) * small * (0.8 + spotHash(jx, jz, 12) * 0.5), weed ? TILE.weed : TILE.grass);
+        const treeGrass = kind === Ground.Paved ? 0 : near * 0.75;
+        const p = kind === Ground.Grass ? 0.78 : kind === Ground.Curb ? 0.24 : 0.008;
+        if (roll < Math.max(p, treeGrass)) {
+          const weed = spotHash(jx, jz, 11) < (kind === Ground.Grass ? 0.14 : 0.45);
+          const scale = kind === Ground.Paved ? 0.42 : kind === Ground.Curb ? 0.62 : 1.05;
+          tuft(jx, jz, (weed ? 0.44 : 0.54) * scale * (0.8 + spotHash(jx, jz, 12) * 0.55), weed ? TILE.weed : TILE.grass);
         }
       }
     }
-    // Weeds pushing up round an abandoned car's wheels.
+    // Weeds pushing up round an abandoned car's wheels (only on curb or countryside soil, never asphalt lanes).
     const cars = this.sources.cars;
     for (let i = 0; i < cars.length; i += 4) {
       const cx = cars[i];
@@ -308,8 +361,10 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
         // Length along the car's local X = (fz, −fx), width along (fx, fz).
         const wx = cx + fz * a + fx * s;
         const wz = cz - fx * a + fz * s;
-        tuft(wx, wz, 0.55, TILE.weed);
-        tuft(wx + 0.2, wz - 0.15, 0.4, TILE.grass);
+        const wk = this.ground(wx, wz);
+        if (wk === Ground.None || wk === Ground.Paved) continue;
+        tuft(wx, wz, 0.52, TILE.weed);
+        tuft(wx + 0.2, wz - 0.15, 0.38, TILE.grass);
       }
     }
     // Ivy and moss up the walls and fences whose foot is in this tile.
@@ -353,9 +408,9 @@ transformed.z += bend * (0.03 + 0.08 * uWind) * sin(wt * 1.3 + 1.7);`,
 const key = (tx: number, tz: number) => (tx + 32768) * 65536 + (tz + 32768);
 const unkey = (k: number): [number, number] => [Math.floor(k / 65536) - 32768, (k % 65536) - 32768];
 
-/** The 2×2 atlas: grass blades, a broad-leaved weed, ivy, fallen leaves. Pixel-y, like the rest. */
+/** The 2×2 atlas: crisp grass blades, broad-leaved weed, ivy, fallen leaves. */
 function atlas(): HTMLCanvasElement {
-  const S = 64;
+  const S = 128;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S * 2;
   const g = cv.getContext('2d')!;
@@ -365,43 +420,42 @@ function atlas(): HTMLCanvasElement {
     return seed / 2147483647;
   };
   const greens = ['#4f5a2e', '#5d6634', '#6b6a38', '#45502a', '#7a7440', '#3e4a28'];
-  // Grass: a tuft of broad blades from one root, fanning out, tapering to a point; dark at the ground,
-  // light at the tips.
-  for (let i = 0; i < 16; i++) {
-    const root = S / 2 + (rnd() - 0.5) * S * 0.25;
-    const h = S * (0.45 + rnd() * 0.53);
-    const lean = (root - S / 2) * 1.2 + (rnd() - 0.5) * S * 0.35;
-    const w = 2.2 + rnd() * 2.6;
+  // Grass: fine tapering meadow blades fanning out from a dense base; dark root, sunlit tips.
+  for (let i = 0; i < 24; i++) {
+    const root = S / 2 + (rnd() - 0.5) * S * 0.28;
+    const h = S * (0.48 + rnd() * 0.50);
+    const lean = (root - S / 2) * 1.15 + (rnd() - 0.5) * S * 0.32;
+    const w = 3.2 + rnd() * 3.8;
     const grad = g.createLinearGradient(0, S, 0, S - h);
     const tone = rnd();
-    grad.addColorStop(0, '#26301a');
-    grad.addColorStop(0.45, tone < 0.5 ? '#4a5a2a' : '#56602e');
-    grad.addColorStop(1, tone < 0.3 ? '#9a9a5a' : '#7e9248');
+    grad.addColorStop(0, '#243018');
+    grad.addColorStop(0.45, tone < 0.5 ? '#4a5c2a' : '#586430');
+    grad.addColorStop(1, tone < 0.3 ? '#9a9e5c' : '#80964a');
     g.fillStyle = grad;
     g.beginPath();
     g.moveTo(root - w, S);
-    g.quadraticCurveTo(root - w * 0.6 + lean * 0.35, S - h * 0.55, root + lean, S - h);
-    g.quadraticCurveTo(root + w * 0.6 + lean * 0.35, S - h * 0.55, root + w, S);
+    g.quadraticCurveTo(root - w * 0.55 + lean * 0.35, S - h * 0.55, root + lean, S - h);
+    g.quadraticCurveTo(root + w * 0.55 + lean * 0.35, S - h * 0.55, root + w, S);
     g.closePath();
     g.fill();
   }
-  // Weed: a stalk with broad leaves.
+  // Weed: stalks with broad leaves.
   g.save();
   g.translate(S, 0);
   for (let i = 0; i < 5; i++) {
-    const x = 10 + i * 11 + rnd() * 4;
+    const x = 20 + i * 22 + rnd() * 8;
     const h = S * (0.5 + rnd() * 0.45);
     g.strokeStyle = '#4a5228';
-    g.lineWidth = 2;
+    g.lineWidth = 4;
     g.beginPath();
     g.moveTo(x, S);
-    g.lineTo(x + (rnd() - 0.5) * 6, S - h);
+    g.lineTo(x + (rnd() - 0.5) * 12, S - h);
     g.stroke();
     for (let k = 0; k < 4; k++) {
       const y = S - h * (0.25 + k * 0.2);
       g.fillStyle = greens[Math.floor(rnd() * greens.length)];
       g.beginPath();
-      g.ellipse(x + (k % 2 ? 6 : -6), y, 7, 3, (k % 2 ? -0.5 : 0.5), 0, Math.PI * 2);
+      g.ellipse(x + (k % 2 ? 12 : -12), y, 14, 6, (k % 2 ? -0.5 : 0.5), 0, Math.PI * 2);
       g.fill();
     }
   }
@@ -416,7 +470,7 @@ function atlas(): HTMLCanvasElement {
     if (d > S * 0.5 * (0.75 + rnd() * 0.3)) continue;
     g.fillStyle = ['#2f3c22', '#3a4826', '#46542c', '#2a3420', '#55603a'][Math.floor(rnd() * 5)];
     g.beginPath();
-    g.ellipse(x, y, 3 + rnd() * 2.5, 2.5 + rnd() * 2, rnd() * 3, 0, Math.PI * 2);
+    g.ellipse(x, y, 6 + rnd() * 5, 5 + rnd() * 4, rnd() * 3, 0, Math.PI * 2);
     g.fill();
   }
   g.restore();
@@ -424,12 +478,12 @@ function atlas(): HTMLCanvasElement {
   g.save();
   g.translate(S, S);
   for (let i = 0; i < 26; i++) {
-    const x = 6 + rnd() * (S - 12);
-    const y = 6 + rnd() * (S - 12);
+    const x = 12 + rnd() * (S - 24);
+    const y = 12 + rnd() * (S - 24);
     if (Math.hypot(x - S / 2, y - S / 2) > S * 0.46) continue;
     g.fillStyle = ['#8a5226', '#9a6a2a', '#7a3e1e', '#a0702a', '#6e4a22'][Math.floor(rnd() * 5)];
     g.beginPath();
-    g.ellipse(x, y, 4 + rnd() * 2, 2 + rnd(), rnd() * 3, 0, Math.PI * 2);
+    g.ellipse(x, y, 8 + rnd() * 4, 4 + rnd() * 2, rnd() * 3, 0, Math.PI * 2);
     g.fill();
   }
   g.restore();

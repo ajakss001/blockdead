@@ -2,7 +2,7 @@ import * as F from './furniture';
 import { spotHash } from './lifeKinds';
 import type { Builder, Rand } from './pieces';
 import type { PoiSite } from './poi';
-import { checkpoint, hypermarket, mall, park, waterPlant } from './poiBuild2';
+import { checkpoint, helipad, hypermarket, mall, park, waterPlant } from './poiBuild2';
 import { airport, militaryBase } from './poiBig';
 import { lab } from './poiLab';
 import { char } from './charred';
@@ -24,6 +24,7 @@ export function buildPoi(b: Builder, s: PoiSite, rand: Rand, seed = 0): void {
   else if (s.kind === 'lab') lab(site, rand);
   else if (s.kind === 'airport') airport(site, rand);
   else if (s.kind === 'base') militaryBase(site, rand);
+  else if (s.kind === 'helipad') helipad(site, rand);
   else checkpoint(site, rand);
   applyScenarios(site, seed);
 }
@@ -109,10 +110,10 @@ function gasStation(S: Site, rand: Rand): void {
   S.roof(x0, z0, x1, z1, H, 0x9a968a);
   p.box(0xa03a2a, (x0 + x1) / 2, H - 0.9, z1 + 0.12, x1 - x0, 0.7, 0.05, 'plaster');
   // Shelves, the till by the door, the cooler on the back wall.
-  for (const z of [-10.5, -7.5]) {
+  [-10.5, -7.5].forEach((z, idx) => {
     F.shopShelf(p.at(-7, z), rand, 6, 'grocery', rand() < 0.5 || S.has('looted'));
-    S.retype('gasShelf');
-  }
+    S.retype('gasShelf', idx === 0 ? ['jerrycan'] : undefined);
+  });
   F.shopCounter(p.at(-1, -4.6, 2), rand, 'grocery');
   S.retype('gasCounter');
   F.cooler(p.at(-12.5, z0 + 0.1), rand);
@@ -132,7 +133,7 @@ function gasStation(S: Site, rand: Rand): void {
   S.car(12, -9, Math.PI / 2, rand);
   // Workbench and wooden crate (3D models).
   p.model('labTable', rand, 16.8, 0, -12, Math.PI / 2, 1, 0.65, 0.35, true);
-  S.container('garage', 16.6, -12);
+  S.container('garage', 16.6, -12, ['heliFuelPump', 'jerrycan']);
   p.model('woodenCrate', rand, 7.5, 0, -4, 0, 1, 0.8, 0.1, true);
   S.container('crate', 7.5, -4);
 }
@@ -230,13 +231,15 @@ function policeStation(S: Site, rand: Rand): void {
   S.wallZ(inner, Z0, -6, 2, H);
   S.wallX(0x5a5e62, -8, 2, -6, H, [{ at: -3, w: 1.0, h: 2.1 }], 'metal');
   S.doorX(-3, -6, { lock: 'armory' });
-  for (const [x, z, r] of [
-    [-7.4, -12, 1],
-    [1.4, -12, 3],
-    [-3, -19.4, 0],
-  ] as const) {
+  for (const [idx, [x, z, r]] of (
+    [
+      [-7.4, -12, 1],
+      [1.4, -12, 3],
+      [-3, -19.4, 0],
+    ] as const
+  ).entries()) {
     p.at(x, z, r).model('metalShelf', rand, 0, 0, 0.35, 0, 1.1, 0.6, 0.4, true);
-    S.container('armory', x + (r === 1 ? 0.8 : r === 3 ? -0.8 : 0), z + (r === 0 ? 0.8 : 0));
+    S.container('armory', x + (r === 1 ? 0.8 : r === 3 ? -0.8 : 0), z + (r === 0 ? 0.8 : 0), idx === 0 ? ['heliAvionics'] : undefined);
   }
   // Back room (x 2…12, z −20…−6): break room, boxes of files.
   S.wallX(inner, 2, X1, -6, H, [{ at: 7, w: 1.0, h: 2.1 }]);
@@ -259,5 +262,5 @@ function policeStation(S: Site, rand: Rand): void {
   S.car((GX0 + GX1) / 2 - 2.8, -14, Math.PI / 2, rand, 'van', 0x1e2632);
   if (rand() < 0.6) S.car((GX0 + GX1) / 2 + 2.6, -14, Math.PI / 2, rand, 'police');
   p.model('labTable', rand, GX1 - 0.8, 0, -18, Math.PI / 2, 1, 0.65, 0.35, true);
-  S.container('garage', GX1 - 0.8, -18);
+  S.container('garage', GX1 - 0.8, -18, ['jerrycan']);
 }
