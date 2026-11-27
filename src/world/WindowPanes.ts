@@ -30,6 +30,7 @@ interface PaneEntry {
   spot: WindowPaneSpot;
   /** 0 = intact, 1 = spiderweb cracked (penetrable & body-breakable), 2 = shattered (gone) */
   stage: 0 | 1 | 2;
+  hits: number;
 }
 
 const _p = new Vector3();
@@ -296,7 +297,7 @@ export class WindowPanes {
       const s = spots[i];
       const owner = WINDOW_OWNER_BASE + this.nextId++;
       owners.push(owner);
-      this.byOwner.set(owner, { owner, chunkKey, spot: s, stage: 0 });
+      this.byOwner.set(owner, { owner, chunkKey, spot: s, stage: 0, hits: 0 });
       this.world.owner = owner;
       this.world.addBox(s.cx - s.sx * 0.5, s.cz - s.sz * 0.5, s.cx + s.sx * 0.5, s.cz + s.sz * 0.5, s.cy - s.sy * 0.5, s.cy + s.sy * 0.5, true, false);
     }
@@ -322,17 +323,25 @@ export class WindowPanes {
     this.sync();
   }
 
-  /** Stage 0 -> Stage 1 on first bullet impact (remains cracked and passable/penetrable). */
-  bulletHit(owner: number): { spot: WindowPaneSpot; newlyCracked: boolean; stage: 1 } | null {
+  /** Stage 0 -> Stage 1 on first 2 bullet impacts; >2 bullet impacts (>2 shots) shatters pane completely to Stage 2. */
+  bulletHit(owner: number): { spot: WindowPaneSpot; newlyCracked: boolean; shattered: boolean; stage: 1 | 2 } | null {
     const entry = this.byOwner.get(owner);
     if (!entry || entry.stage >= 2) return null;
+    entry.hits++;
+    if (entry.hits > 2) {
+      entry.stage = 2;
+      this.world.removeOwner(owner);
+      this.dirty = true;
+      this.sync();
+      return { spot: entry.spot, newlyCracked: false, shattered: true, stage: 2 };
+    }
     const newlyCracked = entry.stage === 0;
     if (newlyCracked) {
       entry.stage = 1;
       this.dirty = true;
       this.sync();
     }
-    return { spot: entry.spot, newlyCracked, stage: 1 };
+    return { spot: entry.spot, newlyCracked, shattered: false, stage: 1 };
   }
 
   /** Stage 0/1 -> Stage 2: completely removes pane visual & collider. */

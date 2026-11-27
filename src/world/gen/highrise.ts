@@ -560,18 +560,18 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
     breach = { x0: bx0, x1: bx1, y0: by0, y1: by1 };
   }
 
-  const addFrontRect = (ax0: number, ax1: number, ay0: number, ay1: number, wz0: number, wz1: number) => {
+  const addFrontRect = (ax0: number, ax1: number, ay0: number, ay1: number, wz0: number, wz1: number, bodyOnly = false) => {
     if (ax1 - ax0 <= 0.01 || ay1 - ay0 <= 0.01) return;
     if (!breach || ax1 <= breach.x0 || ax0 >= breach.x1 || ay1 <= breach.y0 || ay0 >= breach.y1) {
-      b.solid(ax0, wz0, ax1, wz1, ay0, ay1);
+      b.solid(ax0, wz0, ax1, wz1, ay0, ay1, bodyOnly);
       return;
     }
-    if (ax0 < breach.x0) b.solid(ax0, wz0, breach.x0, wz1, ay0, ay1);
-    if (ax1 > breach.x1) b.solid(breach.x1, wz0, ax1, wz1, ay0, ay1);
+    if (ax0 < breach.x0) b.solid(ax0, wz0, breach.x0, wz1, ay0, ay1, bodyOnly);
+    if (ax1 > breach.x1) b.solid(breach.x1, wz0, ax1, wz1, ay0, ay1, bodyOnly);
     const ox0 = Math.max(ax0, breach.x0);
     const ox1 = Math.min(ax1, breach.x1);
-    if (ay0 < breach.y0) b.solid(ox0, wz0, ox1, wz1, ay0, breach.y0);
-    if (ay1 > breach.y1) b.solid(ox0, wz0, ox1, wz1, breach.y1, ay1);
+    if (ay0 < breach.y0) b.solid(ox0, wz0, ox1, wz1, ay0, breach.y0, bodyOnly);
+    if (ay1 > breach.y1) b.solid(ox0, wz0, ox1, wz1, breach.y1, ay1, bodyOnly);
   };
 
   const winXs: [number, number][] = [];
@@ -636,6 +636,14 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
     } else {
       b.solid(wx0, zStart, wx1, zEnd, H, top);
     }
+    if (desc.floors > 1) {
+      // Physical upper-floor body seal: stops actors from walking/being pushed out broken windows while staying invisible to rays.
+      b.solid(wx0, zStart, wx1, zEnd, FLOOR_H, H, true);
+    }
+  }
+  if (desc.floors > 1) {
+    addFrontRect(x0, x1, FLOOR_H, H, frontMinZ, frontMinZ + WALL, true);
+    b.solid(x0, backMinZ, x1, backMinZ + WALL, FLOOR_H, H, true);
   }
 }
 

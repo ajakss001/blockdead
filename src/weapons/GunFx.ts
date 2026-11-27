@@ -22,9 +22,18 @@ import { grim } from '../style/palette';
 const CASES = 60;
 const MAGS = 24;
 const MAX_HOLES = 96;
+const MAX_TRACERS = 16;
 const G = 9.8;
 
 export type BulletHoleKind = 'wood' | 'metal' | 'stone' | 'glass';
+
+interface RicochetTracer {
+  pos: Vector3;
+  q: Quaternion;
+  len: number;
+  life: number;
+  maxLife: number;
+}
 
 interface Body {
   active: boolean;
@@ -187,6 +196,17 @@ export class GunFx {
   private readonly holes: Record<BulletHoleKind, HolePool>;
   private readonly glassHolePos = new Float32Array(MAX_HOLES * 3);
   private readonly glassHoleActive = new Uint8Array(MAX_HOLES);
+  private readonly tracers: RicochetTracer[] = Array.from({ length: MAX_TRACERS }, () => ({
+    pos: new Vector3(),
+    q: new Quaternion(),
+    len: 0,
+    life: 0,
+    maxLife: 0.095,
+  }));
+  private tracerCursor = 0;
+  private readonly tracerGeo = new BoxGeometry(0.018, 0.018, 1);
+  private readonly tracerMat: MeshBasicMaterial;
+  private readonly tracerMesh: InstancedMesh;
   groundY: (x: number, y: number, z: number) => number = () => 0;
 
   constructor(scene: Scene) {
@@ -238,6 +258,23 @@ export class GunFx {
       stone: makeHolePool('stone'),
       glass: makeHolePool('glass'),
     };
+    this.tracerMat = new MeshBasicMaterial({
+      color: 0xffd880,
+      transparent: true,
+      opacity: 0.9,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    this.tracerMesh = new InstancedMesh(this.tracerGeo, this.tracerMat, MAX_TRACERS);
+    this.tracerMesh.count = 0;
+    this.tracerMesh.visible = false;
+    this.tracerMesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    this.tracerMesh.frustumCulled = false;
+    this.tracerMesh.castShadow = false;
+    this.tracerMesh.receiveShadow = false;
+    this.tracerMesh.renderOrder = 4;
+    this.tracerMesh.name = 'gunfx:tracers';
+    scene.add(this.tracerMesh);
     scene.add(this.light);
   }
 
@@ -257,6 +294,7 @@ export class GunFx {
       this.flash.position.set(0, 0, 0);
       this.writeCases();
       this.writeMags();
+      this.writeTracers();
       for (const hp of Object.values(this.holes)) {
         hp.mesh.count = hp.filled;
         hp.mesh.instanceMatrix.needsUpdate = true;
@@ -275,6 +313,12 @@ export class GunFx {
       }
       m.visible = true;
     }
+    if (this.tracerMesh.count === 0) {
+      this.tracerMesh.setMatrixAt(0, _tinyMat);
+      this.tracerMesh.instanceMatrix.needsUpdate = true;
+      this.tracerMesh.count = 1;
+    }
+    this.tracerMesh.visible = true;
     for (const hp of Object.values(this.holes)) {
       if (hp.mesh.count === 0) {
         hp.mesh.setMatrixAt(0, _tinyMat);
@@ -283,6 +327,24 @@ export class GunFx {
       }
       hp.mesh.visible = true;
     }
+  }
+
+  /** Record a bright ricochet tracer streak in the pooled instanced mesh (zero runtime allocations). */
+  addRicochetTracer(from: Vector3, to: Vector3): void {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.05) return;
+    const t = this.tracers[this.tracerCursor];
+    this.tracerCursor = (this.tracerCursor + 1) % MAX_TRACERS;
+    t.pos.set((from.x + to.x) * 0.5, (from.y + to.y) * 0.5, (from.z + to.z) * 0.5);
+    _n.set(dx / len, dy / len, dz / len);
+    t.q.setFromUnitVectors(_zAxis, _n);
+    t.len = len;
+    t.life = 0.095;
+    t.maxLife = 0.095;
+    if (!this.prewarming) this.writeTracers();
   }
 
   /** Stamp a pooled bullet hole decal onto geometry along its surface normal (zero allocations). */
@@ -388,9 +450,18 @@ export class GunFx {
     if (dt <= 0) return;
     this.step(this.cases, dt, 0.005, () => {});
     this.step(this.mags, dt, 0.015, (b) => sfx.magDrop(b.pos));
+    let tracerDirty = false;
+    for (let i = 0; i < this.tracers.length; i++) {
+      const t = this.tracers[i];
+      if (t.life > 0) {
+        t.life = Math.max(0, t.life - dt);
+        tracerDirty = true;
+      }
+    }
     if (!this.prewarming) {
       this.writeCases();
       this.writeMags();
+      if (tracerDirty) this.writeTracers();
     }
   }
 
@@ -447,12 +518,31 @@ export class GunFx {
     this.magMesh.instanceMatrix.needsUpdate = true;
   }
 
+  private writeTracers(): void {
+    let count = 0;
+    for (let i = 0; i < this.tracers.length; i++) {
+      const t = this.tracers[i];
+      if (t.life <= 0) continue;
+      const k = t.life / t.maxLife;
+      const w = 0.55 + 0.65 * k;
+      _s.set(w, w, t.len);
+      this.tracerMesh.setMatrixAt(count++, _m.compose(t.pos, t.q, _s));
+    }
+    _s.set(1, 1, 1);
+    this.tracerMesh.count = count;
+    this.tracerMesh.visible = count > 0;
+    this.tracerMesh.instanceMatrix.needsUpdate = true;
+  }
+
   dispose(): void {
     for (const m of [this.caseMesh, this.shellMesh, this.magMesh]) {
       m.geometry.dispose();
       (m.material as MeshLambertMaterial).dispose();
       m.removeFromParent();
     }
+    this.tracerGeo.dispose();
+    this.tracerMat.dispose();
+    this.tracerMesh.removeFromParent();
     this.holeGeo.dispose();
     for (const hp of Object.values(this.holes)) {
       const mat = hp.mesh.material as MeshBasicMaterial;

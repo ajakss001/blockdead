@@ -314,14 +314,14 @@ export class Builder {
   }
 
   /** Collider in the current frame (optionally limited to a vertical range). */
-  solid(x0: number, z0: number, x1: number, z1: number, y0?: number, y1?: number): void {
+  solid(x0: number, z0: number, x1: number, z1: number, y0?: number, y1?: number, bodyOnly = false): void {
     if (!this.inClip(this.wx((x0 + x1) / 2), this.wz((z0 + z1) / 2))) return;
     if (this.flip) {
       const a = 2 * this.flip.cx - x1;
       const b = 2 * this.flip.cz - z1;
-      this.colliders.addBox(a, b, a + (x1 - x0), b + (z1 - z0), y0, y1);
+      this.colliders.addBox(a, b, a + (x1 - x0), b + (z1 - z0), y0, y1, false, bodyOnly);
     } else {
-      this.colliders.addBox(x0, z0, x1, z1, y0, y1);
+      this.colliders.addBox(x0, z0, x1, z1, y0, y1, false, bodyOnly);
     }
   }
 

@@ -633,6 +633,25 @@ export class Sound {
     this.sample(out, t, 'bulletMetal', { rate: kind === 'car' ? 0.75 : 1, vary: 0.1, gain: 0.6 });
   }
 
+  ricochet(pos: Pos): void {
+    const v = this.voice(pos, 0.8, 1.8, true, 'weapons');
+    if (!v) return;
+    const [out, t] = v;
+    this.sample(out, t, 'bulletMetal', { rate: 1.35, vary: 0.08, gain: 0.45 });
+    const ac = this.ac;
+    if (!ac) return;
+    const osc = ac.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(2350 + Math.random() * 280, t);
+    osc.frequency.exponentialRampToValueAtTime(640 + Math.random() * 140, t + 0.18);
+    const gn = ac.createGain();
+    gn.gain.setValueAtTime(0.22, t);
+    gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(gn).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.19);
+  }
+
   hitMarker(_head: boolean): void {}
 
   explosion(pos: Pos): void {

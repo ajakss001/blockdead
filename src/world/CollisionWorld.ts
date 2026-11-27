@@ -17,7 +17,7 @@ export const COLLIDER_STRIDE = 8;
 
 /** Anything that can receive static boxes: the live CollisionWorld or the worker's collector. */
 export interface ColliderSink {
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY?: number, maxY?: number, glass?: boolean): void;
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY?: number, maxY?: number, glass?: boolean, bodyOnly?: boolean): void;
   /** Box rotated about Y (cars): half sizes along its own X (length) and Z (width). Same yaw as three's rotation.y. */
   addOrientedBox(cx: number, cz: number, halfX: number, halfZ: number, yaw: number, minY?: number, maxY?: number): void;
 }
@@ -75,7 +75,7 @@ export class CollisionWorld implements ColliderSink {
     return this.liveCount;
   }
 
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, door = false): void {
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, door = false, bodyOnly = false): void {
     let x0 = minX;
     let z0 = minZ;
     let x1 = maxX;
@@ -93,7 +93,7 @@ export class CollisionWorld implements ColliderSink {
         z1 = cz + MIN_WALL_THICKNESS * 0.5;
       }
     }
-    this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, glass, door, obb: null });
+    this.insert({ minX: x0, minZ: z0, maxX: x1, maxZ: z1, minY, maxY, owner: this.owner, glass, door, bodyOnly, obb: null });
   }
 
   addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, door = false, rayOnly = false, bodyOnly = false): void {
@@ -151,7 +151,7 @@ export class CollisionWorld implements ColliderSink {
       const cz = packed[i + 1];
       const hx = packed[i + 2];
       const hz = packed[i + 3];
-      if (packed[i + 7] === 0) this.addBox(cx - hx, cz - hz, cx + hx, cz + hz, packed[i + 4], packed[i + 5], packed[i + 6] < 0);
+      if (packed[i + 7] === 0) this.addBox(cx - hx, cz - hz, cx + hx, cz + hz, packed[i + 4], packed[i + 5], packed[i + 6] < 0, false, packed[i + 6] > 1.5);
       else this.addOrientedBox(cx, cz, hx, hz, Math.atan2(packed[i + 7], packed[i + 6]), packed[i + 4], packed[i + 5]);
     }
     this.owner = prev;
@@ -634,8 +634,8 @@ export class CollisionWorld implements ColliderSink {
 /** Collects boxes into a flat array (worker side). */
 export class PackedColliders implements ColliderSink {
   readonly data: number[] = [];
-  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false): void {
-    this.data.push((minX + maxX) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2, minY, maxY, glass ? -1 : 1, 0);
+  addBox(minX: number, minZ: number, maxX: number, maxZ: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX, glass = false, bodyOnly = false): void {
+    this.data.push((minX + maxX) / 2, (minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2, minY, maxY, glass ? -1 : bodyOnly ? 2 : 1, 0);
   }
 
   addOrientedBox(cx: number, cz: number, hx: number, hz: number, yaw: number, minY = ANY_Y_MIN, maxY = ANY_Y_MAX): void {

@@ -53,8 +53,8 @@ export interface FirearmsWorld {
   noise(x: number, y: number, z: number, r: number): void;
   /** Where the floor is under a point. */
   groundY(x: number, y: number, z: number): number;
-  /** The player hurt by their own blast (hp of 100). */
-  hurtSelf(hp: number): void;
+  /** The player hurt by their own blast or bullet ricochet (hp of 100). */
+  hurtSelf(hp: number, cause?: 'blast' | 'ricochet'): void;
   /** A blast sets the cars within r on fire. */
   igniteCars(x: number, y: number, z: number, r: number): void;
   /** A bullet on a car: its alarm may go off. */
@@ -144,6 +144,13 @@ const _rayO = new Vector3();
 const _origO = new Vector3();
 const _shpD = new Vector3();
 const _n = new Vector3();
+const _ricO = new Vector3();
+const _ricD = new Vector3();
+const _ricN = new Vector3();
+const _ricEnd = new Vector3();
+const _ricPerp1 = new Vector3();
+const _ricPerp2 = new Vector3();
+const _ricHitPt = new Vector3();
 const _q = new Quaternion();
 
 interface Rocket {
@@ -185,6 +192,7 @@ export class Firearms {
   private shotSurfaceLookups = 0;
   private shotLastSurface: Surface | null = null;
   private shotHitMarked = false;
+  private shotRicochets = 0;
 
   constructor(private readonly w: FirearmsWorld) {
     this.fx = new GunFx(w.scene);
@@ -443,6 +451,7 @@ export class Firearms {
           this.shotSurfaceLookups = 0;
           this.shotLastSurface = null;
           this.shotHitMarked = false;
+          this.shotRicochets = 0;
           for (let i = 0; i < nPellets; i++) this.bullet(id, mods);
         }
         // Alert AI after resolving pellets so unalerted Stealth First Strike shots trigger ×1.75 crit damage first.
@@ -596,6 +605,7 @@ export class Firearms {
               sfx.bulletHit('metal', _p);
               this.shotHitSounds++;
             }
+            this.tryRicochet(id, mods, _p, d, _n, 'metal', traveled + wall, remain - wall, dmgMul);
             return;
           }
           if (dr.kind === 'glass') {
@@ -643,7 +653,7 @@ export class Firearms {
           continue;
         }
       }
-      this.hitWorld(_rayO, d, wall, det);
+      this.hitWorld(_rayO, d, wall, det, id, mods, traveled, remain, dmgMul);
       return;
     }
   }
@@ -700,7 +710,17 @@ export class Firearms {
   }
 
   /** A bullet on the world: by what it is made of — pooled decal, dust, sparks and a ricochet, splinters, glass, a car's tin. */
-  private hitWorld(o: Vector3, d: Vector3, dist: number, det: RayHitDetail | null = null): void {
+  private hitWorld(
+    o: Vector3,
+    d: Vector3,
+    dist: number,
+    det: RayHitDetail | null = null,
+    id?: GunId,
+    mods: readonly string[] = [],
+    traveled = 0,
+    remain = 0,
+    dmgMul = 1,
+  ): void {
     const isMulti = this.shotTotalPellets > 1;
     const at = _p.copy(o).addScaledVector(d, dist - 0.02);
     if (det) _n.set(det.nx, det.ny, det.nz);
@@ -737,6 +757,120 @@ export class Firearms {
     if (kind === 'metal' || kind === 'car') pt.sparks(at.x, at.y, at.z, Math.max(2, Math.round(6 * nScale)));
     else pt.burst(at, Math.max(2, Math.round((kind === 'glass' ? 3 : 7) * nScale)), kind === 'soft' ? 0.4 : 0.6);
     if (kind === 'car' && (!isMulti || this.shotSurfaceLookups <= 2)) this.w.carHit(at.x, at.y, at.z);
+    if (id) this.tryRicochet(id, mods, at, d, _n, kind, traveled + dist, remain - dist, dmgMul);
+  }
+
+  /** Resolves a secondary ricochet bounce off metal, cars, or concrete that can kill/wound nearby bandits or the shooter. */
+  private tryRicochet(
+    id: GunId,
+    mods: readonly string[],
+    at: Vector3,
+    inDir: Vector3,
+    normal: Vector3,
+    surfaceKind: BulletHit,
+    traveled: number,
+    remain: number,
+    dmgMul: number,
+  ): void {
+    if (this.shotRicochets >= 3 || remain < 1.0) return;
+    if (surfaceKind !== 'metal' && surfaceKind !== 'car' && surfaceKind !== 'concrete') return;
+    _ricN.copy(normal);
+    if (_ricN.lengthSq() < 1e-4) _ricN.copy(inDir).negate();
+    _ricN.normalize();
+    if (_ricN.dot(inDir) > 0) _ricN.negate();
+
+    const cosInc = Math.abs(inDir.dot(_ricN));
+    const chance = surfaceKind === 'metal' || surfaceKind === 'car' ? (cosInc < 0.65 ? 0.95 : 0.72) : cosInc < 0.7 ? 0.65 : 0.28;
+    if (Math.random() > chance) return;
+    this.shotRicochets++;
+
+    const inDot = inDir.dot(_ricN);
+    _ricD.copy(inDir).addScaledVector(_ricN, -2 * inDot).normalize();
+    if (Math.abs(_ricD.y) < 0.9) _ricPerp1.set(0, 1, 0);
+    else _ricPerp1.set(1, 0, 0);
+    _ricPerp1.crossVectors(_ricPerp1, _ricD).normalize();
+    _ricPerp2.crossVectors(_ricD, _ricPerp1).normalize();
+    _ricD.addScaledVector(_ricPerp1, (Math.random() * 2 - 1) * 0.05).addScaledVector(_ricPerp2, (Math.random() * 2 - 1) * 0.05);
+    const outDot = _ricD.dot(_ricN);
+    if (outDot <= 0.05) _ricD.addScaledVector(_ricN, 0.08 - outDot);
+    _ricD.normalize();
+
+    _ricO.copy(at).addScaledVector(_ricN, 0.06);
+    const ricMax = Math.min(35, remain * 0.7);
+    sfx.ricochet(at);
+    this.w.particles.sparks(at.x, at.y, at.z, 5);
+
+    const ricWall = this.w.rayHit(_ricO, _ricD, ricMax);
+    const ricLim = ricWall >= 0 ? ricWall : ricMax;
+
+    // Self-hit check against player capsule (allows steep-angle bounce-back shots to wound or kill the shooter).
+    let playerT = Infinity;
+    let playerHead = false;
+    const pc = this.w.player?.controller;
+    if (pc?.position) {
+      const pr = 0.38;
+      const pBot = pc.position.y;
+      const pTop = pBot + (pc.crouched ? 1.2 : 1.78);
+      const ox = _ricO.x - pc.position.x;
+      const oz = _ricO.z - pc.position.z;
+      const a = _ricD.x * _ricD.x + _ricD.z * _ricD.z;
+      let tCand = -1;
+      if (a >= 1e-8) {
+        const bHalf = ox * _ricD.x + oz * _ricD.z;
+        const c = ox * ox + oz * oz - pr * pr;
+        const disc = bHalf * bHalf - a * c;
+        if (disc >= 0) {
+          const sq = Math.sqrt(disc);
+          const t0 = (-bHalf - sq) / a;
+          const t1 = (-bHalf + sq) / a;
+          tCand = t0 > 0.15 ? t0 : bHalf < 0 && t1 > 0.15 ? 0.16 : -1;
+        }
+      } else if (ox * ox + oz * oz <= pr * pr && Math.abs(_ricD.y) > 1e-6) {
+        const ty0 = (pBot - _ricO.y) / _ricD.y;
+        const ty1 = (pTop - _ricO.y) / _ricD.y;
+        const loT = Math.min(ty0, ty1);
+        const hiT = Math.max(ty0, ty1);
+        if (hiT > 0.15) tCand = Math.max(0.16, loT);
+      }
+      if (tCand > 0.15 && tCand < ricLim) {
+        const hitY = _ricO.y + _ricD.y * tCand;
+        if (hitY >= pBot && hitY <= pTop) {
+          playerT = tCand;
+          playerHead = hitY >= pTop - 0.36;
+          _ricHitPt.copy(_ricO).addScaledVector(_ricD, tCand);
+        }
+      }
+    }
+
+    const bHit = this.w.bandits?.hitTest(_ricO, _ricD, ricLim, 0.3) ?? null;
+    const zHit = this.w.zombies.hitTest(_ricO, _ricD, ricLim, 0.18);
+    const bDist = bHit ? bHit.dist : Infinity;
+    const zDist = zHit ? zHit.dist : Infinity;
+
+    if (playerT < ricLim && playerT <= bDist && playerT <= zDist) {
+      this.fx.addRicochetTracer(_ricO, _ricHitPt);
+      const [lo, hi] = damageOf(id, mods as never);
+      const selfDmg = (lo + hi) * 0.5 * falloff(id, traveled + playerT) * dmgMul * (playerHead ? 2.0 : 0.85);
+      this.w.hurtSelf(selfDmg, 'ricochet');
+      this.w.player.shake(0.85);
+      sfx.bulletHit('flesh', _ricHitPt);
+      return;
+    }
+    if (bHit && bDist < ricLim && bDist <= zDist) {
+      this.fx.addRicochetTracer(_ricO, bHit.point);
+      this.hitBandit(id, mods as never, bHit, _ricO, dmgMul * 1.6, traveled + bDist);
+      return;
+    }
+    if (zHit && zDist < ricLim) {
+      this.fx.addRicochetTracer(_ricO, zHit.point);
+      this.hitZombie(id, mods as never, zHit, _ricO, dmgMul * 1.1, traveled + zDist);
+      return;
+    }
+
+    const endDist = ricWall >= 0 ? ricWall : Math.min(18, ricMax);
+    _ricEnd.copy(_ricO).addScaledVector(_ricD, endDist);
+    this.fx.addRicochetTracer(_ricO, _ricEnd);
+    if (ricWall >= 0) this.w.particles.sparks(_ricEnd.x, _ricEnd.y, _ricEnd.z, 3);
   }
 
   /** The butt strike: a short push, low damage, knocks back. */

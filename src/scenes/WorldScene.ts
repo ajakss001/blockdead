@@ -797,7 +797,14 @@ export class WorldScene implements IScene {
       },
       bandits: this.bandits,
       groundY: (x, y, z) => this.interiors.surfaceY(x, z, y) ?? layout.walkHeightAt(x, z),
-      hurtSelf: (hp) => this.hurt(hp, tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'), true),
+      hurtSelf: (hp, cause) =>
+        this.hurt(
+          hp,
+          cause === 'ricochet'
+            ? tr('Погибли от собственного рикошета', 'Killed by your own ricochet')
+            : tr('Подорвались на своём выстреле', 'Blew yourself up with your own shot'),
+          true,
+        ),
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
@@ -1969,11 +1976,23 @@ export class WorldScene implements IScene {
     }
   }
 
-  /** Stage 1 window bullet impact: cracks whole pane into spiderweb, spawns outward pooled shards + hole decal while bullet penetrates. */
+  /** Window bullet impact: first 2 hits crack pane & leave hole decals; >2 hits shatter pane completely and clear glass holes. */
   private handleWindowBullet(owner: number, at: Vector3, dir: Vector3, nx: number, ny: number, nz: number): boolean {
     if (!this.windowPanes.isWindowOwner(owner)) return false;
     const res = this.windowPanes.bulletHit(owner);
     if (!res) return false;
+    if (res.shattered) {
+      this.emitWindowShatterFx(res.spot.cx, res.spot.cy, res.spot.cz, dir.x, dir.z);
+      this.firearms.fx.clearGlassHolesInBox(
+        res.spot.cx,
+        res.spot.cy,
+        res.spot.cz,
+        res.spot.sx * 0.5 + 0.35,
+        res.spot.sy * 0.5 + 0.35,
+        res.spot.sz * 0.5 + 0.35,
+      );
+      return true;
+    }
     const floorY = this.interiors.surfaceY(at.x, at.z, at.y) ?? this.layout.walkHeightAt(at.x, at.z);
     this.life.burstGlassShards(at.x, at.y, at.z, dir.x, dir.y, dir.z, res.newlyCracked ? 12 : 6, floorY);
     this.firearms.fx.addBulletHole(at, _wn.set(nx, ny, nz), 'glass');
