@@ -105,7 +105,7 @@ export function buildHighriseInterior(b: Builder, desc: BuildingDesc, focus: num
     b.block(0xb0aa98, L.cx1 + 0.16, y + 1.4, L.cz0 + NEAR + 0.2, 0.02, 0.4, 0.3, 'plaster');
 
     if (k === 0) lobby(b, L, desc, h, rs, rf, paperA);
-    else corridorStorey(b, L, desc.seed, k, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, powered, lit.filter((l) => l.k === k));
+    else corridorStorey(b, L, desc.seed, k, y, h, paperA, paperB, office ? 'office' : 'apartment', rs, rf, powered, lit.filter((l) => l.k === k), desc.breach);
   }
   b.setIdBase(null);
   b.endFrame();
@@ -127,7 +127,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
     if (rf) shopInterior(b, L.ix0, L.iz0, sx, L.czA - 0.12, shop.kind, rf);
   }
   // Back units at street level: storerooms off the corridor.
-  backUnits(b, L, desc.seed, 0, 0, h, PAL.wallpapers[0], 'storage', rs, rf, []);
+  backUnits(b, L, desc.seed, 0, 0, h, PAL.wallpapers[0], 'storage', rs, rf, [], desc.breach);
   if (!rf) return;
 
   // Concierge desk facing the doors (kept clear of elevator & side walls), mailboxes beside the elevator on the solid core wall.
@@ -146,7 +146,7 @@ function lobby(b: Builder, L: Local, desc: BuildingDesc, h: number, rs: Rand, rf
   if (spotHash(L.doorX, L.cz0, 77) < 0.45) wallDecalZ(b, 'decalCobweb', L.cx1 + 0.45, h - 0.35, L.cz0, 0.7, -1);
 }
 
-function corridorStorey(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, _paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, powered: boolean, lit: LitUnit[]): void {
+function corridorStorey(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, _paperA: number, paperB: number, mode: UnitMode, rs: Rand, rf: Rand | null, powered: boolean, lit: LitUnit[], breach?: BuildingDesc['breach']): void {
   // Windowless interior PBR wall pool only (never exterior facadeBrick/facadeConcrete with painted black windows!).
   const skins: readonly Surface[] = mode === 'office'
     ? ['plaster', 'concrete', 'wood', 'wallpaper']
@@ -176,10 +176,10 @@ function corridorStorey(b: Builder, L: Local, buildingSeed: number, floorIdx: nu
     b.blockY(corrPaper, gx, y + 2.1, L.czA - 0.12, DOOR_W, h - 2.1, 0.12, wallSkinB);
     unitDoor(b, gx, L.czA - 0.06, y, 1, L.czA + 0.02, st, rs);
     if (rf) {
-      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, roomPaper, roomSeed, light);
+      furnishUnit(b, ux0 + 0.1, L.iz0, ux1 - 0.1, L.czA - 0.12, y, h, mode, true, st, rf, roomPaper, roomSeed, floorIdx, breach, light);
     }
   }
-  backUnits(b, L, buildingSeed, floorIdx, y, h, paperB, mode, rs, rf, lit);
+  backUnits(b, L, buildingSeed, floorIdx, y, h, paperB, mode, rs, rf, lit, breach);
   if (!rf) return;
   // Corridor: ceiling lamps (a few flicker on the generator), bullet holes, damp/cracks, a lost bag.
   const cz = L.czA + CORRIDOR / 2;
@@ -203,7 +203,7 @@ function unitDoor(b: Builder, gx: number, hz: number, y: number, swing: number, 
   b.door(gx, hz, y, 0, st === 'barricaded' ? -swing : swing, planked, { open });
 }
 
-function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[]): void {
+function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number, y: number, h: number, paper: number, mode: UnitMode, rs: Rand, rf: Rand | null, lit: LitUnit[], breach?: BuildingDesc['breach']): void {
   let x0 = L.cx1 + 0.15;
   if (mode === 'storage') {
     // Ground floor: reserve [L.cx1 + 0.15, L.cx1 + 4.35] as a solid alcove wall for the elevator + mailboxes.
@@ -239,7 +239,7 @@ function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number,
     b.blockY(paper, gx + DOOR_W, y, L.cz0, ux1 - gx - DOOR_W, h, 0.12, 'plaster');
     b.blockY(paper, gx, y + 2.1, L.cz0, DOOR_W, h - 2.1, 0.12, 'plaster');
     unitDoor(b, gx, L.cz0 + 0.06, y, -1, L.cz0 - 0.06, st, rs);
-    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, unitPaper, roomSeed, light);
+    if (rf) furnishUnit(b, ux0 + 0.1, L.cz0 + 0.12, ux1 - 0.1, L.iz1, y, h, mode, false, st, rf, unitPaper, roomSeed, floorIdx, breach, light);
   }
 }
 
@@ -247,12 +247,19 @@ function backUnits(b: Builder, L: Local, buildingSeed: number, floorIdx: number,
  * One apartment, office or storeroom. Authored in a unit frame: the far wall (facade, windows) at
  * z = 0, the door in the middle of the wall at z = d, x across the unit.
  */
-function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, roomSeed: number, light?: LitUnit): void {
+function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number, y: number, h: number, mode: UnitMode, front: boolean, st: UnitState, rf: Rand, paper: number, roomSeed: number, floorIdx: number, breach?: BuildingDesc['breach'], light?: LitUnit): void {
   const w = x1 - x0;
   const d = z1 - z0;
   const cx = (x0 + x1) / 2;
   const U = new Place(b, cx, y, front ? z0 : z1, front ? 0 : 2);
-  if (st === 'burnt') {
+  const atCraneBreach = Boolean(
+    breach &&
+      front &&
+      Math.abs(y - breach.y) < FLOOR_H &&
+      x1 >= breach.x - breach.w * 0.5 - 0.8 &&
+      x0 <= breach.x + breach.w * 0.5 + 0.8,
+  );
+  if (st === 'burnt' && !atCraneBreach) {
     // Burnt out: soot patches on the floor.
     U.decal('decalSoot', (rf() - 0.5) * w * 0.4, d * 0.5, 2.2, rf, 1.3);
     U.decal('decalSoot', (rf() - 0.5) * w * 0.6, d * 0.3, 1.6, rf);
@@ -269,6 +276,21 @@ function furnishUnit(b: Builder, x0: number, z0: number, x1: number, z1: number,
   if (mode === 'office') officeUnit(U, w, d, st, rf);
   else if (mode === 'storage') storageUnit(U, w, d, rf);
   else apartment(U, w, d, h, st, rf, paper, cx, front, roomSeed);
+  // Upper-floor sniper overwatch nests (broken glass, brass casings, mattress + ammo stash by the window).
+  const isSniperNest = atCraneBreach || (mode !== 'storage' && floorIdx >= 2 && spotHash(cx, y + z0, 417) < 0.18);
+  if (isSniperNest && w >= 3.0 && d >= 3.0) {
+    const [nx, nz] = U.pt(0, 1.35);
+    b.glb('sniper_nest_camp', nx, y, nz, front ? 0 : Math.PI);
+    U.decal('decalBullets', 0, 0.72, 1.15, rf, 1.25);
+    U.decal('decalShards', (rf() - 0.5) * 0.7, 0.45, 1.25, rf, 1.25);
+    const sx = w >= 4.4 ? 0.85 : 0.35;
+    const [kx, kz] = U.pt(sx, 1.4);
+    b.container(atCraneBreach ? 'militaryCrate' : 'campStash', kx, kz, y, [kx - 0.75, y, kz - 0.75, kx + 0.75, y + 0.9, kz + 0.75]);
+    if (atCraneBreach) {
+      const [ax, az] = U.pt(-0.85, 1.45);
+      b.container('baseArmory', ax, az, y, [ax - 0.75, y, az - 0.75, ax + 0.75, y + 0.9, az + 0.75]);
+    }
+  }
   // Subtle abandoned interior cobwebs, ceiling dampness, and wall cracks (room-seeded).
   if (spotHash(cx, z0 + y * 5, 91) < 0.55) {
     U.poster(0xffffff, (spotHash(cx, y, 92) - 0.5) * (w - 0.9), h - 0.34, 0.62, 0.62, 0, 'decalCobweb');

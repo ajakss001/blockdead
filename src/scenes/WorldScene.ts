@@ -121,6 +121,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { FISTS, HELD as HELD_CFG, type HeldId } from '../player/held';
 import { giveLoadout } from '../weapons/give';
 import { routeHighrise } from '../world/gen/highrise';
+import { LAST_STAND_CENTER, LAST_STAND_WIRES, QUARANTINE_CENTER } from '../world/gen/dioramas';
 import type { DoorRef } from '../world/Doors';
 import type { ContainerRef } from '../systems/Containers';
 import type { TwinRecord } from '../systems/SaveGame';
@@ -286,6 +287,10 @@ export class WorldScene implements IScene {
   private bandits!: Bandits;
   private tripwires!: Tripwires;
   private ambushScanT = 0;
+  private lastStandActivated = false;
+  private quarantineActivated = false;
+  private readonly blownBarrels = new Set<string>();
+  private readonly pendingBlasts: { x: number; y: number; z: number; t: number }[] = [];
   private carHud!: CarHud;
   private interiors!: Interiors;
   private doors!: Doors;
@@ -811,6 +816,7 @@ export class WorldScene implements IScene {
       onWindowBullet: (owner, at, dir, nx, ny, nz) => this.handleWindowBullet(owner, at, dir, nx, ny, nz),
       onWindowShatter: (owner, dir) => this.shatterWindow(owner, dir.x, dir.z),
       onVehicleBulletHit: (o, d, dist, at, playSound) => this.handleVehicleBulletHit(o, d, dist, at, playSound),
+      onWorldBulletImpact: (at) => this.tryDetonateFuelBarrel(at),
       onReloadStart: () => this.bandits.onPlayerReloading(this.player.controller.position),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
@@ -835,6 +841,10 @@ export class WorldScene implements IScene {
     this.interiors.onWindows = (owner, spots) => {
       if (spots) this.windowPanes.addChunk(owner, spots);
       else this.windowPanes.removeChunk(owner);
+    };
+    this.interiors.onGlbs = (owner, glbs) => {
+      if (glbs) this.glbPool.addChunk(owner, glbs);
+      else this.glbPool.removeChunk(owner);
     };
     this.interiors.onAmbient = (owner, spots) => {
       if (spots) {
@@ -1341,9 +1351,18 @@ export class WorldScene implements IScene {
       c.crouched,
     );
     this.tripwires.update(dt, c.position, c.crouched, this.dead, this.zombies.list, this.bandits.list);
+    for (let i = this.pendingBlasts.length - 1; i >= 0; i--) {
+      const pb = this.pendingBlasts[i];
+      pb.t -= dt;
+      if (pb.t <= 0) {
+        this.pendingBlasts.splice(i, 1);
+        this.detonateFuelBarrel(pb.x, pb.y, pb.z);
+      }
+    }
     if ((this.ambushScanT -= dt) <= 0) {
       this.ambushScanT = 1.5;
       this.tripwires.spawnAmbushNearDoors(this.doors.doorsNear(c.position.x, c.position.y, c.position.z, 38), this.bandits.list, this.saves.seed);
+      this.activateNearbyDioramas(c.position.x, c.position.z);
     }
     if (this.vehicles.activeCar && Math.abs(this.vehicles.activeCar.speed) > 2.4) {
       const car = this.vehicles.activeCar;
@@ -2196,6 +2215,74 @@ export class WorldScene implements IScene {
     this.bodies.push(ref);
     this.containers.addLoose(ref, t.items);
     this.save();
+  }
+
+  /** Spawns one-shot dynamic defenders/infected/tripwires when approaching downtown story dioramas. */
+  private activateNearbyDioramas(px: number, pz: number): void {
+    if (!this.lastStandActivated && Math.hypot(px - LAST_STAND_CENTER.x, pz - LAST_STAND_CENTER.z) < 68) {
+      this.lastStandActivated = true;
+      this.bandits.spawnGoonsNear(LAST_STAND_CENTER.x, LAST_STAND_CENTER.z, 6);
+      for (const w of LAST_STAND_WIRES) {
+        this.tripwires.addAmbushWire(w.ax, w.ay, w.az, w.bx, w.by, w.bz, w.key);
+      }
+    }
+    if (!this.quarantineActivated && Math.hypot(px - QUARANTINE_CENTER.x, pz - QUARANTINE_CENTER.z) < 68) {
+      this.quarantineActivated = true;
+      if (this.zombies.target > 0) {
+        const qSpots: readonly [number, number, ModelKind][] = [
+          [-1, -19, 'police'],
+          [-5, -17, 'medic'],
+          [-8, -11, 'worker'],
+          [4, -10, 'medic'],
+          [-7, -4, 'survivorM'],
+          [5, -3, 'medic'],
+          [11, -3, 'jogger'],
+          [0, 3, 'survivorF'],
+          [8, 4, 'worker'],
+        ];
+        for (const [dx, dz, kind] of qSpots) {
+          const zb = this.zombies.spawnAt(QUARANTINE_CENTER.x + dx, QUARANTINE_CENTER.z + dz, 'wander', kind);
+          this.world.resolveCircle(zb.pos, 0.45);
+        }
+      }
+    }
+  }
+
+  /** Detonates a shootable fuel barrel cluster when hit by a bullet and chains nearby clusters. */
+  private tryDetonateFuelBarrel(at: Vector3): void {
+    const hit = this.glbPool?.findFuelBarrelAt(at.x, at.y, at.z, 0.55);
+    if (!hit || this.blownBarrels.has(hit.key)) return;
+    this.blownBarrels.add(hit.key);
+    this.detonateFuelBarrel(hit.x, hit.y, hit.z);
+  }
+
+  /** Triggers an explosive blast, persistent fire/smoke column, and staggered chain-reaction barrel queue. */
+  private detonateFuelBarrel(x: number, y: number, z: number): void {
+    this.firearms.explode(new Vector3(x, y + 0.65, z), {
+      radius: 8.5,
+      damage: 130,
+      impulse: 14,
+      noise: 120,
+      shrapnel: 24,
+    });
+    const fireKey = -2_000_000 - (this.carFireN++ % 100_000);
+    const seed = Math.random();
+    const spots = new Float32Array([
+      LIFE.fire, x, y + 0.15, z, 0, 0, 2.0, 0, seed, 0,
+      LIFE.smoke, x, y + 1.5, z, 0, 0, 0, 0, (seed + 0.37) % 1, 0,
+    ]);
+    this.life.add(fireKey, spots);
+    this.atmo.add(fireKey, spots);
+    this.carFires.push({ key: fireKey, t: 55 + Math.random() * 25 });
+    if (this.glbPool) {
+      let idx = 0;
+      for (const nb of this.glbPool.fuelBarrelsNear(x, z, 9.5)) {
+        if (this.blownBarrels.has(nb.key)) continue;
+        this.blownBarrels.add(nb.key);
+        this.pendingBlasts.push({ x: nb.x, y: nb.y, z: nb.z, t: 0.35 + idx * 0.22 });
+        idx++;
+      }
+    }
   }
 
   /**

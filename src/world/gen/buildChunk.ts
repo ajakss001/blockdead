@@ -14,7 +14,7 @@ import { LIFE, spotHash, TREE } from './lifeKinds';
 import { hash3 } from './noise';
 import { buildPoi } from './poiBuild';
 import { type BodyMode, chaosScene, sceneAt } from './chaos';
-import { carIntoPole, checkpoint, crashSite, trafficJam } from './storytelling';
+import { carIntoPole, checkpoint, crashSite, exitTrafficJam, trafficJam } from './storytelling';
 import { Builder, type ContainerSpot, type DoorSpot, bush, buildHouse, buildShop, fence, hedge, lampPost, mailbox, PAL, pick, pine, plantTree, type Rand, trashBins, tree } from './pieces';
 
 export interface ChunkData {
@@ -53,6 +53,7 @@ export interface InteriorData {
   doors: DoorSpot[];
   windows: WindowPaneSpot[];
   ambient: Float32Array;
+  glbs: GlbPlacement[];
   ms: number;
 }
 
@@ -192,12 +193,18 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
           buildCar(b.batch, b.colliders, { x: x + CURB_LANE, z: bsz + 0.6, yaw: Math.PI / 2 + (rand() - 0.5) * 0.15, paint: 0xffffff, seed: Math.floor(rand() * 1e6), kind: 'bus' }, b.containers);
         }
       }
-      // Downtown: the queue that never got out; elsewhere cars sit where people left them.
-      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8 ? trafficJam(b, x, 0, false, za, za + len, rand) : 0;
-      const pole = layout.urbanX(i, j) && rand() < 0.12;
+      // Downtown: the queue that never got out (plus dense rim-exit gridlocks); elsewhere curb parking.
+      const rimX = Math.max(Math.abs(i), Math.abs(j));
+      const useExitJamX = (rimX === 2 || rimX === 3) && (Math.abs(i) === 2 || Math.abs(j) === 2) && spotHash(i, j, 319) < 0.65;
+      const jam = useExitJamX
+        ? exitTrafficJam(b, x, 0, false, za, za + len, rand)
+        : (layout.isDowntown(i, j) || layout.isDowntown(i - 1, j)) && rand() < 0.8
+          ? trafficJam(b, x, 0, false, za, za + len, rand)
+          : 0;
+      const pole = layout.urbanX(i, j) && !useExitJamX && rand() < 0.12;
       if (pole) carIntoPole(b, x + ROAD_HALF + 1.2, z + CHUNK * 0.25, 0, rand);
       for (const side of [-1, 1]) {
-        if (Math.sign(jam) !== side) curbParking(b, false, x + side * CURB_LANE, side, za + 5, za + len - 5, rand, side > 0 && pole ? z + CHUNK * 0.25 : undefined);
+        if (jam !== 2 && Math.sign(jam) !== side) curbParking(b, false, x + side * CURB_LANE, side, za + 5, za + len - 5, rand, side > 0 && pole ? z + CHUNK * 0.25 : undefined);
       }
       // Speed bumps INSIDE the city (downtown + town): anchored on asphalt, perpendicular to road axis,
       // at crosswalk signs, bus stops, city POIs, and mid-block crossings/exits.
@@ -244,8 +251,14 @@ function roads(b: Builder, layout: WorldLayout, i: number, j: number, rand: Rand
           b.glb('Road_Debris_Cluster_2', dx, 0.01, dz, dyaw);
         }
       }
-      const jam = (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8 ? trafficJam(b, 0, z, true, xa, xa + len, rand) : 0;
-      for (const side of [-1, 1]) if (Math.sign(jam) !== side) curbParking(b, true, z + side * CURB_LANE, side, xa + 5, xa + len - 5, rand);
+      const rimZ = Math.max(Math.abs(i), Math.abs(j));
+      const useExitJamZ = (rimZ === 2 || rimZ === 3) && (Math.abs(i) === 2 || Math.abs(j) === 2) && spotHash(i, j, 323) < 0.65;
+      const jam = useExitJamZ
+        ? exitTrafficJam(b, 0, z, true, xa, xa + len, rand)
+        : (layout.isDowntown(i, j) || layout.isDowntown(i, j - 1)) && rand() < 0.8
+          ? trafficJam(b, 0, z, true, xa, xa + len, rand)
+          : 0;
+      for (const side of [-1, 1]) if (jam !== 2 && Math.sign(jam) !== side) curbParking(b, true, z + side * CURB_LANE, side, xa + 5, xa + len - 5, rand);
       if (signZId === 'crosswalk_sign_1500') trySpeedBump(b, signX + 2.4, z, Math.PI / 2);
       if (roadHasPoiApproach(layout, i, j, 'z') || spotHash(i, j, 77) < 0.32) {
         trySpeedBump(b, x + CHUNK * 0.5, z, Math.PI / 2);
@@ -445,6 +458,7 @@ export function buildInterior(desc: BuildingDesc, focus: number): InteriorData {
     doors: b.doors,
     windows: b.windows,
     ambient: new Float32Array(b.ambient),
+    glbs: batch.glbs,
     ms: performance.now() - t0,
   };
 }

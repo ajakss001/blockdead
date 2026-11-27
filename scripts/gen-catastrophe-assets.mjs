@@ -88,6 +88,42 @@ const ASSETS = [
     prompt:
       'Abandoned emergency rescue equipment cluster on asphalt, overturned wheeled medical stretcher gurney, open orange first-aid trauma kit box, coiled red fire hose with brass nozzle and knocked-over orange traffic cones, realistic gritty PBR game asset',
   },
+  {
+    file: 'collapsed_crane_boom.glb',
+    polycount: 8000,
+    prompt:
+      'Collapsed yellow painted steel lattice tower crane boom truss bridge, bent twisted girders, frayed steel cables, rusted industrial metal, weathered post-apocalyptic construction wreck, PBR game asset',
+  },
+  {
+    file: 'tower_crane_cab.glb',
+    polycount: 7000,
+    prompt:
+      'Damaged yellow industrial construction tower crane operator cab and concrete counterweight base mounted on roof, cracked glass cabin, bent steel mast stub, rust and soot, post-apocalyptic PBR game asset',
+  },
+  {
+    file: 'road_sinkhole_crater.glb',
+    polycount: 7500,
+    prompt:
+      'Collapsed city street asphalt sinkhole crater revealing broken concrete underground storm sewer tunnel pipes and jagged torn pavement edges, twisted rebar, wet dark mud and rubble rim, post-apocalyptic urban disaster PBR game asset',
+  },
+  {
+    file: 'fuel_barrel_cluster.glb',
+    polycount: 5500,
+    prompt:
+      'Cluster of three weathered red and rusty industrial 200-liter fuel oil drums with hazard stripe, one tipped over leaking dark oil puddle, post-apocalyptic gas station convoy ambush prop, PBR game asset',
+  },
+  {
+    file: 'military_barbed_barrier.glb',
+    polycount: 6000,
+    prompt:
+      'Post-Soviet military checkpoint defense barrier made of heavy concrete jersey blocks, stacked olive sandbags, coiled concertina razor barbed wire on top and bullet-riddled steel armor plate, gritty realistic PBR game asset',
+  },
+  {
+    file: 'sniper_nest_camp.glb',
+    polycount: 6000,
+    prompt:
+      'Abandoned rooftop apartment sniper nest setup on floor: dirty rolled military mattress, green metal ammo crate, scattered brass rifle shell casings, spare magazines and binoculars on sandbag rest, gritty realistic post-apocalyptic PBR game asset',
+  },
 ];
 
 function loadMeshyKey() {
@@ -248,6 +284,13 @@ async function packWithBudget(io, rawBytes, targetTris) {
   return packed;
 }
 
+function createIo() {
+  return new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
+    'meshopt.decoder': MeshoptDecoder,
+    'meshopt.encoder': MeshoptEncoder,
+  });
+}
+
 async function main() {
   let apiKey = loadMeshyKey();
 
@@ -256,10 +299,8 @@ async function main() {
   await MeshoptEncoder.ready;
   await MeshoptSimplifier.ready;
 
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
-    'meshopt.decoder': MeshoptDecoder,
-    'meshopt.encoder': MeshoptEncoder,
-  });
+  const io = createIo();
+  const pending = [];
 
   for (const spec of ASSETS) {
     const outPath = join(OUT_DIR, spec.file);
@@ -283,49 +324,61 @@ async function main() {
       );
       continue;
     }
-
-    if (!apiKey) {
-      apiKey = loadMeshyKey();
-    }
-    if (!apiKey) {
-      console.error(`Error: MESHY_API_KEY is missing or empty in local .env (cannot generate ${spec.file}).`);
-      process.exit(1);
-    }
-
-    console.log(`[generate] ${spec.file} (preview -> refine, PBR, target=${spec.polycount})...`);
-    const previewId = await meshyPost(apiKey, {
-      mode: 'preview',
-      ai_model: 'latest',
-      prompt: spec.prompt,
-      should_remesh: true,
-      topology: 'triangle',
-      target_polycount: spec.polycount,
-    });
-    await meshyPoll(apiKey, previewId, `${spec.file}:preview`);
-    console.log(`\n  preview complete (${previewId}), starting PBR refine...`);
-
-    const refineId = await meshyPost(apiKey, {
-      mode: 'refine',
-      preview_task_id: previewId,
-      enable_pbr: true,
-    });
-    const refineData = await meshyPoll(apiKey, refineId, `${spec.file}:refine`);
-    const glbUrl = refineData?.model_urls?.glb;
-    if (!glbUrl) throw new Error(`Meshy refine succeeded without model_urls.glb for ${spec.file}`);
-
-    console.log(`\n  downloading & optimizing via gltf-transform + 1024px WebP...`);
-    const dl = await fetch(glbUrl);
-    if (!dl.ok) throw new Error(`Failed downloading GLB (${dl.status}) for ${spec.file}`);
-    const rawBuf = Buffer.from(await dl.arrayBuffer());
-
-    const packed = await packWithBudget(io, rawBuf, spec.polycount);
-
-    writeFileSync(outPath, packed);
-    const verifyDoc = await io.readBinary(new Uint8Array(packed));
-    console.log(
-      `[done] ${spec.file}: ${countTris(verifyDoc)} tris, ${(packed.byteLength / 1024).toFixed(1)} KB`,
-    );
+    pending.push(spec);
   }
+
+  if (pending.length === 0) return;
+  if (!apiKey) apiKey = loadMeshyKey();
+  if (!apiKey) {
+    console.error(`Error: MESHY_API_KEY is missing or empty in local .env (cannot generate ${pending.map((s) => s.file).join(', ')}).`);
+    process.exit(1);
+  }
+
+  const CONCURRENCY = 3;
+  let nextIdx = 0;
+  const worker = async () => {
+    const taskIo = createIo();
+    while (nextIdx < pending.length) {
+      const spec = pending[nextIdx++];
+      const outPath = join(OUT_DIR, spec.file);
+      console.log(`[generate] ${spec.file} (preview -> refine, PBR, target=${spec.polycount})...`);
+      const previewId = await meshyPost(apiKey, {
+        mode: 'preview',
+        ai_model: 'latest',
+        prompt: spec.prompt,
+        should_remesh: true,
+        topology: 'triangle',
+        target_polycount: spec.polycount,
+      });
+      await meshyPoll(apiKey, previewId, `${spec.file}:preview`);
+      console.log(`\n  [${spec.file}] preview complete (${previewId}), starting PBR refine...`);
+
+      const refineId = await meshyPost(apiKey, {
+        mode: 'refine',
+        preview_task_id: previewId,
+        enable_pbr: true,
+      });
+      const refineData = await meshyPoll(apiKey, refineId, `${spec.file}:refine`);
+      const glbUrl = refineData?.model_urls?.glb;
+      if (!glbUrl) throw new Error(`Meshy refine succeeded without model_urls.glb for ${spec.file}`);
+
+      console.log(`\n  [${spec.file}] downloading & optimizing via gltf-transform + 1024px WebP...`);
+      const dl = await fetch(glbUrl);
+      if (!dl.ok) throw new Error(`Failed downloading GLB (${dl.status}) for ${spec.file}`);
+      const rawBuf = Buffer.from(await dl.arrayBuffer());
+      const rawDoc = await taskIo.readBinary(new Uint8Array(rawBuf));
+      const beforeTris = countTris(rawDoc);
+      const beforeKb = rawBuf.byteLength / 1024;
+
+      const packed = await packWithBudget(taskIo, rawBuf, spec.polycount);
+      writeFileSync(outPath, packed);
+      const verifyDoc = await taskIo.readBinary(new Uint8Array(packed));
+      console.log(
+        `[done] ${spec.file}: ${beforeTris} -> ${countTris(verifyDoc)} tris, ${beforeKb.toFixed(1)} KB -> ${(packed.byteLength / 1024).toFixed(1)} KB`,
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, () => worker()));
 }
 
 await main();

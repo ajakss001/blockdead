@@ -1,9 +1,10 @@
 import { Matrix4, PlaneGeometry, Quaternion, Vector3 } from 'three';
 import { buildCar, CAR_PAINTS } from '../props/car';
+import { PAVE } from './layout';
 import { sandbags, stripedBarrier } from './chaos';
 import { isGlbClear } from './footprint';
 import { Place } from './furniture';
-import { groundDecal } from './highrise';
+import { groundDecal, wallDecalZ } from './highrise';
 import { LIFE, spotHash } from './lifeKinds';
 import { type Builder, pick, type Rand } from './pieces';
 
@@ -90,6 +91,80 @@ export function trafficJam(b: Builder, cx: number, cz: number, alongX: boolean, 
     n++;
   }
   return lane;
+}
+
+/**
+ * Dense city-exit gridlock: 8–11 staggered abandoned cars/vans/buses snaking across both lanes,
+ * scattered evacuation luggage, oil/skid marks, and a concrete rubble barricade blocking the exit.
+ */
+export function exitTrafficJam(b: Builder, cx: number, cz: number, alongX: boolean, from: number, to: number, rand: Rand): number {
+  const dirOut = spotHash(cx, cz, 321) < 0.5 ? 1 : -1;
+  const heading = alongX ? (dirOut > 0 ? 0 : Math.PI) : dirOut > 0 ? -Math.PI / 2 : Math.PI / 2;
+  const start = dirOut > 0 ? from + 4.5 : to - 4.5;
+  const stop = dirOut > 0 ? to - 10.5 : from + 10.5;
+  let k = 0;
+  let cursor = start;
+  while ((dirOut > 0 ? cursor < stop : cursor > stop) && k < 11) {
+    const side = k % 2 === 0 ? -1.8 : 1.8;
+    const wobble = (rand() - 0.5) * 0.28 + Math.sin(k * 1.3) * 0.14;
+    const x = alongX ? cursor : cx + side + (rand() - 0.5) * 0.35;
+    const z = alongX ? cz + side + (rand() - 0.5) * 0.35 : cursor;
+    const flipRoll = spotHash(x, z, 322);
+    const kind = k % 5 === 3 ? 'van' : k % 7 === 5 ? 'bus' : rand() < 0.22 ? 'wreck' : undefined;
+    const flipped = kind === 'wreck' && flipRoll < 0.35 ? 'sideL' : undefined;
+    const placed = buildCar(
+      b.batch,
+      b.colliders,
+      {
+        x,
+        z,
+        yaw: heading + wobble,
+        paint: pick(rand, paints),
+        seed: Math.floor(rand() * 1e6),
+        flatTire: rand() < 0.4,
+        smashed: k > 6 ? 0.55 : rand() < 0.35 ? 0.25 : 0,
+        kind,
+        maxLen: kind === 'bus' ? 7.2 : 5.0,
+        flipped,
+      },
+      b.containers,
+    );
+    if (placed) {
+      b.life(LIFE.car, x, 0, z, Math.sin(heading), Math.cos(heading), 4.3, 1.8, spotHash(x, z, 41));
+      if (k % 3 === 1) {
+        const lx = x + (rand() - 0.5) * 2.2;
+        const lz = z + (rand() - 0.5) * 2.2;
+        if (isGlbClear(b.batch, 'abandoned_luggage_pil', lx, lz, rand() * Math.PI, 0.35, { keepClearGap: 0.6 })) {
+          b.glb('abandoned_luggage_pil', lx, PAVE.asphalt, lz, rand() * Math.PI);
+        }
+      }
+      if (k % 4 === 2) groundDecal(b, 'decalOil', x + (rand() - 0.5) * 1.8, PAVE.asphalt, z + (rand() - 0.5) * 1.8, 1.5, rand);
+    }
+    cursor += dirOut * (3.9 + rand() * 0.6);
+    k++;
+  }
+  // Exit blockade at the front of the gridlock: concrete rubble mound + barricade + evacuation cardboard sign
+  const blkU = dirOut > 0 ? to - 5.2 : from + 5.2;
+  const bx = alongX ? blkU : cx;
+  const bz = alongX ? cz : blkU;
+  const blkYaw = alongX ? Math.PI / 2 : 0;
+  if (isGlbClear(b.batch, 'checkpoint_barricade', bx - (alongX ? 0 : 1.7), bz - (alongX ? 1.7 : 0), blkYaw, 0.4, { keepClearGap: 0.8 })) {
+    b.glb('checkpoint_barricade', bx - (alongX ? 0 : 1.7), PAVE.asphalt, bz - (alongX ? 1.7 : 0), blkYaw);
+    b.colliders.addOrientedBox(bx - (alongX ? 0 : 1.7), bz - (alongX ? 1.7 : 0), 1.65, 0.9, blkYaw, 0, 1.5);
+  }
+  if (isGlbClear(b.batch, 'concrete_rubble_mound', bx + (alongX ? 0 : 1.6), bz + (alongX ? 1.6 : 0), blkYaw, 0.35, { scale: 0.72, keepClearGap: 0.8 })) {
+    const rx = bx + (alongX ? 0 : 1.6);
+    const rz = bz + (alongX ? 1.6 : 0);
+    b.glb('concrete_rubble_mound', rx, PAVE.asphalt, rz, blkYaw, { scale: 0.72 });
+    b.solid(rx - 1.5, rz - 1.5, rx + 1.5, rz + 1.5, PAVE.asphalt, PAVE.asphalt + 1.4);
+  }
+  if (isGlbClear(b.batch, 'Road_Debris_Cluster_2', bx, bz, rand() * 3, 0.25, { keepClearGap: 0.6 })) {
+    b.glb('Road_Debris_Cluster_2', bx, PAVE.asphalt, bz, rand() * 3);
+  }
+  stripDecal(b, bx - Math.cos(heading) * 3.5, bz + Math.sin(heading) * 3.5, heading, 7, 2.6, 'decalSkid');
+  groundDecal(b, 'decalSoot', bx, PAVE.asphalt, bz, 4.0, rand, 1.3);
+  wallDecalZ(b, 'decalEvacuate', bx, 1.15, bz, 1.2, dirOut > 0 ? -1 : 1);
+  return 2;
 }
 
 /** Pile-up in an intersection: wrecked/flipped cars + emergency response (ambulance / fire truck), skid marks, debris & smoke. */

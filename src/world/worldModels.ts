@@ -69,6 +69,12 @@ export const GLB_WORLD_SPECS = {
   collapsed_concrete_slab: { file: 'collapsed_concrete_slab.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [6.8, 2.4, 5.2] as const, minY: 0, lodDist: 185, castShadow: true },
   plane_debris_cluster: { file: 'plane_debris_cluster.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [3.2, 1.15, 2.6] as const, minY: 0, lodDist: 135, castShadow: false },
   emergency_gear_scatter: { file: 'emergency_gear_scatter.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [2.8, 0.95, 2.2] as const, minY: 0, lodDist: 125, castShadow: false },
+  collapsed_crane_boom: { file: 'collapsed_crane_boom.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [22.0, 2.6, 2.8] as const, minY: 0, lodDist: 230, castShadow: true },
+  tower_crane_cab: { file: 'tower_crane_cab.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.2, 5.4, 4.8] as const, minY: 0, lodDist: 220, castShadow: true },
+  road_sinkhole_crater: { file: 'road_sinkhole_crater.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [14.0, 0.55, 10.5] as const, minY: 0, lodDist: 210, castShadow: false },
+  fuel_barrel_cluster: { file: 'fuel_barrel_cluster.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [2.2, 1.15, 2.0] as const, minY: 0, lodDist: 140, castShadow: true },
+  military_barbed_barrier: { file: 'military_barbed_barrier.glb', dir: 'catastrophe' as const, optional: true as const, category: 'structure' as GlbCategory, size: [4.6, 1.9, 2.2] as const, minY: 0, lodDist: 175, castShadow: true },
+  sniper_nest_camp: { file: 'sniper_nest_camp.glb', dir: 'catastrophe' as const, optional: true as const, category: 'prop' as GlbCategory, size: [2.4, 0.85, 2.0] as const, minY: 0, lodDist: 110, castShadow: false },
 } as const satisfies Record<string, GlbSpec>;
 
 export type GlbModelId = keyof typeof GLB_WORLD_SPECS;

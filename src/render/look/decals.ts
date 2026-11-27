@@ -111,11 +111,12 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       break;
     }
     case 'noFuel':
-    case 'evacuate': {
+    case 'evacuate':
+    case 'noWater': {
       // A sheet of cardboard, the words in thick marker, a bit crooked.
-      g.fillStyle = 'rgba(176, 150, 112, 0.97)';
+      g.fillStyle = kind === 'noWater' ? 'rgba(164, 152, 130, 0.96)' : 'rgba(176, 150, 112, 0.97)';
       g.fillRect(size * 0.06, size * 0.2, size * 0.88, size * 0.6);
-      g.fillStyle = 'rgba(24, 22, 20, 0.95)';
+      g.fillStyle = kind === 'noWater' ? 'rgba(20, 32, 48, 0.95)' : 'rgba(24, 22, 20, 0.95)';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.font = `bold ${Math.round(size * 0.17)}px sans-serif`;
@@ -125,9 +126,67 @@ export function generateDecalCanvas(kind: DecalKind, size = 128, seed = 1): HTML
       const [l1, l2] =
         kind === 'noFuel'
           ? [tr('БЕНЗИНА', 'NO'), tr('НЕТ', 'FUEL')]
-          : [tr('ЭВАКУАЦИЯ', 'EVACUATION'), tr('→ СЕВЕР', '→ NORTH')];
+          : kind === 'noWater'
+            ? [tr('ВОДЫ', 'NO'), tr('НЕТ', 'WATER')]
+            : [tr('ЭВАКУАЦИЯ', 'EVACUATION'), tr('→ СЕВЕР', '→ NORTH')];
       g.fillText(l1, 0, -size * 0.1, size * 0.8);
       g.fillText(l2, 0, size * 0.12, size * 0.8);
+      if (kind === 'noWater') {
+        g.strokeStyle = 'rgba(160, 30, 26, 0.88)';
+        g.lineWidth = Math.max(2, size * 0.025);
+        g.beginPath();
+        g.moveTo(-size * 0.34, size * 0.2);
+        g.lineTo(size * 0.34, -size * 0.2);
+        g.stroke();
+      }
+      g.restore();
+      break;
+    }
+    case 'infected': {
+      // Crimson spray-paint warning across concrete/wood walls: DO NOT ENTER — INFECTED.
+      g.save();
+      g.translate(c, c);
+      g.rotate((rand() - 0.5) * 0.14);
+      g.fillStyle = 'rgba(148, 18, 22, 0.92)';
+      g.strokeStyle = 'rgba(178, 24, 28, 0.88)';
+      g.lineWidth = Math.max(2, size * 0.03);
+      g.beginPath();
+      g.moveTo(-size * 0.36, -size * 0.34);
+      g.lineTo(size * 0.36, size * 0.34);
+      g.moveTo(size * 0.36, -size * 0.34);
+      g.lineTo(-size * 0.36, size * 0.34);
+      g.stroke();
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.font = `bold ${Math.round(size * 0.145)}px sans-serif`;
+      g.fillText(tr('НЕ ВХОДИТЬ', 'DO NOT ENTER'), 0, -size * 0.11, size * 0.9);
+      g.fillText(tr('ЗАРАЖЕНО', 'INFECTED'), 0, size * 0.13, size * 0.86);
+      for (let i = 0; i < 6; i++) {
+        const dx = (rand() - 0.5) * size * 0.7;
+        g.fillRect(dx, size * 0.18, 2, size * (0.08 + rand() * 0.14));
+      }
+      g.restore();
+      break;
+    }
+    case 'helpRoof': {
+      // Giant weathered white rooftop SOS paint legible from helicopter altitude.
+      g.save();
+      g.translate(c, c);
+      g.fillStyle = 'rgba(232, 230, 220, 0.88)';
+      g.fillRect(-size * 0.44, -size * 0.28, size * 0.88, size * 0.06);
+      g.fillRect(-size * 0.44, size * 0.22, size * 0.88, size * 0.06);
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.font = `bold ${Math.round(size * 0.32)}px sans-serif`;
+      g.fillText('HELP', 0, 0, size * 0.88);
+      // Weathered dirt scuffs over paint
+      g.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 18; i++) {
+        g.fillStyle = `rgba(0,0,0,${0.18 + rand() * 0.28})`;
+        g.beginPath();
+        g.arc((rand() - 0.5) * size * 0.8, (rand() - 0.5) * size * 0.5, size * (0.02 + rand() * 0.04), 0, Math.PI * 2);
+        g.fill();
+      }
       g.restore();
       break;
     }

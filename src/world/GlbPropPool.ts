@@ -110,6 +110,7 @@ export class GlbPropPool {
   private readonly lightTowers: { x: number; y: number; z: number }[] = [];
   private readonly burnBarrels: { x: number; y: number; z: number }[] = [];
   private readonly heliWrecks: { x: number; y: number; z: number }[] = [];
+  private readonly fuelBarrels: { key: string; x: number; y: number; z: number; r: number }[] = [];
 
   private readonly barrelLights: PointLight[] = [];
   private readonly towerLights: PointLight[] = [];
@@ -184,6 +185,40 @@ export class GlbPropPool {
       if (dx * dx + dy * dy + dz * dz <= b.r * b.r) return true;
     }
     return false;
+  }
+
+  /** Locate an explosive `fuel_barrel_cluster` hit by a bullet or explosion point. */
+  findFuelBarrelAt(wx: number, wy: number, wz: number, margin = 0.55): { key: string; x: number; y: number; z: number } | null {
+    if (this.indexesDirty) this.rebuildSpatialLists();
+    let best: { key: string; x: number; y: number; z: number } | null = null;
+    let bestD2 = Infinity;
+    for (let i = 0; i < this.fuelBarrels.length; i++) {
+      const b = this.fuelBarrels[i];
+      if (wy < b.y - 0.3 || wy > b.y + 1.55) continue;
+      const dx = wx - b.x;
+      const dz = wz - b.z;
+      const d2 = dx * dx + dz * dz;
+      const lim = b.r + margin;
+      if (d2 <= lim * lim && d2 < bestD2) {
+        bestD2 = d2;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /** Return all `fuel_barrel_cluster` props within `radius` (for cascading chain-reaction blasts). */
+  fuelBarrelsNear(wx: number, wz: number, radius: number): { key: string; x: number; y: number; z: number }[] {
+    if (this.indexesDirty) this.rebuildSpatialLists();
+    const out: { key: string; x: number; y: number; z: number }[] = [];
+    const r2 = radius * radius;
+    for (let i = 0; i < this.fuelBarrels.length; i++) {
+      const b = this.fuelBarrels[i];
+      const dx = b.x - wx;
+      const dz = b.z - wz;
+      if (dx * dx + dz * dz <= r2) out.push(b);
+    }
+    return out;
   }
 
   /** Fast local-space OBB lookup for static GLB vehicles at world point (wx, wy, wz). */
@@ -377,11 +412,13 @@ export class GlbPropPool {
       const rawMax = Math.max(0.01, rawSize.x, rawSize.y, rawSize.z);
       const targetMax = Math.max(spec.size[0], spec.size[1], spec.size[2]);
       const uScale = targetMax / rawMax;
-      const yScale = id === 'crash_skid_trench' ? Math.min(uScale, spec.size[1] / Math.max(0.01, rawSize.y)) : uScale;
+      const clampFlat = id === 'crash_skid_trench' || id === 'road_sinkhole_crater' || id === 'collapsed_crane_boom';
+      const yScale = clampFlat ? Math.min(uScale, spec.size[1] / Math.max(0.01, rawSize.y)) : uScale;
+      const zScale = id === 'collapsed_crane_boom' ? Math.min(uScale, spec.size[2] / Math.max(0.01, rawSize.z)) : uScale;
       const cxOff = -(box.min.x + box.max.x) * 0.5;
       const czOff = -(box.min.z + box.max.z) * 0.5;
       assetMat = new Matrix4()
-        .makeScale(uScale, yScale, uScale)
+        .makeScale(uScale, yScale, zScale)
         .multiply(new Matrix4().makeTranslation(cxOff, minYOffset, czOff));
     } else if (!isLod && id === 'Sport_Sedan_22k') {
       extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);
@@ -435,6 +472,7 @@ export class GlbPropPool {
     this.lightTowers.length = 0;
     this.burnBarrels.length = 0;
     this.heliWrecks.length = 0;
+    this.fuelBarrels.length = 0;
 
     for (const list of this.chunks.values()) {
       for (let i = 0; i < list.length; i++) {
@@ -476,6 +514,17 @@ export class GlbPropPool {
           case 'mi8_wreck_remesh':
             this.heliWrecks.push({ x: p.x, y: p.y, z: p.z });
             break;
+          case 'fuel_barrel_cluster': {
+            const sc = p.scale ?? Math.max(p.sx ?? 1, p.sy ?? 1, p.sz ?? 1);
+            this.fuelBarrels.push({
+              key: `${Math.round(p.x * 10)},${Math.round(p.z * 10)}`,
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              r: 1.15 * sc,
+            });
+            break;
+          }
         }
       }
     }

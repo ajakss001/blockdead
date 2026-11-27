@@ -63,6 +63,8 @@ export interface BuildingDesc {
   seed: number;
   /** Optional structural wall breach carved into the front facade (e.g. Mi-8 helicopter crash). */
   breach?: { x: number; y: number; w: number; h: number };
+  /** Optional extra X gap [x0, x1] cut out of the back (+Z) roof parapet (e.g. collapsed crane bridge). */
+  roofGapX?: readonly [number, number];
 }
 
 export interface Local {
@@ -410,11 +412,18 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
     const feCx = (feX0 + feX1) * 0.5;
     b.batch.keepClear.push({ x: b.wx(feCx), z: b.wz(L.z1 + FE_DEPTH * 0.5), r: 0, kind: 'fireEscape' });
     b.block(tint, L.x0, 0, L.z1 - WALL, L.x1 - L.x0, H, WALL, f, false);
-    // Open parapet exit always sits directly at the top flight arrival (feX1 - FE_ROOF_GAP .. feX1), clear of head-house.
+    // Open parapet exit sits at the top flight arrival (gap0 = feX1 - FE_ROOF_GAP .. feX1), plus any extra roofGapX.
     const gap0 = feX1 - FE_ROOF_GAP;
-    const gap1 = feX1;
-    if (gap0 > L.x0 + 0.05) b.block(tint, L.x0, H, L.z1 - WALL, gap0 - L.x0, top - H, WALL, f, true);
-    if (L.x1 > gap1 + 0.05) b.block(tint, gap1, H, L.z1 - WALL, L.x1 - gap1, top - H, WALL, f, true);
+    const gaps: [number, number][] = [[gap0, feX1]];
+    if (desc.roofGapX) gaps.push([desc.roofGapX[0], desc.roofGapX[1]]);
+    gaps.sort((a, b) => a[0] - b[0]);
+    let cur = L.x0;
+    for (const [g0, g1] of gaps) {
+      const segEnd = Math.min(L.x1, g0);
+      if (segEnd > cur + 0.05) b.block(tint, cur, H, L.z1 - WALL, segEnd - cur, top - H, WALL, f, true);
+      cur = Math.max(cur, g1);
+    }
+    if (L.x1 > cur + 0.05) b.block(tint, cur, H, L.z1 - WALL, L.x1 - cur, top - H, WALL, f, true);
     // Solid metal roof threshold bridge joining the top fire-escape landing straight onto the roof slab.
     b.block(0x52565c, gap0, H - 0.08, L.z1 - WALL, FE_ROOF_GAP, 0.08, WALL + FE_LANE_SPLIT, 'metal', true);
     // Exterior working fire escape (ground to roof) along L.z1: scaled so native steps (y 0.70..2.40 -> rise 1.70) span FLOOR_H cleanly.
@@ -455,10 +464,18 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
   b.blockY(0x77756e, L.cx1, H, L.cz0, 0.15, hh, L.cz1 - L.cz0, 'concrete');
   b.blockY(0x77756e, L.cx0, H, L.cz0 - 0.15, 0.6, hh, 0.15, 'concrete');
   b.blockY(0x77756e, L.cx0 + 1.6, H, L.cz0 - 0.15, L.cx1 - L.cx0 - 1.45, hh, 0.15, 'concrete');
-  // The facades stop at the parapet; close the head-house on the outer sides up to its roof.
+  // Faces stop at the parapet; close the head-house on the outer sides up to its roof.
   b.blockY(0x77756e, L.x0, top, L.cz0, WALL, H + hh - top, L.z1 - L.cz0, 'concrete');
   b.blockY(0x77756e, L.x0, top, L.z1 - WALL, L.cx1 - L.x0 + 0.15, H + hh - top, WALL, 'concrete');
   b.block(0x5a5852, L.cx0 - 0.1, H + hh, L.cz0 - 0.2, L.cx1 - L.cx0 + 0.35, 0.15, L.cz1 - L.cz0 + 0.25, 'concrete', true);
+  // Rooftop survivor SOS distress markings visible from the Mi-8 helicopter (~28% of towers).
+  if (desc.floors >= 4 && spotHash(desc.cx, desc.cz, 311) < 0.28) {
+    const frontSpan = L.cz0 - L.iz0;
+    const helpSize = Math.min(8.5, desc.w - 4.0, frontSpan - 1.5);
+    if (helpSize >= 4.0) {
+      groundDecal(b, 'decalHelpRoof', desc.cx + 1.2, H, L.iz0 + frontSpan * 0.5, helpSize, () => 0, 1.35);
+    }
+  }
 
   // Street level: shop windows (intact glass in front of the wall, or a smashed opening), the entrance, canopy.
   let storefrontCarSpawned = false;
@@ -532,6 +549,11 @@ export function buildHighriseShell(b: Builder, desc: BuildingDesc, rand: Rand): 
         b.block(0x9ad0a8, sx - 0.06, 3.1, L.z0 - 0.15, 0.12, 0.4, 0.02, 'lamp');
         b.block(0x9ad0a8, sx - 0.2, 3.24, L.z0 - 0.15, 0.4, 0.12, 0.02, 'lamp');
       }
+    }
+    if (spotHash(desc.cx, desc.cz, 317) < 0.24) {
+      const rTag = spotHash(desc.cx, desc.cz, 318);
+      const surf = rTag < 0.34 ? 'decalEvacuate' : rTag < 0.67 ? 'decalNoWater' : 'decalInfected';
+      wallDecalZ(b, surf, L.doorX, 3.65, L.z0, 1.7, -1);
     }
   }
   shellLife(b, desc, L);

@@ -46,10 +46,13 @@ export type Surface =
   | 'decalShadow'
   | 'decalCobweb'
   | 'decalDamp'
-  | 'decalCrack';
+  | 'decalCrack'
+  | 'decalNoWater'
+  | 'decalInfected'
+  | 'decalHelpRoof';
 
 /** Alpha-cut overlays drawn on top of other surfaces. */
-export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate' | 'shadow' | 'cobweb' | 'damp' | 'crack';
+export type DecalKind = 'soot' | 'oil' | 'skid' | 'bullets' | 'shards' | 'litter' | 'noFuel' | 'cancelled' | 'biohazard' | 'sheen' | 'foam' | 'evacuate' | 'shadow' | 'cobweb' | 'damp' | 'crack' | 'noWater' | 'infected' | 'helpRoof';
 
 export interface SurfaceSpec {
   kind: GrungeKind;
@@ -120,6 +123,9 @@ export const SURFACES: Readonly<Record<Surface, SurfaceSpec>> = {
   decalCobweb: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'cobweb', castShadow: false },
   decalDamp: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'damp', castShadow: false },
   decalCrack: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'crack', castShadow: false },
+  decalNoWater: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'noWater', castShadow: false },
+  decalInfected: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.95, metalness: 0, tile: 1, decal: 'infected', castShadow: false },
+  decalHelpRoof: { kind: 'grime', detail: 0xffffff, noise: 0, roughness: 0.92, metalness: 0, tile: 1, decal: 'helpRoof', castShadow: false },
 };
 
 export const SURFACE_LIST = Object.keys(SURFACES) as Surface[];

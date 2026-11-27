@@ -67,6 +67,8 @@ export interface FirearmsWorld {
   onWindowShatter?(owner: number, dir: Vector3): boolean;
   /** Vehicle hit callback returning `'glass'` (already handled), `'metal'`, or `'miss'` (grazed OBB corner), else null. */
   onVehicleBulletHit?(o: Vector3, d: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | 'miss' | null;
+  /** Non-vehicle solid world impact hook (e.g. shootable explosive fuel barrels). */
+  onWorldBulletImpact?(at: Vector3): void;
   /** The class's handling of firearms (1 none, 1.3 military, 1.5 SWAT). */
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
@@ -757,6 +759,7 @@ export class Firearms {
     if (kind === 'metal' || kind === 'car') pt.sparks(at.x, at.y, at.z, Math.max(2, Math.round(6 * nScale)));
     else pt.burst(at, Math.max(2, Math.round((kind === 'glass' ? 3 : 7) * nScale)), kind === 'soft' ? 0.4 : 0.6);
     if (kind === 'car' && (!isMulti || this.shotSurfaceLookups <= 2)) this.w.carHit(at.x, at.y, at.z);
+    this.w.onWorldBulletImpact?.(at);
     if (id) this.tryRicochet(id, mods, at, d, _n, kind, traveled + dist, remain - dist, dmgMul);
   }
 

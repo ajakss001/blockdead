@@ -3,6 +3,13 @@ import { pickModel } from '../models';
 import { buildCar, CAR_PAINTS, modelLibrary, placeModel } from '../props/car';
 import { GLB_WORLD_SPECS, type GlbModelId } from '../worldModels';
 import { isGlbClear } from './footprint';
+import {
+  ambushedConvoyGasBlock,
+  collapsedCraneBlock,
+  lastStandCheckpointBlock,
+  quarantineEvacBlock,
+  sinkholeCollapseBlock,
+} from './dioramas';
 import { Place } from './furniture';
 import { type BuildingDesc, buildHighriseShell, FLOOR_H, type FacadeSurface, groundDecal, wallDecalZ } from './highrise';
 import { DOWNTOWN_RADIUS, PAVE } from './layout';
@@ -42,9 +49,12 @@ interface Row {
  */
 export function downtownBlock(b: Builder, i: number, j: number, X0: number, Z0: number, X1: number, Z1: number, rand: Rand): BuildingDesc[] {
   b.block(0x5e5c56, X0, 0, Z0, X1 - X0, PAVE.plaza, Z1 - Z0, 'asphalt');
-  if (i === 1 && j === -1) {
-    return airlinerCrashBlock(b, i, j, X0, Z0, X1, Z1, rand);
-  }
+  if (i === 1 && j === -1) return airlinerCrashBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  if (i === -1 && j === -1) return lastStandCheckpointBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  if (i === -1 && j === 0) return quarantineEvacBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  if (i === 0 && j === -1) return collapsedCraneBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  if (i === -1 && j === 1) return ambushedConvoyGasBlock(b, i, j, X0, Z0, X1, Z1, rand);
+  if (i === 0 && j === 1) return sinkholeCollapseBlock(b, i, j, X0, Z0, X1, Z1, rand);
   const out: BuildingDesc[] = [];
   const chunkKey = (i + 32768) * 65536 + (j + 32768);
   const centrality = 1 - Math.max(Math.abs(i), Math.abs(j)) / (DOWNTOWN_RADIUS + 1);
@@ -486,11 +496,42 @@ function backCourtyard(b: Builder, X0: number, X1: number, zS: number, zN: numbe
   if (width >= 7.5) {
     const lanes = rand() < 0.5 ? 1 : 0;
     for (let k = 0; k < lanes; k++) {
-      // One car per half, never across the dividing fence.
       const lo = k === 0 ? X0 + 3.5 : split + 3.2;
       const hi = k === 0 ? split - 3.2 : X1 - 3.5;
       if (hi - lo < 0.5) continue;
       parkedCar(b, lo + rand() * (hi - lo), zN - 2.0, rand() < 0.5 ? 0 : Math.PI, rand, 5.2);
+    }
+  }
+  // Makeshift resident barricades in ~45% of courtyards: wrecked car, dumpsters, stacked crates, burn barrel & campStash.
+  if (spotHash(X0, zMid, 333) < 0.45 && X1 - X0 >= 14) {
+    const westSide = spotHash(X0, zN, 334) < 0.5;
+    const bx = westSide ? X0 + 2.8 : X1 - 2.8;
+    const inX = westSide ? 1 : -1;
+    buildCar(
+      b.batch,
+      b.colliders,
+      { x: bx, z: zMid, yaw: Math.PI * 0.36, glbId: 'burned_car_wreck', paint: CAR_PAINTS.slate, seed: 335, allowOverlap: false },
+      b.containers,
+    );
+    dumpster(b, bx + inX * 1.3 - 0.9, zMid + 0.8, 'x');
+    crates(b, bx + inX * 1.1, zMid - 1.4, rand);
+    wallDecalZ(b, spotHash(bx, zMid, 336) < 0.5 ? 'decalInfected' : 'decalNoWater', bx + inX * 1.6, 1.85, zS + 0.02, 1.35, 1);
+    const barrelX = bx + inX * 2.8;
+    if (isGlbClear(b.batch, 'burn_barrel', barrelX, zMid, 0, 0.5, { keepClearGap: 0.9 })) {
+      b.glb('burn_barrel', barrelX, PAVE.plaza, zMid, 0);
+      b.solid(barrelX - 0.35, zMid - 0.35, barrelX + 0.35, zMid + 0.35, PAVE.plaza, PAVE.plaza + 0.95);
+      b.life(LIFE.fire, barrelX, PAVE.plaza + 0.92, zMid, 0, 0, 0.65, 0, spotHash(barrelX, zMid, 337));
+    }
+    const stashX = barrelX + inX * 1.35;
+    const stashZ = zMid - 0.75;
+    if (isGlbClear(b.batch, 'abandoned_luggage_pil', stashX, stashZ, 0.3, 0.4, { keepClearGap: 0.8 })) {
+      const st = new Place(b, stashX, PAVE.plaza, stashZ, 0);
+      if (st.model('woodenCrate', rand, 0, 0, 0, 0, 1, 0.8, 0.1, true)) {
+        b.container('campStash', stashX, stashZ, PAVE.plaza);
+      }
+    }
+    if (isGlbClear(b.batch, 'abandoned_luggage_pil', barrelX, zMid + 1.05, 0.6, 0.4, { keepClearGap: 0.7 })) {
+      b.glb('abandoned_luggage_pil', barrelX, PAVE.plaza, zMid + 1.05, 0.6);
     }
   }
 }

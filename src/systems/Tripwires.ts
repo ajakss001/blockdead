@@ -332,6 +332,13 @@ export class Tripwires {
     }
   }
 
+  /** Deterministic one-shot enemy tripwire placed by story dioramas (safe to call repeatedly). */
+  addAmbushWire(ax: number, ay: number, az: number, bx: number, by: number, bz: number, key: string): void {
+    if (this.handledAmbushKeys.has(key)) return;
+    this.handledAmbushKeys.add(key);
+    this.place(ax, ay, az, bx, by, bz, false, key);
+  }
+
   /** Rare enemy ambush tripwires across interior doorways of buildings held by bandits. */
   spawnAmbushNearDoors(doors: readonly DoorNavSpot[], bandits: readonly Bandit[], seed: number): void {
     let added = 0;

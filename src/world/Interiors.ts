@@ -2,6 +2,7 @@ import { Frustum, type Group, Matrix4, type Mesh, type Scene, Sphere } from 'thr
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import { setWindowCutouts } from '../render/look/worldMaterials';
 import type { Containers } from '../systems/Containers';
+import type { GlbPlacement } from './worldModels';
 import type { WindowPaneSpot } from './WindowPanes';
 import type { ChunkManager } from './ChunkManager';
 import type { CollisionWorld } from './CollisionWorld';
@@ -49,6 +50,8 @@ export class Interiors {
   onAmbient?: (owner: number, spots: Float32Array | null) => void;
   /** Destructible window panes inside a streamed interior. */
   onWindows?: (owner: number, spots: WindowPaneSpot[] | null) => void;
+  /** Streamed interior GLB props (sniper nests, clutter). */
+  onGlbs?: (owner: number, glbs: GlbPlacement[] | null) => void;
 
   constructor(
     private readonly scene: Scene,
@@ -293,6 +296,7 @@ export class Interiors {
     this.containers.addChunk(owner, 'downtown', data.containers);
     this.doors.add(id, data.doors, keep);
     this.onWindows?.(owner, data.windows);
+    this.onGlbs?.(owner, data.glbs);
     this.onAmbient?.(owner, data.ambient);
     this.loaded.set(id, group);
     this.focus.set(id, data.focus);
@@ -331,6 +335,7 @@ export class Interiors {
     this.containers.removeChunk(owner);
     this.doors.remove(id);
     this.onWindows?.(owner, null);
+    this.onGlbs?.(owner, null);
     this.onAmbient?.(owner, null);
     this.loaded.delete(id);
     this.focus.delete(id);
