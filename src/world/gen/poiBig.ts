@@ -53,12 +53,12 @@ function watchtower(S: Site, lx: number, lz: number): void {
     [-1.1, 1.1],
     [1.1, 1.1],
   ]) q.box(0x4a4c40, a, 0, b, 0.2, 6, 0.2, 'wood', true);
-  q.box(0x5a5c48, 0, 6, 0, 3, 0.15, 3, 'wood');
-  q.box(0x5a5c48, 0, 6.15, -1.45, 3, 1.0, 0.1, 'wood');
-  q.box(0x5a5c48, 0, 6.15, 1.45, 3, 1.0, 0.1, 'wood');
-  q.box(0x5a5c48, -1.45, 6.15, 0, 0.1, 1.0, 3, 'wood');
-  q.box(0x5a5c48, 1.45, 6.15, 0, 0.1, 1.0, 3, 'wood');
-  q.box(0x3a3c30, 0, 8.1, 0, 3.6, 0.2, 3.6, 'roof');
+  q.box(0x5a5c48, 0, 6, 0, 3, 0.15, 3, 'wood', true);
+  q.box(0x5a5c48, 0, 6.15, -1.45, 3, 1.0, 0.1, 'wood', true);
+  q.box(0x5a5c48, 0, 6.15, 1.45, 3, 1.0, 0.1, 'wood', true);
+  q.box(0x5a5c48, -1.45, 6.15, 0, 0.1, 1.0, 3, 'wood', true);
+  q.box(0x5a5c48, 1.45, 6.15, 0, 0.1, 1.0, 3, 'wood', true);
+  q.box(0x3a3c30, 0, 8.1, 0, 3.6, 0.2, 3.6, 'roof', true);
   for (const [a, b] of [
     [-1.4, -1.4],
     [1.4, -1.4],
@@ -149,7 +149,7 @@ function hangar(S: Site, x0: number, z0: number, x1: number, z1: number, h: numb
   const zo = openSide === 'z0' ? z0 : z1;
   for (let x = x0; x < x1 - 0.1; x += 8) {
     const w = Math.min(8, x1 - x);
-    S.p.box(wall, x + w / 2, h - 1.5, zo, w, 1.5, 0.3, 'metal');
+    S.p.box(wall, x + w / 2, h - 1.5, zo, w, 1.5, 0.3, 'metal', true);
   }
   S.roof(x0, z0, x1, z1, h, 0x5a5c5e, 0x6a6e70, 0x4a4e52);
 }
@@ -224,9 +224,9 @@ export function airport(S: Site, rand: Rand): void {
 
   // Control tower.
   p.box(0xa8a8a2, 12, 0, 14, 4, 20, 4, 'concrete', true);
-  p.box(0x8a8a84, 12, 20, 14, 7, 0.4, 7, 'concrete');
-  p.box(0x2a3036, 12, 20.4, 14, 6.6, 2.6, 6.6, 'glass');
-  p.box(0x5a5c5e, 12, 23, 14, 7.6, 0.4, 7.6, 'roof');
+  p.box(0x8a8a84, 12, 20, 14, 7, 0.4, 7, 'concrete', true);
+  p.box(0x2a3036, 12, 20.4, 14, 6.6, 2.6, 6.6, 'glass', true);
+  p.box(0x5a5c5e, 12, 23, 14, 7.6, 0.4, 7.6, 'roof', true);
   p.box(0x3a3c3e, 12, 23.4, 14, 0.2, 2.5, 0.2, 'metal');
 
   // Hangar with light planes and workbench.

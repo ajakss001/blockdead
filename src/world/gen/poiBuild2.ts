@@ -440,7 +440,7 @@ export function checkpoint(S: Site, rand: Rand): void {
     p.box(0x6a5a40, tx + s * 1.45, 5.65, tz, 0.1, 1.1, 3, 'wood', true);
     p.box(0x6a5a40, tx, 5.65, tz + s * 1.45, 3, 1.1, 0.1, 'wood', true);
   }
-  p.box(0x4a4f36, tx, 7.6, tz, 3.4, 0.12, 3.4, 'rubber');
+  p.box(0x4a4f36, tx, 7.6, tz, 3.4, 0.12, 3.4, 'rubber', true);
   for (const [dx, dz] of [
     [-1.5, -1.5],
     [1.5, -1.5],

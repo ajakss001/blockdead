@@ -3,6 +3,7 @@ import { mulberry32 } from '../../core/random';
 import { StaticBatch, type SurfaceBuffers } from '../../render/StaticBatch';
 import { PackedColliders } from '../CollisionWorld';
 import { buildCar, CAR_PAINTS } from '../props/car';
+import type { WindowPaneSpot } from '../WindowPanes';
 import { GLB_WORLD_SPECS, type GlbPlacement, pickRoadSign } from '../worldModels';
 import { curbParking, downtownBlock, trashMound } from './cityFill';
 import { glbObb, isGlbClear, obbOverlap } from './footprint';
@@ -31,6 +32,8 @@ export interface ChunkData {
   shelters: Float32Array;
   /** Entrance doors of the block's buildings (houses, shops, high-rise lobbies). */
   doors: DoorSpot[];
+  /** Destructible building window panes (2-stage crack -> shatter via WindowPanes). */
+  windows: WindowPaneSpot[];
   /** World-life spots (lit windows, curtains…), see world/WorldLife. */
   ambient: Float32Array;
   /** Streamed instanced world GLB placements (vehicles, trees, bushes, signs, street props). */
@@ -48,6 +51,7 @@ export interface InteriorData {
   colliders: Float32Array;
   containers: (ContainerSpot & { id: number })[];
   doors: DoorSpot[];
+  windows: WindowPaneSpot[];
   ambient: Float32Array;
   ms: number;
 }
@@ -111,6 +115,7 @@ export function buildChunk(layout: WorldLayout, i: number, j: number, bodies: Bo
     colliders: new Float32Array(colliders.data),
     shelters: new Float32Array(b.shelters),
     doors: b.doors,
+    windows: b.windows,
     ambient: new Float32Array(b.ambient),
     glbs: batch.glbs,
     ms: performance.now() - t0,
@@ -438,6 +443,7 @@ export function buildInterior(desc: BuildingDesc, focus: number): InteriorData {
     colliders: new Float32Array(colliders.data),
     containers: b.containers.map((c, n) => ({ ...c, id: c.id ?? INTERIOR_ID_BASE + desc.id * 4096 + 4000 + n })),
     doors: b.doors,
+    windows: b.windows,
     ambient: new Float32Array(b.ambient),
     ms: performance.now() - t0,
   };

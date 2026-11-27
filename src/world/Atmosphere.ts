@@ -628,7 +628,7 @@ export class Atmosphere {
       }
       mesh.visible = true;
     }
-    this.vegetation.prewarm();
+    this.vegetation.setPlants([]);
   }
 
   dispose(): void {

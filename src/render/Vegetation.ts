@@ -215,6 +215,14 @@ vMapUv = (vec2(mod(aTile, ${IMP_GRID}.0), floor(aTile / ${IMP_GRID}.0)) + uv) / 
   setPlants(list: Plant[]): void {
     this.plants = list;
     this.dirty = true;
+    if (list.length === 0) {
+      for (const m of this.meshes) {
+        m.count = 0;
+        m.visible = false;
+      }
+      this.impostor.count = 0;
+      this.impostor.visible = false;
+    }
   }
 
   /**

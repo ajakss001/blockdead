@@ -7,6 +7,7 @@ import type { ContainerType } from '../../data/loot';
 import type { ColliderSink } from '../CollisionWorld';
 import { pickModel } from '../models';
 import { modelLibrary, placeModel } from '../props/car';
+import type { WindowPaneSpot } from '../WindowPanes';
 import type { GlbModelId, GlbPlacement } from '../worldModels';
 
 /** A searchable spot in the world (world XZ of its front face, Y of its floor). */
@@ -93,6 +94,7 @@ export class Builder {
   readonly cone6 = new ConeGeometry(1, 1, 6);
   readonly containers: ContainerSpot[] = [];
   readonly doors: DoorSpot[] = [];
+  readonly windows: WindowPaneSpot[] = [];
   private readonly clearances: { x: number; y: number; z: number; r: number }[] = [];
   /** Roofed footprints in world space: [minX, minZ, maxX, maxZ, roofY, …] (see systems/Climate). */
   readonly shelters: number[] = [];
@@ -283,12 +285,17 @@ export class Builder {
       z0 = 2 * this.flip.cz - (z + sz);
     }
     if (!this.inClip(x0 + sx / 2, z0 + sz / 2)) return;
+    if (solid && surface === 'windowGlass') {
+      // Destructible building window panes are rendered & collided dynamically via WindowPanes (2-stage shatter).
+      this.windows.push({ cx: x0 + sx / 2, cy: y + sy / 2, cz: z0 + sz / 2, sx, sy, sz });
+      return;
+    }
     this.logged(x, y, z, x + sx, y + sy, z + sz);
     this.p.set(x0 + sx / 2, y + sy / 2, z0 + sz / 2);
     this.s.set(sx, sy, sz);
     this.batch.add(this.box, color, this.m.compose(this.p, this.q.identity(), this.s), surface);
     // Over the block's own height: low ones (crates, sandbags, tables) can be jumped onto.
-    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz, y, y + sy, surface === 'windowGlass' || surface === 'glass');
+    if (solid) this.colliders.addBox(x0, z0, x0 + sx, z0 + sz, y, y + sy, surface === 'glass');
   }
 
   /** Arbitrary template with a local transform (in the current frame). */
@@ -527,10 +534,23 @@ export function buildHouse(b: Builder, s: HouseSpec): HouseResult {
   }
 
   // Gable roof with overhang, ridge along X.
-  const roofGeo = gableRoof(w + 0.5, d + 0.7, 1.4 + d * 0.06);
-  b.life(LIFE.perch, x0 + w / 2, h + 1.4 + d * 0.06, z0 + d / 2, 1, 0, w * 0.7, 0, spotHash(x0, z0, 92));
+  const ridgeH = 1.4 + d * 0.06;
+  const roofGeo = gableRoof(w + 0.5, d + 0.7, ridgeH);
+  b.life(LIFE.perch, x0 + w / 2, h + ridgeH, z0 + d / 2, 1, 0, w * 0.7, 0, spotHash(x0, z0, 92));
   b.geo(roofGeo, roof, _m.compose(_p.set(x0 + w / 2, h, z0 + d / 2), _q.identity(), _s.set(1, 1, 1)), 'roof');
   roofGeo.dispose();
+  // Stepped solid colliders approximating the sloped gable prism so player & Mi-8 stand cleanly on pitched roofs.
+  const roofSlices = 6;
+  const rx0 = x0 - 0.25;
+  const rx1 = x1 + 0.25;
+  const zMidRoof = z0 + d / 2;
+  const baseHalfD = (d + 0.7) / 2;
+  const sliceH = ridgeH / roofSlices;
+  for (let sIdx = 0; sIdx < roofSlices; sIdx++) {
+    const frac = sIdx / roofSlices;
+    const halfSpan = Math.max(0.28, baseHalfD * (1 - frac));
+    b.solid(rx0, zMidRoof - halfSpan, rx1, zMidRoof + halfSpan, h + sIdx * sliceH, h + (sIdx + 1) * sliceH);
+  }
 
   const result = { doorX: b.wx(doorX), frontZ: b.wz(z1) };
   b.endFrame();
@@ -732,6 +752,8 @@ export function tree(b: Builder, x: number, y: number, z: number, scale: number,
 
 /** A tree spot of a given species (see lifeKinds TREE), its trunk collider, and its streamed GLB model sunk into ground. */
 export function plantTree(b: Builder, x: number, y: number, z: number, s: number, yaw: number, species: number): void {
+  // Never spawn any tree on road centerlines or the downtown (0,0) intersection.
+  if (Math.hypot(x, z) < 0.25) return;
   const conifer = species === TREE.spruce || species === TREE.pine;
   b.life(LIFE.tree, x, y, z, Math.sin(yaw), Math.cos(yaw), (conifer ? 2.4 : 3) * s, s, spotHash(x, z, 31), species);
   b.glb(conifer ? 'Spruce_Pine_Tree_7000' : 'Dead_Autumn_Tree_6000', x, y - 0.18, z, yaw, { scale: conifer ? s * 0.82 : s * 0.88 });

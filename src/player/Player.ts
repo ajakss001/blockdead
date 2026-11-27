@@ -100,7 +100,7 @@ export class Player {
   /** The blow lands (contact frame): true if it hit something that is not the world (a zombie). */
   onStrike: ((item: string) => boolean) | null = null;
   /** The blow lands on the world (not a zombie) at a point: a car there may start wailing. */
-  onStrikeWorld: ((x: number, y: number, z: number, item: string) => void) | null = null;
+  onStrikeWorld: ((x: number, y: number, z: number, item: string, glassOwner?: number) => void) | null = null;
   private readonly worldMeshCache: { mesh: Mesh; box: Box3 }[] = [];
   private readonly surfaceTargets: Mesh[] = [];
   private worldMeshCacheCount = -1;
@@ -226,9 +226,10 @@ export class Player {
     const reach = this.viewmodel.swing.reach;
     const o = this.camera.getWorldPosition(_o);
     const d = this.camera.getWorldDirection(_d);
-    const dist = this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, reach);
+    const det = this.world.rayHitDetail?.(o.x, o.y, o.z, d.x, d.y, d.z, reach, false) ?? null;
+    const dist = det ? det.t : this.world.rayHit(o.x, o.y, o.z, d.x, d.y, d.z, reach);
     if (dist < 0) return;
-    const surface = this.surfaceAlong(o, d, dist);
+    const surface = det?.glass ? 'windowGlass' : this.surfaceAlong(o, d, dist);
     const material: HitMaterial = (surface && MATERIAL[surface]) ?? 'concrete';
     if (!(material === 'glass' && this.onStrikeWorld)) {
       sfx.hit(material, { x: o.x + d.x * dist, y: o.y + d.y * dist, z: o.z + d.z * dist }, item === 'fists' ? 0.3 : item === 'knife' ? 0.5 : 1);
@@ -236,7 +237,7 @@ export class Player {
     this.viewmodel.recoil();
     // A little in front of the surface: sparks fly off it, not inside it.
     const at = dist - 0.04;
-    this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item);
+    this.onStrikeWorld?.(o.x + d.x * at, o.y + d.y * at, o.z + d.z * at, item, det?.glass && !det.door ? det.owner : undefined);
   }
 
   /** Pre-build the spatial chunk/interior AABB cache during loading/prewarm so the first shot never stalls computing bounds. */

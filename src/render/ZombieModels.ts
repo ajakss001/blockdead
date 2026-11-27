@@ -731,6 +731,7 @@ export class ZombieModels {
   }
 
   addCorpse(z: Zombie, rd: Ragdoll): { ok: boolean; evicted: number | null } {
+    if (this.hasCorpse(z.id)) return { ok: false, evicted: null };
     const type = dressOf(z);
     if (!type) return { ok: false, evicted: null };
     const evicted = this.corpses.length >= this.detail.corpses ? this.corpses.shift()!.id : null;
@@ -742,8 +743,9 @@ export class ZombieModels {
   }
 
   removeCorpse(id: number): void {
-    const i = this.corpses.findIndex((c) => c.id === id);
-    if (i >= 0) this.corpses.splice(i, 1);
+    for (let i = this.corpses.length - 1; i >= 0; i--) {
+      if (this.corpses[i].id === id) this.corpses.splice(i, 1);
+    }
   }
 
   hasCorpse(id: number): boolean {

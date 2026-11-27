@@ -87,6 +87,7 @@ import { InventoryPanel } from '../ui/InventoryPanel';
 import { ChunkManager } from '../world/ChunkManager';
 import { Doors } from '../world/Doors';
 import { Interiors } from '../world/Interiors';
+import { WindowPanes } from '../world/WindowPanes';
 import { WorldLife } from '../world/WorldLife';
 import { Sky } from '../world/Sky';
 import { CollisionWorld } from '../world/CollisionWorld';
@@ -217,6 +218,7 @@ const STRIKE_SOUND: Record<string, FleshBlow> = { axe: 'chop', knife: 'stab', fi
 const _so = new Vector3();
 const _sd = new Vector3();
 const _wallHit = new Vector3();
+const _wn = new Vector3();
 const BASE_VFOV = 75;
 const MAX_HFOV = 100;
 /** Door sets: interiors use building ids (positive); a chunk's entrance doors use negative keys. */
@@ -287,6 +289,7 @@ export class WorldScene implements IScene {
   private carHud!: CarHud;
   private interiors!: Interiors;
   private doors!: Doors;
+  private windowPanes!: WindowPanes;
   private saveT = 0;
   private moodleT = 0;
   private readonly clock = new Clock();
@@ -465,7 +468,9 @@ export class WorldScene implements IScene {
     this.scene.add(this.ground.group);
     this.scene.add(this.baseProps.group);
     this.doors = new Doors(this.scene, this.world, ctx.quality.preset.lighting);
+    this.windowPanes = new WindowPanes(this.scene, this.world);
     this.interiors = new Interiors(this.scene, this.world, this.chunks, this.containers, this.doors);
+    this.player.controller.onTouchGlass = (owner, dirX, dirZ) => this.tryShatterCrackedWindow(owner, dirX, dirZ);
     this.glbPool = new GlbPropPool(this.scene, this.particles);
     this.tripwires = new Tripwires({
       scene: this.scene,
@@ -486,6 +491,11 @@ export class WorldScene implements IScene {
       buildingsNear: (x, z, r) => this.interiors.buildingsNear(x, z, r),
       doorsNear: (x, y, z, r) => this.doors.doorsNear(x, y, z, r),
       onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
+      onWindowBullet: (owner, at, dir, nx, ny, nz) => this.handleWindowBullet(owner, at, dir, nx, ny, nz),
+      shatterWindowNear: (x, y, z, r, dx, dz) => {
+        const spots = this.windowPanes.shatterCrackedNear(x, y, z, r);
+        for (const s of spots) this.emitWindowShatterFx(s.cx, s.cy, s.cz, dx, dz);
+      },
       addRagdoll: (rd) => this.ragdolls.add(rd),
       removeRagdoll: (rd) => this.ragdolls.remove(rd),
       zombies: this.zombies,
@@ -538,6 +548,7 @@ export class WorldScene implements IScene {
       this.interiors.addChunk(key, data.buildings);
       this.shelters.add(key, data.shelters);
       this.doors.add(entranceKey(key), data.doors);
+      this.windowPanes.addChunk(key, data.windows);
       this.life?.add(key, data.ambient);
       this.atmo?.add(key, data.ambient);
       this.glbPool?.addChunk(key, data.glbs);
@@ -547,6 +558,7 @@ export class WorldScene implements IScene {
       this.interiors.removeChunk(key);
       this.shelters.remove(key);
       this.doors.remove(entranceKey(key));
+      this.windowPanes.removeChunk(key);
       this.life?.remove(key);
       this.atmo?.remove(key);
       this.glbPool?.removeChunk(key);
@@ -746,10 +758,14 @@ export class WorldScene implements IScene {
       ctx.quality.preset.level === 'low' ? 1 : Math.min(8, ctx.renderer.gl.capabilities.getMaxAnisotropy()),
     );
     // A blow to a wall: steel strikes sparks, glass breaks with 3D shatter + shards, the knife (and a fist) only a little dust.
-    this.player.onStrikeWorld = (x, y, z, item) => {
+    this.player.onStrikeWorld = (x, y, z, item, glassOwner) => {
       this.atmo.strikeAt(x, y, z);
       const eye = this.camera.getWorldPosition(_so);
       const dir = this.camera.getWorldDirection(_sd);
+      if (glassOwner && this.shatterWindow(glassOwner, dir.x, dir.z)) {
+        this.weaponBlow();
+        return;
+      }
       const hitSurf = this.player.surfaceAlong(eye, dir, 2.5);
       if (hitSurf === 'windowGlass' || hitSurf === 'glass') {
         this.breakGlassAt(_wallHit.set(x, y, z), dir);
@@ -785,7 +801,9 @@ export class WorldScene implements IScene {
       igniteCars: (x, y, z, r) => this.igniteCars(x, y, z, r),
       carHit: (x, y, z) => this.atmo.carHit(x, y, z),
       onBreakGlass: (at, dir) => this.breakGlassAt(at, dir),
-      onVehicleBulletHit: (at, dir, playSound) => this.handleVehicleBulletHit(at, dir, playSound),
+      onWindowBullet: (owner, at, dir, nx, ny, nz) => this.handleWindowBullet(owner, at, dir, nx, ny, nz),
+      onWindowShatter: (owner, dir) => this.shatterWindow(owner, dir.x, dir.z),
+      onVehicleBulletHit: (o, d, dist, at, playSound) => this.handleVehicleBulletHit(o, d, dist, at, playSound),
       onReloadStart: () => this.bandits.onPlayerReloading(this.player.controller.position),
       handling: () => this.mods().firearms,
       place: () => this.echoPlace(),
@@ -807,6 +825,10 @@ export class WorldScene implements IScene {
     this.landmarks = new Landmarks(this.scene, layout);
     this.farSmoke = new FarSmoke(this.scene, layout);
     this.weather = new Weather(this.scene, document.getElementById('ui')!, (delay, power) => this.life.thunder(delay, power));
+    this.interiors.onWindows = (owner, spots) => {
+      if (spots) this.windowPanes.addChunk(owner, spots);
+      else this.windowPanes.removeChunk(owner);
+    };
     this.interiors.onAmbient = (owner, spots) => {
       if (spots) {
         this.life.add(owner, spots);
@@ -1160,6 +1182,7 @@ export class WorldScene implements IScene {
     const lifeDone = this.life.prewarm();
     const atmoDone = this.atmo.prewarm();
     const doorsDone = this.doors.prewarm();
+    const winDone = this.windowPanes.prewarm();
     const gunFxDone = this.firearms.fx.prewarm(this.player.viewmodel.scene);
     this.ctx.renderer.gl.compile(this.scene, this.camera);
     this.ctx.renderer.gl.compile(this.player.viewmodel.scene, this.player.viewmodel.camera);
@@ -1168,6 +1191,7 @@ export class WorldScene implements IScene {
       lifeDone();
       atmoDone();
       doorsDone();
+      winDone();
       gunFxDone();
       group.removeFromParent();
       vmGroup.removeFromParent();
@@ -1253,7 +1277,18 @@ export class WorldScene implements IScene {
       c.jumpFactor = this.survival.jumpFactor;
       // Tired: the swing is slower.
       this.player.viewmodel.swingRate = 1 - 0.25 * Math.min(1, Math.max(1 - this.survival.stamina, this.survival.fatigue));
-      if (!this.dead) this.player.fixedUpdate(dt);
+      if (!this.dead) {
+        this.player.fixedUpdate(dt);
+        const h = c.crouched ? 1.15 : 1.75;
+        const broken = this.windowPanes.shatterCrackedNear(c.position.x, c.position.y, c.position.z, 0.52, h);
+        if (broken.length > 0) {
+          const mvx = c.position.x - c.prevPosition.x;
+          const mvz = c.position.z - c.prevPosition.z;
+          const fx = Math.hypot(mvx, mvz) > 1e-4 ? mvx : -Math.sin(c.yaw);
+          const fz = Math.hypot(mvx, mvz) > 1e-4 ? mvz : -Math.cos(c.yaw);
+          for (const s of broken) this.emitWindowShatterFx(s.cx, s.cy, s.cz, fx, fz);
+        }
+      }
       const consumedByWire = !this.dead && this.tripwires.handlePlacementInput(c.position.x, c.position.y, c.position.z, c.yaw, this.ctx.input, this.inventory);
       if (!this.dead && !consumedByWire && !this.tripwires.isPlacing) this.firearms.fixedUpdate(dt);
       this.vehicles.fixedUpdate(dt, this.ctx.input, c.position, c.prevPosition);
@@ -1325,6 +1360,7 @@ export class WorldScene implements IScene {
     for (const z of this.zombies.killedTwins) this.lootTwin(z);
     // The dead go limp: a ragdoll each, from the pose they died in.
     for (const z of this.zombies.died) this.zombieRagdoll(z);
+    this.zombies.clearEvents();
     for (const z of this.zombies.removed) {
       const rd = this.corpseRd.get(z);
       if (rd) this.ragdolls.remove(rd);
@@ -1673,6 +1709,7 @@ export class WorldScene implements IScene {
   private resolveSurfaceAt(x: number, z: number, y: number): StepSurface | null {
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(y)) return null;
     if (this.life.onShards(x, z, y)) return 'glass';
+    if (this.interiors.isOnFireEscape(x, z)) return 'metal';
     const b = this.interiors.buildingAt(x, z);
     if (b) {
       if (inStairCore(b, x, z)) return b.kind === 'offices' ? 'metal' : 'concrete';
@@ -1928,22 +1965,66 @@ export class WorldScene implements IScene {
     }
   }
 
-  /** Shatters car windshields/side/rear glass on upper-cabin hits with zero allocations, else triggers metal car hit. */
-  private handleVehicleBulletHit(at: Vector3, dir: Vector3, playSound: boolean): 'glass' | 'metal' | null {
-    const v = this.glbPool.findVehicleAt(at.x, at.y, at.z);
+  /** Stage 1 window bullet impact: cracks whole pane into spiderweb, spawns outward pooled shards + hole decal while bullet penetrates. */
+  private handleWindowBullet(owner: number, at: Vector3, dir: Vector3, nx: number, ny: number, nz: number): boolean {
+    if (!this.windowPanes.isWindowOwner(owner)) return false;
+    const res = this.windowPanes.bulletHit(owner);
+    if (!res) return false;
+    const floorY = this.interiors.surfaceY(at.x, at.z, at.y) ?? this.layout.walkHeightAt(at.x, at.z);
+    this.life.burstGlassShards(at.x, at.y, at.z, dir.x, dir.y, dir.z, res.newlyCracked ? 12 : 6, floorY);
+    this.firearms.fx.addBulletHole(at, _wn.set(nx, ny, nz), 'glass');
+    return true;
+  }
+
+  private emitWindowShatterFx(cx: number, cy: number, cz: number, dirX: number, dirZ: number): void {
+    const floorAt = (gx: number, gz: number) => this.interiors.surfaceY(gx, gz, cy) ?? this.layout.walkHeightAt(gx, gz);
+    const floorY = floorAt(cx, cz);
+    const len = Math.hypot(dirX, dirZ);
+    const dx = len > 1e-4 ? dirX / len : 0;
+    const dz = len > 1e-4 ? dirZ / len : 1;
+    sfx.glassBreak(_wallHit.set(cx, cy, cz), { x: cx, y: floorY + 0.05, z: cz });
+    this.particles.burst(_wallHit, 10, 0.7);
+    this.life.burstGlassShards(cx, cy, cz, dx, 0.15, dz, 18, floorY);
+    for (const sign of [-1, 1] as const) {
+      const sx = cx + dx * 1.1 * sign;
+      const sz = cz + dz * 1.1 * sign;
+      this.life.addDynamicShards(sx, floorAt(sx, sz), sz, 2.2);
+    }
+  }
+
+  /** Stage 2 full shatter: removes pane visual & collider cleanly and bursts shards inward. */
+  private shatterWindow(owner: number, dirX: number, dirZ: number): boolean {
+    const spot = this.windowPanes.shatter(owner);
+    if (!spot) return false;
+    this.emitWindowShatterFx(spot.cx, spot.cy, spot.cz, dirX, dirZ);
+    return true;
+  }
+
+  /** Only Stage 1 spiderweb-cracked panes shatter on body contact / jumping through. */
+  private tryShatterCrackedWindow(owner: number, dirX: number, dirZ: number): boolean {
+    if (!this.windowPanes.isCracked(owner)) return false;
+    return this.shatterWindow(owner, dirX, dirZ);
+  }
+
+  /** Shatters car windshields/side/rear glass with accurate GLB mesh raycast + world normal orientation. */
+  private handleVehicleBulletHit(origin: Vector3, dir: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | null {
+    const meshHit = this.glbPool.raycastVehicle(origin, dir, dist);
+    const hitPt = meshHit ? meshHit.point : at;
+    const v = meshHit ? meshHit.vehicle : this.glbPool.findVehicleAt(at.x, at.y, at.z);
     if (!v) return null;
     const noGlass = v.id === 'Semi_Trailer_Cargo_20' || v.id === 'zsu_23_4_shilka_14k' || v.id === 'burned_car_wreck';
     const inGlassZone =
       !noGlass &&
       (v.id === 'Semi_Truck_Tractor_24'
-        ? v.localZ < v.hl * 0.12 && at.y > v.y + 1.95 && at.y < v.y + 3.2
-        : at.y > v.y + v.H * 0.55);
+        ? v.localZ < v.hl * 0.12 && hitPt.y > v.y + 1.95 && hitPt.y < v.y + 3.2
+        : hitPt.y > v.y + v.H * 0.55);
     if (inGlassZone) {
-      if (playSound) sfx.glassBreak(at, { x: at.x, y: v.y + 0.05, z: at.z });
-      this.life.burstGlassShards(at.x, at.y, at.z, -dir.x, 0.25, -dir.z, 16, v.y);
-      this.life.addDynamicShards(at.x - dir.x * 0.55, v.y, at.z - dir.z * 0.55, 1.4);
-      this.life.addGlassCrackDecal(at.x, at.y, at.z, -dir.x, -dir.y, -dir.z, 0.44);
-      this.atmo.carHit(at.x, at.y, at.z);
+      const n = meshHit ? meshHit.normal : _wn.copy(dir).negate();
+      if (playSound) sfx.glassBreak(hitPt, { x: hitPt.x, y: v.y + 0.05, z: hitPt.z });
+      this.life.burstGlassShards(hitPt.x, hitPt.y, hitPt.z, n.x, Math.max(0.2, n.y), n.z, 16, v.y);
+      this.life.addDynamicShards(hitPt.x + n.x * 0.55, v.y, hitPt.z + n.z * 0.55, 1.4);
+      this.life.addGlassCrackDecal(hitPt.x, hitPt.y, hitPt.z, n.x, n.y, n.z, 0.36);
+      this.atmo.carHit(hitPt.x, hitPt.y, hitPt.z);
       return 'glass';
     }
     return 'metal';
@@ -1968,6 +2049,7 @@ export class WorldScene implements IScene {
    * and drives the model's bones.
    */
   private zombieRagdoll(z: Zombie): void {
+    if (this.corpseRd.has(z)) return;
     const start = z.death && this.models.deathStart(z);
     if (!start) return;
     const boxes: StaticBox[] = [];
@@ -2791,6 +2873,7 @@ export class WorldScene implements IScene {
     this.baseProps.dispose();
     this.particles.dispose();
     this.glbPool?.dispose();
+    this.windowPanes?.dispose();
     this.atmo.dispose();
     this.weather.dispose();
     this.landmarks.dispose();

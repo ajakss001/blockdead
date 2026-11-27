@@ -8,11 +8,14 @@ import {
   Euler,
   Frustum,
   InstancedMesh,
+  type Intersection,
+  Matrix3,
   Matrix4,
   Mesh,
   MeshStandardMaterial,
   PointLight,
   Quaternion,
+  Raycaster,
   Sphere,
   type BufferGeometry,
   type Material,
@@ -81,6 +84,12 @@ const _frustum = new Frustum();
 const _projScreen = new Matrix4();
 const _sphere = new Sphere();
 const _camForward = new Vector3();
+const _normMat = new Matrix3();
+const _raycaster = new Raycaster();
+const _hitNormal = new Vector3();
+const _hitPoint = new Vector3();
+const _rayProbe = new Vector3();
+const _rayHits: Intersection[] = [];
 
 const nextCap = (need: number) => {
   let c = 8;
@@ -193,6 +202,48 @@ export class GlbPropPool {
       return v;
     }
     return null;
+  }
+
+  /** Accurate per-triangle raycast against the real loaded GLB vehicle mesh to fetch exact point & world normal. */
+  raycastVehicle(origin: Vector3, dir: Vector3, approxDist: number): { point: Vector3; normal: Vector3; vehicle: VehicleObb } | null {
+    if (this.indexesDirty) this.rebuildSpatialLists();
+    _rayProbe.copy(origin).addScaledVector(dir, approxDist);
+    const v = this.findVehicleAt(_rayProbe.x, _rayProbe.y, _rayProbe.z, 0.45);
+    if (!v) return null;
+    const entry = this.assets.get(v.id);
+    if (!entry || entry.status !== 'ready') return null;
+
+    _raycaster.set(origin, dir);
+    _raycaster.near = Math.max(0, approxDist - 0.9);
+    _raycaster.far = approxDist + 2.8;
+
+    let bestDist = Infinity;
+    let hasBest = false;
+
+    const testMeshes = (list: (InstancedMesh | null)[]) => {
+      for (let i = 0; i < list.length; i++) {
+        const im = list[i];
+        if (!im || im.count <= 0) continue;
+        _rayHits.length = 0;
+        _raycaster.intersectObject(im, false, _rayHits);
+        for (let k = 0; k < _rayHits.length; k++) {
+          const h = _rayHits[k];
+          if (!h.face || h.instanceId === undefined || h.distance >= bestDist) continue;
+          bestDist = h.distance;
+          hasBest = true;
+          _hitPoint.copy(h.point);
+          im.getMatrixAt(h.instanceId, _instMat);
+          _normMat.getNormalMatrix(_instMat);
+          _hitNormal.copy(h.face.normal).applyMatrix3(_normMat).normalize();
+          if (_hitNormal.dot(dir) > 0) _hitNormal.negate();
+        }
+      }
+    };
+
+    testMeshes(entry.meshes);
+    if (!hasBest && entry.lodReady) testMeshes(entry.lodMeshes);
+    if (!hasBest) return null;
+    return { point: _hitPoint.clone(), normal: _hitNormal.clone(), vehicle: v };
   }
 
   update(dt: number, camPos: Vector3, paused: boolean, camera?: Camera): void {

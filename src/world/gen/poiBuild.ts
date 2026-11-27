@@ -51,15 +51,22 @@ function gasStation(S: Site, rand: Rand): void {
   ] as const) if (!down || x < 0) p.box(char(0xd8d4c8, k), x, 0, z, 0.4, 4.6, 0.4, 'metal', true);
   if (down) {
     // The east half came down: one edge still on the columns, the other on the ground.
-    p.box(char(0xe0dcd0, 0.85), -4.25, 4.6, cz, 8.5, 0.25, 10, 'metal');
-    p.box(char(0xa03a2a, 0.85), -4.25, 4.85, cz, 8.6, 0.45, 10.2, 'metal');
+    p.box(char(0xe0dcd0, 0.85), -4.25, 4.6, cz, 8.5, 0.25, 10, 'metal', true);
+    p.box(char(0xa03a2a, 0.85), -4.25, 4.85, cz, 8.6, 0.45, 10.2, 'metal', true);
     p.rbox(char(0xe0dcd0, 0.9), 4.1, 2.75, cz, 9.3, 0.25, 10, 0, 0, -0.42, 'metal');
     p.rbox(char(0xa03a2a, 0.9), 4.1, 3.05, cz, 9.3, 0.4, 10.2, 0, 0, -0.42, 'metal');
+    // Stepped solid colliders along the tilted collapsed canopy half.
+    for (let sIdx = 0; sIdx < 5; sIdx++) {
+      const t = (sIdx + 0.5) / 5;
+      const sx = 0 + t * 8.4;
+      const sy = 5.0 - t * 3.8;
+      S.solid(sx, cz, 1.75, 10.2, Math.max(0.2, sy - 0.65), sy);
+    }
     p.rbox(char(0xd8d4c8, 0.85), 7.6, 0.25, cz + 3.5, 4.4, 0.4, 0.4, 0.3, 0, 0.1, 'metal');
     p.solid(7.6, cz, 1.8, 10, 1.4);
   } else {
-    p.box(char(0xe0dcd0, k), 0, 4.6, cz, 17, 0.25, 10, 'metal');
-    p.box(char(0xa03a2a, k), 0, 4.85, cz, 17.2, 0.45, 10.2, 'metal');
+    p.box(char(0xe0dcd0, k), 0, 4.6, cz, 17, 0.25, 10, 'metal', true);
+    p.box(char(0xa03a2a, k), 0, 4.85, cz, 17.2, 0.45, 10.2, 'metal', true);
   }
   const [ax, az] = p.pt(-8.5, cz - 5);
   const [bx, bz] = p.pt(down ? 0 : 8.5, cz + 5);

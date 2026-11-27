@@ -2,11 +2,12 @@ import { Frustum, type Group, Matrix4, type Mesh, type Scene, Sphere } from 'thr
 import { disposeBatchGroup, meshesFromBuffers } from '../render/batchMeshes';
 import { setWindowCutouts } from '../render/look/worldMaterials';
 import type { Containers } from '../systems/Containers';
+import type { WindowPaneSpot } from './WindowPanes';
 import type { ChunkManager } from './ChunkManager';
 import type { CollisionWorld } from './CollisionWorld';
 import type { Doors } from './Doors';
 import type { InteriorData } from './gen/buildChunk';
-import { type BuildingDesc, FLOOR_H, highriseSurfaceY, insideFootprint } from './gen/highrise';
+import { type BuildingDesc, FLOOR_H, highriseSurfaceY, inFireEscape, insideFootprint } from './gen/highrise';
 import { CHUNK } from './gen/layout';
 
 const bCellKey = (ci: number, cj: number) => (ci + 32768) * 65536 + (cj + 32768);
@@ -46,6 +47,8 @@ export class Interiors {
   maxLoaded = MAX_LOADED;
   /** World-life spots of an interior arrived / left (radios, corridor lamps). */
   onAmbient?: (owner: number, spots: Float32Array | null) => void;
+  /** Destructible window panes inside a streamed interior. */
+  onWindows?: (owner: number, spots: WindowPaneSpot[] | null) => void;
 
   constructor(
     private readonly scene: Scene,
@@ -115,6 +118,16 @@ export class Interiors {
     if (!list) return null;
     for (let i = 0; i < list.length; i++) if (insideFootprint(list[i], x, z)) return list[i];
     return null;
+  }
+
+  /** True when (x, z) stands on any high-rise fire escape staircase, landing, or roof threshold. */
+  isOnFireEscape(x: number, z: number): boolean {
+    const list = this.cellBuildings.get(bCellKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+    if (!list) return false;
+    for (let i = 0; i < list.length; i++) {
+      if (insideFootprint(list[i], x, z, 2.5) && inFireEscape(list[i], x, z)) return true;
+    }
+    return false;
   }
 
   buildingsNear(x: number, z: number, radius: number): BuildingDesc[] {
@@ -279,6 +292,7 @@ export class Interiors {
     this.world.addPacked(owner, data.colliders);
     this.containers.addChunk(owner, 'downtown', data.containers);
     this.doors.add(id, data.doors, keep);
+    this.onWindows?.(owner, data.windows);
     this.onAmbient?.(owner, data.ambient);
     this.loaded.set(id, group);
     this.focus.set(id, data.focus);
@@ -316,6 +330,7 @@ export class Interiors {
     this.world.removeOwner(owner);
     this.containers.removeChunk(owner);
     this.doors.remove(id);
+    this.onWindows?.(owner, null);
     this.onAmbient?.(owner, null);
     this.loaded.delete(id);
     this.focus.delete(id);

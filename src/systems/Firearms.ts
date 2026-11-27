@@ -61,8 +61,12 @@ export interface FirearmsWorld {
   carHit(x: number, y: number, z: number): void;
   /** Glass pane struck by bullet or melee: plays 3D shatter + settle and spawns floor shard zones. */
   onBreakGlass?(at: Vector3, dir: Vector3): void;
+  /** Building window glass struck by bullet (Stage 1 crack + outward shards while bullet penetrates). */
+  onWindowBullet?(owner: number, at: Vector3, dir: Vector3, nx: number, ny: number, nz: number): boolean;
+  /** Building window glass shattered directly by melee/blast (Stage 2 clean removal + shards). */
+  onWindowShatter?(owner: number, dir: Vector3): boolean;
   /** Vehicle hit callback returning `'glass'` (already handled) or `'metal'`, else null for generic surfaces. */
-  onVehicleBulletHit?(at: Vector3, dir: Vector3, playSound: boolean): 'glass' | 'metal' | null;
+  onVehicleBulletHit?(o: Vector3, d: Vector3, dist: number, at: Vector3, playSound: boolean): 'glass' | 'metal' | null;
   /** The class's handling of firearms (1 none, 1.3 military, 1.5 SWAT). */
   handling(): number;
   /** Indoors / an alley / a street (the echo). */
@@ -622,6 +626,23 @@ export class Firearms {
           continue;
         }
       }
+      // Building window glass: penetrates cleanly (92% damage retained), Stage 1 spiderweb crack + outward shards.
+      if (det && det.glass && !det.door && this.w.onWindowBullet) {
+        _p.copy(_rayO).addScaledVector(d, wall);
+        const handled = this.w.onWindowBullet(det.owner, _p, d, det.nx, det.ny, det.nz);
+        if (handled) {
+          if (!isMulti || this.shotHitSounds < 2) {
+            sfx.bulletHit('glass', _p);
+            this.shotHitSounds++;
+          }
+          const step = wall + 0.32;
+          _rayO.addScaledVector(d, step);
+          traveled += step;
+          remain -= step;
+          dmgMul *= 0.92;
+          continue;
+        }
+      }
       this.hitWorld(_rayO, d, wall, det);
       return;
     }
@@ -685,10 +706,9 @@ export class Firearms {
     if (det) _n.set(det.nx, det.ny, det.nz);
     else _n.copy(d).negate();
     const withSound = !isMulti || this.shotHitSounds < 2;
-    const vehHit = this.w.onVehicleBulletHit?.(at, d, withSound) ?? null;
+    const vehHit = this.w.onVehicleBulletHit?.(o, d, dist, at, withSound) ?? null;
     if (vehHit === 'glass') {
       if (withSound) this.shotHitSounds++;
-      this.fx.addBulletHole(at, _n, 'glass');
       this.w.particles.burst(at, isMulti && this.shotHitSounds > 1 ? 2 : 5, 0.55);
       return;
     }
@@ -735,6 +755,11 @@ export class Firearms {
       return;
     }
     if (!res) {
+      const det = this.w.rayHitDetail?.(o, d, BASH.reach, false) ?? null;
+      if (det?.glass && !det.door && this.w.onWindowShatter?.(det.owner, d)) {
+        this.w.player.viewmodel.recoil();
+        return;
+      }
       sfx.swing('heavy', 0.2, o);
       return;
     }
@@ -812,6 +837,7 @@ export class Firearms {
       const hitDist = det ? det.t : this.w.rayHit(at, _shpD, b.radius);
       if (hitDist >= 0) {
         _p.copy(at).addScaledVector(_shpD, Math.max(0.05, hitDist - 0.03));
+        if (det?.glass && !det.door && this.w.onWindowShatter?.(det.owner, _shpD)) continue;
         if (det?.glass && this.w.onBreakGlass) this.w.onBreakGlass(_p, _shpD);
         else pt.sparks(_p.x, _p.y, _p.z, 2);
       }

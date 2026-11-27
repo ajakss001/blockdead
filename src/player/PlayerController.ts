@@ -90,6 +90,8 @@ export class PlayerController {
   fallDamage = 0;
   /** Climbing onto a ledge: progress 0..1 (−1 = not climbing), from where to where. */
   mantleT = -1;
+  /** Optional hook when player's movement contacts a glass pane; returns true if shattered and now passable. */
+  onTouchGlass?: (owner: number, dirX: number, dirZ: number) => boolean;
   private readonly mantleFrom = new Vector3();
   private readonly mantleTo = new Vector3();
   /** Highest point of the current time in the air (fall height). */
@@ -184,8 +186,14 @@ export class PlayerController {
         let hitNx = -dirX;
         let hitNz = -dirZ;
         if (hasDetail) {
-          const d1 = world.rayHitDetail(this.position.x, waistY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
-          const d2 = world.rayHitDetail(this.position.x, chestY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          let d1 = world.rayHitDetail(this.position.x, waistY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          let d2 = world.rayHitDetail(this.position.x, chestY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          if (d1 && d1.glass && !d1.door && this.onTouchGlass?.(d1.owner, dirX, dirZ)) {
+            d1 = world.rayHitDetail(this.position.x, waistY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          }
+          if (d2 && d2.glass && !d2.door && this.onTouchGlass?.(d2.owner, dirX, dirZ)) {
+            d2 = world.rayHitDetail(this.position.x, chestY, this.position.z, dirX, 0, dirZ, maxRay, false, true);
+          }
           if (d1 && d1.t < minHit) {
             minHit = d1.t;
             hitNx = d1.nx;

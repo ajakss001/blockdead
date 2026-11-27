@@ -332,7 +332,56 @@ export class Ragdoll {
       this.poses.forEach((pp, i) => (this.anchor[i].p.copy(pp.p), this.anchor[i].q.copy(pp.q)));
       this.still = 1e-6;
     } else this.still += 1 / 60;
+    if (this.still >= SLEEP_AFTER && this.age > 0.8 && this.age < MAX_AWAKE - 0.15 && this.isStillUpright()) {
+      this.applyToppleImpulse();
+      this.still = 0.05;
+      return;
+    }
     if ((this.still >= SLEEP_AFTER && this.age > 0.8) || this.age >= MAX_AWAKE - 1e-6) this.sleep();
+  }
+
+  /** Detect frozen kneeling / wedged upright pelvis-chest-head pose above flat lying floor level. */
+  private isStillUpright(): boolean {
+    if (this.bodies.length < 3) return false;
+    const pelvis = this.bodies[PART.pelvis];
+    const chest = this.bodies[PART.chest];
+    const head = this.bodies[PART.head];
+    const gy = this.groundAt ? this.groundAt(pelvis.position.x, pelvis.position.z, Math.max(this.floorY, pelvis.position.y)) : this.floorY;
+    return pelvis.position.y - gy > 0.38 || chest.position.y - gy > 0.42 || head.position.y - gy > 0.48;
+  }
+
+  /** Nudge a kneeling or wedged ragdoll horizontally & sideways so knees cannot prop the pelvis in an A-frame. */
+  private applyToppleImpulse(): void {
+    if (this.bodies.length < PARTS) return;
+    for (const b of this.bodies) {
+      b.linearDamping = 0.06;
+      b.angularDamping = 0.05;
+    }
+    const pelvis = this.bodies[PART.pelvis];
+    const chest = this.bodies[PART.chest];
+    const head = this.bodies[PART.head];
+    const q = chest.quaternion;
+    let tx = 2 * (q.x * q.z + q.w * q.y);
+    let tz = 1 - 2 * (q.x * q.x + q.y * q.y);
+    const len = Math.hypot(tx, tz);
+    if (len > 0.15) {
+      tx /= len;
+      tz /= len;
+    } else {
+      const ang = (Math.abs(pelvis.position.x * 13.7 + pelvis.position.z * 7.3) % 6.283);
+      tx = Math.cos(ang);
+      tz = Math.sin(ang);
+    }
+    // Lateral perpendicular axis breaks symmetrical two-knee kneeling bridges.
+    const sx = -tz;
+    const sz = tx;
+    chest.applyImpulse(new Vec3((tx * 4.5 + sx * 3.0) * chest.mass, -chest.mass * 1.5, (tz * 4.5 + sz * 3.0) * chest.mass));
+    head.applyImpulse(new Vec3((tx * 4.5 + sx * 3.0) * head.mass, -head.mass * 1.2, (tz * 4.5 + sz * 3.0) * head.mass));
+    pelvis.applyImpulse(new Vec3((-tx * 2.5 - sx * 4.2) * pelvis.mass, -pelvis.mass * 2.8, (-tz * 2.5 - sz * 4.2) * pelvis.mass));
+    for (const leg of [PART.thighL, PART.thighR, PART.shinL, PART.shinR]) {
+      const lb = this.bodies[leg];
+      lb.applyImpulse(new Vec3((-tx * 4.5 + sx * 2.0) * lb.mass, 0, (-tz * 4.5 + sz * 2.0) * lb.mass));
+    }
   }
 
   /** Keep every body part strictly at or above groundY + 0.05 m (including curbs, sidewalks, stairs, and slabs). */
@@ -357,6 +406,14 @@ export class Ragdoll {
   /** Bake the poses and drop the physics: from now on nothing changes. */
   sleep(): void {
     if (this.asleep) return;
+    if (this.bodies.length >= PARTS && this.isStillUpright()) {
+      for (let s = 0; s < 96; s++) {
+        if (s % 24 === 0) this.applyToppleImpulse();
+        this.world.step(1 / 60);
+        this.clampToGround();
+        if (s >= 24 && !this.isStillUpright()) break;
+      }
+    }
     this.clampToGround();
     this.read();
     this.asleep = true;

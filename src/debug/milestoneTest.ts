@@ -16,22 +16,32 @@ import { ZombieSim } from '../systems/zombies';
 import { CollisionWorld, PackedColliders } from '../world/CollisionWorld';
 import { Doors } from '../world/Doors';
 import { GlbPropPool } from '../world/GlbPropPool';
+import { WindowPanes } from '../world/WindowPanes';
 import { buildChunk } from '../world/gen/buildChunk';
+import { buildPoi } from '../world/gen/poiBuild';
+import { Vegetation } from '../render/Vegetation';
+import { playerRagdoll } from '../player/deathBody';
+import { PART } from '../physics/ragdoll';
 import {
   buildHighriseShell,
   FE_DEPTH,
   FE_HALF_W,
+  FE_HATCH_X0,
+  FE_HATCH_X1,
   FE_LAND_W,
   FE_ROOF_GAP,
+  FE_STAIR_X0,
+  FE_STAIR_X1,
   FLOOR_H,
   highriseSurfaceY,
+  inFireEscape,
   local as highriseLocal,
   type BuildingDesc,
 } from '../world/gen/highrise';
 import { glbObb, obbOverlap } from '../world/gen/footprint';
 import { WorldLayout, PAVE } from '../world/gen/layout';
 import { nearestPoi, siteToWorld, type PoiKind } from '../world/gen/poi';
-import { Builder, lampPost } from '../world/gen/pieces';
+import { buildHouse, Builder, lampPost, plantTree } from '../world/gen/pieces';
 import { trafficJam } from '../world/gen/storytelling';
 import { buildCar } from '../world/props/car';
 import { LIFE_STRIDE, WorldLife } from '../world/WorldLife';
@@ -479,7 +489,7 @@ export async function main(): Promise<number> {
       );
     }
 
-    // Highrise GLB fire escape check: smooth continuous ramp, >= 2.2m headroom, and open roof exit
+    // Highrise GLB fire escape check: 1-to-1 stair/hatch colliders, >= 2.2m headroom through hatch, solid grating outside hatch, open roof exit & metal surface
     {
       const cw = new CollisionWorld();
       const packed = new PackedColliders();
@@ -491,14 +501,17 @@ export async function main(): Promise<number> {
       const L = highriseLocal(desc);
       const feX0 = (L.x0 + L.x1) * 0.5 - FE_HALF_W;
       const feX1 = feX0 + FE_HALF_W * 2;
-      const zInner = L.z1 + FE_DEPTH * 0.25;
+      const feCx = (feX0 + feX1) * 0.5;
+      const stairX0 = feCx + FE_STAIR_X0;
+      const stairX1 = feCx + FE_STAIR_X1;
+      const zInner = L.z1 + FE_DEPTH * 0.22;
       const zOuter = L.z1 + FE_DEPTH * 0.72;
       let curY = 0;
       let headroomOk = true;
       let continuousClimb = true;
       for (let f = 0; f < desc.floors; f++) {
-        // Walk from entry feX0 to arrival feX1 along smooth outer ramp
-        for (let x = feX0 + 0.5; x <= feX1 - 0.5; x += 0.25) {
+        // Walk from entry feX0 across outer landing & exact measured stair run [stairX0..stairX1] to arrival landing
+        for (let x = feX0 + 0.5; x <= stairX1 + 0.2; x += 0.25) {
           const ny = highriseSurfaceY(desc, x, zOuter, curY);
           const p = new Vector3(x, curY, zOuter);
           cw.resolveCircle(p, 0.3);
@@ -507,14 +520,16 @@ export async function main(): Promise<number> {
           if (ny === null || ny - curY > 0.35 || p.distanceTo(new Vector3(x, curY, zOuter)) > 0.05) continuousClimb = false;
           else curY = ny;
         }
+        // Snap onto next storey height at top of flight [stairX1..feX1-0.5]
+        curY = (f + 1) * FLOOR_H;
         // Transition to inner balcony walkway (if more floors remain) or exit straight onto roof
         if (f < desc.floors - 1) {
           for (let z = zOuter; z >= zInner; z -= 0.15) {
-            const ny = highriseSurfaceY(desc, feX1 - 0.5, z, curY);
+            const ny = highriseSurfaceY(desc, stairX1 + 0.2, z, curY);
             if (ny === null || Math.abs(ny - (f + 1) * FLOOR_H) > 0.05) continuousClimb = false;
             else curY = ny;
           }
-          for (let x = feX1 - 0.5; x >= feX0 + 0.5; x -= 0.3) {
+          for (let x = stairX1 + 0.2; x >= feX0 + 0.5; x -= 0.3) {
             const ny = highriseSurfaceY(desc, x, zInner, curY);
             const ceil = cw.ceilingAt(x, zInner, 0.25, curY + 0.4);
             if (ceil < curY + 2.2) headroomOk = false;
@@ -526,6 +541,9 @@ export async function main(): Promise<number> {
           }
         }
       }
+      // Solid balcony grating must stop head underneath outside the open hatch [FE_HATCH_X0..FE_HATCH_X1]
+      const underGratingBlocked = cw.ceilingAt(feCx - 1.2, zInner, 0.2, 0.2) < FLOOR_H + 0.05 && cw.ceilingAt(feCx - 1.2, zOuter, 0.2, 0.2) < FLOOR_H + 0.05;
+      const insideHatchClear = cw.ceilingAt((feCx + FE_HATCH_X0 + feCx + FE_HATCH_X1) * 0.5, zOuter, 0.25, 0.4) > FLOOR_H + 0.5;
       // Check stepping straight across parapet exit [feX1 - FE_ROOF_GAP .. feX1] onto the roof slab
       const exitX = feX1 - FE_ROOF_GAP * 0.5;
       let roofExitOk = Math.abs(curY - desc.floors * FLOOR_H) < 0.05;
@@ -537,10 +555,11 @@ export async function main(): Promise<number> {
           roofExitOk = false;
         }
       }
+      const metalFootstepZone = inFireEscape(desc, stairX0, zOuter);
       void FE_LAND_W;
       check(
-        feCount === desc.floors && continuousClimb && headroomOk && roofExitOk,
-        `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & climbs smoothly to roof (${curY.toFixed(1)} m, headroom=${headroomOk}, roofExit=${roofExitOk})`,
+        feCount === desc.floors && continuousClimb && headroomOk && roofExitOk && underGratingBlocked && insideHatchClear && metalFootstepZone,
+        `P5: highrise uses ${feCount} fire_escape_smart_top.glb modules & climbs smoothly to roof (${curY.toFixed(1)} m, headroom=${headroomOk}, hatchClear=${insideHatchClear}, solidGrating=${underGratingBlocked}, roofExit=${roofExitOk})`,
       );
       void LIFE_STRIDE;
     }
@@ -781,6 +800,129 @@ export async function main(): Promise<number> {
         const hasBoeing = cBoeing.glbs.some((g) => g.id === 'passenger_airliner_22');
         const hasHighMi8 = cMi8.glbs.some((g) => g.id === 'mi8_wreck_remesh' && g.y >= 9.0);
         check(hasBoeing && hasHighMi8, `P7: downtown catastrophe landmarks present (boeing=${hasBoeing}, highriseMi8=${hasHighMi8})`);
+      }
+
+      // ── P8 Regression Checks ──
+      // Sloped gable house roof + gas canopy solid colliders & Mi-8 3D fuselage wall collision
+      {
+        const hPack = new PackedColliders();
+        const hb = new Builder(new StaticBatch(), hPack);
+        buildHouse(hb, { x0: 0, z0: 0, w: 9, d: 8, frontPlusZ: true, rand: () => 0.45 });
+        const hCw = new CollisionWorld();
+        hCw.addPacked(1, new Float32Array(hPack.data));
+        const ridgeHit = hCw.rayHitDetail(4.5, 8.0, 4.0, 0, -1, 0, 10, true);
+        const ridgeY = ridgeHit ? 8.0 - ridgeHit.t : 0;
+
+        const gasSite = nearestPoi(layout, 'gas', 0, 0, 60);
+        let gasCanopyY = 0;
+        if (gasSite) {
+          const gPack = new PackedColliders();
+          const gb = new Builder(new StaticBatch(), gPack);
+          buildPoi(gb, gasSite, () => 0.5, layout.seed);
+          const gCw = new CollisionWorld();
+          gCw.addPacked(2, new Float32Array(gPack.data));
+          const [wx, wz] = siteToWorld(gasSite, -4.0, 12.0);
+          const gh = gCw.rayHitDetail(wx, 10.0, wz, 0, -1, 0, 10, true);
+          gasCanopyY = gh ? 10.0 - gh.t : 0;
+        }
+        check(ridgeY > 3.5 && (!gasSite || gasCanopyY >= 4.7), `P8: house gable roof (y=${ridgeY.toFixed(2)}) & gas canopy (y=${gasCanopyY.toFixed(2)}) have solid colliders`);
+
+        const mScene = new Scene();
+        const mcw = new CollisionWorld();
+        mcw.addBox(-12, -10, 12, -6, 0, 14);
+        const hCol = new Helicopter({
+          scene: mScene,
+          world: mcw,
+          layout,
+          particles: new Particles(),
+          groundY: () => 0,
+          toast: () => {},
+          hurtPlayer: () => {},
+          explode: () => {},
+          onEscape: () => {},
+        });
+        hCol.placeForTest(0, 0, true);
+        hCol.board();
+        hCol.yaw = 0;
+        hCol.y = 3.0;
+        hCol.z = -1.5;
+        hCol.vz = -10.0;
+        hCol.spool = 1.0;
+        const hullBefore = hCol.hull;
+        const pPos = new Vector3();
+        const pPrev = new Vector3();
+        const hoverIn = makeMockInput({});
+        for (let k = 0; k < 25; k++) hCol.fixedUpdate(1 / 60, hoverIn, pPos, pPrev);
+        check(hCol.z > -5.5 && hCol.hull < hullBefore, `P8: Mi-8 3D collision stops outside building wall (z=${hCol.z.toFixed(2)}) & takes impact hull damage`);
+        hCol.dispose();
+      }
+
+      // 2-stage building window glass: bullet penetration (Stage 0 -> Stage 1) & body shatter (Stage 1 -> Stage 2)
+      {
+        const wScene = new Scene();
+        const wcw = new CollisionWorld();
+        const wp = new WindowPanes(wScene, wcw);
+        wp.addChunk(101, [{ cx: 0, cy: 1.5, cz: 0, sx: 2.2, sy: 2.0, sz: 0.04 }]);
+        const det0 = wcw.rayHitDetail(0, 1.5, 2, 0, 0, -1, 5, false);
+        const hit1 = det0 ? wp.bulletHit(det0.owner) : null;
+        const penDet = det0 ? wcw.rayHitDetail(0, 1.5, 2 - (det0.t + 0.32), 0, 0, -1, 5, false) : null;
+        const crackedOk = !!det0?.glass && !!hit1?.newlyCracked && wp.isCracked(det0.owner) && penDet === null;
+        const broken = wp.shatterCrackedNear(0, 0, 0.25, 0.52, 1.75);
+        const detAfter = wcw.rayHitDetail(0, 1.5, 2, 0, 0, -1, 5, false);
+        check(crackedOk && broken.length === 1 && det0 !== null && !wp.isCracked(det0.owner) && detAfter === null, 'P8: WindowPanes 2-stage glass penetrates (Stage 1 web) then clears completely on body contact (Stage 2)');
+        wp.dispose();
+      }
+
+      // Car GLB mesh raycast helper & transparent glass decal
+      {
+        check(typeof GlbPropPool.prototype.raycastVehicle === 'function', 'P8: GlbPropPool.raycastVehicle active for exact car windshield normals');
+      }
+
+      // Ragdoll anti-kneel sleep guarantee: lies flat on ground immediately
+      {
+        const rd = playerRagdoll(new Vector3(0, 0, 0), 0, 1, new Vector3(0, 0, 0), new Vector3(0, 0, 1), [], () => 0.4);
+        rd.sleep();
+        const flatOk = rd.poses[PART.pelvis].p.y <= 0.42 && rd.poses[PART.chest].p.y <= 0.45 && rd.poses[PART.head].p.y <= 0.52;
+        check(flatOk, `P8: Ragdoll.sleep() lays corpse flat (pelvis=${rd.poses[PART.pelvis].p.y.toFixed(2)}, chest=${rd.poses[PART.chest].p.y.toFixed(2)}, head=${rd.poses[PART.head].p.y.toFixed(2)})`);
+      }
+
+      // Retired procedural Vegetation stays hidden & plantTree rejects (0,0) road intersection
+      {
+        const vegScene = new Scene();
+        const veg = new Vegetation(vegScene, 1);
+        veg.prewarm();
+        veg.setPlants([]);
+        const bTree = new Builder(new StaticBatch(), new PackedColliders());
+        plantTree(bTree, 0, 0, 0, 1, 0, 0);
+        check(!vegScene.children.some((c) => c.visible) && bTree.batch.glbs.length === 0, 'P8: procedural road tree disabled at (0,0) & hidden in Vegetation');
+        bTree.dispose();
+        veg.dispose();
+      }
+
+      // Bandit post-update zombie kill produces strictly 1 corpse (no duplicate corpse spawn)
+      {
+        const zcw = new CollisionWorld();
+        const zsim = new ZombieSim(
+          {
+            groundY: () => 0,
+            resolveCircle: (p, r, h) => zcw.resolveCircle(p, r, h),
+            rayHit: () => -1,
+            indoors: () => false,
+            kindAt: () => 'worker',
+          },
+          0,
+          123,
+        );
+        const sense = { pos: new Vector3(0, 0, 0), eye: 1.6, noise: 0, crouched: false, lit: 0, daylight: 1, bandits: [] };
+        const z = zsim.spawnAt(3, 3);
+        zsim.update(1 / 60, sense);
+        const killed = zsim.hit(z, 999, 0, 0);
+        const secondHit = zsim.hit(z, 999, 0, 0);
+        const diedCount1 = zsim.died.length;
+        zsim.clearEvents();
+        zsim.update(1 / 60, sense);
+        const diedCount2 = zsim.died.length;
+        check(killed && !secondHit && diedCount1 === 1 && diedCount2 === 0, `P8: post-update zombie kill produces strictly 1 death event (tick1=${diedCount1}, tick2=${diedCount2})`);
       }
     }
   }

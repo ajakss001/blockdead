@@ -111,6 +111,8 @@ export interface BanditWorld {
   buildingsNear(x: number, z: number, r: number): BuildingDesc[];
   doorsNear?(x: number, y: number, z: number, r: number): DoorNavSpot[];
   onBreakGlass?(at: Vector3, dir: Vector3): void;
+  onWindowBullet?(owner: number, at: Vector3, dir: Vector3, nx: number, ny: number, nz: number): boolean;
+  shatterWindowNear?(x: number, y: number, z: number, r: number, dirX: number, dirZ: number): void;
   addRagdoll(rd: Ragdoll): void;
   removeRagdoll(rd: Ragdoll): void;
   zombies: ZombieSim;
@@ -405,6 +407,7 @@ export interface Bandit extends BanditTarget {
   glintMesh: Mesh | null;
   ragdoll: Ragdoll | null;
   ragdollPose: RagdollPose | null;
+  ragdollDone: boolean;
   lootDropped: boolean;
   hit(dmg: number, fromX: number, fromZ: number, head?: boolean, zone?: HitZone): boolean;
 }
@@ -678,7 +681,10 @@ export class Bandits {
 
       if (b.isDead && b.state === 'dead') {
         b.deadT += dt;
-        if (b.ragdollPose && b.ragdoll && !b.ragdoll.asleep) this.applyRagdollPose(b);
+        if (b.ragdollPose && b.ragdoll && !b.ragdollDone) {
+          this.applyRagdollPose(b);
+          if (b.ragdoll.asleep) b.ragdollDone = true;
+        }
         if (b.isDead && !b.lootDropped && (!b.ragdoll || b.ragdoll.asleep || b.deadT > 2.0)) {
           b.lootDropped = true;
           this.w.onDropLoot?.(b);
@@ -2435,6 +2441,7 @@ export class Bandits {
       glintMesh,
       ragdoll: null,
       ragdollPose: null,
+      ragdollDone: false,
       lootDropped: false,
       hit: (dmg, fx, fz, head = false, zone?: HitZone) => this.hit(bot, dmg, fx, fz, head, zone),
     };
@@ -2850,6 +2857,7 @@ export class Bandits {
     this.w.addRagdoll(rd);
     b.ragdoll = rd;
     b.ragdollPose = pose;
+    b.ragdollDone = false;
     this.applyRagdollPose(b);
   }
 
@@ -2889,6 +2897,7 @@ export class Bandits {
   private stepBandit(b: Bandit, nx: number, nz: number, step: number): void {
     b.pos.x += nx * step;
     b.pos.z += nz * step;
+    this.w.shatterWindowNear?.(b.pos.x, b.pos.y, b.pos.z, 0.48, nx, nz);
     this.w.resolveCircle(b.pos, 0.34);
     b.pos.y = this.w.groundY(b.pos.x, b.pos.z, b.pos.y);
   }
@@ -3023,7 +3032,7 @@ export class Bandits {
       if (hitRes && areFactionsHostile(b.faction, hitRes.bot.faction)) {
         hitDist = hitRes.dist;
         entityHitDist = hitRes.dist;
-        const dmg = (g.damage[0] + g.damage[1]) * 0.42 * (shotGlass && hitRes.dist > solidWall ? 0.85 : 1);
+        const dmg = (g.damage[0] + g.damage[1]) * 0.42 * (shotGlass && hitRes.dist > solidWall ? 0.92 : 1);
         this.hit(hitRes.bot, dmg, ox, oz, hitRes.head, hitRes.zone, 'bot', b.id);
       }
     } else if (targetIsPlayer) {
@@ -3049,7 +3058,7 @@ export class Bandits {
             const headCut = playerCrouched ? 0.98 : 1.44;
             const torsoCut = playerCrouched ? 0.52 : 0.78;
             const hitZone: HitZone = relY >= headCut ? 'head' : relY >= torsoCut ? 'torso' : 'limbs';
-            const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24) * (shotGlass && proj > solidWall ? 0.85 : 1);
+            const rawDmg = (g.damage[0] + g.damage[1]) * (b.role === 'boss' ? 0.28 : 0.24) * (shotGlass && proj > solidWall ? 0.92 : 1);
             this.w.hurtPlayer(Math.max(6, Math.min(26, rawDmg)), b.pos.x, b.pos.z, 'Пулевое ранение от бандита', hitZone);
           }
         }
@@ -3059,13 +3068,18 @@ export class Bandits {
       if (zh) {
         hitDist = zh.dist;
         entityHitDist = zh.dist;
-        const dmg = g.damage[0] * 0.85 * (shotGlass && zh.dist > solidWall ? 0.85 : 1);
+        const dmg = g.damage[0] * 0.85 * (shotGlass && zh.dist > solidWall ? 0.92 : 1);
         this.w.zombies.hit(zh.zombie, dmg, ox, oz, zh.head, zh.point);
       }
     }
 
     if (shotGlass && solidWall <= entityHitDist + 0.05) {
-      this.w.onBreakGlass?.(new Vector3(ox + _to.x * solidWall, oy + _to.y * solidWall, oz + _to.z * solidWall), _to.clone());
+      const gAt = new Vector3(ox + _to.x * solidWall, oy + _to.y * solidWall, oz + _to.z * solidWall);
+      const handled =
+        solidDetail && solidDetail.glass && !solidDetail.door && this.w.onWindowBullet
+          ? this.w.onWindowBullet(solidDetail.owner, gAt, _to.clone(), solidDetail.nx, solidDetail.ny, solidDetail.nz)
+          : false;
+      if (!handled) this.w.onBreakGlass?.(gAt, _to.clone());
       // Finish the firing burst through the freshly shattered window before displacing into cover.
       if (b.tacticState === 'NONE') {
         b.tacticState = 'PEEK_AND_SHOOT';

@@ -100,7 +100,7 @@ export class WorldLife {
   private flyCursor = 0;
   private glassDecalMesh: InstancedMesh | null = null;
   private glassDecalTex: CanvasTexture | null = null;
-  private glassDecalMat: MeshStandardMaterial | null = null;
+  private glassDecalMat: MeshBasicMaterial | null = null;
   private readonly glassDecalMats = new Float32Array(GLASS_DECAL_CAP * 16);
   private glassDecalCount = 0;
   private glassDecalCursor = 0;
@@ -234,12 +234,13 @@ export class WorldLife {
         this.flyShardMesh = fMesh;
 
         const crackTex = new CanvasTexture(buildGlassCrackCanvas());
-        const crackMat = new MeshStandardMaterial({
+        const crackMat = new MeshBasicMaterial({
           map: crackTex,
+          color: 0xeef6ff,
           transparent: true,
+          opacity: 0.92,
           depthWrite: false,
-          roughness: 0.18,
-          metalness: 0.2,
+          alphaTest: 0.02,
           polygonOffset: true,
           polygonOffsetFactor: -2,
           polygonOffsetUnits: -2,
@@ -247,6 +248,8 @@ export class WorldLife {
         });
         const cMesh = new InstancedMesh(new PlaneGeometry(1, 1), crackMat, GLASS_DECAL_CAP);
         cMesh.name = 'life:glassCracks';
+        cMesh.castShadow = false;
+        cMesh.receiveShadow = false;
         cMesh.frustumCulled = false;
         cMesh.renderOrder = 2;
         cMesh.count = 0;
@@ -336,7 +339,7 @@ export class WorldLife {
     if (_n.lengthSq() < 1e-6) _n.set(0, 0, 1);
     else _n.normalize();
     _q.setFromUnitVectors(_z, _n).multiply(_q2.setFromAxisAngle(_z, Math.random() * Math.PI * 2));
-    _m.compose(_p.set(x, y, z).addScaledVector(_n, 0.015), _q, _s.set(size, size, 1));
+    _m.compose(_p.set(x, y, z).addScaledVector(_n, 0.004), _q, _s.set(size, size, 1));
     const slot = this.glassDecalCursor;
     this.glassDecalCursor = (this.glassDecalCursor + 1) % GLASS_DECAL_CAP;
     if (this.glassDecalCount < GLASS_DECAL_CAP) this.glassDecalCount++;
@@ -932,7 +935,7 @@ void main() {
   gl_FragColor = vec4(col * a * vI * (1.0 - fog) * (1.0 - 0.75 * uFog.z), 1.0);
 }`;
 
-/** Procedural spiderweb crack + bullet hole texture (built once at boot). */
+/** Procedural spiderweb crack texture on pure transparent background (no dark backdrop). */
 function buildGlassCrackCanvas(): HTMLCanvasElement {
   const S = 128;
   const cv = document.createElement('canvas');
@@ -940,36 +943,31 @@ function buildGlassCrackCanvas(): HTMLCanvasElement {
   const g = cv.getContext('2d')!;
   const cx = S / 2;
   const cy = S / 2;
-  // Shatter frost halo
-  const halo = g.createRadialGradient(cx, cy, 4, cx, cy, S * 0.44);
-  halo.addColorStop(0, 'rgba(210, 230, 240, 0.72)');
-  halo.addColorStop(0.22, 'rgba(220, 236, 245, 0.36)');
-  halo.addColorStop(1, 'rgba(220, 236, 245, 0)');
-  g.fillStyle = halo;
-  g.fillRect(0, 0, S, S);
-  // Radial crack lines
-  g.strokeStyle = 'rgba(235, 244, 250, 0.85)';
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2 + Math.sin(i * 7.3) * 0.22;
-    const len = S * (0.28 + ((i * 37) % 10) * 0.018);
+  g.clearRect(0, 0, S, S);
+  // Crisp radial crack lines (bright ice-white on fully transparent background)
+  g.strokeStyle = 'rgba(238, 246, 255, 0.90)';
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2 + Math.sin(i * 7.3) * 0.20;
+    const len = S * (0.30 + ((i * 37) % 10) * 0.018);
     g.lineWidth = i % 2 === 0 ? 1.5 : 1.0;
     g.beginPath();
-    g.moveTo(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4);
+    g.moveTo(cx + Math.cos(a) * 3, cy + Math.sin(a) * 3);
     g.quadraticCurveTo(cx + Math.cos(a + 0.12) * len * 0.55, cy + Math.sin(a + 0.12) * len * 0.55, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
     g.stroke();
   }
   // Concentric spiderweb rings
-  g.strokeStyle = 'rgba(225, 238, 246, 0.58)';
+  g.strokeStyle = 'rgba(220, 236, 248, 0.65)';
   g.lineWidth = 1.0;
-  for (const r of [11, 20, 31]) {
+  for (const r of [11, 21, 33, 46]) {
     g.beginPath();
     g.arc(cx, cy, r, 0, Math.PI * 2);
     g.stroke();
   }
-  // Dark bullet entry hole at center
-  g.fillStyle = 'rgba(12, 16, 20, 0.92)';
+  // Tiny light-scattering bullet perforation ring (no dark smudge)
+  g.strokeStyle = 'rgba(245, 250, 255, 0.95)';
+  g.lineWidth = 1.4;
   g.beginPath();
-  g.arc(cx, cy, 4.5, 0, Math.PI * 2);
-  g.fill();
+  g.arc(cx, cy, 3.5, 0, Math.PI * 2);
+  g.stroke();
   return cv;
 }

@@ -66,11 +66,19 @@ const GRAVITY = 9.8;
 const _camPos = new Vector3();
 const _camLook = new Vector3();
 const _spark = new Vector3();
+const _bodyProbe = new Vector3();
 /** Local landing gear wheel contact points relative to helicopter center (nose faces -Z at yaw = 0). */
 const GEAR_POINTS: readonly [number, number][] = [
   [0, -4.4],
   [-2.1, 1.5],
   [2.1, 1.5],
+];
+/** Local fuselage cylinder probes [lx, lz, radius] for full 3D Mi-8 airframe collision. */
+const FUSELAGE_PROBES: readonly [number, number, number][] = [
+  [0, -4.4, 1.45],
+  [0, 0.0, 1.65],
+  [0, 3.6, 1.3],
+  [0, 7.2, 0.9],
 ];
 
 /**
@@ -114,6 +122,7 @@ export class Helicopter {
   private stickRight = 0;
   private washT = 0;
   private smokeT = 0;
+  private impactCd = 0;
   private camYaw = 0;
   private camPitch = -0.05;
   private colliderInstalled = false;
@@ -222,7 +231,8 @@ export class Helicopter {
 
   /** 3-point tricycle landing gear support height under helicopter (terrain, roads, helipads, and solid roofs). */
   supportY(refY = this.y): number {
-    let best = this.w.groundY(this.x, this.z, refY);
+    const cg = this.w.groundY(this.x, this.z, refY);
+    let best = cg <= refY + 0.9 ? cg : -Infinity;
     const cos = Math.cos(this.yaw);
     const sin = Math.sin(this.yaw);
     for (let i = 0; i < GEAR_POINTS.length; i++) {
@@ -233,7 +243,7 @@ export class Helicopter {
       // Avoid snapping onto tall adjacent parapet lips/walls far above the fuselage bottom.
       if (gh <= refY + 0.9 && gh > best) best = gh;
     }
-    return best;
+    return best === -Infinity ? this.w.layout.walkHeightAt(this.x, this.z) : best;
   }
 
   /** Context prompt when on foot looking/standing near the Mi-8. Returns null if not near. */
@@ -481,11 +491,91 @@ export class Helicopter {
       this.vx *= Math.exp(-drag * dt);
       this.vz *= Math.exp(-drag * dt);
 
+      this.impactCd = Math.max(0, this.impactCd - dt);
+      const prevY = this.y;
       this.x += this.vx * dt;
       this.y += this.vy * dt;
       this.z += this.vz * dt;
 
-      const nextGround = this.supportY();
+      // Full 3D collision for fuselage + tail boom + rotor disc against buildings, walls, and canopies.
+      const cosY = Math.cos(this.yaw);
+      const sinY = Math.sin(this.yaw);
+      let pushX = 0;
+      let pushZ = 0;
+      for (let i = 0; i < FUSELAGE_PROBES.length; i++) {
+        const [lx, lz, rad] = FUSELAGE_PROBES[i];
+        const wx = this.x + lx * cosY + lz * sinY;
+        const wz = this.z - lx * sinY + lz * cosY;
+        _bodyProbe.set(wx, this.y - 0.15, wz);
+        this.w.world.resolveCircle(_bodyProbe, rad, 3.35);
+        const dx = _bodyProbe.x - wx;
+        const dz = _bodyProbe.z - wz;
+        if (dx !== 0 || dz !== 0) {
+          this.x += dx;
+          this.z += dz;
+          pushX += dx;
+          pushZ += dz;
+        }
+      }
+      // Rotor disc guard (main rotor sweeps ~5.2 m radius around mast at y + 3.2 .. y + 4.1).
+      const rx0 = this.x;
+      const rz0 = this.z;
+      _bodyProbe.set(rx0, this.y + 2.8, rz0);
+      this.w.world.resolveCircle(_bodyProbe, 5.2, 1.3);
+      const rdx = _bodyProbe.x - rx0;
+      const rdz = _bodyProbe.z - rz0;
+      if (rdx !== 0 || rdz !== 0) {
+        this.x += rdx;
+        this.z += rdz;
+        pushX += rdx;
+        pushZ += rdz;
+      }
+
+      const pushLen = Math.hypot(pushX, pushZ);
+      if (pushLen > 1e-4) {
+        const nx = pushX / pushLen;
+        const nz = pushZ / pushLen;
+        const vn = -(this.vx * nx + this.vz * nz);
+        if (vn > 0) {
+          this.vx += nx * vn * 1.1;
+          this.vz += nz * vn * 1.1;
+        }
+        this.vx *= 0.78;
+        this.vz *= 0.78;
+        if (vn > 1.8 && this.impactCd <= 0) {
+          this.impactCd = 0.35;
+          const dmg = Math.min(0.45, (vn - 1.5) * 0.045);
+          this.hull = Math.max(0.05, this.hull - dmg);
+          this.w.hurtPlayer(Math.round((vn - 1.5) * 4.5), tr('Столкновение Ми-8', 'Mi-8 collision'));
+          sfx.hit('metal', _spark.set(this.x, this.y + 1.8, this.z), 1);
+          this.w.particles.sparks(this.x, this.y + 1.8, this.z, 10);
+          if (vn > 14 || this.hull <= 0.1) {
+            this.crash();
+            return;
+          }
+        }
+      }
+
+      // Ceiling collision (flying upward under bridges/canopies/hangars).
+      const ceilY = this.w.world.ceilingAt(this.x, this.z, 2.0, this.y + 0.5);
+      if (Number.isFinite(ceilY) && this.y + 4.25 > ceilY) {
+        this.y = ceilY - 4.25;
+        if (this.vy > 2.0 && this.impactCd <= 0) {
+          this.impactCd = 0.35;
+          const dmg = Math.min(0.35, (this.vy - 1.8) * 0.05);
+          this.hull = Math.max(0.05, this.hull - dmg);
+          this.w.hurtPlayer(Math.round((this.vy - 1.8) * 4.0), tr('Удар ротора Ми-8', 'Mi-8 rotor strike'));
+          sfx.hit('metal', _spark.set(this.x, this.y + 4.0, this.z), 1);
+          this.w.particles.sparks(this.x, this.y + 4.0, this.z, 10);
+          if (this.hull <= 0.1) {
+            this.crash();
+            return;
+          }
+        }
+        this.vy = Math.min(0, this.vy);
+      }
+
+      const nextGround = this.supportY(Math.max(prevY, this.y));
       if (this.y <= nextGround + 0.015) {
         const impact = -this.vy;
         this.y = nextGround;

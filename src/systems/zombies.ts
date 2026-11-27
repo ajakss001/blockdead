@@ -368,6 +368,14 @@ export class ZombieSim {
     this.reported = [this.sounds.length, this.killedTwins.length, this.died.length];
   }
 
+  /** Clears reported death/sound/twin event queues after WorldScene consumes them (prevents duplicate spawns from post-update bandit/tripwire kills). */
+  clearEvents(): void {
+    this.sounds.length = 0;
+    this.killedTwins.length = 0;
+    this.died.length = 0;
+    this.reported = [0, 0, 0];
+  }
+
   /** How many sounds, killed twins and deaths the last step reported (cleared by the next one). */
   private reported = [0, 0, 0];
 
@@ -581,6 +589,7 @@ export class ZombieSim {
    * scene turns it into one this step).
    */
   private kill(z: Zombie, fromX: number, fromZ: number, damage: number, head: boolean, point: Vector3 | null, push = 1): void {
+    if (z.state === 'dead') return;
     z.death = { fromX, fromZ, damage, head, point: point?.clone() ?? null, phase: z.phase, gait: z.gait, speed: z.speed, push };
     z.state = 'dead';
     z.shake = 0;
