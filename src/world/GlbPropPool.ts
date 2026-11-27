@@ -377,10 +377,11 @@ export class GlbPropPool {
       const rawMax = Math.max(0.01, rawSize.x, rawSize.y, rawSize.z);
       const targetMax = Math.max(spec.size[0], spec.size[1], spec.size[2]);
       const uScale = targetMax / rawMax;
+      const yScale = id === 'crash_skid_trench' ? Math.min(uScale, spec.size[1] / Math.max(0.01, rawSize.y)) : uScale;
       const cxOff = -(box.min.x + box.max.x) * 0.5;
       const czOff = -(box.min.z + box.max.z) * 0.5;
       assetMat = new Matrix4()
-        .makeScale(uScale, uScale, uScale)
+        .makeScale(uScale, yScale, uScale)
         .multiply(new Matrix4().makeTranslation(cxOff, minYOffset, czOff));
     } else if (!isLod && id === 'Sport_Sedan_22k') {
       extraGeo = new BoxGeometry(spec.size[0] * 0.58, spec.size[1] * 0.30, spec.size[2] * 0.14);

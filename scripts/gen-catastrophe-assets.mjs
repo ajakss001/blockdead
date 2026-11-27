@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Manual-only one-shot generator for the 5 missing post-apocalyptic catastrophe GLB assets via Meshy API v2.
+ * Manual-only one-shot generator & local optimizer for post-apocalyptic catastrophe GLB assets via Meshy API v2.
  *
  * Security & quota safety:
  *  - Reads `MESHY_API_KEY` (or fallback `MESH_API_KEY`) strictly from local `.env` (never logged or bundled).
  *  - Never runs automatically during builds or tests; run manually via `npm run gen:catastrophe`.
- *  - Generates strictly the 5 listed assets and SKIPS any asset whose target `.glb` already exists (> 0 bytes)
- *    in `public/models/catastrophe/` to prevent duplicate API credit usage.
- *  - Post-processes every downloaded GLB through `gltf-transform` (`weld`, `MeshoptSimplifier`, `1024px` WebP,
- *    `dedup`, `prune`, `quantize`, `meshopt`) enforcing <= 1.5 MB per file (compatible with `GlbPropPool`
+ *  - Re-optimizes existing `.glb` files locally via `gltf-transform` + `MeshoptSimplifier` WITHOUT spending Meshy
+ *    credits whenever an existing file lacks `extras.optimizedBy === 'gen-catastrophe-v2'`, exceeds `MAX_BYTES`,
+ *    or exceeds its polycount budget. Only calls Meshy API if a target `.glb` does not exist on disk yet.
+ *  - Post-processes every GLB through `gltf-transform` (`dequantize`, `dedup`, `weld`, `MeshoptSimplifier`,
+ *    `1024px` WebP, `prune`, `quantize`, `meshopt`) enforcing <= 1.5 MB per file (compatible with `GlbPropPool`
  *    `MeshoptDecoder` without shipping extra Draco WASM decoders in the client bundle).
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -23,66 +24,67 @@ const ROOT_DIR = resolve('.');
 const ENV_PATH = join(ROOT_DIR, '.env');
 const OUT_DIR = join(ROOT_DIR, 'public/models/catastrophe');
 const MAX_BYTES = 1.5 * 1024 * 1024;
+const OPT_STAMP = 'gen-catastrophe-v2';
 const MESHY_ENDPOINT = 'https://api.meshy.ai/openapi/v2/text-to-3d';
 
 const ASSETS = [
   {
     file: 'crashed_boeing_fuselage.glb',
-    polycount: 18000,
+    polycount: 10000,
     prompt:
       'Broken burned passenger airliner fuselage wreck, snapped in half, ripped jagged charred aluminum edges, dark soot and scorch marks, NO landing gear, post-apocalyptic crash site, gritty realistic PBR game asset',
   },
   {
     file: 'crashed_plane_wing.glb',
-    polycount: 10000,
+    polycount: 7500,
     prompt:
       'Detached broken airplane wing with damaged jet engine, scorched metal, torn wiring, realistic post-apocalyptic debris, PBR game asset',
   },
   {
     file: 'concrete_rubble_mound.glb',
-    polycount: 10000,
+    polycount: 6000,
     prompt:
       'Large pile of collapsed Soviet building concrete rubble, broken slabs, red bricks, bent exposed steel rebar, dust and ash, realistic PBR game asset',
   },
   {
     file: 'building_breach_frame.glb',
-    polycount: 10000,
+    polycount: 6500,
     prompt:
       'Jagged destroyed concrete and brick wall hole breach with twisted exposed rebar and scorched edges, modular architectural destruction piece, PBR game asset',
   },
   {
     file: 'giant_trash_mound.glb',
-    polycount: 10000,
+    polycount: 6000,
     prompt:
       'Huge post-apocalyptic urban garbage mound, torn black trash bags, broken wooden crates, scrap metal, cardboard, rusted cans, gritty realistic PBR game asset',
   },
   {
     file: 'crash_skid_trench.glb',
-    polycount: 10000,
+    polycount: 5500,
     prompt:
       'Deep gouged asphalt and scorched earth airplane crash landing skid trench crater, torn jagged pavement chunks, dark soot streaks, scattered charred aircraft fragments, low-profile flat ground terrain piece, gritty realistic PBR game asset',
   },
   {
     file: 'charred_rubble_pile.glb',
-    polycount: 14000,
+    polycount: 6500,
     prompt:
       'Dark charred post-apocalyptic rubble pile of shattered reinforced concrete chunks, broken dark red bricks, soot-blackened twisted steel I-beams and jagged rebar, ash and scorched debris, realistic gritty PBR game asset',
   },
   {
     file: 'collapsed_concrete_slab.glb',
-    polycount: 12000,
+    polycount: 6000,
     prompt:
       'Broken tilted reinforced concrete building floor slab collapsed at an angle, jagged fractured concrete edges with bent exposed rusted steel rebar rods sticking out, heavy soot and char marks, realistic PBR game asset',
   },
   {
     file: 'plane_debris_cluster.glb',
-    polycount: 12000,
+    polycount: 6500,
     prompt:
       'Scattered airliner crash interior debris cluster, bent scorched riveted aluminum fuselage panels, two charred broken airplane passenger seats, torn cables and insulation, realistic gritty PBR game asset',
   },
   {
     file: 'emergency_gear_scatter.glb',
-    polycount: 12000,
+    polycount: 6500,
     prompt:
       'Abandoned emergency rescue equipment cluster on asphalt, overturned wheeled medical stretcher gurney, open orange first-aid trauma kit box, coiled red fire hose with brass nozzle and knocked-over orange traffic cones, realistic gritty PBR game asset',
   },
@@ -167,6 +169,14 @@ async function convertTexturesWebP(doc, maxDim, quality) {
     const img = tex.getImage();
     if (!img) continue;
     const meta = await sharp(img).metadata();
+    if (
+      tex.getMimeType() === 'image/webp' &&
+      (meta.width ?? 0) <= maxDim &&
+      (meta.height ?? 0) <= maxDim &&
+      quality >= 78
+    ) {
+      continue;
+    }
     let pipe = sharp(img);
     if ((meta.width ?? maxDim) > maxDim || (meta.height ?? maxDim) > maxDim) {
       pipe = pipe.resize(maxDim, maxDim, { fit: 'inside', withoutEnlargement: true });
@@ -198,7 +208,13 @@ function simplifyDocToBudget(doc, targetTris) {
       const srcIdx = new Uint32Array(idxAcc.getArray());
       const wantIdx = Math.max(36, Math.floor((srcIdx.length * ratio) / 3) * 3);
       if (wantIdx >= srcIdx.length) continue;
-      const [dstIdx] = MeshoptSimplifier.simplify(srcIdx, posArr, 3, wantIdx, 0.04, ['Permissive', 'Prune']);
+      let [dstIdx] = MeshoptSimplifier.simplify(srcIdx, posArr, 3, wantIdx, 0.02, ['Permissive', 'Prune']);
+      if (dstIdx.length > wantIdx * 1.35) {
+        const [retryIdx] = MeshoptSimplifier.simplify(srcIdx, posArr, 3, wantIdx, 0.05, ['Permissive', 'Prune']);
+        if (retryIdx.length >= 12 && retryIdx.length < dstIdx.length) {
+          dstIdx = retryIdx;
+        }
+      }
       if (dstIdx.length >= 12 && dstIdx.length < srcIdx.length) {
         idxAcc.setArray(dstIdx);
         compactPrimitive(prim);
@@ -216,15 +232,24 @@ async function optimizeGlb(io, rawBytes, targetTris, texDim = 1024, webpQuality 
   simplifyDocToBudget(doc, targetTris);
   await convertTexturesWebP(doc, texDim, webpQuality);
   await doc.transform(prune(), quantize(), meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
+  const asset = doc.getRoot().getAsset();
+  asset.extras = { ...(asset.extras ?? {}), optimizedBy: OPT_STAMP, targetTris };
   return io.writeBinary(doc);
 }
 
-async function main() {
-  const apiKey = loadMeshyKey();
-  if (!apiKey) {
-    console.error('Error: MESHY_API_KEY is missing or empty in local .env (nothing generated).');
-    process.exit(1);
+async function packWithBudget(io, rawBytes, targetTris) {
+  let packed = await optimizeGlb(io, rawBytes, targetTris, 1024, 80);
+  if (packed.byteLength > MAX_BYTES) {
+    packed = await optimizeGlb(io, rawBytes, Math.round(targetTris * 0.65), 768, 68);
   }
+  if (packed.byteLength > MAX_BYTES) {
+    packed = await optimizeGlb(io, rawBytes, Math.round(targetTris * 0.45), 512, 62);
+  }
+  return packed;
+}
+
+async function main() {
+  let apiKey = loadMeshyKey();
 
   mkdirSync(OUT_DIR, { recursive: true });
   await MeshoptDecoder.ready;
@@ -239,9 +264,32 @@ async function main() {
   for (const spec of ASSETS) {
     const outPath = join(OUT_DIR, spec.file);
     if (existsSync(outPath) && statSync(outPath).size > 0) {
-      const kb = (statSync(outPath).size / 1024).toFixed(1);
-      console.log(`[skip] ${spec.file} already exists (${kb} KB)`);
+      const existingBytes = readFileSync(outPath);
+      const existingDoc = await io.readBinary(new Uint8Array(existingBytes));
+      const beforeTris = countTris(existingDoc);
+      const beforeKb = existingBytes.byteLength / 1024;
+      const stamp = existingDoc.getRoot().getAsset().extras?.optimizedBy;
+      if (stamp === OPT_STAMP && existingBytes.byteLength <= MAX_BYTES && beforeTris <= Math.round(spec.polycount * 1.15)) {
+        console.log(`[skip] ${spec.file} already optimized (${beforeTris} tris, ${beforeKb.toFixed(1)} KB)`);
+        continue;
+      }
+
+      const packed = await packWithBudget(io, existingBytes, spec.polycount);
+      writeFileSync(outPath, packed);
+      const afterDoc = await io.readBinary(new Uint8Array(packed));
+      const afterTris = countTris(afterDoc);
+      console.log(
+        `[optimize] ${spec.file}: ${beforeTris} -> ${afterTris} tris, ${beforeKb.toFixed(1)} KB -> ${(packed.byteLength / 1024).toFixed(1)} KB`,
+      );
       continue;
+    }
+
+    if (!apiKey) {
+      apiKey = loadMeshyKey();
+    }
+    if (!apiKey) {
+      console.error(`Error: MESHY_API_KEY is missing or empty in local .env (cannot generate ${spec.file}).`);
+      process.exit(1);
     }
 
     console.log(`[generate] ${spec.file} (preview -> refine, PBR, target=${spec.polycount})...`);
@@ -270,16 +318,10 @@ async function main() {
     if (!dl.ok) throw new Error(`Failed downloading GLB (${dl.status}) for ${spec.file}`);
     const rawBuf = Buffer.from(await dl.arrayBuffer());
 
-    let packed = await optimizeGlb(io, rawBuf, spec.polycount, 1024, 80);
-    if (packed.byteLength > MAX_BYTES) {
-      packed = await optimizeGlb(io, rawBuf, Math.round(spec.polycount * 0.65), 768, 68);
-    }
-    if (packed.byteLength > MAX_BYTES) {
-      packed = await optimizeGlb(io, rawBuf, Math.round(spec.polycount * 0.45), 512, 62);
-    }
+    const packed = await packWithBudget(io, rawBuf, spec.polycount);
 
     writeFileSync(outPath, packed);
-    const verifyDoc = await io.readBinary(packed);
+    const verifyDoc = await io.readBinary(new Uint8Array(packed));
     console.log(
       `[done] ${spec.file}: ${countTris(verifyDoc)} tris, ${(packed.byteLength / 1024).toFixed(1)} KB`,
     );

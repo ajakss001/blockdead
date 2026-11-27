@@ -324,7 +324,7 @@ function airlinerCrashBlock(
   // 3D gouged skid trench crater spawned along the center approach corridor
   const skidX = ax - Math.cos(ayaw) * 8.5;
   const skidZ = az + Math.sin(ayaw) * 8.5;
-  b.glb('crash_skid_trench', skidX, PAVE.plaza - 0.04, skidZ, ayaw);
+  b.glb('crash_skid_trench', skidX, PAVE.plaza - 0.02, skidZ, ayaw);
 
   groundDecal(b, 'decalSoot', ax, PAVE.plaza + 0.015, az, 9.5, rand, 1.6);
   groundDecal(b, 'decalSoot', bCx, PAVE.plaza + 0.015, bZ0 - 1.0, 9.0, rand, 1.4);

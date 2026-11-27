@@ -585,21 +585,24 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
       : (ax0: number, ax1: number, ay0: number, ay1: number, az0: number, az1: number) => {
           if (ax1 - ax0 > 0.01 && ay1 - ay0 > 0.01) b.solid(ax0, az0, ax1, az1, ay0, ay1);
         };
-    for (let k = startFloor; k < desc.floors; k++) {
-      const y0 = k * FLOOR_H;
-      const ySill = y0 + spec.sill;
-      const yHead = y0 + spec.head;
-      const y1 = y0 + FLOOR_H;
-      put(x0, x1, y0, ySill, wz0, wz1);
-      put(x0, x1, yHead, y1, wz0, wz1);
+    if (startFloor < desc.floors) {
+      const startY = startFloor * FLOOR_H;
+      // Single continuous full-height box per vertical pier column (breach-safe via `put`).
       let curX = x0;
       for (const [wx0, wx1] of winXs) {
-        put(curX, Math.min(x1, wx0), ySill, yHead, wz0, wz1);
+        put(curX, Math.min(x1, wx0), startY, H, wz0, wz1);
         curX = Math.max(curX, wx1);
       }
-      put(curX, x1, ySill, yHead, wz0, wz1);
-    }
-    if (isFront || desc.floors < 2) {
+      put(curX, x1, startY, H, wz0, wz1);
+
+      // Merged horizontal spandrel bands: bottom sill, inter-floor head+sill pairs, and top lintel+parapet.
+      put(x0, x1, startY, startY + spec.sill, wz0, wz1);
+      for (let k = startFloor; k < desc.floors - 1; k++) {
+        put(x0, x1, k * FLOOR_H + spec.head, (k + 1) * FLOOR_H + spec.sill, wz0, wz1);
+      }
+      const topEnd = isFront || desc.floors < 2 ? top : H;
+      put(x0, x1, (desc.floors - 1) * FLOOR_H + spec.head, topEnd, wz0, wz1);
+    } else if (isFront || desc.floors < 2) {
       put(x0, x1, H, top, wz0, wz1);
     }
   };
@@ -614,22 +617,25 @@ function addPiercedFacadeColliders(b: Builder, desc: BuildingDesc, top: number):
   const zEnd = z1 - WALL;
   for (const wx0 of [x0, x1 - WALL]) {
     const wx1 = wx0 + WALL;
-    for (let k = 0; k < desc.floors; k++) {
-      const y0 = k * FLOOR_H;
-      const ySill = y0 + spec.sill;
-      const yHead = y0 + spec.head;
-      const y1 = y0 + FLOOR_H;
-      b.solid(wx0, zStart, wx1, zEnd, y0, ySill);
-      b.solid(wx0, zStart, wx1, zEnd, yHead, y1);
+    if (desc.floors > 0) {
+      // Single continuous full-height box per side vertical pier column.
       let curZ = zStart;
       for (const [wz0, wz1] of winZs) {
         const clamped0 = Math.min(zEnd, wz0);
-        if (clamped0 - curZ > 0.01) b.solid(wx0, curZ, wx1, clamped0, ySill, yHead);
+        if (clamped0 - curZ > 0.01) b.solid(wx0, curZ, wx1, clamped0, 0, H);
         curZ = Math.max(curZ, wz1);
       }
-      if (zEnd - curZ > 0.01) b.solid(wx0, curZ, wx1, zEnd, ySill, yHead);
+      if (zEnd - curZ > 0.01) b.solid(wx0, curZ, wx1, zEnd, 0, H);
+
+      // Merged horizontal spandrel bands along side facade.
+      b.solid(wx0, zStart, wx1, zEnd, 0, spec.sill);
+      for (let k = 0; k < desc.floors - 1; k++) {
+        b.solid(wx0, zStart, wx1, zEnd, k * FLOOR_H + spec.head, (k + 1) * FLOOR_H + spec.sill);
+      }
+      b.solid(wx0, zStart, wx1, zEnd, (desc.floors - 1) * FLOOR_H + spec.head, top);
+    } else {
+      b.solid(wx0, zStart, wx1, zEnd, H, top);
     }
-    b.solid(wx0, zStart, wx1, zEnd, H, top);
   }
 }
 
