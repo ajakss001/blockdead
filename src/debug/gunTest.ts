@@ -384,11 +384,39 @@ export async function main(): Promise<number> {
     check(worst < 0, `${id}: the muzzle never through the wall (${(worst * 100).toFixed(1)} cm${worst >= 0 ? `, ${worstAt}` : ''})`);
   }
 
-  // 8. Every gun has its reload and inspect animations (test:anim checks them frame by frame).
+  // 8. Every gun has its reload, inspect, checkMag, and checkChamber animations (and checks preserve ammo).
   for (const id of GUN_IDS) {
     const a = gunAnimations(vm, id);
     const reload = GUNS[id].feed === 'mag' ? ['reload', 'reloadEmpty'] : GUNS[id].feed === 'rocket' ? ['reload'] : ['load'];
-    check([...reload, 'inspect'].every((k) => (a[k]?.length ?? 0) > 10), `${id}: animations ${[...reload, 'inspect'].join(', ')}`);
+    const req = [...reload, 'inspect', 'checkMag', 'checkChamber'];
+    check(req.every((k) => (a[k]?.length ?? 0) > 10), `${id}: animations ${req.join(', ')}`);
+  }
+  {
+    const p = pool(90, 3);
+    const inst = newInst('rifle_ak', 22);
+    const gs = new GunState('rifle_ak', inst, p);
+    runUntilIdle(gs);
+    const before = gs.loaded;
+    const evMag: string[] = [];
+    let dropped = false;
+    gs.update(1 / 60, { ...none, checkMag: true }).forEach((e) => evMag.push(e.kind));
+    for (let i = 0; i < 400 && gs.busy; i++) {
+      for (const e of gs.update(1 / 60, none)) {
+        evMag.push(e.kind);
+        if (e.kind === 'magOut' && e.drop) dropped = true;
+      }
+    }
+    check(gs.loaded === before && p.rounds === 90 && !dropped && evMag.includes('magCheckRead') && evMag.includes('magIn'), 'checkMag preserves ammo, never drops mag, emits magCheckRead + magIn');
+    let readLoaded = false;
+    const evCh: string[] = [];
+    gs.update(1 / 60, { ...none, checkChamber: true }).forEach((e) => evCh.push(e.kind));
+    for (let i = 0; i < 400 && gs.busy; i++) {
+      for (const e of gs.update(1 / 60, none)) {
+        evCh.push(e.kind);
+        if (e.kind === 'chamberCheckRead') readLoaded = e.loaded && !e.jammed;
+      }
+    }
+    check(gs.loaded === before && readLoaded && evCh.includes('chamberPull') && evCh.includes('chamberClose'), 'checkChamber preserves ammo & reports live chamber status');
   }
 
   // 9. Pause: no world time — the cases, magazines and rockets hold still, the gun's action doesn't go on.

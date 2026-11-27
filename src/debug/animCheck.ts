@@ -541,6 +541,8 @@ export function gunAnimations(vm: Viewmodel, id: GunId): Record<string, FrameRow
     until('unjam', 400, (i) => ({ reload: i === 0 }));
   }
   until('inspect', 400, (i) => ({ inspect: i === 0 }), true);
+  until('checkMag', 400, (i) => ({ checkMag: i === 0 }), true);
+  until('checkChamber', 400, (i) => ({ checkChamber: i === 0 }), true);
   if (g.modes.length > 1) until('mode', 100, (i) => ({ mode: i === 0 }), true);
   until('bash', 100, (i) => ({ bash: i === 0 }), false);
   // A wall comes close and goes (gunView.wall from its distance: muzzle up and back).

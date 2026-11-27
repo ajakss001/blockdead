@@ -170,19 +170,34 @@ export class GunHud {
       return;
     }
     const showMag = !f.inVehicle && gun.magCheckLeft > 0;
-    if (showMag) {
-      const status = gun.jammed ? tr('Заклинило', 'Jammed') : magCheckStatus(gun.mag, gun.capacity);
+    const showChamber = !f.inVehicle && !showMag && (gun.chamberCheckLeft ?? 0) > 0;
+    if (showMag || showChamber) {
+      let status: string;
+      let warn = false;
+      if (showMag) {
+        status = gun.jammed ? tr('Заклинило', 'Jammed') : magCheckStatus(gun.mag, gun.capacity);
+        warn = gun.jammed || gun.mag <= 0;
+      } else {
+        const cs = gun.chamberCheckStatus ?? (gun.jammed ? 'jammed' : gun.chamber ? 'loaded' : 'empty');
+        status =
+          cs === 'jammed'
+            ? tr('Заклинило', 'Jammed')
+            : cs === 'loaded'
+              ? tr('Патрон в патроннике', 'Chambered')
+              : tr('Патронник пуст', 'Chamber empty');
+        warn = cs !== 'loaded';
+      }
       const modeText = magCheckMode(gun);
-      const key = `${gun.id}|${status}|${modeText}|${gun.jammed ? 1 : 0}|${getLang()}`;
+      const key = `${gun.id}|${showChamber ? 'ch' : 'mg'}|${status}|${modeText}|${warn ? 1 : 0}|${getLang()}`;
       if (key !== this.magKey) {
         this.magKey = key;
         this.magStatus.textContent = status;
-        this.magStatus.style.color = gun.jammed || gun.mag <= 0 ? '#f0867a' : '';
+        this.magStatus.style.color = warn ? '#f0867a' : '';
         this.magMode.textContent = modeText;
         this.magMode.hidden = !modeText;
       }
     }
-    this.magPopup.classList.toggle('is-visible', showMag);
+    this.magPopup.classList.toggle('is-visible', showMag || showChamber);
 
     const wantReload = gun.mag === 0 && !gun.reloading && gun.reserve > 0;
     this.reload.hidden = !wantReload && !gun.jammed;

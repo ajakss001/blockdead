@@ -2,6 +2,7 @@ import './domStub';
 import { BufferGeometry, Float32BufferAttribute, Scene, Uint16BufferAttribute, Vector3 } from 'three';
 import { loadCharactersNode } from './nodeCharacters';
 import { FP_SHADOW_LAYER, stripUpperTriangles } from '../player/BodyModel';
+import { type GunPoseInput, newGunPoseOut, poseGun } from '../player/gunPose';
 import { PlayerController } from '../player/PlayerController';
 import { Bandits } from '../systems/Bandits';
 import { ESCAPE_ALTITUDE, HELI_SPOOL_TIME, Helicopter, PERIMETER_RADIUS } from '../systems/Helicopter';
@@ -803,7 +804,7 @@ export async function main(): Promise<number> {
         const noIntactPlane = !cBoeing.glbs.some((g) => g.id === 'passenger_airliner_22');
         const hasFuselage = cBoeing.glbs.some((g) => g.id === 'crashed_boeing_fuselage');
         const hasWing = cBoeing.glbs.some((g) => g.id === 'crashed_plane_wing');
-        const rubbleBoeing = cBoeing.glbs.filter((g) => g.id === 'concrete_rubble_mound').length;
+        const rubbleBoeing = cBoeing.glbs.filter((g) => g.id === 'concrete_rubble_mound' || g.id === 'charred_rubble_pile').length;
         const hasBreachBoeing = cBoeing.glbs.some((g) => g.id === 'building_breach_frame');
 
         const breachBldg = cMi8.buildings.find((b) => !!b.breach);
@@ -940,6 +941,79 @@ export async function main(): Promise<number> {
         zsim.update(1 / 60, sense);
         const diedCount2 = zsim.died.length;
         check(killed && !secondHit && diedCount1 === 1 && diedCount2 === 0, `P8: post-update zombie kill produces strictly 1 death event (tick1=${diedCount1}, tick2=${diedCount2})`);
+      }
+
+      // First-person weapon checkMag & checkChamber animations + live state events
+      {
+        const ammo = { count: () => 90, take: (_id: string, n: number) => n, give: () => {}, spareMags: () => 2, takeMag: () => true };
+        const stAk = newInst('rifle_ak', 18);
+        const gsAk = new GunState('rifle_ak', stAk, ammo);
+        gsAk.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true });
+        for (let i = 0; i < 60 && gsAk.busy; i++) gsAk.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true });
+        const beforeLoaded = gsAk.loaded;
+        const magEvents: string[] = [];
+        let magDetachedMid = false;
+        const poseOut = newGunPoseOut();
+        const poseIn: GunPoseInput = {
+          ads: 0, sprint: 0, crouch: 0, wall: 0, lower: 0, pump: 0,
+          action: 'idle', t: 0, duration: 1, sinceShot: -1, open: false, chamber: true,
+          kickBack: 0, kickUp: 0, kickSide: 0, kickRoll: 0,
+        };
+        gsAk.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, checkMag: true, bash: false, canFire: true }).forEach((e) => magEvents.push(e.kind));
+        for (let i = 0; i < 200 && gsAk.busy; i++) {
+          gsAk.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true }).forEach((e) => magEvents.push(e.kind));
+          poseIn.action = gsAk.action;
+          poseIn.t = gsAk.t;
+          poseIn.duration = gsAk.duration;
+          poseIn.chamber = gsAk.inst.chamber;
+          poseGun('rifle_ak', poseIn, poseOut);
+          if (!poseOut.magOnGun) magDetachedMid = true;
+        }
+        const stHunt = newInst('rifle_hunting', 4);
+        stHunt.jammed = false;
+        const gsHunt = new GunState('rifle_hunting', stHunt, ammo);
+        for (let i = 0; i < 60 && gsHunt.busy; i++) gsHunt.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true });
+        let chLoaded = false;
+        let chJammed = true;
+        let hasChRead = false;
+        let maxBoltLift = 0;
+        let maxSlide = 0;
+        gsHunt.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, checkChamber: true, bash: false, canFire: true }).forEach((e) => {
+          if (e.kind === 'chamberCheckRead') {
+            hasChRead = true;
+            chLoaded = e.loaded;
+            chJammed = e.jammed;
+          }
+        });
+        for (let i = 0; i < 200 && gsHunt.busy; i++) {
+          gsHunt.update(1 / 60, { trigger: false, pulled: false, reload: false, mode: false, inspect: false, bash: false, canFire: true }).forEach((e) => {
+            if (e.kind === 'chamberCheckRead') {
+              hasChRead = true;
+              chLoaded = e.loaded;
+              chJammed = e.jammed;
+            }
+          });
+          poseIn.action = gsHunt.action;
+          poseIn.t = gsHunt.t;
+          poseIn.duration = gsHunt.duration;
+          poseIn.chamber = gsHunt.inst.chamber;
+          poseGun('rifle_hunting', poseIn, poseOut);
+          maxBoltLift = Math.max(maxBoltLift, poseOut.boltLift);
+          maxSlide = Math.max(maxSlide, poseOut.slide);
+        }
+        const checkOk =
+          magDetachedMid &&
+          magEvents.includes('magCheckRead') &&
+          gsAk.loaded === beforeLoaded &&
+          hasChRead &&
+          chLoaded &&
+          !chJammed &&
+          maxBoltLift > 0.5 &&
+          maxSlide > 0.015;
+        check(
+          checkOk,
+          `P8: weapon checkMag (detached=${magDetachedMid}, ammo=${gsAk.loaded}/${beforeLoaded}) & checkChamber (boltLift=${maxBoltLift.toFixed(2)}, slide=${maxSlide.toFixed(3)}) active`,
+        );
       }
     }
   }

@@ -17,7 +17,7 @@ import {
 } from 'three';
 import { GUNS, type GunId, isGun, type ModId } from '../weapons/guns';
 import type { GunAction } from '../weapons/gunState';
-import { GunModel } from '../weapons/gunModel';
+import { GunModel, loadWeaponPart, weaponPartMaterial } from '../weapons/gunModel';
 import { grim } from '../style/palette';
 import { gunRigData, type GunPoseInput, type GunPoseOut, newGunPoseOut, poseGun } from './gunPose';
 import { clamp, damp } from '../core/math';
@@ -131,7 +131,7 @@ export class Viewmodel {
   /** Guns: each in a holder in the right hand (the grip_main frame undone), made on first use. */
   private readonly guns = new Map<GunId, { holder: Group; model: GunModel; base: Matrix4 }>();
   /** The shell (pump gun / bolt rifle) in the left hand while loading. */
-  private readonly shell: Mesh;
+  private readonly shell: Group;
   /** Set by the scene each frame while a gun is in hand. */
   readonly gunView: GunView = { action: 'idle', t: 0, duration: 1, open: false, ads: false, wall: 0, wallDist: 99, chamber: true, mods: [] };
   /** The pose of the gun this frame (read by test:anim, ?animdebug and the scene for the muzzle). */
@@ -193,13 +193,19 @@ export class Viewmodel {
     this.lens = ((this.torchModel.children[0] as Mesh).material as Material[])[1] as MeshStandardMaterial;
     this.materials.push(this.lens);
     this.handL.add(this.torch);
+    this.shell = new Group();
+    this.shell.position.set(0.03, 0, -0.05);
+    this.shell.visible = false;
     const shellGeo = new CylinderGeometry(0.0105, 0.0105, 0.07, 8).rotateX(Math.PI / 2);
     this.geometries.push(shellGeo);
     const shellMat = new MeshLambertMaterial({ color: grim(0x4a5a44) });
     this.materials.push(shellMat);
-    this.shell = new Mesh(shellGeo, shellMat);
-    this.shell.position.set(0.03, 0, -0.05);
-    this.shell.visible = false;
+    this.shell.add(new Mesh(shellGeo, shellMat));
+    void loadWeaponPart('shell_12g').then((part) => {
+      if (!part) return;
+      this.shell.clear();
+      this.shell.add(new Mesh(part.geo, weaponPartMaterial(`shell_12g:${part.map ? 't' : 'c'}`, grim(0x7c2a24), part.map)));
+    });
     this.handL.add(this.shell);
 
     this.root.add(this.armR, this.armL, ...this.uppers);
@@ -236,9 +242,14 @@ export class Viewmodel {
     return this.pendingItem !== null || this.rightDown > 0.05;
   }
 
-  /** Camera pitch the swing asks for this frame (rad, + up): leaning back in the windup. */
+  /** Camera pitch the swing or firearm weapon animation asks for this frame (rad, + up). */
   get cameraPitch(): number {
-    return this.rig.pitch;
+    return this.rig.pitch + (isGun(this.item) ? this.gunPose.camPitch : 0);
+  }
+
+  /** Subtle first-person camera roll impulse during mechanical weapon handling (rad). */
+  get cameraRoll(): number {
+    return isGun(this.item) ? this.gunPose.camRoll : 0;
   }
 
   /** The current weapon needs both hands: the flashlight is worn on the head. */
@@ -536,7 +547,8 @@ export class Viewmodel {
     model.setMods(gv.mods);
     // Sights, wall: eased; the aim wavers after a while in the sights.
     const aimT = GUNS[id].times.aim;
-    const wantAds = gv.ads && this.sprintT < 0.3 && this.rightDown < 0.05 && gv.wall < 0.3;
+    const noAdsAction = gv.action === 'checkMag' || gv.action === 'checkChamber' || gv.action === 'inspect';
+    const wantAds = gv.ads && !noAdsAction && this.sprintT < 0.3 && this.rightDown < 0.05 && gv.wall < 0.3;
     this.ads = clamp(this.ads + (wantAds ? dt : -dt) / aimT, 0, 1);
     this.adsTime = this.ads > 0.9 ? this.adsTime + dt : 0;
     this.wallT = damp(this.wallT, gv.wall, 16, dt);
@@ -631,6 +643,7 @@ export class Viewmodel {
     const p = model.parts;
     p.slide.position.z = out.slide;
     p.pump.position.z = out.pump;
+    model.setBoltLift(out.boltLift);
     p.mag.visible = out.magShown;
     if (out.magOnGun) {
       p.mag.position.set(...model.sockets.mag);
@@ -665,7 +678,7 @@ export class Viewmodel {
     this.root.updateMatrixWorld(true);
     const hp = gripHands(id, true, true);
     this.arms.setPose(0, hp.R);
-    this.arms.setPose(1, out.left === 'gun' ? (out.onBolt ? hp.bolt : hp.L) : out.left === 'none' ? 'relaxed' : 'grip_fist');
+    this.arms.setPose(1, out.onBolt ? hp.bolt : out.left === 'gun' ? hp.L : out.left === 'none' ? 'relaxed' : 'grip_fist');
     this.arms.update(0, this.uppers[0], rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], rig.left.pose.upperLen, this.armL, this.handL);
   }

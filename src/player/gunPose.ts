@@ -2,8 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { clamp, easeInOutSine } from '../core/math';
 import { gunSockets, type GunSockets, type HandFrame, type V3 } from '../weapons/gunFrame';
 import { GUNS, type GunClass, type GunId } from '../weapons/guns';
-import type { GunAction } from '../weapons/gunState';
-import { RELOAD_MARKS } from '../weapons/gunState';
+import { CHECK_CHAMBER_MARKS, CHECK_MAG_MARKS, type GunAction, RELOAD_MARKS } from '../weapons/gunState';
 import { basisQuat } from './armRig';
 import { GUN_TUNED } from './gunTuned';
 import { GRIPS, onGripsChanged, quat, vec } from './grips';
@@ -71,6 +70,11 @@ export interface GunPoseOut {
   /** The moving parts, m back along the gun: the slide / bolt, the pump. */
   slide: number;
   pump: number;
+  /** Bolt-action handle lift 0..1 (rotation on Z for bolt-action extraction & checks). */
+  boltLift: number;
+  /** Subtle mechanical camera impulse from handling (rad). */
+  camPitch: number;
+  camRoll: number;
   /** The rocket shows in the tube (loaded). */
   rocket: boolean;
   /** The shoulders off their rest (the stock pulled in, the arms pushed out in the sights), camera space. */
@@ -122,6 +126,8 @@ export interface GunPoses {
   lowered: PoseKey;
   inspectA: PoseKey;
   inspectB: PoseKey;
+  checkMag: PoseKey;
+  checkChamber: PoseKey;
   bash: PoseKey;
   crouch: number;
   /** The pouch the left hand reaches for (camera space): new magazines, shells, the rocket. */
@@ -159,6 +165,8 @@ const CLASS: Record<GunClass, GunPoses> = {
     lowered: { at: [0.12, -0.45, -0.28], turn: [-1.0, 0, 0] },
     inspectA: { at: [0.05, -0.12, -0.36], turn: [0.15, -0.5, 0.35] },
     inspectB: { at: [0.06, -0.1, -0.36], turn: [0.35, 0.3, -0.35] },
+    checkMag: { at: [0.07, -0.14, -0.35], turn: [0.24, 0.16, -0.26] },
+    checkChamber: { at: [0.06, -0.11, -0.34], turn: [0.14, -0.24, 0.34] },
     bash: { at: [0.06, -0.12, -0.5], turn: [0.2, -0.35, 0.2] },
     crouch: -0.015,
     pouch: [-0.12, -0.5, -0.15],
@@ -187,6 +195,8 @@ const CLASS: Record<GunClass, GunPoses> = {
     lowered: { at: [0.15, -0.45, -0.18], turn: [-0.9, 0.3, 0] },
     inspectA: { at: [0.08, -0.15, -0.18], turn: [0.15, -0.4, 0.35] },
     inspectB: { at: [0.09, -0.13, -0.18], turn: [0.3, 0.25, -0.35] },
+    checkMag: { at: [0.11, -0.19, -0.21], turn: [0.22, 0.18, -0.28] },
+    checkChamber: { at: [0.11, -0.15, -0.22], turn: [0.14, -0.22, 0.34] },
     bash: { at: [0.08, -0.15, -0.32], turn: [0.15, -0.35, 0.2] },
     crouch: -0.02,
     pouch: [-0.12, -0.5, -0.12],
@@ -215,6 +225,8 @@ const CLASS: Record<GunClass, GunPoses> = {
     lowered: { at: [0.12, -0.45, -0.08], turn: [-0.8, 0.2, 0] },
     inspectA: { at: [0.05, -0.12, -0.1], turn: [0.1, -0.3, 0.25] },
     inspectB: { at: [0.06, -0.1, -0.1], turn: [0.2, 0.2, -0.25] },
+    checkMag: { at: [0.07, -0.13, -0.11], turn: [0.14, 0.15, -0.2] },
+    checkChamber: { at: [0.07, -0.12, -0.11], turn: [0.1, -0.18, 0.24] },
     bash: { at: [0.06, -0.12, -0.22], turn: [0.1, -0.2, 0.1] },
     crouch: -0.02,
     pouch: [-0.12, -0.5, -0.08],
@@ -366,6 +378,11 @@ function blendKey(d: GunRigData, k: PoseKey, w: number, at: Vector3, q: Quaterni
 }
 
 const seg = (k: number, a: number, b: number) => easeInOutSine(clamp((k - a) / (b - a), 0, 1));
+const bump = (k: number, center: number, width: number) => {
+  const x = clamp(1 - Math.abs(k - center) / width, 0, 1);
+  return x * x * (3 - 2 * x);
+};
+const snap = (k: number, atK: number, inW = 0.04, outW = 0.1) => (k < atK ? seg(k, atK - inW, atK) : 1 - seg(k, atK, atK + outW));
 
 /** Camera-space transform of a gun-frame hand frame on a gun posed at (pos, q). */
 function onGun(pos: Vector3, q: Quaternion, h: HandOnGun, outGrip: Vector3, outQ: Quaternion, dz = 0): void {
@@ -397,31 +414,117 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   // Sprint, with the arms' pump.
   blendKey(d, d.cls.sprint, inp.sprint, at, q);
   at.y += inp.pump * 0.02 * inp.sprint;
-  // The action's own pose (reload, inspect, butt strike, the fire-mode thumb).
+  // The action's own pose (reload, inspect, checkMag, checkChamber, butt strike, the fire-mode thumb).
   const k = inp.duration > 0 ? clamp(inp.t / inp.duration, 0, 1) : 1;
   const a = inp.action;
   const reloading = a === 'reload' || a === 'reloadEmpty' || a === 'unjam' || a === 'loadStart' || a === 'loadOne' || a === 'loadEnd';
+  out.boltLift = 0;
+  out.camPitch = 0;
+  out.camRoll = 0;
   let rw = 0;
   if (a === 'reload' || a === 'reloadEmpty' || a === 'unjam') rw = seg(k, 0, 0.14) * (1 - seg(k, 0.86, 1));
   else if (a === 'loadStart') rw = seg(k, 0, 1);
   else if (a === 'loadOne') rw = 1;
   else if (a === 'loadEnd') rw = 1 - seg(k, 0, 1);
   blendKey(d, d.cls.reload, rw, at, q);
-  // A bolt rifle's own pose while the bolt is worked (as the hand reaches it, back as it lets go).
-  if (a === 'cycle' && g.action === 'bolt' && d.cls.cycle) blendKey(d, d.cls.cycle, seg(k, 0, 0.25) * (1 - seg(k, 0.6, 1)), at, q);
+
+  // Tactile mechanical secondary motion & subtle camera kick synchronized to reload/unjam/cycle events.
+  if (a === 'reload' || a === 'reloadEmpty') {
+    const empty = a === 'reloadEmpty';
+    const dip = bump(k, 0.44, 0.18);
+    at.y -= 0.007 * dip;
+    const u = snap(k, RELOAD_MARKS.out, 0.04, 0.09);
+    at.y -= 0.006 * u;
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), (empty ? -0.045 : -0.025) * u));
+    out.camPitch -= 0.004 * u;
+    const s = snap(k, RELOAD_MARKS.in, 0.035, 0.11);
+    at.y += 0.012 * s;
+    at.z += 0.008 * s;
+    q.multiply(_q.setFromAxisAngle(_a.set(1, 0, 0), 0.028 * s));
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.035 * s));
+    out.camPitch += 0.007 * s;
+    out.camRoll -= 0.006 * s;
+    if (empty) {
+      const r = snap(k, RELOAD_MARKS.rack, 0.04, 0.1);
+      at.z += 0.01 * r;
+      q.multiply(_q.setFromAxisAngle(_a.set(1, 0, 0), -0.02 * r));
+      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.03 * r));
+      out.camPitch -= 0.005 * r;
+      out.camRoll += 0.005 * r;
+    }
+  } else if (a === 'unjam') {
+    const s = snap(k, 0.26, 0.04, 0.09);
+    at.y += 0.016 * s;
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.04 * s));
+    out.camPitch += 0.008 * s;
+    const r = snap(k, 0.7, 0.045, 0.11);
+    at.z += 0.014 * r;
+    q.multiply(_q.setFromAxisAngle(_a.set(1, 0, 0), -0.03 * r));
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.045 * r));
+    out.camPitch -= 0.008 * r;
+    out.camRoll += 0.007 * r;
+  }
+
+  // A bolt rifle or pump shotgun's cycle action.
+  if (a === 'cycle' && g.action === 'bolt') {
+    const cw = seg(k, 0, 0.22) * (1 - seg(k, 0.75, 1));
+    if (d.cls.cycle) blendKey(d, d.cls.cycle, cw, at, q);
+    const lock = snap(k, 0.82, 0.035, 0.09);
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.04 * cw - 0.03 * lock));
+    out.camRoll += 0.005 * lock;
+  } else if (a === 'cycle' && g.action === 'pump') {
+    const pw = Math.sin(Math.PI * seg(k, 0.12, 0.88));
+    at.z += 0.012 * pw;
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.035 * pw));
+    out.camRoll += 0.004 * bump(k, 0.5, 0.35);
+  }
+
   if (a === 'inspect') {
-    // Turned to look at its left side, then up at its right, back.
+    // Smooth weapon showcase: right side, organic drift, left side, back.
     const w1 = seg(k, 0, 0.25) * (1 - seg(k, 0.45, 0.6));
     const w2 = seg(k, 0.5, 0.7) * (1 - seg(k, 0.85, 1));
     blendKey(d, d.cls.inspectA, w1, at, q);
     blendKey(d, d.cls.inspectB, w2, at, q);
+    const drift = Math.sin(Math.PI * clamp((k - 0.12) / 0.76, 0, 1));
+    at.y += Math.sin(k * Math.PI * 2) * 0.004 * drift;
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), Math.sin(k * Math.PI * 3) * 0.025 * drift));
+  } else if (a === 'checkMag') {
+    const w = seg(k, 0, 0.18) * (1 - seg(k, 0.82, 1));
+    blendKey(d, d.cls.checkMag, w, at, q);
+    if (g.feed === 'tube') {
+      // Roll shotgun port-up slightly toward camera to check shell tube follower.
+      const tw = seg(k, 0.16, 0.34) * (1 - seg(k, 0.68, 0.88));
+      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.62 * tw));
+      at.y += 0.03 * tw;
+    } else if (g.feed === 'internal') {
+      // Cant hunting rifle slightly more to inspect internal magazine through top port.
+      const iw = seg(k, 0.14, 0.3) * (1 - seg(k, 0.72, 0.92));
+      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.28 * iw));
+    } else if (g.feed === 'mag') {
+      const seat = snap(k, CHECK_MAG_MARKS.in, 0.035, 0.11);
+      at.y += 0.011 * seat;
+      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.028 * seat));
+      out.camPitch += 0.006 * seat;
+      out.camRoll -= 0.005 * seat;
+    }
+  } else if (a === 'checkChamber') {
+    const w = seg(k, 0, 0.25) * (1 - seg(k, 0.72, 1));
+    blendKey(d, g.action === 'bolt' ? (d.cls.cycle ?? d.cls.checkMag) : d.cls.checkChamber, w, at, q);
+    const pullK = snap(k, CHECK_CHAMBER_MARKS.pull, 0.04, 0.08);
+    const closeK = snap(k, CHECK_CHAMBER_MARKS.close, 0.035, 0.1);
+    at.z += 0.006 * pullK - 0.005 * closeK;
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.025 * closeK));
+    out.camPitch -= 0.003 * pullK - 0.004 * closeK;
+    out.camRoll += 0.004 * closeK;
   } else if (a === 'bash') {
     // The butt (a pistol's frame) driven forward and to the left, then back.
     const w = seg(k, 0, 0.3) * (1 - seg(k, 0.45, 1));
     blendKey(d, d.cls.bash, w, at, q);
   } else if (a === 'mode') {
     const w = Math.sin(Math.PI * k);
-    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.08 * w));
+    q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.12 * w));
+    q.multiply(_q.setFromAxisAngle(_a.set(1, 0, 0), 0.025 * snap(k, 0.48, 0.12, 0.25)));
+    out.camRoll -= 0.004 * w;
   }
   // Against a wall: muzzle up, the gun pulled back.
   blendKey(d, d.cls.wall, easeInOutSine(clamp(inp.wall, 0, 1)), at, q);
@@ -458,11 +561,17 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   out.left = 'gun';
   // Left hand on its socket (the pump moves under it).
   if (a === 'cycle' && g.action === 'pump') out.pump = 0.085 * Math.sin(Math.PI * seg(k, 0, 1));
+  else if (a === 'checkChamber' && g.action === 'pump') {
+    const pull = k < 0.38 ? seg(k, 0.2, 0.38) : k < 0.6 ? 1 : 1 - seg(k, 0.6, 0.78);
+    out.pump = 0.048 * pull;
+  }
   onGun(at, q, d.off, out.leftGrip, out.leftQ, out.pump);
   out.rollL = P.adsOffRoll * ads;
   if (out.rollL) out.leftQ.multiply(_q.setFromAxisAngle(_a.set(0, 1, 0), out.rollL));
   magSeated(d, at, q, out);
-  if (reloading || (a === 'cycle' && g.action === 'bolt')) leftPath(d, g.feed, a, k, at, q, out);
+  if (reloading || (a === 'cycle' && g.action === 'bolt') || a === 'checkMag' || a === 'checkChamber') {
+    leftPath(d, g.feed, g.action, a, k, at, q, inp.open, out);
+  }
   // The keys: the left hand (what it holds goes with it).
   if (keys) keyLeft(keys, k, at, q, out);
 }
@@ -543,6 +652,7 @@ const _hG = new Vector3();
 const _hQ = new Quaternion();
 const _mA = { pos: new Vector3(), q: new Quaternion() };
 const _mB = { pos: new Vector3(), q: new Quaternion() };
+const _mC = { pos: new Vector3(), q: new Quaternion() };
 const _mP = { pos: new Vector3(), q: new Quaternion() };
 const _mt = { pos: new Vector3(), q: new Quaternion() };
 
@@ -559,11 +669,21 @@ function lerpM(a: { pos: Vector3; q: Quaternion }, b: { pos: Vector3; q: Quatern
 }
 
 /**
- * The left hand's path through a reload (k = share of the action's time), the magazine with it.
+ * The left hand's path through a reload, cycle, magazine check, or chamber check (k = share of action's time).
  * Marks (gunState RELOAD_MARKS): out 0.28 — the magazine leaves the well; in 0.62 — the new one seated;
  * rack 0.85 — the action worked (from empty).
  */
-function leftPath(d: GunRigData, feed: string, a: GunAction, k: number, at: Vector3, q: Quaternion, out: GunPoseOut): void {
+function leftPath(
+  d: GunRigData,
+  feed: string,
+  actionType: string,
+  a: GunAction,
+  k: number,
+  at: Vector3,
+  q: Quaternion,
+  open: boolean,
+  out: GunPoseOut,
+): void {
   _offG.copy(out.leftGrip);
   _offQ.copy(out.leftQ);
   // Magazine frames: A seated, B pulled out down the well, P at the pouch (turned as at B).
@@ -574,6 +694,91 @@ function leftPath(d: GunRigData, feed: string, a: GunAction, k: number, at: Vect
   _mP.pos.set(...d.cls.pouch);
   _mP.q.copy(q).premultiply(_q.setFromAxisAngle(_a.set(1, 0, 0), -0.5));
   const M = RELOAD_MARKS;
+
+  if (a === 'checkMag') {
+    if (feed === 'mag') {
+      const pistol = GUNS[d.id].cls === 'pistol';
+      const rock = bump(k, 0.5, 0.12) * Math.sin(k * Math.PI * 6) * 0.12;
+      _mC.pos.set(pistol ? -0.025 : -0.045, pistol ? -0.09 : -0.06, pistol ? -0.34 : -0.28);
+      _mC.pos.y += Math.sin(clamp((k - 0.38) / 0.22, 0, 1) * Math.PI * 2) * 0.007 * bump(k, 0.5, 0.12);
+      _mC.q
+        .copy(q)
+        .premultiply(_q.setFromAxisAngle(_a.set(0, 1, 0), 0.52 + rock))
+        .multiply(_q2.setFromAxisAngle(_a.set(1, 0, 0), pistol ? 0.34 : 0.28));
+      const CM = CHECK_MAG_MARKS;
+      let m: { pos: Vector3; q: Quaternion } | null = null;
+      if (k < 0.13) {
+        holdMag(d, _mA, _hG, _hQ);
+        between(_offG, _offQ, _hG, _hQ, seg(k, 0, 0.13), out);
+        out.left = 'none';
+      } else if (k < CM.out) {
+        m = lerpM(_mA, _mB, seg(k, 0.13, CM.out), _mt);
+      } else if (k < 0.39) {
+        m = lerpM(_mB, _mC, seg(k, CM.out, 0.39), _mt);
+      } else if (k < 0.59) {
+        _mt.pos.copy(_mC.pos);
+        _mt.q.copy(_mC.q);
+        m = _mt;
+      } else if (k < 0.72) {
+        m = lerpM(_mC, _mB, seg(k, 0.59, 0.72), _mt);
+      } else if (k < CM.in) {
+        m = lerpM(_mB, _mA, seg(k, 0.72, CM.in), _mt);
+      } else {
+        holdMag(d, _mA, _hG, _hQ);
+        between(_hG, _hQ, _offG, _offQ, seg(k, CM.in + 0.01, 0.99), out);
+        out.left = 'none';
+      }
+      if (m) {
+        out.magOnGun = false;
+        out.magPos.copy(m.pos);
+        out.magQ.copy(m.q);
+        holdMag(d, m, out.leftGrip, out.leftQ);
+        out.left = 'mag';
+      }
+      return;
+    }
+    if (feed === 'tube') {
+      onGun(at, q, d.load, _hG, _hQ);
+      if (k < 0.28) between(_offG, _offQ, _hG, _hQ, seg(k, 0, 0.28), out);
+      else if (k < 0.68) {
+        out.leftGrip.copy(_hG);
+        out.leftQ.copy(_hQ);
+      } else between(_hG, _hQ, _offG, _offQ, seg(k, 0.68, 0.98), out);
+      out.left = 'none';
+      return;
+    }
+    if (feed === 'internal') {
+      boltWork(d, k, at, q, _offG, _offQ, out, 0, 0.2, 0.3, 0.42, 0.62, 0.72, 0.82, 0.036, true);
+      out.left = 'none';
+      return;
+    }
+    return;
+  }
+
+  if (a === 'checkChamber') {
+    if (actionType === 'pump') return;
+    if (actionType === 'bolt') {
+      boltWork(d, k, at, q, _offG, _offQ, out, 0, 0.2, 0.3, 0.42, 0.6, 0.7, 0.8, 0.034, true);
+      out.left = 'none';
+      return;
+    }
+    if (feed === 'rocket') return;
+    // Pistols & self-loading rifles: press-check / half-rack slide or charging handle.
+    onGun(at, q, d.bolt, _pose.at, _pose.q);
+    const pull = k < 0.38 ? seg(k, 0.22, 0.38) : k < 0.6 ? 1 : 1 - seg(k, 0.6, 0.74);
+    const travel = open ? 0.005 * pull : (GUNS[d.id].cls === 'pistol' ? 0.017 : 0.028) * pull;
+    const backV = _p2.set(0, 0, 1).applyQuaternion(q).multiplyScalar(travel);
+    if (k < 0.22) between(_offG, _offQ, _pose.at, _pose.q, seg(k, 0, 0.22), out);
+    else if (k < 0.74) {
+      out.leftGrip.copy(_pose.at).add(backV);
+      out.leftQ.copy(_pose.q);
+    } else between(_pose.at, _pose.q, _offG, _offQ, seg(k, 0.74, 0.98), out);
+    if (k >= 0.22 && k < 0.74) out.slide = open ? Math.max(0.028, 0.028 + travel) : travel;
+    out.onBolt = k >= 0.13 && k < 0.78;
+    out.left = 'none';
+    return;
+  }
+
   if (feed === 'mag' && (a === 'reload' || a === 'reloadEmpty')) {
     const empty = a === 'reloadEmpty';
     let m: { pos: Vector3; q: Quaternion } | null = null;
@@ -621,8 +826,8 @@ function leftPath(d: GunRigData, feed: string, a: GunAction, k: number, at: Vect
     return;
   }
   if (a === 'cycle') {
-    // The bolt rifle: the left hand from the stock to the bolt, up-back-forward-down, back.
-    boltPath(d, k, at, q, _offG, _offQ, out, 0, 0.25, 0.55, 1);
+    // Bolt rifle: reach bolt, lift handle, pull back, hold briefly, push forward, lock handle down, return.
+    boltWork(d, k, at, q, _offG, _offQ, out, 0, 0.18, 0.28, 0.46, 0.54, 0.72, 0.84, 0.055, true);
     out.left = 'none';
     return;
   }
@@ -658,6 +863,47 @@ function leftPath(d: GunRigData, feed: string, a: GunAction, k: number, at: Vect
     between(pouchG, pouchQ, _offG, _offQ, seg(k, 0, 1), out);
     out.left = 'none';
   }
+}
+
+/**
+ * Four-phase bolt work: reach `from -> bolt` (t0..tReach), lift handle (tReach..tLift), pull back (tLift..tBack),
+ * hold (tBack..tHold), push forward (tHold..tFwd), lock handle down (tFwd..tLock), return (tLock..1).
+ */
+function boltWork(
+  d: GunRigData,
+  k: number,
+  at: Vector3,
+  q: Quaternion,
+  fromG: Vector3,
+  fromQ: Quaternion,
+  out: GunPoseOut,
+  t0: number,
+  tReach: number,
+  tLift: number,
+  tBack: number,
+  tHold: number,
+  tFwd: number,
+  tLock: number,
+  travel: number,
+  useLift: boolean,
+): void {
+  onGun(at, q, d.bolt, _pose.at, _pose.q);
+  const lift = !useLift ? 0 : k < tReach ? 0 : k < tLift ? seg(k, tReach, tLift) : k < tFwd ? 1 : k < tLock ? 1 - seg(k, tFwd, tLock) : 0;
+  const back = k < tLift ? 0 : k < tBack ? seg(k, tLift, tBack) * travel : k < tHold ? travel : k < tFwd ? (1 - seg(k, tHold, tFwd)) * travel : 0;
+  out.boltLift = lift;
+  out.slide = back;
+  if (k < tReach) {
+    between(fromG, fromQ, _pose.at, _pose.q, seg(k, t0, tReach), out);
+  } else if (k < tLock) {
+    out.leftGrip.copy(_pose.at);
+    out.leftGrip.addScaledVector(_p2.set(0, 1, 0).applyQuaternion(q), 0.014 * lift);
+    out.leftGrip.addScaledVector(_p2.set(0, 0, 1).applyQuaternion(q), back);
+    out.leftQ.copy(_pose.q);
+  } else {
+    onGun(at, q, d.off, _offG, _offQ, 0);
+    between(_pose.at, _pose.q, _offG, _offQ, seg(k, tLock, 1), out);
+  }
+  out.onBolt = k >= t0 + (tReach - t0) * 0.6 && k < tLock;
 }
 
 /**
@@ -697,6 +943,9 @@ export function newGunPoseOut(): GunPoseOut {
     onBolt: false,
     slide: 0,
     pump: 0,
+    boltLift: 0,
+    camPitch: 0,
+    camRoll: 0,
     rocket: true,
     shoulderR: new Vector3(),
     shoulderL: new Vector3(),

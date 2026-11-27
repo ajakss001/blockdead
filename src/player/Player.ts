@@ -374,7 +374,12 @@ export class Player {
     this.camera.position.set(_eye.x, _eye.y - this.landDip * bob, _eye.z);
     this.shakeT = damp(this.shakeT, 0, 14, frameDt);
     const sh = this.shakeT * 0.02 * bob;
-    this.camera.rotation.set(c.pitch + this.viewmodel.cameraPitch - this.hitKick * bob + (Math.random() - 0.5) * sh, c.yaw + (Math.random() - 0.5) * sh, Math.sin(phase) * 0.004 * amp * bob + (Math.random() - 0.5) * sh, 'YXZ');
+    this.camera.rotation.set(
+      c.pitch + this.viewmodel.cameraPitch - this.hitKick * bob + (Math.random() - 0.5) * sh,
+      c.yaw + (Math.random() - 0.5) * sh,
+      Math.sin(phase) * 0.004 * amp * bob + this.viewmodel.cameraRoll * bob + (Math.random() - 0.5) * sh,
+      'YXZ',
+    );
     // The sights narrow the view a little (the scene sets the base field of view on resize).
     if (!this.baseFov) this.baseFov = this.camera.fov;
     const want = 1 + (this.zoom - 1) * this.viewmodel.ads;

@@ -74,9 +74,9 @@ export class KeyboardMouseInput {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (!this.locked && !this.keysWithoutLock) return;
-    if (e.altKey && e.code === 'KeyT') {
+    if (e.code === 'KeyT') {
       e.preventDefault();
-      if (!e.repeat) this.input.press('checkAmmo');
+      if (!e.repeat) this.input.press(e.shiftKey ? 'checkChamber' : 'checkAmmo');
       return;
     }
     if (e.altKey && e.code === 'KeyE') {
@@ -98,6 +98,9 @@ export class KeyboardMouseInput {
     this.keys.delete(e.code);
     if (e.code === 'KeyT' || e.code === 'AltLeft' || e.code === 'AltRight') {
       this.input.release('checkAmmo');
+    }
+    if (e.code === 'KeyT' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      this.input.release('checkChamber');
     }
     if (e.code === 'KeyE' || e.code === 'AltLeft' || e.code === 'AltRight') {
       this.input.release('peek');

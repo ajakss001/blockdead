@@ -42,7 +42,7 @@ export interface AmmoSource {
   takeMag(): boolean;
 }
 
-export type GunAction = 'idle' | 'draw' | 'holster' | 'cycle' | 'reload' | 'reloadEmpty' | 'loadStart' | 'loadOne' | 'loadEnd' | 'unjam' | 'inspect' | 'mode' | 'bash';
+export type GunAction = 'idle' | 'draw' | 'holster' | 'cycle' | 'reload' | 'reloadEmpty' | 'loadStart' | 'loadOne' | 'loadEnd' | 'unjam' | 'inspect' | 'checkMag' | 'checkChamber' | 'mode' | 'bash';
 
 /** What happened this step (sounds, effects, the hands). */
 export type GunEvent =
@@ -53,6 +53,10 @@ export type GunEvent =
   | { kind: 'casing' }
   | { kind: 'magOut'; drop: boolean }
   | { kind: 'magIn' }
+  | { kind: 'magCheckRead' }
+  | { kind: 'chamberPull' }
+  | { kind: 'chamberCheckRead'; loaded: boolean; jammed: boolean }
+  | { kind: 'chamberClose' }
   | { kind: 'rack' }
   | { kind: 'shellIn' }
   | { kind: 'rocketIn' }
@@ -68,6 +72,8 @@ export interface GunInput {
   reload: boolean;
   mode: boolean;
   inspect: boolean;
+  checkMag?: boolean;
+  checkChamber?: boolean;
   bash: boolean;
   /** Not sprinting, not against a wall, not busy. */
   canFire: boolean;
@@ -75,6 +81,10 @@ export interface GunInput {
 
 /** Of a reload action, when (share of its time) the magazine leaves, the new one is in, the action is worked. */
 export const RELOAD_MARKS = { out: 0.28, in: 0.62, rack: 0.85 };
+/** Marks of the Tarkov-style magazine weight/level check. */
+export const CHECK_MAG_MARKS = { out: 0.22, read: 0.45, in: 0.80 };
+/** Marks of the press-check / chamber inspection. */
+export const CHECK_CHAMBER_MARKS = { pull: 0.24, read: 0.44, close: 0.70 };
 
 export class GunState {
   readonly cfg: GunConfig;
@@ -168,6 +178,14 @@ export class GunState {
       ev.push({ kind: 'mode', mode: this.inst.mode });
       return ev;
     }
+    if (inp.checkMag) {
+      this.start('checkMag', g.times.checkMag, ev);
+      return ev;
+    }
+    if (inp.checkChamber) {
+      this.start('checkChamber', g.times.checkChamber, ev);
+      return ev;
+    }
     if (inp.inspect) {
       this.start('inspect', g.times.inspect, ev);
       return ev;
@@ -256,6 +274,36 @@ export class GunState {
     if (a === 'bash' && this.marks === 0 && k >= GunState.BASH_HIT) {
       this.marks = 1;
       ev.push({ kind: 'bash' });
+    }
+    if (a === 'checkMag') {
+      if (this.marks === 0 && k >= CHECK_MAG_MARKS.out) {
+        this.marks = 1;
+        if (this.cfg.feed === 'mag') ev.push({ kind: 'magOut', drop: false });
+      }
+      if (this.marks < 2 && k >= CHECK_MAG_MARKS.read) {
+        this.marks = 2;
+        ev.push({ kind: 'magCheckRead' });
+      }
+      if (this.marks < 3 && k >= CHECK_MAG_MARKS.in) {
+        this.marks = 3;
+        if (this.cfg.feed === 'mag') ev.push({ kind: 'magIn' });
+      }
+      return;
+    }
+    if (a === 'checkChamber') {
+      if (this.marks === 0 && k >= CHECK_CHAMBER_MARKS.pull) {
+        this.marks = 1;
+        ev.push({ kind: 'chamberPull' });
+      }
+      if (this.marks < 2 && k >= CHECK_CHAMBER_MARKS.read) {
+        this.marks = 2;
+        ev.push({ kind: 'chamberCheckRead', loaded: this.inst.chamber, jammed: this.inst.jammed });
+      }
+      if (this.marks < 3 && k >= CHECK_CHAMBER_MARKS.close) {
+        this.marks = 3;
+        ev.push({ kind: 'chamberClose' });
+      }
+      return;
     }
     if (a !== 'reload' && a !== 'reloadEmpty' && a !== 'unjam') return;
     const marks = a === 'unjam' ? [0.3, 1.1, 0.7] : [RELOAD_MARKS.out, RELOAD_MARKS.in, a === 'reloadEmpty' ? RELOAD_MARKS.rack : 2];

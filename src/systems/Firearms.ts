@@ -103,6 +103,9 @@ export interface GunHudState {
   ads: boolean;
   /** Seconds left for the Tarkov-style mag-check readout beside the white silhouette. */
   magCheckLeft: number;
+  /** Seconds left for chamber-check popup readout & its captured status. */
+  chamberCheckLeft?: number;
+  chamberCheckStatus?: 'loaded' | 'empty' | 'jammed' | null;
   /** Crosshair spread now (deg), the kind of crosshair. */
   spread: number;
   crosshair: 'cross' | 'circle' | 'none';
@@ -179,8 +182,12 @@ export class Firearms {
   sinceUse = 99;
   /** Seconds left for Tarkov-style mag-check overlay below crosshair. */
   magCheckT = 0;
-  /** Anti-spam cooldown (seconds) for manual mag check (Alt+T / touch). */
+  /** Anti-spam cooldown (seconds) for manual mag check (T / Alt+T / touch). */
   private magCheckCooldown = 0;
+  /** Seconds left for chamber-check overlay & its inspected result. */
+  chamberCheckT = 0;
+  private chamberCheckCooldown = 0;
+  private chamberCheckStatus: 'loaded' | 'empty' | 'jammed' | null = null;
   /** The noise of the last shot (the HUD's wave), m, and how long ago. */
   lastNoise = 0;
   /** A hit to show: 'body' | 'head', fresh. */
@@ -228,6 +235,8 @@ export class Firearms {
     this.sinceUse += dt;
     this.magCheckT = Math.max(0, this.magCheckT - dt);
     this.magCheckCooldown = Math.max(0, this.magCheckCooldown - dt);
+    this.chamberCheckT = Math.max(0, this.chamberCheckT - dt);
+    this.chamberCheckCooldown = Math.max(0, this.chamberCheckCooldown - dt);
     this.hitMarkT += dt;
     for (let i = this.pendingCasings.length - 1; i >= 0; i--) {
       this.pendingCasings[i].t -= dt;
@@ -251,6 +260,8 @@ export class Firearms {
         this.state.speed = 1 + (this.w.handling() - 1) * 0.4;
         this.sinceUse = 0;
         this.magCheckT = 0;
+        this.chamberCheckT = 0;
+        this.chamberCheckStatus = null;
         sfx.gunMech('draw');
       } else this.state = null;
     }
@@ -263,6 +274,7 @@ export class Firearms {
       input.consumePressed('reload');
       input.consumePressed('inspect');
       input.consumePressed('checkAmmo');
+      input.consumePressed('checkChamber');
       input.consumePressed('fireMode');
       input.consumePressed('bash');
       return;
@@ -283,16 +295,16 @@ export class Firearms {
     const reachOut = g.cls === 'pistol' ? 0.62 : g.cls === 'launcher' ? 0.55 : 0.85;
     vm.gunView.wall = Math.max(0, Math.min(1, (reachOut + 0.15 - this.wallDist) / 0.45));
     vm.gunView.wallDist = this.wallDist;
-    // R: a tap reloads, held inspects. Alt+T / touch mag-check checks magazine status with 1.5s cooldown.
+    // R: a tap reloads, held inspects. T / Alt+T / touch checks magazine; Shift+T checks chamber.
     let reload = false;
     let inspect = input.consumePressed('inspect');
-    const checkAmmo = input.consumePressed('checkAmmo');
-    if (checkAmmo && this.magCheckCooldown <= 0 && !player.busy && !vm.switching) {
-      this.magCheckT = 2.8;
-      this.magCheckCooldown = 1.5;
-      inspect = true;
-      sfx.gunMech('magCheck', id === 'rifle_ak' ? 0.94 : id.startsWith('pistol') ? 1.08 : 1);
-    }
+    const busy = player.busy || vm.switching;
+    const wantCheckMag = input.consumePressed('checkAmmo');
+    const wantCheckChamber = input.consumePressed('checkChamber');
+    const checkMag = wantCheckMag && this.magCheckCooldown <= 0 && !busy && !gs.busy;
+    if (checkMag) this.magCheckCooldown = 1.5;
+    const checkChamber = wantCheckChamber && this.chamberCheckCooldown <= 0 && !busy && !gs.busy;
+    if (checkChamber) this.chamberCheckCooldown = 1.2;
     if (input.consumePressed('reload')) {
       this.reloadHeld = 0;
       this.inspectFromHold = false;
@@ -309,7 +321,6 @@ export class Firearms {
         this.reloadHeld = -1;
       }
     }
-    const busy = player.busy || vm.switching;
     const pulled = input.consumePressed('attack');
     const trigger = input.isHeld('attack');
     const canFire = !busy && !c.sprinting && vm.gunView.wall < 0.5;
@@ -319,6 +330,8 @@ export class Firearms {
       reload: reload && !busy,
       mode: input.consumePressed('fireMode') && !busy,
       inspect: inspect && !busy,
+      checkMag: checkMag && !busy,
+      checkChamber: checkChamber && !busy,
       bash: input.consumePressed('bash') && !busy && vm.gunView.wall < 0.5,
       canFire,
     };
@@ -396,6 +409,8 @@ export class Firearms {
       jammed: inst.jammed,
       ads: vm.ads > 0.6,
       magCheckLeft: Math.max(0, this.magCheckT),
+      chamberCheckLeft: Math.max(0, this.chamberCheckT),
+      chamberCheckStatus: this.chamberCheckStatus,
       spread: this.spread(id),
       crosshair: g.cls === 'launcher' ? 'none' : g.pellets ? 'circle' : 'cross',
     };
@@ -477,16 +492,41 @@ export class Firearms {
         this.w.toast(tr('Заклинило — R', 'Jammed — R'), 1200);
         break;
       case 'magOut':
-        if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magOut');
+        if (gs.action === 'checkMag') sfx.gunMech('magCheck', id === 'rifle_ak' ? 0.94 : g.cls === 'pistol' ? 1.08 : 1);
+        else if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magOut');
         if (e.drop) this.dropMag(id);
         break;
       case 'magIn':
-        if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magIn');
+        if (gs.action === 'checkMag') {
+          sfx.gunMech('magIn', id === 'rifle_ak' ? 0.96 : g.cls === 'pistol' ? 1.12 : 1);
+          p.shake(0.06);
+        } else {
+          if (id !== 'rifle_ak' && id !== 'rifle_m4a1') mech('magIn');
+          p.shake(0.08);
+        }
+        break;
+      case 'magCheckRead':
+        this.magCheckT = 2.6;
+        this.chamberCheckT = 0;
+        break;
+      case 'chamberPull':
+        sfx.gunMech(g.action === 'pump' ? 'pump' : g.action === 'bolt' ? 'bolt' : 'magCheck', g.cls === 'pistol' ? 1.16 : 1.08);
+        p.shake(0.04);
+        break;
+      case 'chamberCheckRead':
+        this.chamberCheckT = 2.4;
+        this.magCheckT = 0;
+        this.chamberCheckStatus = e.jammed ? 'jammed' : e.loaded ? 'loaded' : 'empty';
+        break;
+      case 'chamberClose':
+        sfx.gunMech(g.action === 'pump' ? 'pump' : g.action === 'bolt' ? 'bolt' : 'magCheck', g.cls === 'pistol' ? 1.08 : 0.96);
+        p.shake(0.04);
         break;
       case 'rack':
         // Rifles play trimmed mag-out + mag-in only on reload (no trailing bolt-rack); unjam still racks.
         if ((id === 'rifle_ak' || id === 'rifle_m4a1') && gs.action === 'reloadEmpty') break;
         mech(id === 'rifle_m4a1' ? 'boltCatch' : 'rack');
+        p.shake(0.1);
         break;
       case 'cycle':
         mech(g.action === 'pump' ? 'pump' : 'bolt');

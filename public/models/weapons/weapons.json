@@ -64,5 +64,47 @@
    "body"
   ],
   "tris": 800
+ },
+ "mag_pistol_g17": {
+  "parts": [
+   "body"
+  ],
+  "tris": 700
+ },
+ "mag_pistol_m1911": {
+  "parts": [
+   "body"
+  ],
+  "tris": 700
+ },
+ "mod_ext_mag_g17": {
+  "parts": [
+   "body"
+  ],
+  "tris": 750
+ },
+ "bolt_ak": {
+  "parts": [
+   "body"
+  ],
+  "tris": 700
+ },
+ "bolt_m4a1": {
+  "parts": [
+   "body"
+  ],
+  "tris": 700
+ },
+ "bolt_hunting": {
+  "parts": [
+   "body"
+  ],
+  "tris": 699
+ },
+ "shell_12g": {
+  "parts": [
+   "body"
+  ],
+  "tris": 380
  }
 }

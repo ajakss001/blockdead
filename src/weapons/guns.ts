@@ -49,6 +49,9 @@ export interface GunTimes {
   /** Clearing a jam (slap the magazine, rack the action). */
   unjam: number;
   inspect: number;
+  /** Tarkov-style magazine weight/level check and brass/chamber check, s. */
+  checkMag: number;
+  checkChamber: number;
   /** Fire-mode switch (the thumb on the selector). */
   mode: number;
 }
@@ -110,7 +113,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 25,
     weight: 0.9,
     durability: 900,
-    times: { draw: 0.42, holster: 0.4, aim: 0.2, reload: 1.45, reloadEmpty: 1.9, unjam: 1.4, inspect: 2.6, mode: 0.3 },
+    times: { draw: 0.42, holster: 0.4, aim: 0.2, reload: 1.45, reloadEmpty: 1.9, unjam: 1.4, inspect: 2.6, checkMag: 1.75, checkChamber: 1.3, mode: 0.3 },
     zoom: 0.92,
   },
   pistol_m1911: {
@@ -131,7 +134,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 22,
     weight: 1.1,
     durability: 800,
-    times: { draw: 0.42, holster: 0.4, aim: 0.2, reload: 1.5, reloadEmpty: 2.0, unjam: 1.4, inspect: 2.6, mode: 0.3 },
+    times: { draw: 0.42, holster: 0.4, aim: 0.2, reload: 1.5, reloadEmpty: 2.0, unjam: 1.4, inspect: 2.6, checkMag: 1.75, checkChamber: 1.35, mode: 0.3 },
     zoom: 0.92,
   },
   shotgun_pump: {
@@ -152,7 +155,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 9,
     weight: 3.4,
     durability: 600,
-    times: { draw: 0.55, holster: 0.5, aim: 0.27, reload: 0, reloadEmpty: 0, loadStart: 0.35, loadOne: 0.55, loadEnd: 0.4, cycle: 0.55, unjam: 1.6, inspect: 3, mode: 0.3 },
+    times: { draw: 0.55, holster: 0.5, aim: 0.27, reload: 0, reloadEmpty: 0, loadStart: 0.35, loadOne: 0.55, loadEnd: 0.4, cycle: 0.55, unjam: 1.6, inspect: 3, checkMag: 1.55, checkChamber: 1.35, mode: 0.3 },
     zoom: 0.9,
   },
   rifle_m4a1: {
@@ -173,7 +176,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 60,
     weight: 3.1,
     durability: 1000,
-    times: { draw: 0.55, holster: 0.5, aim: 0.25, reload: 2.1, reloadEmpty: 2.7, unjam: 1.7, inspect: 3.2, mode: 0.35 },
+    times: { draw: 0.55, holster: 0.5, aim: 0.25, reload: 2.1, reloadEmpty: 2.7, unjam: 1.7, inspect: 3.2, checkMag: 2.1, checkChamber: 1.2, mode: 0.35 },
     zoom: 0.88,
   },
   rifle_ak: {
@@ -194,7 +197,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 50,
     weight: 3.6,
     durability: 1500,
-    times: { draw: 0.55, holster: 0.5, aim: 0.26, reload: 2.2, reloadEmpty: 2.8, unjam: 1.7, inspect: 3.2, mode: 0.35 },
+    times: { draw: 0.55, holster: 0.5, aim: 0.26, reload: 2.2, reloadEmpty: 2.8, unjam: 1.7, inspect: 3.2, checkMag: 2.1, checkChamber: 1.2, mode: 0.35 },
     zoom: 0.88,
   },
   rifle_hunting: {
@@ -214,7 +217,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 90,
     weight: 3.5,
     durability: 500,
-    times: { draw: 0.58, holster: 0.52, aim: 0.3, reload: 0, reloadEmpty: 0, loadStart: 0.4, loadOne: 0.5, loadEnd: 0.45, cycle: 0.9, unjam: 1.8, inspect: 3.2, mode: 0.3 },
+    times: { draw: 0.58, holster: 0.52, aim: 0.3, reload: 0, reloadEmpty: 0, loadStart: 0.4, loadOne: 0.5, loadEnd: 0.45, cycle: 0.9, unjam: 1.8, inspect: 3.2, checkMag: 1.55, checkChamber: 1.25, mode: 0.3 },
     zoom: 0.85,
   },
   launcher_rpg: {
@@ -234,7 +237,7 @@ export const GUNS: Readonly<Record<GunId, GunConfig>> = {
     range: 150,
     weight: 7,
     durability: 50,
-    times: { draw: 0.6, holster: 0.55, aim: 0.3, reload: 3, reloadEmpty: 3, unjam: 2, inspect: 3, mode: 0.3 },
+    times: { draw: 0.6, holster: 0.55, aim: 0.3, reload: 3, reloadEmpty: 3, unjam: 2, inspect: 3, checkMag: 1.4, checkChamber: 1.1, mode: 0.3 },
     blast: { radius: 6, damage: 260, impulse: 9 },
     zoom: 0.9,
   },

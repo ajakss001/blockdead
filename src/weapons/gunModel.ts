@@ -179,12 +179,41 @@ function material(key: string, color: number, map: Texture | null): Material {
   return m;
 }
 
+const PISTOL_MAG_PART: Partial<Record<GunId, string>> = {
+  pistol_g17: 'mag_pistol_g17',
+  pistol_m1911: 'mag_pistol_m1911',
+};
+
+const RIFLE_BOLT_PART: Partial<Record<GunId, string>> = {
+  rifle_ak: 'bolt_ak',
+  rifle_m4a1: 'bolt_m4a1',
+  rifle_hunting: 'bolt_hunting',
+};
+
+const _downY = new Vector3(0, -1, 0);
+const _magOutDir = new Vector3();
+
+/** Loads a standalone auxiliary weapon part mesh & texture (e.g. pistol mag, rifle bolt, 12g shell) when present. */
+export async function loadWeaponPart(id: string): Promise<{ geo: BufferGeometry; map: Texture | null } | null> {
+  const geos = await loadFile(id);
+  const geo = geos?.body ?? (geos ? Object.values(geos)[0] : null);
+  if (!geo) return null;
+  return { geo, map: textureOf(id) };
+}
+
+/** Shared textured/colored material matching weapon parts. */
+export function weaponPartMaterial(key: string, color: number, map: Texture | null): Material {
+  return material(key, color, map);
+}
+
 /** A gun in the gun frame, its moving parts and modules; the model takes the stand-in's place when loaded. */
 export class GunModel {
   readonly root = new Group();
   readonly sockets: GunSockets;
   /** Moving parts, pivoted at their sockets (mag at the magazine socket; the others at the origin). */
   readonly parts: Record<'body' | 'mag' | 'slide' | 'pump' | 'rocket', Group>;
+  /** Pivoted bolt/charging-handle subgroup under `parts.slide` for lift + reciprocation. */
+  private readonly boltPivot = new Group();
   /** The module models on their sockets. */
   private readonly modMeshes = new Map<ModId, Object3D>();
   private mods: readonly ModId[] = [];
@@ -204,8 +233,37 @@ export class GunModel {
     this.parts = { body: mk('body'), mag: mk('mag'), slide: mk('slide'), pump: mk('pump'), rocket: mk('rocket') };
     this.parts.mag.position.set(...this.sockets.mag);
     this.parts.mag.add(this.magOwn);
+    this.boltPivot.name = 'boltPivot';
+    const boltX = id === 'rifle_m4a1' ? 0 : id === 'rifle_hunting' ? 0.006 : id === 'rifle_ak' ? 0.012 : this.sockets.bolt[0];
+    this.boltPivot.position.set(boltX, this.sockets.bolt[1], this.sockets.bolt[2]);
+    this.parts.slide.add(this.boltPivot);
     this.fillStandIn();
     void loadFile(id).then((geo) => geo && this.fillModel(geo));
+    const pistolMagId = PISTOL_MAG_PART[id];
+    if (pistolMagId) {
+      void loadWeaponPart(pistolMagId).then((part) => {
+        if (!part) return;
+        this.magOwn.clear();
+        const mesh = new Mesh(part.geo, material(`${pistolMagId}:${part.map ? 't' : 'c'}`, POLY, part.map));
+        _magOutDir.set(...this.sockets.magOut).normalize();
+        mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+        this.magOwn.add(mesh);
+      });
+    }
+    const boltPartId = RIFLE_BOLT_PART[id];
+    if (boltPartId) {
+      this.fillBoltFallback();
+      void loadWeaponPart(boltPartId).then((part) => {
+        if (!part) return;
+        this.boltPivot.clear();
+        this.boltPivot.add(new Mesh(part.geo, material(`${boltPartId}:${part.map ? 't' : 'c'}`, STEEL, part.map)));
+      });
+    }
+  }
+
+  /** Rotate the bolt handle upward (0 = closed, 1 = lifted 60 deg for bolt-action extraction/inspection). */
+  setBoltLift(lift: number): void {
+    this.boltPivot.rotation.z = lift * (Math.PI / 3);
   }
 
   /** Which modules show (only the ones that fit). */
@@ -232,12 +290,17 @@ export class GunModel {
     else this.root.add(holder);
     if (id === 'mod_suppressor') holder.position.set(...s.muzzle);
     else if (id === 'mod_flashlight') holder.position.set(...s.light);
-    const fill = (geo: BufferGeometry, map: Texture | null) => {
+    const fill = (geo: BufferGeometry, map: Texture | null, alignWell = false) => {
       holder.clear();
-      holder.add(new Mesh(geo, material(`${id}:${map ? 't' : 'c'}`, id === 'mod_flashlight' ? STEEL : POLY, map)));
+      const mesh = new Mesh(geo, material(`${id}:${map ? 't' : 'c'}`, id === 'mod_flashlight' ? STEEL : POLY, map));
+      if (alignWell && id.startsWith('mod_ext_mag') && HINTS[this.id].magWell) {
+        _magOutDir.set(...s.magOut).normalize();
+        mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+      }
+      holder.add(mesh);
     };
-    fill(id.startsWith('mod_ext_mag') ? magStandIn(this.id, s, true) : modStandIn(id), null);
-    void loadFile(id).then((geo) => geo?.body && fill(geo.body, textureOf(id)));
+    fill(id.startsWith('mod_ext_mag') ? magStandIn(this.id, s, true) : modStandIn(id), null, false);
+    void loadFile(id).then((geo) => geo?.body && fill(geo.body, textureOf(id), true));
     this.modMeshes.set(id, holder);
     if (MODS[id].slot === 'mag') {
       this.magExt = holder;
@@ -257,12 +320,26 @@ export class GunModel {
     }
   }
 
+  private fillBoltFallback(): void {
+    const boltMat = material(`c${STEEL}`, STEEL, null);
+    if (this.id === 'rifle_hunting') {
+      this.boltPivot.add(new Mesh(box(0.014, 0.014, 0.075, [0, 0, 0]), boltMat));
+      this.boltPivot.add(new Mesh(box(0.024, 0.008, 0.01, [0.014, 0, 0.015]), boltMat));
+    } else if (this.id === 'rifle_ak') {
+      this.boltPivot.add(new Mesh(box(0.012, 0.014, 0.07, [0, 0, 0]), boltMat));
+      this.boltPivot.add(new Mesh(box(0.018, 0.008, 0.012, [0.012, 0, 0.018]), boltMat));
+    } else if (this.id === 'rifle_m4a1') {
+      this.boltPivot.add(new Mesh(box(0.036, 0.012, 0.065, [0, 0, 0]), boltMat));
+    }
+  }
+
   private fillModel(geo: Record<string, BufferGeometry>): void {
     if (this.loaded) return;
     this.loaded = true;
     const map = textureOf(this.id);
     const mat = material(`${this.id}:t`, STEEL, map);
     for (const name of ['body', 'slide', 'pump', 'rocket'] as const) this.parts[name].clear();
+    this.parts.slide.add(this.boltPivot);
     for (const [name, g] of Object.entries(geo)) {
       const m = new Mesh(g, mat);
       if (name === 'mag') {
