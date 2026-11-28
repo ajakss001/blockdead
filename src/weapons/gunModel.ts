@@ -37,6 +37,8 @@ let manifest: Record<string, { parts: string[] }> | null = null;
 let manifestP: Promise<void> | null = null;
 const files = new Map<string, Promise<Record<string, BufferGeometry> | null>>();
 const textures = new Map<string, Texture>();
+const loadedTextures = new Set<string>();
+const texWaiters = new Map<string, Set<() => void>>();
 
 /** Where the files come from (Node: none, the stand-ins) and the texture size (512 on low, 0: none). */
 export function setGunSource(size: 0 | 512 | 1024, r?: Read | null): void {
@@ -86,12 +88,27 @@ function textureOf(id: string): Texture | null {
   if (!texSize || typeof document === 'undefined') return null;
   let t = textures.get(id);
   if (!t) {
-    t = new TextureLoader().load(`${import.meta.env?.BASE_URL ?? '/'}models/weapons/${id}_${texSize}.webp`);
+    const finish = () => {
+      loadedTextures.add(id);
+      const waiters = texWaiters.get(id);
+      if (waiters) {
+        texWaiters.delete(id);
+        for (const cb of waiters) cb();
+      }
+    };
+    t = new TextureLoader().load(`${import.meta.env?.BASE_URL ?? '/'}models/weapons/${id}_${texSize}.webp`, finish, undefined, finish);
     t.colorSpace = SRGBColorSpace;
     t.flipY = false;
     textures.set(id, t);
   }
   return t;
+}
+
+function onTextureReady(id: string, cb: () => void): void {
+  if (!texSize || typeof document === 'undefined' || loadedTextures.has(id)) return;
+  let set = texWaiters.get(id);
+  if (!set) texWaiters.set(id, (set = new Set()));
+  set.add(cb);
 }
 
 // ── Stand-ins ──────────────────────────────────────────────────────────────────────────────────────
@@ -345,6 +362,8 @@ export class GunModel {
   private meshyMagLoaded = false;
   private hasExtMag = false;
   private loaded = false;
+  /** Called whenever an async GLB mesh, part, module, or texture finishes loading. */
+  onChange: (() => void) | null = null;
 
   constructor(readonly id: GunId) {
     this.sockets = gunSockets(id);
@@ -418,6 +437,8 @@ export class GunModel {
         this.magOwn.add(mesh);
         this.meshyMagLoaded = true;
         this.refreshMagRounds();
+        onTextureReady(magPartId, () => this.onChange?.());
+        this.onChange?.();
       });
     }
     const boltPartId = RIFLE_BOLT_PART[id];
@@ -427,6 +448,8 @@ export class GunModel {
         if (!part) return;
         this.boltPivot.clear();
         this.boltPivot.add(new Mesh(part.geo, material(`${boltPartId}:${part.map ? 't' : 'c'}`, STEEL, part.map)));
+        onTextureReady(boltPartId, () => this.onChange?.());
+        this.onChange?.();
       });
     }
   }
@@ -536,7 +559,12 @@ export class GunModel {
       holder.add(mesh);
     };
     fill(id.startsWith('mod_ext_mag') ? magStandIn(this.id, s, true) : modStandIn(id), null, false);
-    void loadFile(id).then((geo) => geo?.body && fill(geo.body, textureOf(id), true));
+    void loadFile(id).then((geo) => {
+      if (!geo?.body) return;
+      fill(geo.body, textureOf(id), true);
+      onTextureReady(id, () => this.onChange?.());
+      this.onChange?.();
+    });
     this.modMeshes.set(id, holder);
     if (MODS[id].slot === 'mag') {
       this.magExt = holder;
@@ -587,5 +615,7 @@ export class GunModel {
         this.parts[name as 'body']?.add(new Mesh(g, mat));
       }
     }
+    onTextureReady(this.id, () => this.onChange?.());
+    this.onChange?.();
   }
 }

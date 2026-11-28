@@ -397,7 +397,8 @@ export class InventoryPanel {
       leftSlots.append(cell);
     }
 
-    this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint);
+    const handMods = inv.hand && isGun(inv.hand) ? (inv.guns[inv.hand]?.mods ?? []) : undefined;
+    this.preview.setOutfit(inv.worn, inv.hand, inv.wornDirt, inv.wornTint, handMods);
     const figure = el('div', 'inv__figure');
     figure.append(this.preview.canvas, el('div', 'inv__figure-hint', '↔'));
 
