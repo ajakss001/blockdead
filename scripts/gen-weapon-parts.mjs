@@ -614,8 +614,11 @@ function parseFlags(argv) {
     const a = argv[i];
     if (a === '--from' && argv[i + 1]) fromDir = resolve(argv[++i]);
     else if (a.startsWith('--from=')) fromDir = resolve(a.slice(7));
-    else if (a.startsWith('--flip-y=')) for (const id of a.slice(9).split(',')) if (id) flipY.add(id.trim());
-    else if (a.startsWith('--flip-z=')) for (const id of a.slice(9).split(',')) if (id) flipZ.add(id.trim());
+    else if (a.startsWith('--flip-y=')) {
+      for (const id of a.slice(9).split(',')) if (id) flipY.add(id.trim());
+    } else if (a.startsWith('--flip-z=')) {
+      for (const id of a.slice(9).split(',')) if (id) flipZ.add(id.trim());
+    }
   }
   return { fromDir, flipY, flipZ };
 }

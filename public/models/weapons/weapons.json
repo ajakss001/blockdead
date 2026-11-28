@@ -57,7 +57,7 @@
   "parts": [
    "body"
   ],
-  "tris": 800
+  "tris": 898
  },
  "mod_ext_mag_ak": {
   "parts": [
@@ -112,5 +112,11 @@
    "body"
   ],
   "tris": 1100
+ },
+ "mag_m4": {
+  "parts": [
+   "body"
+  ],
+  "tris": 896
  }
 }
