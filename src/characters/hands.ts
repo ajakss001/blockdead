@@ -14,8 +14,25 @@ import { bodyAsset, type RigAsset } from './assets';
  * along); relaxed a free hand, fingers a little bent; grip_torch the flashlight's closed grip — the fingers
  * round its body, the thumb laid over the top towards the lens.
  */
-export type HandPose = 'grip_fist' | 'grip_trigger' | 'grip_support' | 'relaxed' | 'grip_torch';
-export const HAND_POSES: readonly HandPose[] = ['grip_fist', 'grip_trigger', 'grip_support', 'relaxed', 'grip_torch'];
+export type HandPose =
+  | 'grip_fist'
+  | 'grip_trigger'
+  | 'grip_support'
+  | 'relaxed'
+  | 'grip_torch'
+  | 'mag_pinch'
+  | 'slap_open'
+  | 'bolt_hook';
+export const HAND_POSES: readonly HandPose[] = [
+  'grip_fist',
+  'grip_trigger',
+  'grip_support',
+  'relaxed',
+  'grip_torch',
+  'mag_pinch',
+  'slap_open',
+  'bolt_hook',
+];
 
 /** Curl of each finger's three joints (rad), the thumb's two, per pose; the index finger may differ. */
 const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly number[]; thumb: readonly number[] }> = {
@@ -24,6 +41,9 @@ const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly 
   grip_support: { fingers: [1.1, 1.25, 1.05], index: [1.06, 1.15, 1.05], thumb: [0.6, 0.7] },
   relaxed: { fingers: [0.35, 0.45, 0.3], index: [0.25, 0.35, 0.25], thumb: [0.1, 0.15] },
   grip_torch: { fingers: [1.2, 1.4, 1.05], index: [1.15, 1.35, 1.0], thumb: [0.45, 0.6] },
+  mag_pinch: { fingers: [0.85, 1.05, 0.8], index: [0.75, 0.95, 0.7], thumb: [0.5, 0.6] },
+  slap_open: { fingers: [0.15, 0.2, 0.1], index: [0.12, 0.18, 0.1], thumb: [0.1, 0.12] },
+  bolt_hook: { fingers: [1.1, 1.3, 1.0], index: [1.35, 1.45, 1.15], thumb: [0.25, 0.3] },
 };
 /**
  * The poses whose thumb turns mirrored for the left hand. The thumb's axis below (−f + 0.4·axis) is the right
@@ -66,7 +86,22 @@ function fingerless(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
   const m = handFrame(male, side);
   if (!m) return null;
   const none = () => new Map<number, Quaternion>();
-  return { q: m.q.clone(), grip: m.grip.clone(), fist: none(), poses: { grip_fist: none(), grip_trigger: none(), grip_support: none(), relaxed: none(), grip_torch: none() }, fingers: false };
+  return {
+    q: m.q.clone(),
+    grip: m.grip.clone(),
+    fist: none(),
+    poses: {
+      grip_fist: none(),
+      grip_trigger: none(),
+      grip_support: none(),
+      relaxed: none(),
+      grip_torch: none(),
+      mag_pinch: none(),
+      slap_open: none(),
+      bolt_hook: none(),
+    },
+    fingers: false,
+  };
 }
 
 function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
@@ -126,7 +161,16 @@ function build(rig: RigAsset, side: 'L' | 'R'): HandFrame | null {
     }
     return out;
   };
-  const poses = { grip_fist: curlOf('grip_fist'), grip_trigger: curlOf('grip_trigger'), grip_support: curlOf('grip_support'), relaxed: curlOf('relaxed'), grip_torch: curlOf('grip_torch') };
+  const poses = {
+    grip_fist: curlOf('grip_fist'),
+    grip_trigger: curlOf('grip_trigger'),
+    grip_support: curlOf('grip_support'),
+    relaxed: curlOf('relaxed'),
+    grip_torch: curlOf('grip_torch'),
+    mag_pinch: curlOf('mag_pinch'),
+    slap_open: curlOf('slap_open'),
+    bolt_hook: curlOf('bolt_hook'),
+  };
   const fingers = rig.index.has(`${S}HandMiddle1`) && rig.index.has(`${S}HandThumb1`);
   return { q, grip, fist: poses.grip_fist, poses, fingers };
 

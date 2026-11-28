@@ -8,10 +8,11 @@ import { type AmmoSource, type GunAction, type GunInput, GunState, newInst } fro
 /**
  * /tools/gun-fp.html: every firearm in first-person hands — hip, in the sights (a cross marks the middle of
  * the screen: the front sight sits on it), sprint, mid-reload (the magazine in the left hand), inspect,
- * against a wall. ?gun=rifle_m4a1 one gun only; ?w=360 cell width.
+ * against a wall. ?gun=rifle_m4a1 one gun only; ?w=360 cell width; ?mode=reload reload/check contact sheet.
  */
 const q = new URLSearchParams(location.search);
 const ids = (q.get('gun')?.split(',') as GunId[] | undefined) ?? GUN_IDS;
+const mode = q.get('mode');
 const W = Number(q.get('w')) || 360;
 const H = Math.round((W * 9) / 16);
 interface Shot {
@@ -26,7 +27,7 @@ interface Shot {
   at?: [GunAction, number];
   empty?: boolean;
 }
-const SHOTS: Shot[] = [
+const DEFAULT_SHOTS: Shot[] = [
   { name: 'бедро', frames: 40 },
   { name: 'прицел', frames: 40, ads: true },
   { name: 'бег', frames: 50, sprint: true },
@@ -35,6 +36,15 @@ const SHOTS: Shot[] = [
   { name: 'осмотр', frames: 400, inp: (i) => ({ inspect: i === 0 }), at: ['inspect', 0.3] },
   { name: 'стена', frames: 40, wall: 1 },
 ];
+const RELOAD_SHOTS: Shot[] = [
+  { name: 'mag-out (0.24)', frames: 400, inp: (i) => ({ reload: i === 0 }), at: ['reload', 0.24] },
+  { name: 'mag-approach (0.52)', frames: 400, inp: (i) => ({ reload: i === 0 }), at: ['reload', 0.52] },
+  { name: 'mag-in (0.61)', frames: 400, inp: (i) => ({ reload: i === 0 }), at: ['reload', 0.61] },
+  { name: 'empty bolt/slap (0.84)', frames: 450, inp: (i) => ({ reload: i === 0 }), at: ['reloadEmpty', 0.84], empty: true },
+  { name: 'checkMag (0.50)', frames: 400, inp: (i) => ({ checkMag: i === 0 }), at: ['checkMag', 0.5] },
+  { name: 'checkChamber (0.48)', frames: 400, inp: (i) => ({ checkChamber: i === 0 }), at: ['checkChamber', 0.48] },
+];
+const SHOTS = mode === 'reload' ? RELOAD_SHOTS : DEFAULT_SHOTS;
 const plenty = (): AmmoSource => ({ count: () => 999, take: (_id, n) => n, give: () => {}, spareMags: () => 9, takeMag: () => true });
 
 const r = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -78,18 +88,26 @@ for (const [row, id] of ids.entries()) {
     for (let i = 0; i < 120; i++) step({});
     vm.gunView.ads = !!shot.ads;
     vm.gunView.wall = shot.wall ?? 0;
+    let targetAt: [GunAction, number] | undefined = shot.at ? [shot.at[0], shot.at[1]] : undefined;
     if (shot.empty && g.feed === 'mag') {
       inst.mag = 0;
       inst.chamber = false;
+    } else if (g.feed === 'mag' && targetAt?.[0] === 'reload') {
+      inst.mag = Math.max(0, Math.floor(g.capacity / 2));
+      inst.chamber = true;
     }
-    if (g.feed !== 'mag' && shot.at?.[0].startsWith('reload')) {
-      inst.mag = 0;
+    if (g.feed !== 'mag' && targetAt?.[0].startsWith('reload')) {
+      inst.mag = g.feed === 'rocket' ? 0 : Math.max(0, g.capacity - 1);
       inst.chamber = false;
-      shot.at = [g.feed === 'rocket' ? 'reload' : 'loadOne', 0.4];
+      if (g.feed === 'rocket') targetAt = ['reload', targetAt[1]];
+      else if (targetAt[0] === 'reloadEmpty') targetAt = ['loadEnd', 0.45];
+      else if (targetAt[1] < 0.3) targetAt = ['loadStart', 0.7];
+      else if (targetAt[1] < 0.55) targetAt = ['loadOne', 0.35];
+      else targetAt = ['loadOne', 0.49];
     }
     for (let i = 0; i < shot.frames; i++) {
       step(shot.inp?.(i) ?? {});
-      if (shot.at && gs.action === shot.at[0] && gs.t / gs.duration >= shot.at[1]) break;
+      if (targetAt && gs.action === targetAt[0] && gs.t / gs.duration >= targetAt[1]) break;
     }
     // Let the models arrive (the stand-in is drawn until then).
     await new Promise((res) => setTimeout(res, 30));

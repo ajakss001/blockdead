@@ -95,12 +95,6 @@
   ],
   "tris": 700
  },
- "bolt_hunting": {
-  "parts": [
-   "body"
-  ],
-  "tris": 699
- },
  "shell_12g": {
   "parts": [
    "body"

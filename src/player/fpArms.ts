@@ -101,13 +101,21 @@ export class FpArms {
   readonly cuff = [new Vector3(), new Vector3()];
   private posed: (HandPose | null)[] = [null, null];
 
-  /** The fingers of hand `k` (0 right, 1 left) in a pose (hands.ts), set when it changes. */
-  setPose(k: 0 | 1, pose: HandPose): void {
+  /** The fingers of hand `k` (0 right, 1 left) in a pose (hands.ts), set or smoothly blended over `dt` (s). */
+  setPose(k: 0 | 1, pose: HandPose, dt = 0): void {
     const a = this.arms[k];
-    if (!a || !this.mesh || this.posed[k] === pose) return;
+    if (!a || !this.mesh) return;
+    if (dt <= 0 && this.posed[k] === pose) return;
+    const snap = dt <= 0 || this.posed[k] === null;
     this.posed[k] = pose;
     const bones = this.mesh.skeleton.bones;
-    for (const [i, q] of a.hf.poses[pose]) bones[i].quaternion.copy(q);
+    const target = a.hf.poses[pose];
+    if (snap) {
+      for (const [i, q] of target) bones[i].quaternion.copy(q);
+      return;
+    }
+    const alpha = Math.min(1, dt * 18);
+    for (const [i, q] of target) bones[i].quaternion.slerp(q, alpha);
   }
 
   /** The body's hands have finger bones (else they stay open: the model needs rigging again with fingers). */

@@ -73,14 +73,6 @@ const SPECS = [
       'Isolated matte black steel AR-15 M4A1 T-shaped charging handle and cylindrical bolt carrier assembly, mechanical firearm part, realistic gritty PBR metal',
   },
   {
-    id: 'bolt_hunting',
-    kind: 'bolt',
-    size: [0.036, 0.024, 0.095],
-    tris: 700,
-    prompt:
-      'Isolated machined stainless steel bolt-action hunting rifle bolt assembly with cylindrical bolt body, locking lugs, and turned-down spherical bolt knob handle on one side, realistic gritty PBR metal',
-  },
-  {
     id: 'shell_12g',
     kind: 'shell',
     size: [0.021, 0.021, 0.068], // cylindrical along Z

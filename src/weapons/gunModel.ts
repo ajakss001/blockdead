@@ -187,7 +187,6 @@ const PISTOL_MAG_PART: Partial<Record<GunId, string>> = {
 const RIFLE_BOLT_PART: Partial<Record<GunId, string>> = {
   rifle_ak: 'bolt_ak',
   rifle_m4a1: 'bolt_m4a1',
-  rifle_hunting: 'bolt_hunting',
 };
 
 const _downY = new Vector3(0, -1, 0);
@@ -322,10 +321,7 @@ export class GunModel {
 
   private fillBoltFallback(): void {
     const boltMat = material(`c${STEEL}`, STEEL, null);
-    if (this.id === 'rifle_hunting') {
-      this.boltPivot.add(new Mesh(box(0.014, 0.014, 0.075, [0, 0, 0]), boltMat));
-      this.boltPivot.add(new Mesh(box(0.024, 0.008, 0.01, [0.014, 0, 0.015]), boltMat));
-    } else if (this.id === 'rifle_ak') {
+    if (this.id === 'rifle_ak') {
       this.boltPivot.add(new Mesh(box(0.012, 0.014, 0.07, [0, 0, 0]), boltMat));
       this.boltPivot.add(new Mesh(box(0.018, 0.008, 0.012, [0.012, 0, 0.018]), boltMat));
     } else if (this.id === 'rifle_m4a1') {

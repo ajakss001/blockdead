@@ -123,6 +123,7 @@ export class Viewmodel {
   private readonly bounce = new PointLight(0xfffaed, 0, 1.5, 2);
   private readonly ambient = new AmbientLight(0x050510, 0.15);
   private readonly moon = new DirectionalLight(0x5a6c90, 0.12);
+  private readonly rim = new DirectionalLight(0x9aa6b8, 0.35);
   private readonly itemState: ItemState = { attackT: -1, sprint: 0, pump: 0, lower: 0 };
   private readonly torchState: ItemState = { attackT: -1, sprint: 0, pump: 0, lower: 0 };
 
@@ -173,7 +174,8 @@ export class Viewmodel {
     this.scene.add(this.ambient);
     const moon = this.moon;
     moon.position.set(-0.5, 1, 0.4);
-    this.scene.add(moon, this.bounce);
+    this.rim.position.set(0.55, 0.75, 0.65);
+    this.scene.add(moon, this.rim, this.bounce);
     this.bounce.position.set(-0.12, -0.12, -0.35);
 
     this.buildArm(this.armR, this.handR);
@@ -276,9 +278,10 @@ export class Viewmodel {
   /** The arms' own light follows the world's (style/stage): a grey overcast day, a dark night. */
   setDaylight(k: number): void {
     this.ambient.color.setRGB(0.02 + 0.4 * k, 0.02 + 0.43 * k, 0.06 + 0.42 * k);
-    this.ambient.intensity = 0.15 + 0.6 * k;
+    this.ambient.intensity = 0.24 + 0.52 * k;
     this.moon.color.setRGB(0.35 + 0.37 * k, 0.42 + 0.32 * k, 0.56 + 0.19 * k);
-    this.moon.intensity = 0.12 + 0.42 * k;
+    this.moon.intensity = 0.24 + 0.42 * k;
+    this.rim.intensity = 0.26 + 0.34 * k;
   }
 
   setAspect(aspect: number): void {
@@ -469,8 +472,8 @@ export class Viewmodel {
     this.root.updateMatrixWorld(true);
     // The fingers: the item's hand poses (data/grips.json); the left hand's closed grip on the flashlight when one-handed.
     const hp = gripHands(this.item, false, twoHanded);
-    this.arms.setPose(0, hp.R);
-    this.arms.setPose(1, twoHanded ? hp.L : 'grip_torch');
+    this.arms.setPose(0, hp.R, dt);
+    this.arms.setPose(1, twoHanded ? hp.L : 'grip_torch', dt);
     this.arms.update(0, this.uppers[0], this.rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], this.rig.left.pose.upperLen, this.armL, this.handL);
     this.handL.getWorldPosition(_hand);
@@ -677,8 +680,8 @@ export class Viewmodel {
     this.root.rotation.set(this.swayY * 1.2, this.swayX * 2, this.swayX * 1.5);
     this.root.updateMatrixWorld(true);
     const hp = gripHands(id, true, true);
-    this.arms.setPose(0, hp.R);
-    this.arms.setPose(1, out.onBolt ? hp.bolt : out.left === 'gun' ? hp.L : out.left === 'none' ? 'relaxed' : 'grip_fist');
+    this.arms.setPose(0, hp.R, dt);
+    this.arms.setPose(1, out.leftPose ?? (out.onBolt ? hp.bolt : out.left === 'gun' ? hp.L : out.left === 'none' ? 'relaxed' : 'mag_pinch'), dt);
     this.arms.update(0, this.uppers[0], rig.right.pose.upperLen, this.armR, this.handR);
     this.arms.update(1, this.uppers[1], rig.left.pose.upperLen, this.armL, this.handL);
   }
