@@ -420,7 +420,7 @@ export class CharacterFigure {
       // Slight head tilt away from shoulder tube so helmet clears RPG body cleanly.
       turnBoneAxis('Head', charFwd, -0.07);
     } else {
-      const twist = -0.42;
+      const twist = -0.44;
       turnBoneAxis('Spine', charUp, twist * 0.34);
       turnBoneAxis('Spine1', charUp, twist * 0.36);
       turnBoneAxis('Spine2', charUp, twist * 0.30);
@@ -428,22 +428,36 @@ export class CharacterFigure {
       turnBoneAxis('Spine2', charRight, -0.05);
       turnBoneAxis('Neck', charUp, -twist * 0.52);
       turnBoneAxis('Neck', charRight, 0.04);
-      turnBoneAxis('Head', charUp, -twist * 0.48);
+      turnBoneAxis('Head', charUp, -twist * 0.48 + 0.15);
       turnBoneAxis('Head', charRight, 0.04);
       turnBoneAxis('Head', charFwd, 0.06);
-      turnBoneAxis('LeftShoulder', charUp, -0.10);
+      turnBoneAxis('LeftShoulder', charUp, -0.18);
     }
 
     // 3. Aiming frame & weapon orientation (gun -Z along aimFwd).
+    // Long guns cant slightly inward across the chest so the stock seats in the right shoulder pocket/underarm
+    // and the left hand reaches long forends cleanly without pulling the weapon into the vest.
     const aimPitch = cls === 'launcher' ? 0.08 : 0;
-    const aimQ = _q4.setFromAxisAngle(charRight, aimPitch).multiply(rootQ).normalize();
+    const aimYaw = cls === 'long' ? 0.25 : 0;
+    const aimQ = _q4
+      .setFromAxisAngle(charUp, aimYaw)
+      .multiply(_q5.setFromAxisAngle(charRight, aimPitch))
+      .multiply(rootQ)
+      .normalize();
     const aimFwd = _aimFwd.set(0, 0, 1).applyQuaternion(aimQ).normalize();
     const aimRight = _aimRight.set(-1, 0, 0).applyQuaternion(aimQ).normalize();
     const aimUp = _aimUp.crossVectors(aimRight, aimFwd).normalize();
 
     const qGunW = _qGunW.copy(aimQ).multiply(_qFlipY);
 
-    // 4. Right-hand grip anchor in front of RightArm shoulder / shoulder pocket.
+    // 4. Right-hand grip contact & shoulder-pocket buttstock anchor.
+    _mainAt.copy(d.main.at);
+    if (gun === 'rifle_ak' || gun === 'rifle_m4a1') _mainAt.x = 0.012;
+    else if (gun === 'rifle_hunting') _mainAt.set(0.008, -0.010, -0.015);
+
+    _offAt.copy(d.off.at);
+    if (gun === 'rifle_hunting') _offAt.set(0.0, d.s.off.at[1] - 0.008, -0.39);
+
     const shoulderR = r.bone('RightArm').getWorldPosition(_pShR);
     let fwdDist: number;
     let inwardDist: number;
@@ -456,14 +470,11 @@ export class CharacterFigure {
       fwdDist = 0.22 * sc;
       inwardDist = -0.045 * sc;
       dropDist = -0.055 * sc;
-    } else if (gun === 'shotgun_pump' || gun === 'rifle_hunting') {
-      fwdDist = 0.17 * sc;
-      inwardDist = 0.075 * sc;
-      dropDist = 0.06 * sc;
     } else {
-      fwdDist = 0.23 * sc;
-      inwardDist = 0.08 * sc;
-      dropDist = 0.055 * sc;
+      const stockBack = Math.max(0.20, d.s.back - _mainAt.z);
+      fwdDist = stockBack + 0.075 * sc;
+      inwardDist = 0.028 * sc;
+      dropDist = 0.080 * sc;
     }
 
     _gripR
@@ -472,8 +483,8 @@ export class CharacterFigure {
       .addScaledVector(aimRight, -inwardDist)
       .addScaledVector(aimUp, -dropDist);
 
-    _gunPos.copy(_gripR).sub(_tmp.copy(d.main.at).applyQuaternion(qGunW));
-    _gripL.copy(_gunPos).add(_tmp.copy(d.off.at).applyQuaternion(qGunW));
+    _gunPos.copy(_gripR).sub(_tmp.copy(_mainAt).applyQuaternion(qGunW));
+    _gripL.copy(_gunPos).add(_tmp.copy(_offAt).applyQuaternion(qGunW));
 
     // 5. Convert palm grip centers into wrist world targets & anatomical 3P orientations.
     // Rifles whose grips.json hand rotations carry steep FP viewmodel sleeve twists use neutral 3P rifle frames.
@@ -491,14 +502,14 @@ export class CharacterFigure {
       _wristL.copy(_gripL);
     }
 
-    // Left-arm reach guard: pull weapon closer to shoulder pocket if left forearm can't quite reach forend.
+    // Left-arm reach guard: pull weapon only slightly if left forearm can't quite reach forend.
     const shoulderL = r.bone('LeftArm').getWorldPosition(_pShL);
     const l1 = shoulderL.distanceTo(r.bone('LeftForeArm').getWorldPosition(_tmp));
     const l2 = _tmp.distanceTo(r.bone('LeftHand').getWorldPosition(_tmp2));
     const maxReach = (l1 + l2) * 0.965;
     const distL = shoulderL.distanceTo(_wristL);
     if (distL > maxReach) {
-      const pull = Math.min(0.08 * sc, distL - maxReach);
+      const pull = Math.min(cls === 'long' ? 0.035 * sc : 0.08 * sc, distL - maxReach);
       _gripR.addScaledVector(aimFwd, -pull);
       _gunPos.addScaledVector(aimFwd, -pull);
       _gripL.addScaledVector(aimFwd, -pull);
@@ -547,6 +558,8 @@ const _pShR = new Vector3();
 const _pShL = new Vector3();
 const _gripR = new Vector3();
 const _gripL = new Vector3();
+const _mainAt = new Vector3();
+const _offAt = new Vector3();
 const _wristR = new Vector3();
 const _wristL = new Vector3();
 const _poleR = new Vector3();

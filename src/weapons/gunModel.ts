@@ -430,6 +430,8 @@ export class GunModel {
         const matKey = `${magPartId}:${part.map ? 't' : 'c'}`;
         const fallbackCol = HINTS[id].magWell ? POLY : STEEL;
         const mesh = new Mesh(part.geo, material(matKey, fallbackCol, part.map));
+        if (id === 'rifle_ak') mesh.position.y = 0.026;
+        else if (id === 'rifle_m4a1') mesh.position.y = 0.024;
         if (HINTS[id].magWell) {
           _magOutDir.set(...this.sockets.magOut).normalize();
           mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
@@ -552,9 +554,13 @@ export class GunModel {
     const fill = (geo: BufferGeometry, map: Texture | null, alignWell = false) => {
       holder.clear();
       const mesh = new Mesh(geo, material(`${id}:${map ? 't' : 'c'}`, id === 'mod_flashlight' ? STEEL : POLY, map));
-      if (alignWell && id.startsWith('mod_ext_mag') && HINTS[this.id].magWell) {
-        _magOutDir.set(...s.magOut).normalize();
-        mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+      if (alignWell) {
+        if (id === 'mod_ext_mag_ak') mesh.position.y = 0.026;
+        else if (id === 'mod_ext_mag_m4') mesh.position.y = 0.024;
+        if (id.startsWith('mod_ext_mag') && HINTS[this.id].magWell) {
+          _magOutDir.set(...s.magOut).normalize();
+          mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+        }
       }
       holder.add(mesh);
     };
