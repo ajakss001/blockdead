@@ -346,6 +346,8 @@ export class Firearms {
     gv.duration = gs.duration;
     gv.open = gs.open;
     gv.chamber = gs.inst.chamber;
+    gv.mag = gs.inst.mag;
+    gv.capacity = capacityOf(id, gs.inst.mods);
     gv.mods = gs.inst.mods;
     gv.ads = input.isHeld('aim');
     if (gv.ads && !this.prevAds && !busy && !c.sprinting) sfx.ads(g.cls === 'pistol');

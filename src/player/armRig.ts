@@ -39,7 +39,7 @@ const ELBOW_CLEAR = 0.3;
 export const SHOULDER_R = new Vector3(0.19, -0.25, -0.05);
 export const SHOULDER_L = new Vector3(-0.19, -0.25, -0.05);
 export const POLE_R = new Vector3(0.7, -0.6, 0.25).normalize();
-export const POLE_L = new Vector3(-0.8, -0.2, 0.55).normalize();
+export const POLE_L = new Vector3(-0.6, -0.75, 0.28).normalize();
 
 /** Result of one arm solve, in viewmodel-camera space; angles in radians. */
 export interface ArmPose {
@@ -262,12 +262,14 @@ export class ArmRig {
     ev.twist = wristTw;
     ev.roll = roll;
     const elbowNear = Math.max(0, ELBOW_CLEAR - _e.length());
+    const elbowHigh = Math.max(0, _e.y + 0.2);
     ev.cost =
       10 * (over(flex, WRIST_FLEX - MARGIN) ** 2 + over(dev, WRIST_DEV - MARGIN) ** 2 + over(wristTw, WRIST_TWIST - TWIST_MARGIN) ** 2 + over(roll, FOREARM_ROLL) ** 2) +
       0.01 * ((flex / WRIST_FLEX) ** 2 + (dev / WRIST_DEV) ** 2 + (tau / (2 * WRIST_TWIST)) ** 2) +
       0.05 * phi * phi +
       0.05 * (phi - prev) ** 2 +
-      100 * elbowNear * elbowNear;
+      100 * elbowNear * elbowNear +
+      2500 * elbowHigh * elbowHigh;
     if (commit) {
       this.pose.elbow.copy(_e);
       this.pose.forearm.copy(_qa);

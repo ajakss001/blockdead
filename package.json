@@ -23,6 +23,7 @@
     "test:bandits": "node tools/vite-run.mjs src/debug/banditTest.ts",
     "test:collisions": "node tools/vite-run.mjs src/debug/collisionAuditTest.ts",
     "test:guns": "node tools/vite-run.mjs src/debug/gunTest.ts",
+    "test:reload-seq": "node tools/vite-run.mjs src/debug/reloadSeqTest.ts",
     "test:gear": "node tools/vite-run.mjs src/debug/gearTest.ts",
     "test:zombies": "node tools/vite-run.mjs src/debug/zombieTest.ts",
     "test:ragdoll": "node tools/vite-run.mjs src/debug/ragdollTest.ts",

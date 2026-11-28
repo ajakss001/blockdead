@@ -1,5 +1,5 @@
 import { Color, Scene, WebGLRenderer } from 'three';
-import { loadCharacters } from '../characters/assets';
+import { type BodyId, loadBody, loadCharacters } from '../characters/assets';
 import { Viewmodel } from '../player/Viewmodel';
 import { GunModel } from '../weapons/gunModel';
 import { GUN_IDS, GUNS, type GunId } from '../weapons/guns';
@@ -13,6 +13,7 @@ import { type AmmoSource, type GunAction, type GunInput, GunState, newInst } fro
 const q = new URLSearchParams(location.search);
 const ids = (q.get('gun')?.split(',') as GunId[] | undefined) ?? GUN_IDS;
 const mode = q.get('mode');
+const body = (q.get('body') as BodyId | null) ?? 'male';
 const W = Number(q.get('w')) || 360;
 const H = Math.round((W * 9) / 16);
 interface Shot {
@@ -56,6 +57,7 @@ const labels = document.createElement('div');
 labels.style.cssText = 'position:absolute;left:0;top:0;color:#eee;font:11px monospace;pointer-events:none';
 document.body.append(labels);
 await loadCharacters(1024);
+if (body !== 'male' && body !== 'female') await loadBody(body);
 // The gun files load once (cached), then every viewmodel's model replaces its stand-in at once.
 for (const id of ids) new GunModel(id);
 await new Promise((res) => setTimeout(res, 2500));
@@ -65,7 +67,7 @@ r.setScissorTest(true);
 for (const [row, id] of ids.entries()) {
   for (const [col, shot] of SHOTS.entries()) {
     const vm = new Viewmodel();
-    vm.setBody('male', 1);
+    vm.setBody(body, 1);
     vm.setAspect(16 / 9);
     vm.setDaylight(1);
     const g = GUNS[id];
@@ -82,6 +84,8 @@ for (const [row, id] of ids.entries()) {
       gv.duration = gs.duration;
       gv.open = gs.open;
       gv.chamber = inst.chamber;
+      gv.mag = inst.mag;
+      gv.capacity = g.capacity;
       vm.fixedUpdate(dt, false);
       vm.update(dt, { lookX: 0, lookY: 0, stepPhase: 0, speed: shot.sprint ? 5 : 0, sprinting: !!shot.sprint, flashlightOn: false });
     };
@@ -95,6 +99,8 @@ for (const [row, id] of ids.entries()) {
     } else if (g.feed === 'mag' && targetAt?.[0] === 'reload') {
       inst.mag = Math.max(0, Math.floor(g.capacity / 2));
       inst.chamber = true;
+    } else if (targetAt?.[0] === 'checkMag') {
+      inst.mag = g.feed === 'mag' ? g.capacity : Math.min(5, g.capacity);
     }
     if (g.feed !== 'mag' && targetAt?.[0].startsWith('reload')) {
       inst.mag = g.feed === 'rocket' ? 0 : Math.max(0, g.capacity - 1);

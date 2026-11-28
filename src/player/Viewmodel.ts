@@ -1,5 +1,6 @@
 import {
   AmbientLight,
+  BoxGeometry,
   type BufferGeometry,
   DirectionalLight,
   CylinderGeometry,
@@ -48,6 +49,9 @@ export interface GunView {
   wallDist: number;
   /** The rocket is in the tube. */
   chamber: boolean;
+  /** Rounds remaining inside the magazine / internal clip (optional, defaults to capacity). */
+  mag?: number;
+  capacity?: number;
   mods: readonly ModId[];
 }
 
@@ -131,10 +135,11 @@ export class Viewmodel {
   private pendingItem: HandItem | null = null;
   /** Guns: each in a holder in the right hand (the grip_main frame undone), made on first use. */
   private readonly guns = new Map<GunId, { holder: Group; model: GunModel; base: Matrix4 }>();
-  /** The shell (pump gun / bolt rifle) in the left hand while loading. */
+  /** The shell (pump gun) and 5-round .308 cartridge pack (hunting rifle) in the left hand while loading. */
   private readonly shell: Group;
+  private readonly rifleClip = new Group();
   /** Set by the scene each frame while a gun is in hand. */
-  readonly gunView: GunView = { action: 'idle', t: 0, duration: 1, open: false, ads: false, wall: 0, wallDist: 99, chamber: true, mods: [] };
+  readonly gunView: GunView = { action: 'idle', t: 0, duration: 1, open: false, ads: false, wall: 0, wallDist: 99, chamber: true, mag: 99, capacity: 99, mods: [] };
   /** The pose of the gun this frame (read by test:anim, ?animdebug and the scene for the muzzle). */
   readonly gunPose: GunPoseOut = newGunPoseOut();
   private readonly gunIn: GunPoseInput = { ads: 0, sprint: 0, crouch: 0, wall: 0, lower: 0, pump: 0, action: 'idle', t: 0, duration: 1, sinceShot: -1, open: false, chamber: true, kickBack: 0, kickUp: 0, kickSide: 0, kickRoll: 0 };
@@ -209,6 +214,30 @@ export class Viewmodel {
       this.shell.add(new Mesh(part.geo, weaponPartMaterial(`shell_12g:${part.map ? 't' : 'c'}`, grim(0x7c2a24), part.map)));
     });
     this.handL.add(this.shell);
+    this.rifleClip.name = 'rifleClip';
+    this.rifleClip.position.set(0.022, 0.016, -0.072);
+    this.rifleClip.rotation.set(0.25, 0.35, -0.2);
+    this.rifleClip.visible = false;
+    const clipSpineGeo = new BoxGeometry(0.048, 0.008, 0.012);
+    const caseGeo = new CylinderGeometry(0.0044, 0.0046, 0.036, 8).rotateX(Math.PI / 2);
+    const tipGeo = new CylinderGeometry(0.0008, 0.0042, 0.018, 8).rotateX(-Math.PI / 2);
+    this.geometries.push(clipSpineGeo, caseGeo, tipGeo);
+    const clipMat = new MeshLambertMaterial({ color: grim(0x282a2d) });
+    const brassMat = new MeshLambertMaterial({ color: 0xe6be53, emissive: 0x3b2d0a });
+    const copperMat = new MeshLambertMaterial({ color: 0xd4743b, emissive: 0x331608 });
+    this.materials.push(clipMat, brassMat, copperMat);
+    const spine = new Mesh(clipSpineGeo, clipMat);
+    spine.position.set(0, -0.004, 0.02);
+    this.rifleClip.add(spine);
+    for (let i = 0; i < 5; i++) {
+      const rx = (i - 2) * 0.0092;
+      const c = new Mesh(caseGeo, brassMat);
+      c.position.set(rx, 0, 0);
+      const t = new Mesh(tipGeo, copperMat);
+      t.position.set(rx, 0, -0.027);
+      this.rifleClip.add(c, t);
+    }
+    this.handL.add(this.rifleClip);
 
     this.root.add(this.armR, this.armL, ...this.uppers);
     this.scene.add(this.root, this.armsGroup);
@@ -420,6 +449,8 @@ export class Viewmodel {
     }
     const twoHanded = this.twoHands;
     this.torch.visible = !twoHanded;
+    this.shell.visible = false;
+    this.rifleClip.visible = false;
     const light = f.light ?? (f.flashlightOn ? 1 : 0);
     setLensGlow(this.lens, light);
     // The light spills on the hands from the left fist (on the handle when both hands are on a weapon).
@@ -550,7 +581,16 @@ export class Viewmodel {
     model.setMods(gv.mods);
     // Sights, wall: eased; the aim wavers after a while in the sights.
     const aimT = GUNS[id].times.aim;
-    const noAdsAction = gv.action === 'checkMag' || gv.action === 'checkChamber' || gv.action === 'inspect';
+    const noAdsAction =
+      gv.action === 'checkMag' ||
+      gv.action === 'checkChamber' ||
+      gv.action === 'inspect' ||
+      gv.action === 'reload' ||
+      gv.action === 'reloadEmpty' ||
+      gv.action === 'loadStart' ||
+      gv.action === 'loadOne' ||
+      gv.action === 'loadEnd' ||
+      gv.action === 'unjam';
     const wantAds = gv.ads && !noAdsAction && this.sprintT < 0.3 && this.rightDown < 0.05 && gv.wall < 0.3;
     this.ads = clamp(this.ads + (wantAds ? dt : -dt) / aimT, 0, 1);
     this.adsTime = this.ads > 0.9 ? this.adsTime + dt : 0;
@@ -664,7 +704,11 @@ export class Viewmodel {
       _gp.copy(out.leftGrip).sub(out.pos).applyQuaternion(_gq.copy(out.q).invert());
       p.rocket.position.set(_gp.x - model.sockets.load[0], _gp.y - model.sockets.load[1], _gp.z - model.sockets.load[2]);
     } else p.rocket.position.set(0, 0, 0);
-    this.shell.visible = out.left === 'shell';
+    const isBolt = id === 'rifle_hunting';
+    model.setMagFill(gv.mag ?? GUNS[id].capacity, gv.capacity ?? GUNS[id].capacity);
+    model.setBreechOpen(isBolt && (out.boltLift > 0.3 || out.slide > 0.015));
+    this.shell.visible = out.left === 'shell' && !isBolt;
+    this.rifleClip.visible = out.left === 'shell' && isBolt;
     // Sway and bob, much less in the sights (but growing after STEADY s there); breathing.
     const still = 1 - 0.85 * this.ads;
     const tired = this.ads * clamp((this.adsTime - STEADY) / 6, 0, 1);
