@@ -15,7 +15,7 @@
  *  - Simplifies meshes (`<= 800` tris) and exports `EXTMeshoptCompression` + `grim`-palette WebP textures matching
  *    `tools/import-assets.mjs` and `src/weapons/gunModel.ts`.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Document, NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
@@ -35,7 +35,7 @@ const SPECS = [
   {
     id: 'mag_pistol_g17',
     kind: 'mag',
-    size: [0.017, 0.076, 0.024], // [maxX thickness, exactY height along -Y, maxZ depth]
+    size: [0.017, 0.088, 0.026],
     tris: 700,
     prompt:
       'Vertical straight black polymer 9mm pistol magazine for Glock 17 with steel feed lips and one brass 9mm cartridge loaded on top, black polymer baseplate at bottom, standalone game weapon part, realistic PBR',
@@ -43,7 +43,7 @@ const SPECS = [
   {
     id: 'mag_pistol_m1911',
     kind: 'mag',
-    size: [0.014, 0.094, 0.023],
+    size: [0.014, 0.098, 0.025],
     tris: 700,
     prompt:
       'Vertical blued steel single-stack .45 ACP pistol magazine for M1911 with witness holes on side, steel floorplate at bottom, and one brass .45 cartridge visible at top feed lips, standalone weapon part, realistic PBR',
@@ -51,15 +51,55 @@ const SPECS = [
   {
     id: 'mod_ext_mag_g17',
     kind: 'mag',
-    size: [0.017, 0.16, 0.025],
+    size: [0.017, 0.16, 0.026],
     tris: 750,
     prompt:
       'Long vertical black polymer 33-round extended 9mm stick magazine for Glock pistol with thick extended floorplate at bottom and brass cartridge at top feed lips, standalone game weapon attachment, realistic PBR',
   },
   {
+    id: 'mag_m4',
+    kind: 'mag',
+    size: [0.024, 0.172, 0.064],
+    tris: 900,
+    prompt:
+      'Matte black steel 30-round 5.56mm AR-15 M4A1 magazine with brass cartridge at top feed lips, standalone game weapon part, realistic PBR',
+  },
+  {
+    id: 'mag_ak',
+    kind: 'mag',
+    size: [0.026, 0.19, 0.09],
+    tris: 900,
+    prompt:
+      'Curved dark stamped steel 30-round 7.62x39mm AK-47 magazine with reinforcing ribs and brass cartridge visible at top feed lips, standalone game weapon part, realistic PBR',
+  },
+  {
+    id: 'mod_ext_mag_m4',
+    kind: 'mag',
+    size: [0.025, 0.27, 0.068],
+    tris: 950,
+    prompt:
+      'Extended matte black polymer 40-round 5.56mm AR-15 magazine with brass cartridge at top feed lips, standalone game weapon attachment, realistic PBR',
+  },
+  {
+    id: 'mod_ext_mag_ak',
+    kind: 'mag',
+    size: [0.028, 0.275, 0.105],
+    tris: 950,
+    prompt:
+      'Long curved dark steel/bakelite 40-round 7.62x39mm extended AK magazine with brass cartridge visible at top feed lips, standalone game weapon attachment, realistic PBR',
+  },
+  {
+    id: 'clip_308',
+    kind: 'clip',
+    size: [0.06, 0.016, 0.071],
+    tris: 1100,
+    prompt:
+      'Five 7.62x51mm .308 brass rifle cartridges with copper pointed bullets held side-by-side in a dark blued steel stripper clip charger, standalone game ammunition prop, realistic PBR',
+  },
+  {
     id: 'bolt_ak',
     kind: 'bolt',
-    size: [0.028, 0.022, 0.088], // centered at origin, length along Z, handle protruding +X
+    size: [0.028, 0.022, 0.088],
     tris: 700,
     prompt:
       'Isolated dark blued steel AK-47 rifle bolt carrier group with curved charging handle knob sticking out to one side, mechanical firearm internal part, realistic gritty PBR metal',
@@ -75,7 +115,7 @@ const SPECS = [
   {
     id: 'shell_12g',
     kind: 'shell',
-    size: [0.021, 0.021, 0.068], // cylindrical along Z
+    size: [0.021, 0.021, 0.068],
     tris: 380,
     prompt:
       'Single realistic 12-gauge shotgun shell cartridge with crimped ribbed dark red plastic hull and ribbed brass base rim with primer, isolated game ammunition prop, PBR',
@@ -256,12 +296,20 @@ function compact(g) {
 function simplify(g, target) {
   if (g.index.length / 3 <= target) return g;
   const want = Math.max(36, Math.floor(target) * 3);
-  let [index] = MeshoptSimplifier.simplifyWithAttributes(g.index, g.pos, 3, g.uv, 2, [1.5, 1.5], null, want, 1, ['LockBorder']);
-  if (index.length / 3 > target * 1.15) {
-    const [relaxed] = MeshoptSimplifier.simplify(g.index, g.pos, 3, want, 0.04, ['Permissive']);
-    if (relaxed.length >= 36 && relaxed.length < index.length) index = relaxed;
+  let [best] = MeshoptSimplifier.simplifyWithAttributes(g.index, g.pos, 3, g.uv, 2, [1.5, 1.5], null, want, 1, ['LockBorder']);
+  if (best.length / 3 <= target) return compact({ ...g, index: best });
+  for (const [factor, err] of [
+    [0.95, 0.05],
+    [0.88, 0.08],
+    [0.78, 0.12],
+    [0.65, 0.2],
+  ]) {
+    const aim = Math.max(36, Math.floor(target * factor) * 3);
+    const [cand] = MeshoptSimplifier.simplify(g.index, g.pos, 3, aim, err, ['Permissive']);
+    if (cand.length >= 36 && cand.length < best.length) best = cand;
+    if (best.length / 3 <= target) break;
   }
-  return compact({ ...g, index });
+  return compact({ ...g, index: best });
 }
 
 function bounds(pos) {
@@ -287,16 +335,29 @@ function transform(g, m) {
   return { ...g, pos, nor };
 }
 
+function sampleBrassWarmth(rawTex, u, v) {
+  if (!rawTex) return false;
+  const uu = ((u % 1) + 1) % 1;
+  const vv = ((v % 1) + 1) % 1;
+  const x = Math.min(rawTex.width - 1, Math.floor(uu * rawTex.width));
+  const y = Math.min(rawTex.height - 1, Math.floor(vv * rawTex.height));
+  const idx = (y * rawTex.width + x) * 4;
+  const r = rawTex.data[idx];
+  const g = rawTex.data[idx + 1];
+  const b = rawTex.data[idx + 2];
+  return r > b + 20 && r > 85 && g > 55 && r >= g * 0.85;
+}
+
 /**
  * Normalize axis orientation & metric scale deterministically regardless of Meshy's raw pose:
- *  - `mag`   : longest axis -> Y (top at y=0, hanging -Y), thinnest -> X, middle -> Z; scaled cleanly into `spec.size`.
- *  - `bolt`  : longest axis -> Z (barrel axis), middle -> X (handle sticking out +X), thinnest -> Y.
- *  - `shell` : longest axis -> Z (cartridge length), cross-section X/Y symmetric.
+ *  - `mag`   : longest -> Y (feed lips at y=0 facing +Y, brass bullet tips facing -Z, body hanging -Y).
+ *  - `clip`  : longest -> Z (cartridge length, bullet tips strictly along -Z), middle -> X, thinnest -> Y, centered.
+ *  - `bolt`  : longest -> Z (barrel axis), middle -> X (handle sticking out +X), thinnest -> Y, centered.
+ *  - `shell` : longest -> Z (cartridge length), cross-section X/Y symmetric, centered.
  */
-function alignAndScale(g, spec) {
+function alignAndScale(g, spec, rawTex, opts = {}) {
   const b0 = bounds(g.pos);
   const order = [0, 1, 2].sort((a, b) => b0.ext[b] - b0.ext[a]); // [longest, middle, thinnest]
-  // Basis mapping: assign source axes to target [X, Y, Z].
   let srcForX;
   let srcForY;
   let srcForZ;
@@ -304,10 +365,10 @@ function alignAndScale(g, spec) {
     srcForY = order[0]; // tallest = vertical mag length
     srcForZ = order[1]; // front-to-back mag depth
     srcForX = order[2]; // thinnest = left-right thickness
-  } else if (spec.kind === 'bolt') {
-    srcForZ = order[0]; // longest = along barrel Z
-    srcForX = order[1]; // middle = handle protrusion X
-    srcForY = order[2]; // height
+  } else if (spec.kind === 'bolt' || spec.kind === 'clip') {
+    srcForZ = order[0]; // longest = cartridge/barrel Z
+    srcForX = order[1]; // middle = handle protrusion or 5-round clip X width
+    srcForY = order[2]; // thinnest height Y
   } else {
     srcForZ = order[0];
     srcForX = order[1];
@@ -319,48 +380,123 @@ function alignAndScale(g, spec) {
   const mapCol = (srcAxis, targetVec) => {
     cols[srcAxis].copy(targetVec);
   };
-  const xVec = new Vector3(1, 0, 0);
-  const yVec = new Vector3(0, 1, 0);
-  const zVec = new Vector3(0, 0, 1);
-  mapCol(srcForX, xVec);
-  mapCol(srcForY, yVec);
-  mapCol(srcForZ, zVec);
-  // Ensure right-handed basis (det > 0) to preserve triangle winding.
+  mapCol(srcForX, new Vector3(1, 0, 0));
+  mapCol(srcForY, new Vector3(0, 1, 0));
+  mapCol(srcForZ, new Vector3(0, 0, 1));
   const det = new Vector3().crossVectors(cols[0], cols[1]).dot(cols[2]);
   if (det < 0) cols[srcForX].negate();
   perm.makeBasis(cols[0], cols[1], cols[2]);
   let out = transform(g, perm);
 
-  // For bolts, ensure any protruding handle extends toward +X rather than -X (centroid skewed vs midpoint or |hi.x| > |lo.x|).
-  if (spec.kind === 'bolt') {
+  const nVerts = out.pos.length / 3;
+  if (spec.kind === 'mag') {
+    // 1. Ensure feed lips / brass round end is at +Y (top), baseplate at -Y (bottom).
+    const by = bounds(out.pos);
+    const yTopCut = by.hi[1] - 0.18 * by.ext[1];
+    const yBotCut = by.lo[1] + 0.18 * by.ext[1];
+    let topBrass = 0;
+    let botBrass = 0;
+    for (let i = 0; i < nVerts; i++) {
+      const y = out.pos[i * 3 + 1];
+      if (y >= yTopCut && sampleBrassWarmth(rawTex, out.uv[i * 2], out.uv[i * 2 + 1])) topBrass++;
+      else if (y <= yBotCut && sampleBrassWarmth(rawTex, out.uv[i * 2], out.uv[i * 2 + 1])) botBrass++;
+    }
+    if (botBrass > topBrass * 1.15) {
+      out = transform(out, new Matrix4().makeRotationX(Math.PI));
+    }
+
+    // 2. Ensure cartridge nose / AK forward curve points along -Z.
+    const bz = bounds(out.pos);
+    if (spec.id.includes('ak')) {
+      const topZCut = bz.hi[1] - 0.3 * bz.ext[1];
+      const botZCut = bz.lo[1] + 0.3 * bz.ext[1];
+      let sumTopZ = 0, cntTop = 0, sumBotZ = 0, cntBot = 0;
+      for (let i = 0; i < nVerts; i++) {
+        const y = out.pos[i * 3 + 1];
+        const z = out.pos[i * 3 + 2];
+        if (y >= topZCut) { sumTopZ += z; cntTop++; }
+        else if (y <= botZCut) { sumBotZ += z; cntBot++; }
+      }
+      const meanTopZ = sumTopZ / Math.max(1, cntTop);
+      const meanBotZ = sumBotZ / Math.max(1, cntBot);
+      if (meanBotZ > meanTopZ) out = transform(out, new Matrix4().makeRotationY(Math.PI));
+    } else {
+      const yLipCut = bz.hi[1] - 0.12 * bz.ext[1];
+      const zMid = (bz.lo[2] + bz.hi[2]) * 0.5;
+      let absXFront = 0, cntFront = 0, absXBack = 0, cntBack = 0;
+      for (let i = 0; i < nVerts; i++) {
+        if (out.pos[i * 3 + 1] < yLipCut) continue;
+        const ax = Math.abs(out.pos[i * 3]);
+        if (out.pos[i * 3 + 2] < zMid) { absXFront += ax; cntFront++; }
+        else { absXBack += ax; cntBack++; }
+      }
+      if (cntFront > 0 && cntBack > 0 && absXFront / cntFront > absXBack / cntBack * 1.05) {
+        out = transform(out, new Matrix4().makeRotationY(Math.PI));
+      }
+    }
+  } else if (spec.kind === 'clip') {
+    // Pointed bullet tips have narrower Y cross-section & taper in -Z compared to flat rim / clip spine in +Z.
+    const bc = bounds(out.pos);
+    const midY = (bc.lo[1] + bc.hi[1]) * 0.5;
+    const zFrontCut = bc.lo[2] + 0.2 * bc.ext[2];
+    const zBackCut = bc.hi[2] - 0.2 * bc.ext[2];
+    let fAbsY = 0, fCnt = 0, bAbsY = 0, bCnt = 0;
+    for (let i = 0; i < nVerts; i++) {
+      const z = out.pos[i * 3 + 2];
+      const dy = Math.abs(out.pos[i * 3 + 1] - midY);
+      if (z <= zFrontCut) { fAbsY += dy; fCnt++; }
+      else if (z >= zBackCut) { bAbsY += dy; bCnt++; }
+    }
+    if (fCnt > 0 && bCnt > 0 && fAbsY / fCnt > bAbsY / bCnt) {
+      out = transform(out, new Matrix4().makeRotationY(Math.PI));
+    }
+  } else if (spec.kind === 'bolt') {
     const bb = bounds(out.pos);
     let meanX = 0;
-    const n = out.pos.length / 3;
-    for (let i = 0; i < n; i++) meanX += out.pos[i * 3];
-    meanX /= Math.max(1, n);
+    for (let i = 0; i < nVerts; i++) meanX += out.pos[i * 3];
+    meanX /= Math.max(1, nVerts);
     const midX = (bb.lo[0] + bb.hi[0]) * 0.5;
-    // Handle side extends farther from centroid on +X; flip 180 deg about Z if skewed the other way.
     if (meanX - bb.lo[0] > bb.hi[0] - meanX && Math.abs(midX - meanX) > 1e-4) {
       out = transform(out, new Matrix4().makeRotationZ(Math.PI));
     }
   }
 
-  // Uniform scale from primary dimension, capped per-axis by spec.size so parts never poke outside receivers/grips.
+  if (opts.flipY) out = transform(out, new Matrix4().makeRotationX(Math.PI));
+  if (opts.flipZ) out = transform(out, new Matrix4().makeRotationY(Math.PI));
+
+  // Scale from primary dimension, capped per-axis by spec.size.
   const b1 = bounds(out.pos);
   const primaryScale =
     spec.kind === 'mag' ? spec.size[1] / b1.ext[1] : spec.size[2] / b1.ext[2];
   const sx = Math.min(primaryScale, spec.size[0] / b1.ext[0]);
   const sy = spec.kind === 'mag' ? primaryScale : Math.min(primaryScale, spec.size[1] / b1.ext[1]);
-  const sz = spec.kind === 'bolt' || spec.kind === 'shell' ? primaryScale : Math.min(primaryScale, spec.size[2] / b1.ext[2]);
+  const sz = spec.kind === 'bolt' || spec.kind === 'shell' || spec.kind === 'clip' ? primaryScale : Math.min(primaryScale, spec.size[2] / b1.ext[2]);
 
-  const cx = (b1.lo[0] + b1.hi[0]) * 0.5;
-  const cy = (b1.lo[1] + b1.hi[1]) * 0.5;
-  const cz = (b1.lo[2] + b1.hi[2]) * 0.5;
+  let anchorX = (b1.lo[0] + b1.hi[0]) * 0.5;
+  let anchorY = (b1.lo[1] + b1.hi[1]) * 0.5;
+  let anchorZ = (b1.lo[2] + b1.hi[2]) * 0.5;
 
-  const anchorY = spec.kind === 'mag' ? -b1.hi[1] : -cy;
+  if (spec.kind === 'mag') {
+    // Anchor mag pivot at the center of the top 20% slice so curved AK mags seat flush in magwell at (0,0,0).
+    const ySlice = b1.hi[1] - 0.2 * b1.ext[1];
+    let sxSum = 0, szSum = 0, sCnt = 0;
+    for (let i = 0; i < nVerts; i++) {
+      if (out.pos[i * 3 + 1] >= ySlice) {
+        sxSum += out.pos[i * 3];
+        szSum += out.pos[i * 3 + 2];
+        sCnt++;
+      }
+    }
+    if (sCnt > 0) {
+      anchorX = sxSum / sCnt;
+      anchorZ = szSum / sCnt;
+    }
+    anchorY = b1.hi[1];
+  }
+
   const m = new Matrix4()
     .makeScale(sx, sy, sz)
-    .multiply(new Matrix4().makeTranslation(-cx, anchorY, -cz));
+    .multiply(new Matrix4().makeTranslation(-anchorX, -anchorY, -anchorZ));
   return transform(out, m);
 }
 
@@ -372,17 +508,22 @@ function grimPixel(r, g, b) {
   return c;
 }
 
-async function writeTextures(id, img) {
+async function decodeRawTexture(img) {
+  if (!img) return null;
+  const res = await sharp(Buffer.from(img)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { width: res.info.width, height: res.info.height, data: res.data };
+}
+
+async function writeTextures(id, rawTex) {
   let rawBuf;
   let width;
   let height;
-  if (img) {
-    const res = await sharp(Buffer.from(img)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    width = res.info.width;
-    height = res.info.height;
+  if (rawTex) {
+    width = rawTex.width;
+    height = rawTex.height;
     rawBuf = Buffer.alloc(width * height * 4);
     for (let i = 0; i < width * height; i++) {
-      const c = grimPixel(res.data[i * 4], res.data[i * 4 + 1], res.data[i * 4 + 2]);
+      const c = grimPixel(rawTex.data[i * 4], rawTex.data[i * 4 + 1], rawTex.data[i * 4 + 2]);
       rawBuf[i * 4] = (c >> 16) & 255;
       rawBuf[i * 4 + 1] = (c >> 8) & 255;
       rawBuf[i * 4 + 2] = c & 255;
@@ -410,6 +551,39 @@ async function writeTextures(id, img) {
   }
 }
 
+async function processRawBuffer(io, manifest, spec, rawBuf, opts = {}) {
+  const raw = await readCombined(io, rawBuf);
+  const rawTris = raw.index.length / 3;
+  const decodedTex = await decodeRawTexture(raw.tex);
+  const simplified = simplify(raw, spec.tris);
+  const aligned = alignAndScale(simplified, spec, decodedTex, opts);
+  const finalTris = aligned.index.length / 3;
+  const bytes = await writePartGlb(io, spec.id, aligned);
+  await writeTextures(spec.id, decodedTex);
+
+  const bb = bounds(aligned.pos);
+  manifest[spec.id] = { parts: ['body'], tris: finalTris };
+  writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 1));
+  console.log(
+    `[done] ${spec.id}: ${rawTris} -> ${finalTris} tris (budget <= ${spec.tris}), ${(bytes / 1024).toFixed(1)} KB, ext=${bb.ext.map((v) => v.toFixed(3)).join('x')}m, y=[${bb.lo[1].toFixed(3)},${bb.hi[1].toFixed(3)}]`,
+  );
+}
+
+function walkGlbs(dir, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) walkGlbs(p, out);
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith('.glb')) out.push(p);
+  }
+  return out;
+}
+
+function findGlbForSpec(files, id) {
+  const exact = new RegExp(`(^|[\\\\/])${id}\\.glb$`, 'i');
+  const meshy = new RegExp(`meshy_ai_${id}_\\d+p`, 'i');
+  return files.find((f) => exact.test(f)) ?? files.find((f) => meshy.test(f)) ?? null;
+}
+
 async function writePartGlb(io, id, g) {
   const doc = new Document();
   const buf = doc.createBuffer();
@@ -432,13 +606,51 @@ async function writePartGlb(io, id, g) {
   return statSync(outPath).size;
 }
 
+function parseFlags(argv) {
+  let fromDir = '';
+  const flipY = new Set();
+  const flipZ = new Set();
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--from' && argv[i + 1]) fromDir = resolve(argv[++i]);
+    else if (a.startsWith('--from=')) fromDir = resolve(a.slice(7));
+    else if (a.startsWith('--flip-y=')) for (const id of a.slice(9).split(',')) if (id) flipY.add(id.trim());
+    else if (a.startsWith('--flip-z=')) for (const id of a.slice(9).split(',')) if (id) flipZ.add(id.trim());
+  }
+  return { fromDir, flipY, flipZ };
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   await MeshoptDecoder.ready;
   await MeshoptEncoder.ready;
   await MeshoptSimplifier.ready;
 
+  const { fromDir, flipY, flipZ } = parseFlags(process.argv.slice(2));
   const manifest = existsSync(MANIFEST_PATH) ? JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) : {};
+
+  if (fromDir) {
+    const files = walkGlbs(fromDir);
+    const io = createIo();
+    let count = 0;
+    for (const spec of SPECS) {
+      const srcFile = findGlbForSpec(files, spec.id);
+      if (!srcFile) continue;
+      count++;
+      console.log(`[import] ${spec.id} <- ${srcFile}`);
+      const rawBuf = readFileSync(srcFile);
+      await processRawBuffer(io, manifest, spec, rawBuf, {
+        flipY: flipY.has(spec.id),
+        flipZ: flipZ.has(spec.id),
+      });
+    }
+    if (count === 0) {
+      console.warn(`No matching weapon part GLBs found under ${fromDir}`);
+    }
+    writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 1));
+    return;
+  }
+
   const pending = [];
 
   for (const spec of SPECS) {
@@ -491,21 +703,10 @@ async function main() {
       const dl = await fetch(glbUrl);
       if (!dl.ok) throw new Error(`Failed downloading ${spec.id}.glb (${dl.status})`);
       const rawBuf = Buffer.from(await dl.arrayBuffer());
-
-      const raw = await readCombined(io, rawBuf);
-      const rawTris = raw.index.length / 3;
-      const simplified = simplify(raw, spec.tris);
-      const aligned = alignAndScale(simplified, spec);
-      const finalTris = aligned.index.length / 3;
-      const bytes = await writePartGlb(io, spec.id, aligned);
-      await writeTextures(spec.id, aligned.tex);
-
-      const bb = bounds(aligned.pos);
-      manifest[spec.id] = { parts: ['body'], tris: finalTris };
-      writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 1));
-      console.log(
-        `\n[done] ${spec.id}: ${rawTris} -> ${finalTris} tris, ${(bytes / 1024).toFixed(1)} KB, size=${bb.ext.map((v) => v.toFixed(3)).join('x')}m`,
-      );
+      await processRawBuffer(io, manifest, spec, rawBuf, {
+        flipY: flipY.has(spec.id),
+        flipZ: flipZ.has(spec.id),
+      });
     }
   };
 

@@ -290,9 +290,11 @@ function cleanMagwellSpikes(geo: BufferGeometry, mag: V3): BufferGeometry {
   return clean;
 }
 
-const PISTOL_MAG_PART: Partial<Record<GunId, string>> = {
+const MAG_PART: Partial<Record<GunId, string>> = {
   pistol_g17: 'mag_pistol_g17',
   pistol_m1911: 'mag_pistol_m1911',
+  rifle_ak: 'mag_ak',
+  rifle_m4a1: 'mag_m4',
 };
 
 const RIFLE_BOLT_PART: Partial<Record<GunId, string>> = {
@@ -340,6 +342,8 @@ export class GunModel {
   /** The model's own magazine (hidden under an extended one). */
   private magOwn: Group = new Group();
   private magExt: Object3D | null = null;
+  private meshyMagLoaded = false;
+  private hasExtMag = false;
   private loaded = false;
 
   constructor(readonly id: GunId) {
@@ -365,10 +369,10 @@ export class GunModel {
       const built = buildCleanRifleMag(id, this.magRounds, this.magAmmoGroup);
       this.magOwn.add(built.body);
       this.magFollower = built.follower;
-    } else if (PISTOL_MAG_PART[id]) {
+    } else if (id === 'pistol_g17' || id === 'pistol_m1911') {
       _magOutDir.set(...this.sockets.magOut).normalize();
       this.magAmmoGroup.quaternion.setFromUnitVectors(_downY, _magOutDir);
-      // 2 top feed-lip rounds + 5 side witness window markers for pistols.
+      // 2 top feed-lip rounds + 5 side witness window markers for pistols (kept subtle when Meshy GLB loads).
       for (let i = 0; i < 2; i++) {
         const r = makeCartridge(0.028, 0.0044);
         r.position.set(i === 0 ? 0.001 : -0.002, 0.002 - i * 0.0055, -0.002);
@@ -399,15 +403,21 @@ export class GunModel {
     }
     this.setMagFill(99, 99);
     void loadFile(id).then((geo) => geo && this.fillModel(geo));
-    const pistolMagId = PISTOL_MAG_PART[id];
-    if (pistolMagId) {
-      void loadWeaponPart(pistolMagId).then((part) => {
+    const magPartId = MAG_PART[id];
+    if (magPartId) {
+      void loadWeaponPart(magPartId).then((part) => {
         if (!part) return;
         this.magOwn.clear();
-        const mesh = new Mesh(part.geo, material(`${pistolMagId}:${part.map ? 't' : 'c'}`, POLY, part.map));
-        _magOutDir.set(...this.sockets.magOut).normalize();
-        mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+        const matKey = `${magPartId}:${part.map ? 't' : 'c'}`;
+        const fallbackCol = HINTS[id].magWell ? POLY : STEEL;
+        const mesh = new Mesh(part.geo, material(matKey, fallbackCol, part.map));
+        if (HINTS[id].magWell) {
+          _magOutDir.set(...this.sockets.magOut).normalize();
+          mesh.quaternion.setFromUnitVectors(_downY, _magOutDir);
+        }
         this.magOwn.add(mesh);
+        this.meshyMagLoaded = true;
+        this.refreshMagRounds();
       });
     }
     const boltPartId = RIFLE_BOLT_PART[id];
@@ -445,17 +455,30 @@ export class GunModel {
   setMagFill(mag: number, capacity: number): void {
     this.magCount = Math.max(0, Math.round(mag));
     this.magCap = Math.max(1, capacity);
+    this.refreshMagRounds();
+    this.refreshBreech();
+  }
+
+  private refreshMagRounds(): void {
+    const meshy = this.meshyMagLoaded || this.hasExtMag;
     if (this.magRounds.length > 0) {
       const top0 = this.magRounds[0];
       const top1 = this.magRounds[1];
-      if (top0) top0.visible = this.magCount >= 1;
-      if (top1) top1.visible = this.magCount >= 2;
+      if (top0) {
+        top0.visible = this.magCount >= 1;
+        // Let the sculpted brass cartridge in Meshy GLBs show through cleanly while keeping a recessed anchor.
+        top0.scale.setScalar(meshy ? 0.35 : 1);
+        top0.position.y = meshy ? -0.008 : 0.003;
+      }
+      if (top1) top1.visible = !meshy && this.magCount >= 2;
       const winSlots = Math.max(0, this.magRounds.length - 2);
       const winCount = this.magCount <= 0 ? 0 : Math.ceil((Math.min(this.magCount, this.magCap) / this.magCap) * winSlots);
-      for (let i = 0; i < winSlots; i++) this.magRounds[i + 2].visible = i < winCount;
+      for (let i = 0; i < winSlots; i++) this.magRounds[i + 2].visible = !meshy && i < winCount;
     }
-    if (this.magFollower) this.magFollower.visible = this.magCount === 0;
-    this.refreshBreech();
+    if (this.magFollower) {
+      this.magFollower.visible = this.magCount === 0;
+      this.magFollower.position.y = meshy ? -0.002 : 0.001;
+    }
   }
 
   /** Show/hide internal .308 cartridges in the hunting rifle's open receiver port. */
@@ -483,8 +506,10 @@ export class GunModel {
     for (const [id, m] of this.modMeshes) m.visible = this.mods.includes(id);
     for (const id of this.mods) if (!this.modMeshes.has(id)) this.addMod(id);
     const ext = this.mods.find((m) => MODS[m].slot === 'mag') ?? null;
+    this.hasExtMag = !!ext;
     this.magOwn.visible = !ext;
     if (this.magExt) this.magExt.visible = !!ext;
+    this.refreshMagRounds();
   }
 
   /** Where the muzzle ends now (the suppressor's front with one on), gun frame. */

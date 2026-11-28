@@ -237,6 +237,11 @@ export class Viewmodel {
       t.position.set(rx, 0, -0.027);
       this.rifleClip.add(c, t);
     }
+    void loadWeaponPart('clip_308').then((part) => {
+      if (!part) return;
+      this.rifleClip.clear();
+      this.rifleClip.add(new Mesh(part.geo, weaponPartMaterial(`clip_308:${part.map ? 't' : 'c'}`, grim(0xb8963c), part.map)));
+    });
     this.handL.add(this.rifleClip);
 
     this.root.add(this.armR, this.armL, ...this.uppers);

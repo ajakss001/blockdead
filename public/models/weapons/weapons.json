@@ -63,7 +63,7 @@
   "parts": [
    "body"
   ],
-  "tris": 800
+  "tris": 949
  },
  "mag_pistol_g17": {
   "parts": [
@@ -75,13 +75,13 @@
   "parts": [
    "body"
   ],
-  "tris": 700
+  "tris": 662
  },
  "mod_ext_mag_g17": {
   "parts": [
    "body"
   ],
-  "tris": 750
+  "tris": 749
  },
  "bolt_ak": {
   "parts": [
@@ -100,5 +100,17 @@
    "body"
   ],
   "tris": 380
+ },
+ "mag_ak": {
+  "parts": [
+   "body"
+  ],
+  "tris": 900
+ },
+ "clip_308": {
+  "parts": [
+   "body"
+  ],
+  "tris": 1100
  }
 }
