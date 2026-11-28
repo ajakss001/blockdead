@@ -1,6 +1,7 @@
 import './domStub';
-import { type Group, Vector3 } from 'three';
+import { type Group, Quaternion, Vector3 } from 'three';
 import { loadBody } from '../characters/assets';
+import { HAND_OFFSET } from '../player/armRig';
 import { Viewmodel, type ViewmodelFrame } from '../player/Viewmodel';
 import { capacityOf, GUN_IDS, GUNS } from '../weapons/guns';
 import { type AmmoSource, type GunInput, GunState, newInst } from '../weapons/gunState';
@@ -112,6 +113,13 @@ export async function main(): Promise<number> {
       let sawClipInHand = false, clipInView = false;
       let sawShellInHand = false, shellInView = false;
 
+      let maxFlexDeg = 0, maxDevDeg = 0, maxTwistDeg = 0, badWristAt = '';
+      let akUnderWristY = 99, akBoltWristX = -99, akReceiverHits = 0, akHitAt = '';
+      const invGunQ = new Quaternion();
+      const tmpElbowG = new Vector3();
+      const tmpWristG = new Vector3();
+      const tmpSegG = new Vector3();
+
       const vmPriv = vm as unknown as { shell: Group; rifleClip: Group };
 
       for (let i = 0; i < 500 && gs.busy; i++) {
@@ -119,12 +127,39 @@ export async function main(): Promise<number> {
         maxElbL = Math.max(maxElbL, vm.rig.left.pose.elbow.y);
         maxElbR = Math.max(maxElbR, vm.rig.right.pose.elbow.y);
         const k = gs.duration > 0 ? gs.t / gs.duration : 0;
+        const pL = vm.rig.left.pose;
+        const fDeg = Math.abs(pL.flex) * 57.2957795;
+        const dDeg = Math.abs(pL.dev) * 57.2957795;
+        const tDeg = Math.abs(pL.twist) * 57.2957795;
+        if (fDeg > maxFlexDeg || dDeg > maxDevDeg || tDeg > maxTwistDeg) {
+          if (fDeg > 60.5 || dDeg > 26 || tDeg > 41) {
+            badWristAt ||= `${gs.action}@${k.toFixed(2)}(f=${fDeg.toFixed(1)},d=${dDeg.toFixed(1)},t=${tDeg.toFixed(1)})`;
+          }
+          maxFlexDeg = Math.max(maxFlexDeg, fDeg);
+          maxDevDeg = Math.max(maxDevDeg, dDeg);
+          maxTwistDeg = Math.max(maxTwistDeg, tDeg);
+        }
         if (vm.rig.left.pose.reachErr > maxReachErr) {
           maxReachErr = vm.rig.left.pose.reachErr;
           badReachAt = `${gs.action}@${k.toFixed(2)}`;
         }
         const out = vm.gunPose;
         if (!Number.isFinite(out.pos.x) || !Number.isFinite(out.leftGrip.x) || !Number.isFinite(out.magPos.x)) badNan = true;
+
+        if (id === 'rifle_ak' && empty && gs.action === 'reloadEmpty' && k >= 0.66 && k <= 0.94) {
+          invGunQ.copy(out.q).invert();
+          tmpElbowG.copy(pL.elbow).sub(out.pos).applyQuaternion(invGunQ);
+          tmpWristG.set(0, 0, -HAND_OFFSET).applyQuaternion(pL.forearm).add(pL.elbow).sub(out.pos).applyQuaternion(invGunQ);
+          if (k >= 0.68 && k <= 0.75) akUnderWristY = Math.min(akUnderWristY, tmpWristG.y);
+          if (k >= 0.79 && k <= 0.86) akBoltWristX = Math.max(akBoltWristX, tmpWristG.x);
+          for (let s = 1; s <= 8; s++) {
+            tmpSegG.copy(tmpElbowG).lerp(tmpWristG, s / 8);
+            if (Math.abs(tmpSegG.x) < 0.018 && tmpSegG.y > 0.025 && tmpSegG.y < 0.115 && tmpSegG.z > -0.28 && tmpSegG.z < -0.02) {
+              akReceiverHits++;
+              akHitAt ||= `@${k.toFixed(2)}(${tmpSegG.x.toFixed(3)},${tmpSegG.y.toFixed(3)},${tmpSegG.z.toFixed(3)})`;
+            }
+          }
+        }
 
         if (g.feed === 'mag' && (gs.action === 'reload' || gs.action === 'reloadEmpty') && k >= 0.48 && k <= 0.60) {
           sawInsertMag = true;
@@ -151,6 +186,16 @@ export async function main(): Promise<number> {
       check(!badNan && maxReachErr < 0.05, `${tag}: no NaN & reachErr=${maxReachErr.toFixed(4)} (< 0.05, ${badReachAt})`);
       check(maxElbL <= -0.10 && maxElbR <= -0.10, `${tag}: elbows low (L=${maxElbL.toFixed(3)}, R=${maxElbR.toFixed(3)})`);
       if (g.feed === 'mag') {
+        check(
+          maxFlexDeg <= 60.5 && maxDevDeg <= 26 && maxTwistDeg <= 41,
+          `${tag}: left wrist within limits (flex=${maxFlexDeg.toFixed(1)}°, dev=${maxDevDeg.toFixed(1)}°, twist=${maxTwistDeg.toFixed(1)}° ${badWristAt})`,
+        );
+        if (id === 'rifle_ak' && empty) {
+          check(
+            akUnderWristY < 0.01 && akBoltWristX > 0.02 && akReceiverHits === 0,
+            `${tag}: AK under-gun rack clears receiver (minY=${akUnderWristY.toFixed(3)}, maxX=${akBoltWristX.toFixed(3)}, hits=${akReceiverHits} ${akHitAt})`,
+          );
+        }
         check(sawInsertMag && magDistOk && magInView, `${tag}: left hand holds visible mag inside viewport during insert`);
       } else if (id === 'rifle_hunting') {
         check(sawClipInHand && clipInView, `${tag}: 5-round .308 clip visible in left hand inside viewport`);
@@ -166,9 +211,20 @@ export async function main(): Promise<number> {
       for (let i = 0; i < 20; i++) step();
       step({ checkMag: true });
       let checked = false;
+      let cmFlex = 0, cmDev = 0, cmTwist = 0, cmBadAt = '';
       for (let i = 0; i < 300 && gs.busy; i++) {
         step();
         const k = gs.duration > 0 ? gs.t / gs.duration : 0;
+        const pL = vm.rig.left.pose;
+        const fDeg = Math.abs(pL.flex) * 57.2957795;
+        const dDeg = Math.abs(pL.dev) * 57.2957795;
+        const tDeg = Math.abs(pL.twist) * 57.2957795;
+        if ((fDeg > 60.5 || dDeg > 26 || tDeg > 41) && !cmBadAt) {
+          cmBadAt = `@${k.toFixed(2)}(f=${fDeg.toFixed(1)},d=${dDeg.toFixed(1)},t=${tDeg.toFixed(1)})`;
+        }
+        cmFlex = Math.max(cmFlex, fDeg);
+        cmDev = Math.max(cmDev, dDeg);
+        cmTwist = Math.max(cmTwist, tDeg);
         if (gs.action === 'checkMag' && k >= 0.48 && !checked) {
           checked = true;
           const out = vm.gunPose;
@@ -189,6 +245,10 @@ export async function main(): Promise<number> {
           );
         }
       }
+      check(
+        cmFlex <= 60.5 && cmDev <= 26 && cmTwist <= 41,
+        `${id} checkMag: left wrist within limits (flex=${cmFlex.toFixed(1)}°, dev=${cmDev.toFixed(1)}°, twist=${cmTwist.toFixed(1)}° ${cmBadAt})`,
+      );
       for (let i = 0; i < 30; i++) step();
       inst.mag = 0;
       inst.chamber = true;

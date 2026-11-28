@@ -41,9 +41,9 @@ const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly 
   grip_support: { fingers: [1.1, 1.25, 1.05], index: [1.06, 1.15, 1.05], thumb: [0.6, 0.7] },
   relaxed: { fingers: [0.35, 0.45, 0.3], index: [0.25, 0.35, 0.25], thumb: [0.1, 0.15] },
   grip_torch: { fingers: [1.2, 1.4, 1.05], index: [1.15, 1.35, 1.0], thumb: [0.45, 0.6] },
-  mag_pinch: { fingers: [0.85, 1.05, 0.8], index: [0.75, 0.95, 0.7], thumb: [0.5, 0.6] },
+  mag_pinch: { fingers: [1.18, 1.38, 1.05], index: [1.0, 1.18, 0.88], thumb: [0.58, 0.68] },
   slap_open: { fingers: [0.15, 0.2, 0.1], index: [0.12, 0.18, 0.1], thumb: [0.1, 0.12] },
-  bolt_hook: { fingers: [1.1, 1.3, 1.0], index: [1.35, 1.45, 1.15], thumb: [0.25, 0.3] },
+  bolt_hook: { fingers: [1.22, 1.42, 1.08], index: [1.35, 1.48, 1.15], thumb: [0.35, 0.42] },
 };
 /**
  * The poses whose thumb turns mirrored for the left hand. The thumb's axis below (−f + 0.4·axis) is the right
@@ -51,7 +51,7 @@ const POSE_CURL: Record<HandPose, { fingers: readonly number[]; index: readonly 
  * turn the left thumb into the handle. Only the poses here have it right; the rest keep the weapons' holds
  * as they were tuned (changing them moves every left hand on a weapon).
  */
-const THUMB_MIRRORED: ReadonlySet<HandPose> = new Set(['grip_torch']);
+const THUMB_MIRRORED: ReadonlySet<HandPose> = new Set(['grip_torch', 'mag_pinch', 'bolt_hook', 'slap_open']);
 
 export interface HandFrame {
   /** The grip frame in the hand bone's frame. */

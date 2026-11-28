@@ -164,11 +164,11 @@ const CLASS: Record<GunClass, GunPoses> = {
     adsDrop: 0,
     sprint: { at: [0.05, -0.22, -0.28], turn: [-0.6, 0.15, 0] },
     wall: { at: [0.08, -0.12, -0.22], turn: [0.9, 0, 0] },
-    reload: { at: [0.055, -0.07, -0.35], turn: [0.3, 0.32, -0.44] },
+    reload: { at: [0.06, -0.09, -0.34], turn: [0.22, 0.16, -0.22] },
     lowered: { at: [0.12, -0.45, -0.28], turn: [-1.0, 0, 0] },
     inspectA: { at: [0.05, -0.12, -0.36], turn: [0.15, -0.5, 0.35] },
     inspectB: { at: [0.06, -0.1, -0.36], turn: [0.35, 0.3, -0.35] },
-    checkMag: { at: [0.07, -0.09, -0.35], turn: [0.24, 0.22, -0.28] },
+    checkMag: { at: [0.07, -0.09, -0.34], turn: [0.18, 0.14, -0.2] },
     checkChamber: { at: [0.05, -0.11, -0.35], turn: [0.14, -0.24, 0.34] },
     bash: { at: [0.06, -0.12, -0.5], turn: [0.2, -0.35, 0.2] },
     crouch: -0.015,
@@ -194,11 +194,11 @@ const CLASS: Record<GunClass, GunPoses> = {
     adsDrop: 0.02,
     sprint: { at: [0.08, -0.26, -0.22], turn: [-0.4, 0.5, -0.25] },
     wall: { at: [0.11, -0.16, -0.1], turn: [0.85, 0.1, 0] },
-    reload: { at: [0.07, -0.075, -0.34], turn: [0.22, 0.26, -0.44] },
+    reload: { at: [0.065, -0.08, -0.33], turn: [0.18, 0.16, -0.34] },
     lowered: { at: [0.15, -0.45, -0.18], turn: [-0.9, 0.3, 0] },
     inspectA: { at: [0.08, -0.15, -0.18], turn: [0.15, -0.4, 0.35] },
     inspectB: { at: [0.09, -0.13, -0.18], turn: [0.3, 0.25, -0.35] },
-    checkMag: { at: [0.09, -0.09, -0.34], turn: [0.2, 0.24, -0.36] },
+    checkMag: { at: [0.085, -0.09, -0.33], turn: [0.16, 0.16, -0.28] },
     checkChamber: { at: [0.07, -0.11, -0.31], turn: [0.16, -0.22, 0.36] },
     cycle: { at: [0.09, -0.14, -0.16], turn: [0.14, -0.18, 0.24] },
     bash: { at: [0.08, -0.15, -0.32], turn: [0.15, -0.35, 0.2] },
@@ -320,6 +320,8 @@ export function gunRigData(id: GunId): GunRigData {
     pouch: id === 'shotgun_pump' ? SHOTGUN_POUCH : base.pouch,
     cycle: base.cycle ?? GUN_POSES[id].cycle,
     adsShoulderL: id === 'rifle_ak' ? base.adsShoulderL : GUN_POSES[id].adsShoulderL,
+    magRoll: g.feed === 'mag' ? 0 : GUN_POSES[id].magRoll,
+    boltRoll: g.feed === 'mag' ? 0 : GUN_POSES[id].boltRoll,
   };
   if (G.ads?.relief !== undefined) cls.relief = G.ads.relief;
   if (G.ads?.drop !== undefined) cls.adsDrop = G.ads.drop;
@@ -348,15 +350,34 @@ export function gunRigData(id: GunId): GunRigData {
   const adsAt = new Vector3(0, 0, -cls.relief).sub(eye.applyQuaternion(adsQ));
   // The magazine in the left fist: the fist round its lower half, thumb up along it, knuckles forward.
   const out = v(s.magOut);
+  const magDepth =
+    id === 'pistol_g17'
+      ? 0.062
+      : id === 'pistol_m1911'
+        ? 0.068
+        : id === 'rifle_ak'
+          ? 0.112
+          : id === 'rifle_m4a1'
+            ? 0.104
+            : g.cls === 'pistol'
+              ? 0.062
+              : 0.108;
+  const magSideShift = g.cls === 'pistol' ? 0.014 : 0;
+  const magFwdShift = id === 'rifle_ak' ? -0.006 : id === 'rifle_m4a1' ? -0.004 : g.cls === 'pistol' ? -0.008 : 0;
+  const magAxis = g.cls === 'pistol' ? out.clone().negate().add(new Vector3(-0.2, 0, 0.6)).normalize() : out.clone().negate();
+  const magReach =
+    g.cls === 'pistol'
+      ? new Vector3(0.55, 0.4, -0.6).normalize()
+      : new Vector3(0.68, 0.08, -0.73).normalize();
   const magHold: HandOnGun = {
-    at: out.clone().multiplyScalar(g.cls === 'pistol' ? 0.085 : 0.11),
-    q: rolled(basisQuat(out.clone().negate(), new Vector3(0.45, 0, -1)), cls.magRoll),
+    at: out.clone().multiplyScalar(magDepth).add(new Vector3(magSideShift, 0, magFwdShift)),
+    q: rolled(basisQuat(magAxis, magReach), cls.magRoll),
   };
   // The bolt: a pistol's slide gripped from above at its back, thumb back; a rifle's handle from the side.
   const bolt: HandOnGun = G.bolt
     ? { at: vec(G.bolt.at), q: quat(G.bolt.q) }
     : g.cls === 'pistol'
-      ? { at: v(s.sightR).add(new Vector3(0, -0.012, 0.01)), q: rolled(basisQuat(new Vector3(0, 0, 1), new Vector3(1, 0, 0)), cls.boltRoll) }
+      ? { at: v(s.sightR).add(new Vector3(0, -0.012, 0.01)), q: rolled(basisQuat(new Vector3(0, 0, 1), new Vector3(0.85, 0.15, -0.5).normalize()), cls.boltRoll) }
       : { at: v(s.bolt), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.3, 0.85, 0)), cls.boltRoll) };
   const load: HandOnGun = { at: v(s.load), q: rolled(basisQuat(new Vector3(0, 0, -1), new Vector3(0.2, 1, 0)), cls.loadRoll) };
   const keys: Partial<Record<GunAction, MoveKey[]>> = {};
@@ -393,7 +414,10 @@ function blendKey(d: GunRigData, k: PoseKey, w: number, at: Vector3, q: Quaterni
   q.slerp(keyQ(d, k, _q), w);
 }
 
-const _qSlap = basisQuat(new Vector3(0.1, 0.95, -0.25).normalize(), new Vector3(0.75, 0.05, -0.65).normalize());
+const _qSlap = basisQuat(new Vector3(0.1, 0.3, 0.95).normalize(), new Vector3(0.45, 0.88, -0.15).normalize());
+const _akUnderPassQ = basisQuat(new Vector3(-0.75, 0.15, 0.65).normalize(), new Vector3(0.55, 0.45, -0.7).normalize());
+const _akUnderBoltQ = basisQuat(new Vector3(-0.78, 0.12, 0.61).normalize(), new Vector3(0.58, 0.68, -0.45).normalize());
+const _akUnderRetQ = basisQuat(new Vector3(-0.78, 0.2, 0.59).normalize(), new Vector3(0.52, 0.45, -0.72).normalize());
 
 const segLin = (k: number, a: number, b: number) => clamp((k - a) / (b - a), 0, 1);
 const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
@@ -452,6 +476,12 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
   else if (a === 'loadOne') rw = 1;
   else if (a === 'loadEnd') rw = 1 - seg(k, 0, 1);
   blendKey(d, d.cls.reload, rw, at, q);
+  const actionW = Math.max(rw, a === 'checkMag' ? segOut(k, 0, 0.18) * (1 - seg(k, 0.82, 1)) : 0);
+  if (actionW > 0 && ads < 1) {
+    const sw = actionW * (1 - ads);
+    out.shoulderR.lerp(_sh.set(...CLASS[g.cls].shoulderR), sw);
+    out.shoulderL.lerp(_sh.set(...CLASS[g.cls].shoulderL), sw);
+  }
 
   // MW2019 multi-phase workspace attitude & sharp mechanical impulses synced to reload/load/check events.
   if (a === 'reload' || a === 'reloadEmpty') {
@@ -468,10 +498,12 @@ export function poseGun(id: GunId, inp: GunPoseInput, out: GunPoseOut): void {
         q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.42 * slidePose));
       }
     } else if (id === 'rifle_ak' && empty) {
-      const rackPose = segOut(k, 0.65, 0.76) * (1 - seg(k, 0.88, 0.98));
-      at.x -= 0.015 * rackPose;
-      at.y -= 0.006 * rackPose;
-      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), 0.48 * rackPose));
+      const rackPose = segOut(k, 0.64, 0.74) * (1 - seg(k, 0.89, 0.98));
+      at.x -= 0.012 * rackPose;
+      at.y += 0.032 * rackPose;
+      at.z += 0.015 * rackPose;
+      q.multiply(_q.setFromAxisAngle(_a.set(1, 0, 0), 0.08 * rackPose));
+      q.multiply(_q.setFromAxisAngle(_a.set(0, 0, 1), -0.34 * rackPose));
     } else if (id === 'rifle_m4a1' && empty) {
       const slapPose = segOut(k, 0.65, 0.76) * (1 - seg(k, 0.88, 0.98));
       at.x -= 0.012 * slapPose;
@@ -790,13 +822,13 @@ function leftPath(
   if (a === 'checkMag') {
     if (feed === 'mag') {
       const rock = bump(k, 0.5, 0.12) * Math.sin(k * Math.PI * 6) * 0.1;
-      _mC.pos.set(pistol ? -0.045 : -0.06, pistol ? -0.025 : -0.01, pistol ? -0.31 : -0.34);
+      _mC.pos.set(pistol ? -0.04 : -0.07, pistol ? -0.04 : -0.05, pistol ? -0.36 : -0.44);
       _mC.pos.y += Math.sin(clamp((k - 0.38) / 0.22, 0, 1) * Math.PI * 2) * 0.007 * bump(k, 0.5, 0.12);
       _mC.q
         .copy(q)
-        .premultiply(_q.setFromAxisAngle(_a.set(0, 1, 0), (pistol ? 0.52 : 0.42) + rock))
-        .premultiply(_q2.setFromAxisAngle(_a.set(1, 0, 0), pistol ? 0.34 : 0.38))
-        .multiply(_q2.setFromAxisAngle(_a.set(0, 0, 1), -0.14));
+        .premultiply(_q.setFromAxisAngle(_a.set(0, 1, 0), 0.35 + rock))
+        .premultiply(_q2.setFromAxisAngle(_a.set(1, 0, 0), pistol ? 0.14 : 0.25))
+        .multiply(_q2.setFromAxisAngle(_a.set(0, 0, 1), pistol ? 0 : 0.15));
       const CM = CHECK_MAG_MARKS;
       let m: { pos: Vector3; q: Quaternion } | null = null;
       if (k < 0.13) {
@@ -910,7 +942,7 @@ function leftPath(
       holdMag(d, _mA, _hG, _hQ);
       if (empty && m4) {
         // M4A1 MW2019 signature finish: open-palm slap onto left-receiver bolt catch paddle.
-        _pose.at.set(d.s.bolt[0] - 0.026, d.s.mag[1] + 0.044, d.s.mag[2] + 0.015).applyQuaternion(q).add(at);
+        _pose.at.set(d.s.bolt[0] - 0.026, d.s.mag[1] + 0.028, d.s.mag[2] + 0.015).applyQuaternion(q).add(at);
         _pose.q.copy(q).multiply(_qSlap);
         const outDir = _p2.set(-1, 0, 0).applyQuaternion(q);
         if (k < 0.66) {
@@ -936,6 +968,8 @@ function leftPath(
           between(_pose.at, _pose.q, _offG, _offQ, seg(k, 0.89, 0.98), out);
           out.leftPose = k < 0.93 ? 'slap_open' : null;
         }
+      } else if (empty && ak) {
+        akUnderBoltPath(d, k, at, q, _hG, _hQ, out, 0.66, 0.73, 0.79, M.rack, 0.89, 0.94, 0.99);
       } else if (empty) {
         boltPath(d, k, at, q, _hG, _hQ, out, 0.66, 0.76, M.rack, 0.97, open);
       } else {
@@ -961,6 +995,8 @@ function leftPath(
       between(_offG, _offQ, _hG, _hQ, w, out);
       out.leftGrip.addScaledVector(_p.set(...d.s.magOut).applyQuaternion(q), 0.03 * (1 - w));
       out.leftPose = 'slap_open';
+    } else if (ak) {
+      akUnderBoltPath(d, k, at, q, _hG, _hQ, out, 0.3, 0.42, 0.54, 0.7, 0.76, 0.86, 0.97);
     } else boltPath(d, k, at, q, _hG, _hQ, out, 0.3, 0.5, 0.7, 0.97, open);
     out.left = 'none';
     return;
@@ -1067,6 +1103,69 @@ function boltWork(
     between(_pose.at, _pose.q, _offG, _offQ, seg(k, tLock, 1), out);
   }
   out.onBolt = k >= t0 + (tReach - t0) * 0.6 && k < tLock;
+}
+
+const _akPassFrame: HandOnGun = { at: new Vector3(0.025, -0.055, -0.105), q: _akUnderPassQ };
+const _akBoltFrame: HandOnGun = { at: new Vector3(), q: _akUnderBoltQ };
+const _akRetFrame: HandOnGun = { at: new Vector3(-0.015, -0.052, -0.195), q: _akUnderRetQ };
+const _uPassG = new Vector3();
+const _uPassQ = new Quaternion();
+const _uBoltG = new Vector3();
+const _uBoltQ = new Quaternion();
+const _uRetG = new Vector3();
+const _uRetQ = new Quaternion();
+
+/**
+ * AK-pattern under-the-gun charging handle rack: left arm passes underneath the receiver behind the
+ * magazine, curls the wrist up onto the right-side charging handle from below, racks back, and returns
+ * underneath before re-gripping the handguard.
+ */
+function akUnderBoltPath(
+  d: GunRigData,
+  k: number,
+  at: Vector3,
+  q: Quaternion,
+  fromG: Vector3,
+  fromQ: Quaternion,
+  out: GunPoseOut,
+  t0: number,
+  tPass: number,
+  tBolt: number,
+  tRack: number,
+  tRelease: number,
+  tRet: number,
+  tEnd: number,
+): void {
+  _akBoltFrame.at.set(d.s.bolt[0] + 0.032, d.s.bolt[1] - 0.012, d.s.bolt[2] + 0.008);
+  onGun(at, q, _akPassFrame, _uPassG, _uPassQ);
+  onGun(at, q, _akBoltFrame, _uBoltG, _uBoltQ);
+  onGun(at, q, _akRetFrame, _uRetG, _uRetQ);
+  const travel = 0.062 * (k < tBolt ? 0 : k < tRack ? segOut(k, tBolt, tRack) : k < tRelease ? 1 - segLin(k, tRack, tRelease) : 0);
+  if (k < t0) {
+    out.leftGrip.copy(fromG);
+    out.leftQ.copy(fromQ);
+    out.leftPose = 'mag_pinch';
+  } else if (k < tPass) {
+    between(fromG, fromQ, _uPassG, _uPassQ, segOut(k, t0, tPass), out);
+    out.leftPose = 'relaxed';
+  } else if (k < tBolt) {
+    between(_uPassG, _uPassQ, _uBoltG, _uBoltQ, segOut(k, tPass, tBolt), out);
+    out.onBolt = k >= (tPass + tBolt) * 0.5;
+    out.leftPose = 'bolt_hook';
+  } else if (k < tRelease) {
+    out.leftGrip.copy(_uBoltG).addScaledVector(_p2.set(0, 0, 1).applyQuaternion(q), travel);
+    out.leftQ.copy(_uBoltQ);
+    out.slide = travel;
+    out.onBolt = true;
+    out.leftPose = 'bolt_hook';
+  } else if (k < tRet) {
+    between(_uBoltG, _uBoltQ, _uRetG, _uRetQ, seg(k, tRelease, tRet), out);
+    out.leftPose = 'relaxed';
+  } else {
+    onGun(at, q, d.off, _offG, _offQ, 0);
+    between(_uRetG, _uRetQ, _offG, _offQ, seg(k, tRet, tEnd), out);
+    out.leftPose = null;
+  }
 }
 
 /**
